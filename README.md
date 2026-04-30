@@ -75,6 +75,7 @@ This creates a new folder `feature-login/` instantly.
 | **Remove a worktree** | `rm -rf <folder>` then `git worktree prune` |
 | **Check WSL status** | `wsl --list --verbose` |
 | **Open Linux files in Windows** | `explorer.exe .` (from WSL) |
+| **Git push** | git push --set-upstream origin main |
 
 ---
 
