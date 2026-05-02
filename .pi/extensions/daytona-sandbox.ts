@@ -4,7 +4,7 @@ import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
   // 1. Daytona Sandbox Interceptor
-  pi.on("tool_call", async (event) => {
+  pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("bash", event)) return;
 
     const safePrefixes = ["git ", "gh ", "cat ", "ls ", "npx impeccable "];
@@ -13,6 +13,49 @@ export default function (pi: ExtensionAPI) {
     );
 
     if (!isSafe) {
+      const probe = async () => {
+        const result = await pi.exec(
+          "daytona",
+          ["exec", "pi-sandbox", "--", "true"],
+          { timeout: 10000, signal: ctx.signal },
+        );
+        return result.code === 0;
+      };
+
+      if (!(await probe())) {
+        // Try starting, with retries for transient state-change conflicts
+        let started = false;
+        for (let i = 0; i < 5; i++) {
+          const result = await pi.exec(
+            "daytona",
+            ["start", "pi-sandbox"],
+            { timeout: 30000, signal: ctx.signal },
+          );
+          if (result.code === 0) {
+            started = true;
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+
+        if (!started) {
+          // Fallback: create the sandbox
+          const result = await pi.exec(
+            "daytona",
+            ["create", "--name", "pi-sandbox"],
+            { timeout: 60000, signal: ctx.signal },
+          );
+
+          if (result.code === 0) {
+            // creation is async; poll until the sandbox accepts commands
+            for (let i = 0; i < 20; i++) {
+              await new Promise((r) => setTimeout(r, 1500));
+              if (await probe()) break;
+            }
+          }
+        }
+      }
+
       const cmd = event.input.command.replace(/'/g, "'\"'\"'");
       event.input.command = `daytona exec pi-sandbox -- '${cmd}'`;
     }
