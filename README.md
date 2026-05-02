@@ -12,6 +12,7 @@ Ensure your WSL (Ubuntu 24.04 LTS) has the necessary runtimes. This setup bypass
 # 1. Base Runtimes
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs python3 python3-pip python3-venv jq unzip
+sudo npm install -g npm@latest
 
 # 2. Docker & Daytona (Native WSL Setup)
 curl -fsSL https://get.docker.com -o get-docker.sh
