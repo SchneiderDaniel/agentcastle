@@ -53,17 +53,43 @@ export OPENCODE_GO_API_KEY="opencode-go-..."
 export APIFY_TOKEN="apify_api_..."
 ```
 
-### 1.2 The Auto-Start
-Add this to the bottom of your `~/.bashrc` to ensure variables and services are always available in your Zed terminal:
-```bash
-# Ensure Docker and Memory are alive
-if ! pgrep -x "dockerd" > /dev/null; then sudo service docker start; fi
-pgrep -f "agentmemory" > /dev/null || (npx -y @agentmemory/agentmemory > /dev/null 2>&1 &)
+### 1.2 The Auto-Start (One-Click Setup)
+WSL doesn't automatically start background services like a normal Linux boot. This script automatically appends the necessary startup logic to your `~/.bashrc`. 
 
-# Load secrets
-[ -f "$HOME/.agent_env" ] && source "$HOME/.agent_env"
+Just copy, paste, and run this entire block in your WSL terminal:
+
+```bash
+cat << 'EOF' >> ~/.bashrc
+
+# ==========================================
+# AGENTCASTLE AUTO-START
+# ==========================================
+# 1. WSL Quirk: Start Docker silently if it isn't running. 
+# (Note: May ask for your sudo password on the first new terminal launch)
+if ! pgrep -x "dockerd" > /dev/null; then 
+    sudo service docker start > /dev/null 2>&1
+fi
+
+# 2. Background Task: Keep the local AgentMemory vector store alive for Pi.
+if ! pgrep -f "agentmemory" > /dev/null; then
+    npx -y @agentmemory/agentmemory > /dev/null 2>&1 &
+fi
+
+# 3. Environment: Load the OpenCode and Apify keys into the session.
+if [ -f "$HOME/.agent_env" ]; then
+    source "$HOME/.agent_env"
+fi
+# ==========================================
+EOF
+
+# Apply the changes immediately to your current terminal
+source ~/.bashrc
 ```
-**Run `source ~/.bashrc` before moving on.**
+
+**Why this matters:**
+* **Docker:** Daytona needs Docker running *before* Pi attempts to execute commands. 
+* **AgentMemory:** The MCP adapter will fail to connect if the memory service isn't daemonized in the background.
+* **Secrets:** Injecting `.agent_env` ensures `process.env.APIFY_TOKEN` is never "undefined" when Zed boots up the agent.
 
 ---
 
