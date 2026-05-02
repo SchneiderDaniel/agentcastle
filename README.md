@@ -117,7 +117,6 @@ Create `~/.pi/agent/settings.json`:
 }
 ```
 
-*(Note: If you have a legacy `~/.pi/agent/models.json` file from previous setups, delete it using `rm ~/.pi/agent/models.json` so it doesn't conflict with the native provider).*
 
 ---
 
