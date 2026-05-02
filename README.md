@@ -38,13 +38,14 @@ sudo apt-get install gh
 ---
 
 ## 1. Security & Environment (The Foundation)
-We need to set up the environment for the MCP tools.
+We need to set up the environment for the MCP tools locally within your project.
 
-### 1.1 Create the Secret Store
-Pi's tools (like `crawl4ai`) inherit environment variables from your terminal. Create `~/.agent_env`:
+### 1.1 Create the Project Secret Store
+Pi's tools (like `crawl4ai`) inherit environment variables from your terminal session. Create a `.env` file in your **project root**:
 ```bash
 export APIFY_TOKEN="apify_api_..."
 ```
+*(Note: Be sure to add `.env` to your `.gitignore` to avoid leaking secrets!)*
 
 ### 1.2 The Auto-Start (One-Click Setup)
 WSL doesn't automatically start background services like a normal Linux boot. This script automatically appends the necessary startup logic to your `~/.bashrc`. 
@@ -66,11 +67,6 @@ fi
 if ! pgrep -f "agentmemory" > /dev/null; then
     npx -y @agentmemory/agentmemory > /dev/null 2>&1 &
 fi
-
-# 3. Environment: Load the API keys into the session.
-if [ -f "$HOME/.agent_env" ]; then
-    source "$HOME/.agent_env"
-fi
 # ==========================================
 EOF
 
@@ -78,10 +74,12 @@ EOF
 source ~/.bashrc
 ```
 
+*(Tip: Whenever you start working on your project, remember to run `source .env` in your project root so Pi can access your local API keys, or use a tool like `direnv` to automate this).*
+
 ---
 
 ## 2. AI Provider Setup (The OpenCode Config)
-OpenCode Go is natively supported by Pi. We will authenticate once via the CLI, which saves the credentials securely into Pi's internal `auth.json` vault.
+OpenCode Go is natively supported by Pi. We will authenticate once via the CLI.
 
 ### 2.1 One-Time Authentication
 Run this command in your terminal, replacing the dummy key with your actual OpenCode Go key:
@@ -90,8 +88,8 @@ pi --provider opencode-go --api-key "your-actual-api-key-here"
 ```
 *(Once Pi launches successfully, you can exit by pressing `Ctrl+C` twice).*
 
-### 2.2 The Default Override (`settings.json`)
-Force Pi to use OpenCode Go by default so you don't have to select it manually every session. Create `~/.pi/agent/settings.json`:
+### 2.2 The Default Override (Project Local)
+Force Pi to use OpenCode Go by default for this specific project. Create a `.pi/settings.json` file in your **project root**:
 
 ```json
 {
@@ -126,7 +124,7 @@ Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults t
 ---
 
 ## 5. The Agent Toolchain (The MCP Bridge)
-Since your `.agent_env` is sourced, `process.env.APIFY_TOKEN` will resolve properly. Create `~/.config/pi/pi.config.ts`:
+Create your Pi configuration file natively in the **project root** as `./pi.config.ts`:
 
 ```typescript
 import { setupMCP } from "pi-mcp-adapter";
@@ -139,7 +137,7 @@ export default async function configurePi(pi) {
     crawl4ai: { 
       command: "npx", 
       args: ["-y", "@apify/actors-mcp-server", "--actors", "janbuchar/crawl4ai"],
-      env: { APIFY_TOKEN: process.env.APIFY_TOKEN }
+      env: { APIFY_TOKEN: process.env.APIFY_TOKEN } // Relies on your local .env being sourced
     }
   });
 
@@ -153,7 +151,7 @@ export default async function configurePi(pi) {
 ---
 
 ## 6. Execution Security (Hardcoded Hooks)
-**CRITICAL:** This force-routes Pi's code execution into the OCI sandbox. Append to `~/.config/pi/pi.config.ts`:
+**CRITICAL:** This force-routes Pi's code execution into the OCI sandbox. Append the following to your **project root's** `./pi.config.ts`:
 
 ```typescript
   // 3. The Daytona Sandbox Interceptor (v0.17x Syntax)
@@ -173,7 +171,7 @@ export default async function configurePi(pi) {
 ---
 
 ## 7. The "Brain" Protocol (Templates)
-Create `~/.config/pi/templates/caveman.md`:
+Store your project-specific agent templates locally. Create `./.pi/templates/caveman.md` in your **project root**:
 ```markdown
 ### 1. Communication
 Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next step].
@@ -189,6 +187,7 @@ Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next st
 ## 8. Workflows & Pro-Tips
 | Action | Command |
 |---|---|
+| **Load Local Secrets** | `source .env` |
 | **Start Session** | `pi --template caveman` |
 | **Check Sandbox** | `daytona list` |
 | **Restart Docker** | `sudo service docker start` |
@@ -199,8 +198,11 @@ Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next st
 Before writing your first line of code, verify that all components are communicating correctly.
 
 ### 9.1 Verify Base Services
-Open your WSL terminal and ensure the background auto-start scripts executed properly:
+Open your WSL terminal in your project folder, source your `.env`, and ensure the background auto-start scripts executed properly:
 ```bash
+# Source local project variables
+source .env
+
 # 1. Check Docker daemon (Should output headers without permission errors)
 docker ps
 
@@ -229,7 +231,7 @@ pi "Respond with exactly one word: 'Operational'."
 ```
 
 ### 9.4 Verify Execution Routing (The Acid Test)
-This ensures your `pi.config.ts` interceptor is successfully capturing and routing Pi's bash commands into the Daytona sandbox. Open Zed's terminal (Ctrl + ~) and run:
+This ensures your project-level `pi.config.ts` interceptor is successfully capturing and routing Pi's bash commands into the Daytona sandbox. Open Zed's terminal (Ctrl + ~), ensure you are in the project root, and run:
 ```bash
 pi --template caveman "Run 'uname -n' in bash and tell me the hostname."
 ```
