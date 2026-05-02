@@ -250,24 +250,36 @@ Extensions in `.pi/extensions/` are loaded automatically on Pi startup (no `--ex
 
 ---
 
-## 7. The "Brain" Protocol (Templates)
-Store your project-specific agent templates locally. Create `./.pi/templates/caveman.md` in your **project root**:
-```markdown
-### 1. Communication
-Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next step].
+## 7. The "Brain" Protocol (Context & Templates)
 
-### 2. Tool Routing
-* Code Search: `search_graph` 
-* Web Search: `crawl4ai` (returns clean markdown)
-* GitHub: `gh` cli natively via bash.
+Pi loads two different kinds of instruction files. They are **not** interchangeable.
+
+### 7.1 Always-On Context (`AGENTS.md`) — Use This for Caveman
+If you want instructions to be **automatically active** in every Pi session, put them in `AGENTS.md` (or `CLAUDE.md`) in your **project root**. Pi concatenates all discovered `AGENTS.md` files (walking up from the working directory) and appends them to the system prompt on every turn.
+
+**This project already has an `AGENTS.md`** with the caveman protocol (communication style + tool routing). It is active as soon as you run `pi` in this directory.
+
+### 7.2 Reusable Prompt Templates (`.pi/prompts/*.md`)
+If you want **manual snippets** that you invoke on demand, create prompt templates in `.pi/prompts/`:
+
+```bash
+mkdir -p .pi/prompts
+cat << 'EOF' > .pi/prompts/review.md
+---
+description: Review staged git changes
+---
+Review the staged changes. Focus on bugs, security issues, and error handling gaps.
+EOF
 ```
+
+Invoke with `/review` inside Pi's editor. Templates are **not** automatically loaded — you must type `/` and select them.
 
 ---
 
 ## 8. Workflows & Pro-Tips
 | Action | Command |
 |---|---|
-| **Start Session** | `pi --template caveman` |
+| **Start Session** | `pi` |
 | **Check Sandbox** | `daytona list` |
 | **Restart Docker** | `sudo service docker start` |
 
@@ -309,7 +321,7 @@ pi "Respond with exactly one word: 'Operational'."
 ### 9.4 Verify Execution Routing (The Acid Test)
 This ensures your `.pi/extensions/daytona-sandbox.ts` interceptor is successfully capturing and routing Pi's bash commands into the Daytona sandbox. Open Zed's terminal (Ctrl + ~), ensure you are in the project root, and run:
 ```bash
-pi --template caveman "Run 'uname -n' in bash and tell me the hostname."
+pi -p "Run 'uname -n' in bash and tell me the hostname."
 ```
 *Expected Result:* Pi should report the hostname of the sandbox (e.g., `pi-sandbox` or a container ID). If it returns your actual WSL machine's hostname, the extension hook in Step 5 failed and your system is not safely isolated.
 
