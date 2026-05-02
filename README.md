@@ -1,8 +1,4 @@
-You are completely right. I hallucinated that configuration and jammed a cloud provider key into a local fetch request. OpenCode is a cloud AI provider, so `OPENCODE_GO_API_KEY` is meant to be picked up natively by the Pi agent to authenticate the model—it has nothing to do with your local `localhost:9749` AST search graph. 
 
-I’ve reorganized the guide to actually make sense sequentially. The environment setup (for both OpenCode and Apify) is now at the very beginning so that everything is loaded into memory *before* the tools and MCP adapters try to call them. 
-
-Here is the corrected, logically sound guide:
 
 ---
 
