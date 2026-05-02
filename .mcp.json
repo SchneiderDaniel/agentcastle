@@ -1,0 +1,20 @@
+{
+    "mcpServers": {
+        "agentmemory": {
+            "command": "npx",
+            "args": ["-y", "@agentmemory/mcp"]
+        },
+        "crawl4ai": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@apify/actors-mcp-server",
+                "--actors",
+                "janbuchar/crawl4ai"
+            ],
+            "env": {
+                "APIFY_TOKEN": "${APIFY_TOKEN}"
+            }
+        }
+    }
+}
