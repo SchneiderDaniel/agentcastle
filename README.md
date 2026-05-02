@@ -246,7 +246,9 @@ export default function (pi: ExtensionAPI) {
 
 Extensions in `.pi/extensions/` are loaded automatically on Pi startup (no `--extension` flag needed).
 
-> **Auto-Recovery:** This extension now automatically probes the sandbox state. If `pi-sandbox` is stopped, it attempts to start it (with retry backoff for transient conflicts). If the sandbox doesn't exist, it creates it and polls until it's ready. You no longer need to manually run `daytona start pi-sandbox` before every Pi session.
+> **Sandbox Routing:** The extension routes commands into the Daytona sandbox *except* for file-management operations (`rm`, `mkdir`, `mv`, `cp`, `touch`, `chmod`, `chown`) which run on the host so the agent can manage actual project files. A basic guard blocks absolute paths outside the project directory. A persistent Daytona volume (`pi-sandbox-vol`) is mounted at `/workspace` so sandbox data survives restarts.
+>
+> **Auto-Recovery:** The extension automatically probes the sandbox state. If `pi-sandbox` is stopped, it attempts to start it (with retry backoff for transient conflicts). If the sandbox doesn't exist, it creates it (with the persistent volume) and polls until it's ready.
 
 ---
 
@@ -319,10 +321,19 @@ pi "Respond with exactly one word: 'Operational'."
 ```
 
 ### 9.4 Verify Execution Routing (The Acid Test)
-This ensures your `.pi/extensions/daytona-sandbox.ts` interceptor is successfully capturing and routing Pi's bash commands into the Daytona sandbox. Open Zed's terminal (Ctrl + ~), ensure you are in the project root, and run:
+This ensures your `.pi/extensions/daytona-sandbox.ts` interceptor is successfully capturing and routing Pi's bash commands correctly.
+
+**Test A — Sandbox isolation:**
+Open Zed's terminal (Ctrl + ~), ensure you are in the project root, and run:
 ```bash
 pi -p "Run 'uname -n' in bash and tell me the hostname."
 ```
-*Expected Result:* Pi should report the hostname of the sandbox (e.g., `pi-sandbox` or a container ID). If it returns your actual WSL machine's hostname, the extension hook in Step 5 failed and your system is not safely isolated.
+*Expected Result:* Pi should report the hostname of the sandbox (e.g., `pi-sandbox` or a container ID). If it returns your actual WSL machine's hostname, the extension hook in Step 5 failed and arbitrary commands are not isolated.
 
-> **Tip:** You can test the auto-recovery by stopping the sandbox first: `daytona stop pi-sandbox`. The extension should transparently start it back up on the next intercepted command.
+**Test B — Host file operations:**
+```bash
+pi -p "Create a file named '.pi/test-file.txt' with the content 'host works', then tell me the absolute path where it was created."
+```
+*Expected Result:* The file should appear on the host filesystem at `<project-root>/.pi/test-file.txt`. If the agent reports it can't find the path or the file doesn't appear on the host, file-management commands are being incorrectly routed to the sandbox.
+
+> **Tip:** You can test the auto-recovery by stopping the sandbox first: `daytona stop pi-sandbox`. The extension should transparently start it back up on the next sandbox command.
