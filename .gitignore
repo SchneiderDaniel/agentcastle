@@ -1,1 +1,4 @@
 .env
+.agent_env
+
+node_modules
