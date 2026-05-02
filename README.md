@@ -127,57 +127,81 @@ Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults t
 
 ## 5. The Agent Toolchain (The MCP Bridge)
 
-### 5.1 Initialize Local Dependencies
-Because we are using a project-local configuration (`./pi.config.ts`), Node and TypeScript need the agent dependencies installed locally to resolve the module imports. Run the following in your **project root**:
-```bash
-npm init -y
-npm install --save-dev pi-mcp-adapter @mariozechner/pi-coding-agent
+### 5.1 MCP Server Configuration
+Pi discovers MCP servers from `.mcp.json` in your **project root**:
+
+```json
+{
+  "mcpServers": {
+    "agentmemory": {
+      "command": "npx",
+      "args": ["-y", "@agentmemory/mcp"]
+    },
+    "crawl4ai": {
+      "command": "npx",
+      "args": ["-y", "@apify/actors-mcp-server", "--actors", "janbuchar/crawl4ai"],
+      "env": {
+        "APIFY_TOKEN": "${APIFY_TOKEN}"
+      }
+    }
+  }
+}
 ```
 
-### 5.2 Create the Config File
-Since your `~/.agent_env` is sourced globally, `process.env.APIFY_TOKEN` will resolve properly. Create your Pi configuration file natively in the **project root** as `./pi.config.ts`. Ensure you are using the correct default imports and package paths:
+Make sure `pi-mcp-adapter` is installed so Pi can load these servers:
+```bash
+pi install npm:pi-mcp-adapter
+```
+
+### 5.2 Custom Tools & Bash Interception (Pi Extension)
+Pi does **not** use a `pi.config.ts` file. Instead, it auto-discovers extensions from `.pi/extensions/` in your **project root**.
+
+Create `.pi/extensions/daytona-sandbox.ts`:
 
 ```typescript
-import setupMCP from "pi-mcp-adapter";
-import { interceptTool } from "@mariozechner/pi-coding-agent/hooks";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
+import { Type } from "typebox";
 
-export default async function configurePi(pi) {
-  // 1. Mount MCPs
-  await setupMCP(pi, {
-    agentmemory: { command: "npx", args: ["-y", "@agentmemory/mcp"] },
-    crawl4ai: { 
-      command: "npx", 
-      args: ["-y", "@apify/actors-mcp-server", "--actors", "janbuchar/crawl4ai"],
-      env: { APIFY_TOKEN: process.env.APIFY_TOKEN }
+export default function (pi: ExtensionAPI) {
+  // 1. Daytona Sandbox Interceptor
+  pi.on("tool_call", async (event) => {
+    if (!isToolCallEventType("bash", event)) return;
+
+    const safePrefixes = ["git ", "gh ", "cat ", "ls ", "npx impeccable "];
+    const isSafe = safePrefixes.some((prefix) =>
+      event.input.command.trim().startsWith(prefix),
+    );
+
+    if (!isSafe) {
+      const cmd = event.input.command.replace(/'/g, "'\"'\"'");
+      event.input.command = `daytona exec pi-sandbox -- '${cmd}'`;
     }
   });
 
   // 2. Local AST graph search (Requires local service running on port 9749)
-  pi.registerTool("search_graph", async (query) => {
-    const res = await fetch(`http://localhost:9749/search?q=${encodeURIComponent(query)}`);
-    return await res.json();
-  });
-```
-
----
-
-## 6. Execution Security (Hardcoded Hooks)
-**CRITICAL:** This force-routes Pi's code execution into the OCI sandbox. Append the following to your **project root's** `./pi.config.ts`:
-
-```typescript
-  // 3. The Daytona Sandbox Interceptor (v0.17x Syntax)
-  interceptTool("bash", async (context, originalCommand) => {
-    const safePrefixes = ["git ", "gh ", "cat ", "ls ", "npx impeccable "];
-    const isSafe = safePrefixes.some(prefix => originalCommand.trim().startsWith(prefix));
-    
-    if (isSafe) return { modifiedCommand: originalCommand };
-
-    // Wrap execution in the pre-created pi-sandbox
-    const daytonaWrapped = `daytona exec pi-sandbox -- "${originalCommand}"`;
-    return { modifiedCommand: daytonaWrapped };
+  pi.registerTool({
+    name: "search_graph",
+    label: "Search Graph",
+    description: "Search the local AST graph database",
+    parameters: Type.Object({
+      query: Type.String({ description: "Search query" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const res = await fetch(
+        `http://localhost:9749/search?q=${encodeURIComponent(params.query)}`,
+      );
+      const data = await res.json();
+      return {
+        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+        details: data,
+      };
+    },
   });
 }
 ```
+
+Extensions in `.pi/extensions/` are loaded automatically on Pi startup (no `--extension` flag needed).
 
 ---
 
@@ -238,8 +262,8 @@ pi "Respond with exactly one word: 'Operational'."
 ```
 
 ### 9.4 Verify Execution Routing (The Acid Test)
-This ensures your project-level `pi.config.ts` interceptor is successfully capturing and routing Pi's bash commands into the Daytona sandbox. Open Zed's terminal (Ctrl + ~), ensure you are in the project root, and run:
+This ensures your `.pi/extensions/daytona-sandbox.ts` interceptor is successfully capturing and routing Pi's bash commands into the Daytona sandbox. Open Zed's terminal (Ctrl + ~), ensure you are in the project root, and run:
 ```bash
 pi --template caveman "Run 'uname -n' in bash and tell me the hostname."
 ```
-*Expected Result:* Pi should report the hostname of the sandbox (e.g., `pi-sandbox` or a container ID). If it returns your actual WSL machine's hostname, the interceptor hook in Step 6 failed and your system is not safely isolated.
+*Expected Result:* Pi should report the hostname of the sandbox (e.g., `pi-sandbox` or a container ID). If it returns your actual WSL machine's hostname, the extension hook in Step 5 failed and your system is not safely isolated.
