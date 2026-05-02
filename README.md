@@ -91,13 +91,7 @@ pi --provider opencode-go --api-key "your-actual-api-key-here"
 *(Once Pi launches successfully, you can exit by pressing `Ctrl+C` twice).*
 
 ### 2.2 The Default Override (Project Local)
-Force Pi to use OpenCode Go by default for this specific project. Create a `.pi/settings.json` file in your **project root**:
-
-```json
-{
-  "defaultProvider": "opencode-go"
-}
-```
+Force Pi to use OpenCode Go by default for this specific project. Create a `.pi/settings.json` file in your **project root** and set `defaultProvider` to `opencode-go`. See the `.pi/settings.json` file in this repository.
 
 ---
 
@@ -128,25 +122,7 @@ Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults t
 ## 5. The Agent Toolchain (The MCP Bridge)
 
 ### 5.1 MCP Server Configuration
-Pi discovers MCP servers from `.mcp.json` in your **project root**:
-
-```json
-{
-  "mcpServers": {
-    "agentmemory": {
-      "command": "npx",
-      "args": ["-y", "@agentmemory/mcp"]
-    },
-    "crawl4ai": {
-      "command": "npx",
-      "args": ["-y", "@apify/actors-mcp-server", "--actors", "janbuchar/crawl4ai"],
-      "env": {
-        "APIFY_TOKEN": "${APIFY_TOKEN}"
-      }
-    }
-  }
-}
-```
+Pi discovers MCP servers from `.mcp.json` in your **project root**. See the `.mcp.json` file in this repository for the `agentmemory` and `crawl4ai` server definitions.
 
 Make sure `pi-mcp-adapter` is installed so Pi can load these servers:
 ```bash
@@ -156,93 +132,7 @@ pi install npm:pi-mcp-adapter
 ### 5.2 Custom Tools & Bash Interception (Pi Extension)
 Pi does **not** use a `pi.config.ts` file. Instead, it auto-discovers extensions from `.pi/extensions/` in your **project root**.
 
-Create `.pi/extensions/daytona-sandbox.ts`:
-
-```typescript
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
-import { Type } from "typebox";
-
-export default function (pi: ExtensionAPI) {
-  // 1. Daytona Sandbox Interceptor
-  pi.on("tool_call", async (event, ctx) => {
-    if (!isToolCallEventType("bash", event)) return;
-
-    const safePrefixes = ["git ", "gh ", "cat ", "ls ", "npx impeccable "];
-    const isSafe = safePrefixes.some((prefix) =>
-      event.input.command.trim().startsWith(prefix),
-    );
-
-    if (!isSafe) {
-      const probe = async () => {
-        const result = await pi.exec(
-          "daytona",
-          ["exec", "pi-sandbox", "--", "true"],
-          { timeout: 10000, signal: ctx.signal },
-        );
-        return result.code === 0;
-      };
-
-      if (!(await probe())) {
-        // Try starting, with retries for transient state-change conflicts
-        let started = false;
-        for (let i = 0; i < 5; i++) {
-          const result = await pi.exec(
-            "daytona",
-            ["start", "pi-sandbox"],
-            { timeout: 30000, signal: ctx.signal },
-          );
-          if (result.code === 0) {
-            started = true;
-            break;
-          }
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-
-        if (!started) {
-          // Fallback: create the sandbox
-          const result = await pi.exec(
-            "daytona",
-            ["create", "--name", "pi-sandbox"],
-            { timeout: 60000, signal: ctx.signal },
-          );
-
-          if (result.code === 0) {
-            // creation is async; poll until the sandbox accepts commands
-            for (let i = 0; i < 20; i++) {
-              await new Promise((r) => setTimeout(r, 1500));
-              if (await probe()) break;
-            }
-          }
-        }
-      }
-
-      const cmd = event.input.command.replace(/'/g, "'\"'\"'");
-      event.input.command = `daytona exec pi-sandbox -- '${cmd}'`;
-    }
-  });
-
-  // 2. Local AST graph search (Requires local service running on port 9749)
-  pi.registerTool({
-    name: "search_graph",
-    label: "Search Graph",
-    description: "Search the local AST graph database",
-    parameters: Type.Object({
-      query: Type.String({ description: "Search query" }),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const res = await fetch(
-        `http://localhost:9749/search?q=${encodeURIComponent(params.query)}`,
-      );
-      const data = await res.json();
-      return {
-        content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-        details: data,
-      };
-    },
-  });
-}
-```
+Create `.pi/extensions/daytona-sandbox.ts` in your **project root**. See the `.pi/extensions/daytona-sandbox.ts` file in this repository for the Daytona sandbox interceptor and local AST graph search tool implementation.
 
 Extensions in `.pi/extensions/` are loaded automatically on Pi startup (no `--extension` flag needed).
 
@@ -262,19 +152,7 @@ If you want instructions to be **automatically active** in every Pi session, put
 **This project already has an `AGENTS.md`** with the caveman protocol (communication style + tool routing). It is active as soon as you run `pi` in this directory.
 
 ### 7.2 Reusable Prompt Templates (`.pi/prompts/*.md`)
-If you want **manual snippets** that you invoke on demand, create prompt templates in `.pi/prompts/`:
-
-```bash
-mkdir -p .pi/prompts
-cat << 'EOF' > .pi/prompts/review.md
----
-description: Review staged git changes
----
-Review the staged changes. Focus on bugs, security issues, and error handling gaps.
-EOF
-```
-
-Invoke with `/review` inside Pi's editor. Templates are **not** automatically loaded — you must type `/` and select them.
+If you want **manual snippets** that you invoke on demand, create prompt templates in `.pi/prompts/`. See the `.pi/prompts/review.md` example in this repository. Invoke templates with `/review` inside Pi's editor. Templates are **not** automatically loaded — you must type `/` and select them.
 
 ---
 
