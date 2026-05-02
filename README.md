@@ -135,11 +135,11 @@ npm install --save-dev pi-mcp-adapter @mariozechner/pi-coding-agent
 ```
 
 ### 5.2 Create the Config File
-Since your `~/.agent_env` is sourced globally, `process.env.APIFY_TOKEN` will resolve properly. Create your Pi configuration file natively in the **project root** as `./pi.config.ts`:
+Since your `~/.agent_env` is sourced globally, `process.env.APIFY_TOKEN` will resolve properly. Create your Pi configuration file natively in the **project root** as `./pi.config.ts`. Ensure you are using the correct default imports and package paths:
 
 ```typescript
-import { setupMCP } from "pi-mcp-adapter";
-import { interceptTool } from "pi-core/hooks";
+import setupMCP from "pi-mcp-adapter";
+import { interceptTool } from "@mariozechner/pi-coding-agent/hooks";
 
 export default async function configurePi(pi) {
   // 1. Mount MCPs
