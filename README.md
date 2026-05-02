@@ -1,10 +1,6 @@
-Here is the final, corrected documentation. I have completely ripped out the broken `models.json` section and replaced it with the native OpenCode configuration, setting `opencode-go` as your permanent default so you never have to type a flag or login command again.
-
----
-
 # Agentcastle: The Pi Stack (Full 2026 Edition)
 
-High-performance, secure, and local-first development environment using WSL (Ubuntu) + Zed + Git Worktrees + Pi AI. 
+High-performance, secure, and local-first development environment using WSL (Ubuntu) + Zed + Git Worktrees + Pi AI.
 
 ## 0. Prerequisites
 Ensure your WSL (Ubuntu 24.04 LTS) has the necessary runtimes. This setup bypasses the broken install scripts by pulling the binaries directly.
@@ -42,12 +38,11 @@ sudo apt-get install gh
 ---
 
 ## 1. Security & Environment (The Foundation)
-Pi and its MCP tools inherit environment variables from your terminal. We set this up *first* to avoid missing keys and authentication errors.
+We need to set up the environment for the MCP tools.
 
 ### 1.1 Create the Secret Store
-Create `~/.agent_env`:
+Pi's tools (like `crawl4ai`) inherit environment variables from your terminal. Create `~/.agent_env`:
 ```bash
-export OPENCODE_API_KEY="opencode-go-..."
 export APIFY_TOKEN="apify_api_..."
 ```
 
@@ -85,11 +80,32 @@ source ~/.bashrc
 
 ---
 
-## 2. Workspace & Git
-### 2.1 WSL (Ubuntu) & SSH
+## 2. AI Provider Setup (The OpenCode Config)
+OpenCode Go is natively supported by Pi. We will authenticate once via the CLI, which saves the credentials securely into Pi's internal `auth.json` vault.
+
+### 2.1 One-Time Authentication
+Run this command in your terminal, replacing the dummy key with your actual OpenCode Go key:
+```bash
+pi --provider opencode-go --api-key "your-actual-api-key-here"
+```
+*(Once Pi launches successfully, you can exit by pressing `Ctrl+C` twice).*
+
+### 2.2 The Default Override (`settings.json`)
+Force Pi to use OpenCode Go by default so you don't have to select it manually every session. Create `~/.pi/agent/settings.json`:
+
+```json
+{
+  "defaultProvider": "opencode-go"
+}
+```
+
+---
+
+## 3. Workspace & Git
+### 3.1 WSL (Ubuntu) & SSH
 * **The Golden Rule:** All code lives in the Linux filesystem (`~/...`). **Never** use `/mnt/c/` for active dev work.
 
-### 2.2 Bare Worktree Workflow
+### 3.2 Bare Worktree Workflow
 Run isolated Pi agents simultaneously in different Zed windows.
 ```bash
 mkdir my-project && cd my-project
@@ -101,22 +117,6 @@ echo ".env" >> .gitignore
 git worktree add -b feature/logic feature-logic
 cd feature-logic
 ```
-
----
-
-## 3. AI Provider Setup (The OpenCode Config)
-OpenCode and OpenCode Go are **natively supported** by Pi. Because we loaded the `OPENCODE_API_KEY` environment variable into our terminal memory in Section 1, Pi will automatically authenticate. We just need to tell it which model to use.
-
-### 3.1 The Default Override (`settings.json`)
-Force Pi to use the native OpenCode Go provider by default so you don't have to select it manually or pass flags every session. 
-
-Create `~/.pi/agent/settings.json`:
-```json
-{
-  "defaultProvider": "opencode-go"
-}
-```
-
 
 ---
 
