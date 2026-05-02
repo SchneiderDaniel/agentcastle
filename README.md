@@ -24,10 +24,10 @@ curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 curl -sfL https://download.daytona.io/daytona/install.sh | sudo bash
 
-# 3. Pi Agent & MCP Adapter
-npm install -g pi-agent pi-mcp-adapter
+# 3. Pi Agent & MCP Adapter (Updated Package Names)
+sudo npm install -g @mariozechner/pi-coding-agent @mariozechner/pi-mcp-adapter
 
-# 4. GitHub CLI (Replaces GitHub MCP for token-efficient repo management)
+# 4. GitHub CLI 
 sudo apt-get install gh
 
 ```
