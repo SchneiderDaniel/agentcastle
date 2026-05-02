@@ -27,7 +27,11 @@ daytona login
 daytona create --name pi-sandbox # This is where Pi will execute code
 
 # 3. Pi Agent & MCP Adapter
-sudo npm install -g @mariozechner/pi-coding-agent @mariozechner/pi-mcp-adapter
+Install the agent first:
+sudo npm install -g @mariozechner/pi-coding-agent
+
+Install the adapter via Pi:
+pi install npm:pi-mcp-adapter
 
 # 4. GitHub CLI 
 sudo apt-get install gh
