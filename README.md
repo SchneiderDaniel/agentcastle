@@ -22,7 +22,15 @@ sudo apt-get install -y nodejs python3 python3-pip python3-venv jq
 # 2. Docker & Daytona (Required for container sandboxing)
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
-curl -sfL https://download.daytona.io/daytona/install.sh | sudo bash
+
+# 2.1. Download the latest Linux x86_64 binary
+sudo curl -L "https://github.com/daytonaio/daytona/releases/latest/download/daytona-linux-amd64" -o /usr/local/bin/daytona
+
+# 2.2. Give it execution permissions
+sudo chmod +x /usr/local/bin/daytona
+
+# 2.3. Test it
+daytona version
 
 # 3. Pi Agent & MCP Adapter (Updated Package Names)
 sudo npm install -g @mariozechner/pi-coding-agent @mariozechner/pi-mcp-adapter
