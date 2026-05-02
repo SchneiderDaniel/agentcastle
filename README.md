@@ -38,14 +38,13 @@ sudo apt-get install gh
 ---
 
 ## 1. Security & Environment (The Foundation)
-We need to set up the environment for the MCP tools locally within your project.
+We need to set up the environment for the MCP tools.
 
-### 1.1 Create the Project Secret Store
-Pi's tools (like `crawl4ai`) inherit environment variables from your terminal session. Create a `.env` file in your **project root**:
+### 1.1 Create the Secret Store
+Pi's tools (like `crawl4ai`) inherit environment variables from your terminal. Create `~/.agent_env` in your **home directory**:
 ```bash
 export APIFY_TOKEN="apify_api_..."
 ```
-*(Note: Be sure to add `.env` to your `.gitignore` to avoid leaking secrets!)*
 
 ### 1.2 The Auto-Start (One-Click Setup)
 WSL doesn't automatically start background services like a normal Linux boot. This script automatically appends the necessary startup logic to your `~/.bashrc`. 
@@ -67,14 +66,17 @@ fi
 if ! pgrep -f "agentmemory" > /dev/null; then
     npx -y @agentmemory/agentmemory > /dev/null 2>&1 &
 fi
+
+# 3. Environment: Load the API keys into the session.
+if [ -f "$HOME/.agent_env" ]; then
+    source "$HOME/.agent_env"
+fi
 # ==========================================
 EOF
 
 # Apply the changes immediately to your current terminal
 source ~/.bashrc
 ```
-
-*(Tip: Whenever you start working on your project, remember to run `source .env` in your project root so Pi can access your local API keys, or use a tool like `direnv` to automate this).*
 
 ---
 
@@ -124,7 +126,7 @@ Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults t
 ---
 
 ## 5. The Agent Toolchain (The MCP Bridge)
-Create your Pi configuration file natively in the **project root** as `./pi.config.ts`:
+Since your `~/.agent_env` is sourced globally, `process.env.APIFY_TOKEN` will resolve properly. Create your Pi configuration file natively in the **project root** as `./pi.config.ts`:
 
 ```typescript
 import { setupMCP } from "pi-mcp-adapter";
@@ -137,7 +139,7 @@ export default async function configurePi(pi) {
     crawl4ai: { 
       command: "npx", 
       args: ["-y", "@apify/actors-mcp-server", "--actors", "janbuchar/crawl4ai"],
-      env: { APIFY_TOKEN: process.env.APIFY_TOKEN } // Relies on your local .env being sourced
+      env: { APIFY_TOKEN: process.env.APIFY_TOKEN }
     }
   });
 
@@ -187,7 +189,6 @@ Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next st
 ## 8. Workflows & Pro-Tips
 | Action | Command |
 |---|---|
-| **Load Local Secrets** | `source .env` |
 | **Start Session** | `pi --template caveman` |
 | **Check Sandbox** | `daytona list` |
 | **Restart Docker** | `sudo service docker start` |
@@ -198,11 +199,8 @@ Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next st
 Before writing your first line of code, verify that all components are communicating correctly.
 
 ### 9.1 Verify Base Services
-Open your WSL terminal in your project folder, source your `.env`, and ensure the background auto-start scripts executed properly:
+Open your WSL terminal and ensure the background auto-start scripts executed properly:
 ```bash
-# Source local project variables
-source .env
-
 # 1. Check Docker daemon (Should output headers without permission errors)
 docker ps
 
