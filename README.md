@@ -192,3 +192,45 @@ Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next st
 | **Start Session** | `pi --template caveman` |
 | **Check Sandbox** | `daytona list` |
 | **Restart Docker** | `sudo service docker start` |
+
+---
+
+## 9. Installation Check Up (Test Your Stack)
+Before writing your first line of code, verify that all components are communicating correctly.
+
+### 9.1 Verify Base Services
+Open your WSL terminal and ensure the background auto-start scripts executed properly:
+```bash
+# 1. Check Docker daemon (Should output headers without permission errors)
+docker ps
+
+# 2. Check AgentMemory (Should return a process ID integer)
+pgrep -f "agentmemory"
+
+# 3. Check API Keys (Should print your Apify token)
+echo $APIFY_TOKEN
+```
+
+### 9.2 Verify the Sandbox
+Check that Daytona is running and capable of executing commands inside the isolated container.
+```bash
+# Verify sandbox status (Look for 'pi-sandbox' in 'Running' state)
+daytona list
+
+# Test arbitrary execution
+daytona exec pi-sandbox -- echo "Sandbox active"
+```
+
+### 9.3 Verify Pi Autonomy
+Ensure Pi is properly utilizing OpenCode Go without asking for provider selection.
+```bash
+# Ask Pi a simple question directly from the CLI
+pi "Respond with exactly one word: 'Operational'."
+```
+
+### 9.4 Verify Execution Routing (The Acid Test)
+This ensures your `pi.config.ts` interceptor is successfully capturing and routing Pi's bash commands into the Daytona sandbox. Open Zed's terminal (Ctrl + ~) and run:
+```bash
+pi --template caveman "Run 'uname -n' in bash and tell me the hostname."
+```
+*Expected Result:* Pi should report the hostname of the sandbox (e.g., `pi-sandbox` or a container ID). If it returns your actual WSL machine's hostname, the interceptor hook in Step 6 failed and your system is not safely isolated.
