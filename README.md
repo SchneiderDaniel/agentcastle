@@ -1,4 +1,4 @@
-# Agentcastle: The Pi Stack (Full 2026 Edition)
+# Agentcastle: The Pi Stack
 
 High-performance, secure, and local-first development environment using WSL (Ubuntu) + Zed + Git Worktrees + Pi AI.
 
@@ -126,6 +126,15 @@ Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults t
 ---
 
 ## 5. The Agent Toolchain (The MCP Bridge)
+
+### 5.1 Initialize Local Dependencies
+Because we are using a project-local configuration (`./pi.config.ts`), Node and TypeScript need the agent dependencies installed locally to resolve the module imports. Run the following in your **project root**:
+```bash
+npm init -y
+npm install --save-dev pi-mcp-adapter @mariozechner/pi-coding-agent
+```
+
+### 5.2 Create the Config File
 Since your `~/.agent_env` is sourced globally, `process.env.APIFY_TOKEN` will resolve properly. Create your Pi configuration file natively in the **project root** as `./pi.config.ts`:
 
 ```typescript
