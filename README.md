@@ -31,7 +31,7 @@ Install the agent first:
 sudo npm install -g @mariozechner/pi-coding-agent
 
 Install the adapter via Pi:
-pi install npm:pi-mcp-adapter
+sudo pi install npm:pi-mcp-adapter
 
 # 4. GitHub CLI 
 sudo apt-get install gh
