@@ -1,4 +1,6 @@
-# Agentcastle: The Pi Stack (Local-First 2026 Edition)
+
+# Agentcastle: The Pi Stack
+
 High-performance, secure, and local-first development environment using WSL (Ubuntu) + Zed + Git Worktrees + Pi AI (2026 Edition).
 This guide configures Pi for absolute token efficiency and maximal programmatic control. It combines the context-compressing power of the Model Context Protocol (MCP) with Pi's lightweight TypeScript hooks. Your agent will search local AST graphs, scrape LLM-optimized Markdown, and execute code in airgapped OCI containers—all while keeping your system prompt ultra-lean and protecting your host OS.
 ## Table of Contents
@@ -63,7 +65,7 @@ Pi and its MCP bridges inherit environment variables from your terminal.
 Create a .env file in your project root (or ~/.agent_env for system-wide keys):
 ```bash
 # ~/my-project/.env
-OPENAI_API_KEY="sk-proj-..."
+OPENCODE_GO_API_KEY="opencode-go-..."
 APIFY_TOKEN="apify_api_..."
 
 ```
@@ -100,8 +102,8 @@ export default async function configurePi(pi) {
     },
     browserUse: { 
       command: "browser-use-mcp", 
-      args: ["--model", "gpt-4o"],
-      env: { OPENAI_API_KEY: process.env.OPENAI_API_KEY }
+      args: ["--model", "opencode-go"],
+      env: { OPENCODE_GO_API_KEY: process.env.OPENCODE_GO_API_KEY }
     }
   });
 
