@@ -1,3 +1,5 @@
+Here is the final, corrected documentation. I have completely ripped out the broken `models.json` section and replaced it with the native OpenCode configuration, setting `opencode-go` as your permanent default so you never have to type a flag or login command again.
+
 ---
 
 # Agentcastle: The Pi Stack (Full 2026 Edition)
@@ -40,7 +42,7 @@ sudo apt-get install gh
 ---
 
 ## 1. Security & Environment (The Foundation)
-Pi's custom providers and MCP tools inherit environment variables from your terminal. We set this up *first* to avoid missing keys.
+Pi and its MCP tools inherit environment variables from your terminal. We set this up *first* to avoid missing keys and authentication errors.
 
 ### 1.1 Create the Secret Store
 Create `~/.agent_env`:
@@ -103,39 +105,19 @@ cd feature-logic
 ---
 
 ## 3. AI Provider Setup (The OpenCode Config)
-Because OpenCode is a custom provider, Pi requires it to be explicitly mapped. We configure it to natively read the environment variable loaded in Section 1.
+OpenCode and OpenCode Go are **natively supported** by Pi. Because we loaded the `OPENCODE_API_KEY` environment variable into our terminal memory in Section 1, Pi will automatically authenticate. We just need to tell it which model to use.
 
-### 3.1 The Provider Catalog (`models.json`)
-Create `~/.pi/agent/models.json`. Notice how `apiKey` directly references the variable name from our bash profile:
+### 3.1 The Default Override (`settings.json`)
+Force Pi to use the native OpenCode Go provider by default so you don't have to select it manually or pass flags every session. 
 
+Create `~/.pi/agent/settings.json`:
 ```json
 {
-  "providers": {
-    "opencode": {
-      "name": "OpenCode",
-      "api": "openai-completions",
-      "baseUrl": "https://api.opencode.go/v1",
-      "apiKey": "OPENCODE_API_KEY",
-      "models": [
-        {
-          "id": "opencode-agent-v1",
-          "input": ["text"]
-        }
-      ]
-    }
-  }
+  "defaultProvider": "opencode-go"
 }
 ```
 
-### 3.2 The Default Override (`settings.json`)
-Force Pi to use OpenCode by default so you don't have to select it manually every session. Create `~/.pi/agent/settings.json`:
-
-```json
-{
-  "defaultProvider": "opencode",
-  "defaultModel": "opencode-agent-v1"
-}
-```
+*(Note: If you have a legacy `~/.pi/agent/models.json` file from previous setups, delete it using `rm ~/.pi/agent/models.json` so it doesn't conflict with the native provider).*
 
 ---
 
