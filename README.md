@@ -1,5 +1,3 @@
-Here is the fully corrected and updated guide. I have completely removed the non-functional OpenCode environment variables and integrated the proper custom provider setup (`models.json`, `settings.json`, and the one-time interactive login) so it actually works.
-
 ---
 
 # Agentcastle: The Pi Stack (Full 2026 Edition)
@@ -42,12 +40,12 @@ sudo apt-get install gh
 ---
 
 ## 1. Security & Environment (The Foundation)
-Pi's MCP tools inherit environment variables from your terminal. We set this up *first* to avoid "undefined" errors during agent execution.
-* `APIFY_TOKEN` is used by the MCP server for web crawling.
+Pi's custom providers and MCP tools inherit environment variables from your terminal. We set this up *first* to avoid missing keys.
 
 ### 1.1 Create the Secret Store
 Create `~/.agent_env`:
 ```bash
+export OPENCODE_API_KEY="opencode-go-..."
 export APIFY_TOKEN="apify_api_..."
 ```
 
@@ -63,7 +61,6 @@ cat << 'EOF' >> ~/.bashrc
 # AGENTCASTLE AUTO-START
 # ==========================================
 # 1. WSL Quirk: Start Docker silently if it isn't running. 
-# (Note: May ask for your sudo password on the first new terminal launch)
 if ! pgrep -x "dockerd" > /dev/null; then 
     sudo service docker start > /dev/null 2>&1
 fi
@@ -73,7 +70,7 @@ if ! pgrep -f "agentmemory" > /dev/null; then
     npx -y @agentmemory/agentmemory > /dev/null 2>&1 &
 fi
 
-# 3. Environment: Load the Apify key into the session.
+# 3. Environment: Load the API keys into the session.
 if [ -f "$HOME/.agent_env" ]; then
     source "$HOME/.agent_env"
 fi
@@ -84,21 +81,15 @@ EOF
 source ~/.bashrc
 ```
 
-**Why this matters:**
-* **Docker:** Daytona needs Docker running *before* Pi attempts to execute commands. 
-* **AgentMemory:** The MCP adapter will fail to connect if the memory service isn't daemonized in the background.
-* **Secrets:** Injecting `.agent_env` ensures `process.env.APIFY_TOKEN` is never "undefined" when tools try to access it.
-
 ---
 
 ## 2. Workspace & Git
 ### 2.1 WSL (Ubuntu) & SSH
-* **The Golden Rule:** All code lives in the Linux filesystem (`~/...`). **Never** use `/mnt/c/` for active dev work; it kills Docker performance and file-watching for the agent.
+* **The Golden Rule:** All code lives in the Linux filesystem (`~/...`). **Never** use `/mnt/c/` for active dev work.
 
 ### 2.2 Bare Worktree Workflow
 Run isolated Pi agents simultaneously in different Zed windows.
 ```bash
-# Initial Setup
 mkdir my-project && cd my-project
 git clone --bare git@github.com:Username/repo.git .bare
 echo "gitdir: ./.bare" > .git
@@ -112,27 +103,27 @@ cd feature-logic
 ---
 
 ## 3. AI Provider Setup (The OpenCode Config)
-Because OpenCode is a custom provider, Pi requires it to be explicitly mapped in its configuration files.
+Because OpenCode is a custom provider, Pi requires it to be explicitly mapped. We configure it to natively read the environment variable loaded in Section 1.
 
 ### 3.1 The Provider Catalog (`models.json`)
-Register OpenCode so Pi knows how to connect to it. Create `~/.pi/agent/models.json`:
+Create `~/.pi/agent/models.json`. Notice how `apiKey` directly references the variable name from our bash profile:
 
 ```json
 {
-  "providers": [
-    {
-      "id": "opencode",
+  "providers": {
+    "opencode": {
       "name": "OpenCode",
-      "api": "openai",
-      "baseUrl": "https://api.opencode.go/v1"
+      "api": "openai-completions",
+      "baseUrl": "https://api.opencode.go/v1",
+      "apiKey": "OPENCODE_API_KEY",
+      "models": [
+        {
+          "id": "opencode-agent-v1",
+          "input": ["text"]
+        }
+      ]
     }
-  ],
-  "models": [
-    {
-      "id": "opencode-agent-v1",
-      "provider": "opencode"
-    }
-  ]
+  }
 }
 ```
 
@@ -146,15 +137,6 @@ Force Pi to use OpenCode by default so you don't have to select it manually ever
 }
 ```
 
-### 3.3 The One-Time Auth
-To keep your API key secure (and out of plain text files), inject it directly into Pi's encrypted vault.
-1. Start your session by running `pi` in your terminal. (Ignore any startup warnings).
-2. Run the login command for the custom provider:
-   ```bash
-   /login opencode
-   ```
-3. Paste your OpenCode API key when prompted and hit enter. You will never be asked for it again.
-
 ---
 
 ## 4. The Core: Editor & Agent (Zed)
@@ -164,6 +146,7 @@ Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults t
 
 ## 5. The Agent Toolchain (The MCP Bridge)
 Since your `.agent_env` is sourced, `process.env.APIFY_TOKEN` will resolve properly. Create `~/.config/pi/pi.config.ts`:
+
 ```typescript
 import { setupMCP } from "pi-mcp-adapter";
 import { interceptTool } from "pi-core/hooks";
@@ -228,4 +211,3 @@ Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next st
 | **Start Session** | `pi --template caveman` |
 | **Check Sandbox** | `daytona list` |
 | **Restart Docker** | `sudo service docker start` |
-```
