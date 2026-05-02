@@ -1,4 +1,4 @@
-Here is the fully updated guide with the correct native environment variable (`OPENCODE_API_KEY`) integrated, ensuring Pi automatically recognizes your models without any hacks.
+Here is the fully corrected and updated guide. I have completely removed the non-functional OpenCode environment variables and integrated the proper custom provider setup (`models.json`, `settings.json`, and the one-time interactive login) so it actually works.
 
 ---
 
@@ -42,14 +42,12 @@ sudo apt-get install gh
 ---
 
 ## 1. Security & Environment (The Foundation)
-Pi (and its MCPs) inherit environment variables from your terminal. We set this up *first* to avoid "undefined" errors and missing models.
-* `OPENCODE_API_KEY` allows Pi to natively authenticate with the OpenCode cloud provider without manual login steps.
+Pi's MCP tools inherit environment variables from your terminal. We set this up *first* to avoid "undefined" errors during agent execution.
 * `APIFY_TOKEN` is used by the MCP server for web crawling.
 
 ### 1.1 Create the Secret Store
 Create `~/.agent_env`:
 ```bash
-export OPENCODE_API_KEY="opencode-go-..."
 export APIFY_TOKEN="apify_api_..."
 ```
 
@@ -75,7 +73,7 @@ if ! pgrep -f "agentmemory" > /dev/null; then
     npx -y @agentmemory/agentmemory > /dev/null 2>&1 &
 fi
 
-# 3. Environment: Load the OpenCode and Apify keys into the session.
+# 3. Environment: Load the Apify key into the session.
 if [ -f "$HOME/.agent_env" ]; then
     source "$HOME/.agent_env"
 fi
@@ -89,7 +87,7 @@ source ~/.bashrc
 **Why this matters:**
 * **Docker:** Daytona needs Docker running *before* Pi attempts to execute commands. 
 * **AgentMemory:** The MCP adapter will fail to connect if the memory service isn't daemonized in the background.
-* **Secrets:** Injecting `.agent_env` ensures Pi instantly loads your OpenCode models and that `process.env.APIFY_TOKEN` is never "undefined".
+* **Secrets:** Injecting `.agent_env` ensures `process.env.APIFY_TOKEN` is never "undefined" when tools try to access it.
 
 ---
 
@@ -113,14 +111,59 @@ cd feature-logic
 
 ---
 
-## 3. The Core: Editor & Agent (Zed)
+## 3. AI Provider Setup (The OpenCode Config)
+Because OpenCode is a custom provider, Pi requires it to be explicitly mapped in its configuration files.
+
+### 3.1 The Provider Catalog (`models.json`)
+Register OpenCode so Pi knows how to connect to it. Create `~/.pi/agent/models.json`:
+
+```json
+{
+  "providers": [
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "api": "openai",
+      "baseUrl": "https://api.opencode.go/v1"
+    }
+  ],
+  "models": [
+    {
+      "id": "opencode-agent-v1",
+      "provider": "opencode"
+    }
+  ]
+}
+```
+
+### 3.2 The Default Override (`settings.json`)
+Force Pi to use OpenCode by default so you don't have to select it manually every session. Create `~/.pi/agent/settings.json`:
+
+```json
+{
+  "defaultProvider": "opencode",
+  "defaultModel": "opencode-agent-v1"
+}
+```
+
+### 3.3 The One-Time Auth
+To keep your API key secure (and out of plain text files), inject it directly into Pi's encrypted vault.
+1. Start your session by running `pi` in your terminal. (Ignore any startup warnings).
+2. Run the login command for the custom provider:
+   ```bash
+   /login opencode
+   ```
+3. Paste your OpenCode API key when prompted and hit enter. You will never be asked for it again.
+
+---
+
+## 4. The Core: Editor & Agent (Zed)
 Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults to your **WSL Ubuntu profile**.
 
 ---
 
-## 4. The Agent Toolchain (The MCP Bridge)
+## 5. The Agent Toolchain (The MCP Bridge)
 Since your `.agent_env` is sourced, `process.env.APIFY_TOKEN` will resolve properly. Create `~/.config/pi/pi.config.ts`:
-
 ```typescript
 import { setupMCP } from "pi-mcp-adapter";
 import { interceptTool } from "pi-core/hooks";
@@ -145,7 +188,7 @@ export default async function configurePi(pi) {
 
 ---
 
-## 5. Execution Security (Hardcoded Hooks)
+## 6. Execution Security (Hardcoded Hooks)
 **CRITICAL:** This force-routes Pi's code execution into the OCI sandbox. Append to `~/.config/pi/pi.config.ts`:
 
 ```typescript
@@ -165,7 +208,7 @@ export default async function configurePi(pi) {
 
 ---
 
-## 6. The "Brain" Protocol (Templates)
+## 7. The "Brain" Protocol (Templates)
 Create `~/.config/pi/templates/caveman.md`:
 ```markdown
 ### 1. Communication
@@ -179,9 +222,10 @@ Terse. technical substance exact. No fluff. Pattern: [action] [reason]. [next st
 
 ---
 
-## 7. Workflows & Pro-Tips
+## 8. Workflows & Pro-Tips
 | Action | Command |
 |---|---|
 | **Start Session** | `pi --template caveman` |
 | **Check Sandbox** | `daytona list` |
 | **Restart Docker** | `sudo service docker start` |
+```
