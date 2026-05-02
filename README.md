@@ -1,4 +1,4 @@
-
+Here is the fully updated guide with the correct native environment variable (`OPENCODE_API_KEY`) integrated, ensuring Pi automatically recognizes your models without any hacks.
 
 ---
 
@@ -42,14 +42,14 @@ sudo apt-get install gh
 ---
 
 ## 1. Security & Environment (The Foundation)
-Pi (and its MCPs) inherit environment variables from your terminal. We set this up *first* to avoid "undefined" errors.
-* `OPENCODE_GO_API_KEY` allows Pi to use the OpenCode cloud provider.
+Pi (and its MCPs) inherit environment variables from your terminal. We set this up *first* to avoid "undefined" errors and missing models.
+* `OPENCODE_API_KEY` allows Pi to natively authenticate with the OpenCode cloud provider without manual login steps.
 * `APIFY_TOKEN` is used by the MCP server for web crawling.
 
 ### 1.1 Create the Secret Store
 Create `~/.agent_env`:
 ```bash
-export OPENCODE_GO_API_KEY="opencode-go-..."
+export OPENCODE_API_KEY="opencode-go-..."
 export APIFY_TOKEN="apify_api_..."
 ```
 
@@ -89,7 +89,7 @@ source ~/.bashrc
 **Why this matters:**
 * **Docker:** Daytona needs Docker running *before* Pi attempts to execute commands. 
 * **AgentMemory:** The MCP adapter will fail to connect if the memory service isn't daemonized in the background.
-* **Secrets:** Injecting `.agent_env` ensures `process.env.APIFY_TOKEN` is never "undefined" when Zed boots up the agent.
+* **Secrets:** Injecting `.agent_env` ensures Pi instantly loads your OpenCode models and that `process.env.APIFY_TOKEN` is never "undefined".
 
 ---
 
