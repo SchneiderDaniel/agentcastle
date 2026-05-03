@@ -46,6 +46,10 @@ Pi's tools (like `crawl4ai`) inherit environment variables from your terminal. C
 export APIFY_TOKEN="apify_api_..."
 ```
 
+> **How `web_crawl` uses APIFY_TOKEN:** The `web_crawl` tool tries local crawl4ai first (runs on the host with auto-installed venv + Chromium deps). If that fails, it falls back to Apify's official [`apify~website-content-crawler`](https://apify.com/apify/website-content-crawler) actor — a cloud-based browser extraction that returns clean markdown. The last resort is a direct HTTP fetch with regex-based HTML→markdown conversion.
+>
+> **System requirements for local crawl4ai:** The extension auto-creates a Python venv at `.pi/crawl4ai-venv/` and downloads Chromium system libraries to `.pi/chromium-deps/` (no sudo needed). Requires: `python3`, `python3-venv`, `python3-pip`, `dpkg`, `apt-get` (for library downloads).
+
 ### 1.2 The Auto-Start (One-Click Setup)
 WSL doesn't automatically start background services like a normal Linux boot. This script automatically appends the necessary startup logic to your `~/.bashrc`. 
 
@@ -134,11 +138,15 @@ Pi does **not** use a `pi.config.ts` file. Instead, it auto-discovers extensions
 
 Create `.pi/extensions/daytona-sandbox.ts` in your **project root**. See the `.pi/extensions/daytona-sandbox.ts` file in this repository for the Daytona sandbox interceptor and local AST graph search tool implementation.
 
+Create `.pi/extensions/crawl4ai.ts` in your **project root**. See the `.pi/extensions/crawl4ai.ts` file in this repository for the `web_crawl` tool — a three-tier web crawler that tries local crawl4ai (host, with real browser), falls back to Apify's cloud actor, then direct HTTP fetch.
+
 Extensions in `.pi/extensions/` are loaded automatically on Pi startup (no `--extension` flag needed).
 
 > **Sandbox Routing:** The extension routes commands into the Daytona sandbox *except* for file-management operations (`rm`, `mkdir`, `mv`, `cp`, `touch`, `chmod`, `chown`) which run on the host so the agent can manage actual project files. A basic guard blocks absolute paths outside the project directory. A persistent Daytona volume (`pi-sandbox-vol`) is mounted at `/workspace` so sandbox data survives restarts.
 >
 > **Auto-Recovery:** The extension automatically probes the sandbox state. If `pi-sandbox` is stopped, it attempts to start it (with retry backoff for transient conflicts). If the sandbox doesn't exist, it creates it (with the persistent volume) and polls until it's ready.
+>
+> **crawl4ai Auto-Setup:** On first `web_crawl` invocation, the extension auto-creates a Python virtual environment at `.pi/crawl4ai-venv/`, installs `crawl4ai` + Playwright Chromium, and downloads missing system libraries (libnspr4, libnss3, libasound) to `.pi/chromium-deps/` — no sudo required. `LD_LIBRARY_PATH` is set automatically so Chromium finds these libs.
 
 ---
 

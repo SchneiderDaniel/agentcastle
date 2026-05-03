@@ -13,7 +13,7 @@ async def main():
     max_pages = min(max(1, config.get("maxPages", 1)), 10)
 
     try:
-        from crawl4ai import AsyncWebCrawler
+        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
     except ImportError as e:
         print(json.dumps({"ok": False, "error": f"crawl4ai not installed: {e}"}))
         return
@@ -21,6 +21,8 @@ async def main():
     results = []
     visited = set()
     queue = [url]
+
+    run_conf = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
 
     async with AsyncWebCrawler() as crawler:
         while queue and len(visited) < max_pages:
@@ -30,20 +32,30 @@ async def main():
             visited.add(current)
 
             try:
-                # Try older API first, then newer API
                 try:
-                    result = await crawler.arun(url=current, bypass_cache=True)
+                    result = await crawler.arun(url=current, config=run_conf)
                 except TypeError:
                     result = await crawler.arun(url=current)
 
-                md = getattr(result, "markdown", "") or ""
+                md_attr = getattr(result, "markdown", "")
+                if isinstance(md_attr, str):
+                    md = md_attr
+                elif hasattr(md_attr, "raw_markdown"):
+                    md = md_attr.raw_markdown or ""
+                elif hasattr(md_attr, "fit_markdown"):
+                    md = md_attr.fit_markdown or ""
+                else:
+                    md = str(md_attr) if md_attr else ""
+
                 results.append({"url": current, "markdown": md, "success": True})
 
-                # Queue same-origin internal links if more pages requested
                 if len(visited) < max_pages:
-                    links = getattr(result, "links", {}) or {}
-                    internal = links.get("internal", []) if isinstance(links, dict) else []
-                    base = current.split("/")[2]
+                    links = getattr(result, "links", None)
+                    internal = []
+                    if isinstance(links, dict):
+                        internal = links.get("internal", [])
+                    elif isinstance(links, list):
+                        internal = links
                     for link in internal:
                         if link not in visited and link not in queue:
                             queue.append(link)
@@ -101,31 +113,109 @@ function htmlToMarkdown(html: string): string {
 }
 
 export default function (pi: ExtensionAPI) {
-  let crawl4aiReady: boolean | null = null;
+  // Paths (all inside project dir to avoid sandbox absolute-path blocks)
+  const CWD = process.cwd();
+  const VENV_DIR = `${CWD}/.pi/crawl4ai-venv`;
+  const VENV_PYTHON = `${VENV_DIR}/bin/python3`;
+  const DEPS_DIR = `${CWD}/.pi/chromium-deps`;
+  const DEPS_LIB_DIR = `${DEPS_DIR}/usr/lib/x86_64-linux-gnu`;
 
-  async function ensureCrawl4AI(onUpdate?: (u: { content: Array<{ type: "text"; text: string }> }) => void): Promise<boolean> {
-    if (crawl4aiReady !== null) return crawl4aiReady;
+  let venvReady: boolean | null = null;
+  let depsReady: boolean | null = null;
 
+  async function ensurePythonVenv(onUpdate?: (u: { content: Array<{ type: "text"; text: string }> }) => void): Promise<string | null> {
+    if (venvReady !== null) return venvReady ? VENV_PYTHON : null;
+
+    // Check system python3 exists
     const pyCheck = await pi.exec("python3", ["--version"]);
     if (pyCheck.code !== 0) {
-      crawl4aiReady = false;
-      return false;
+      console.error("crawl4ai: python3 not found");
+      venvReady = false;
+      return null;
     }
 
-    const modCheck = await pi.exec("python3", ["-c", "import crawl4ai; print('ok')"]);
-    if (modCheck.code !== 0) {
-      onUpdate?.({ content: [{ type: "text", text: "Installing crawl4ai…" }] });
-      const install = await pi.exec("python3", ["-m", "pip", "install", "crawl4ai"]);
-      if (install.code !== 0) {
-        crawl4aiReady = false;
-        return false;
+    // Check if venv already set up with crawl4ai
+    const alreadyOk = await pi.exec(VENV_PYTHON, ["-c", "import crawl4ai; print('ok')"]);
+    if (alreadyOk.code === 0 && alreadyOk.stdout.includes("ok")) {
+      venvReady = true;
+      return VENV_PYTHON;
+    }
+
+    // Create venv if it doesn't exist (or is broken)
+    const venvCheck = await pi.exec(VENV_PYTHON, ["--version"]);
+    if (venvCheck.code !== 0) {
+      // Clean up any broken partial venv first
+      await pi.exec("rm", ["-rf", VENV_DIR]);
+      onUpdate?.({ content: [{ type: "text", text: "Creating Python virtual environment for crawl4ai…" }] });
+      const create = await pi.exec("python3", ["-m", "venv", "--clear", VENV_DIR]);
+      if (create.code !== 0) {
+        console.error("crawl4ai: failed to create venv");
+        venvReady = false;
+        return null;
       }
-      // Ensure browser binaries are available (best-effort)
-      await pi.exec("python3", ["-m", "playwright", "install", "chromium"]);
     }
 
-    crawl4aiReady = true;
-    return true;
+    // Install crawl4ai in venv
+    onUpdate?.({ content: [{ type: "text", text: "Installing crawl4ai (this may take a minute)…" }] });
+    const install = await pi.exec(VENV_PYTHON, ["-m", "pip", "install", "crawl4ai"], { timeout: 180_000 });
+    if (install.code !== 0) {
+      console.error("crawl4ai: pip install failed:", install.stderr.slice(0, 500));
+      venvReady = false;
+      return null;
+    }
+
+    // Install playwright browsers (best-effort)
+    onUpdate?.({ content: [{ type: "text", text: "Installing Chromium browser for crawl4ai…" }] });
+    await pi.exec(VENV_PYTHON, ["-m", "playwright", "install", "chromium"], { timeout: 120_000 });
+
+    // Verify
+    const verify = await pi.exec(VENV_PYTHON, ["-c", "import crawl4ai; print('ok')"]);
+    venvReady = verify.code === 0 && verify.stdout.includes("ok");
+    return venvReady ? VENV_PYTHON : null;
+  }
+
+  async function ensureChromiumDeps(onUpdate?: (u: { content: Array<{ type: "text"; text: string }> }) => void): Promise<string | null> {
+    if (depsReady !== null) return depsReady ? DEPS_LIB_DIR : null;
+
+    // Check if deps already extracted and working
+    const testLib = `${DEPS_LIB_DIR}/libnspr4.so`;
+    const libCheck = await pi.exec("bash", ["-c", `test -f ${testLib}`]);
+    if (libCheck.code === 0) {
+      depsReady = true;
+      return DEPS_LIB_DIR;
+    }
+
+    // Download and extract Chromium system dependencies (without sudo)
+    onUpdate?.({ content: [{ type: "text", text: "Downloading Chromium system libraries…" }] });
+
+    const pkgs = ["libnspr4", "libnss3", "libasound2t64"];
+    for (const pkg of pkgs) {
+      const dl = await pi.exec("bash", ["-c", `cd ${DEPS_DIR} && apt-get download ${pkg}`], {
+        timeout: 30_000,
+      });
+      if (dl.code !== 0) {
+        console.error(`crawl4ai: failed to download ${pkg}`);
+      }
+    }
+
+    // Extract all debs
+    const findResult = await pi.exec("bash", ["-c", `ls ${DEPS_DIR}/*.deb 2>/dev/null`]);
+    if (findResult.code === 0 && findResult.stdout.trim()) {
+      for (const deb of findResult.stdout.trim().split("\n")) {
+        await pi.exec("dpkg", ["-x", deb.trim(), DEPS_DIR]);
+      }
+    }
+
+    // Verify
+    const verify = await pi.exec("bash", ["-c", `test -f ${testLib}`]);
+    if (verify.code !== 0) {
+      console.error("crawl4ai: failed to set up Chromium system libraries");
+      depsReady = false;
+      return null;
+    }
+
+    depsReady = true;
+    return DEPS_LIB_DIR;
   }
 
   async function apifyCrawl(
@@ -136,8 +226,9 @@ export default function (pi: ExtensionAPI) {
     const token = process.env.APIFY_TOKEN;
     if (!token) return null;
 
-    const actorId = "janbuchar~crawl4ai";
-    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?token=${token}`;
+    // Use Apify's official website-content-crawler (5.0 rating, actively maintained).
+    const actorId = "apify~website-content-crawler";
+    const apiUrl = `https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?token=${token}&timeout=120`;
 
     try {
       const res = await fetch(apiUrl, {
@@ -145,7 +236,10 @@ export default function (pi: ExtensionAPI) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           startUrls: [{ url }],
-          maxRequestsPerCrawl: maxPages,
+          maxCrawlPages: maxPages,
+          maxCrawlDepth: 0,
+          outputFormat: "markdown",
+          sameDomainOnly: true,
         }),
         signal,
       });
@@ -260,16 +354,38 @@ export default function (pi: ExtensionAPI) {
       });
 
       // 1. Try local crawl4ai (preferred)
-      const hasC4A = await ensureCrawl4AI(onUpdate);
-      if (hasC4A) {
+      const python = await ensurePythonVenv(onUpdate);
+      const depsDir = await ensureChromiumDeps(onUpdate);
+      if (python && depsDir) {
         const cfg = JSON.stringify({ url: params.url, maxPages });
-        const run = await pi.exec("python3", ["-c", CRAWL4AI_SCRIPT, cfg], {
+        const browsersPath = (process.env.HOME || "/tmp") + "/.cache/ms-playwright";
+        // Base64-encode script & config to avoid bash escaping issues.
+        // Use bash -c to set LD_LIBRARY_PATH (ExecOptions has no 'env' field).
+        const scriptB64 = Buffer.from(CRAWL4AI_SCRIPT, "utf-8").toString("base64");
+        const cfgB64 = Buffer.from(cfg, "utf-8").toString("base64");
+        const run = await pi.exec("bash", ["-c",
+          "LD_LIBRARY_PATH=" + depsDir + ":$LD_LIBRARY_PATH " +
+          "PLAYWRIGHT_BROWSERS_PATH=" + browsersPath + " " +
+          python + " -c \"$(echo " + scriptB64 + " | base64 -d)\" " +
+          "\"$(echo " + cfgB64 + " | base64 -d)\"",
+        ], {
           timeout: 120_000,
           signal,
         });
         if (run.code === 0) {
           try {
-            const parsed = JSON.parse(run.stdout) as {
+            // stdout may contain crawl4ai progress lines before the final JSON.
+            // Extract the last JSON object from stdout.
+            const lines = run.stdout.split("\n");
+            let jsonStr = "";
+            for (let i = lines.length - 1; i >= 0; i--) {
+              const trimmed = lines[i].trim();
+              if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+                jsonStr = trimmed;
+                break;
+              }
+            }
+            const parsed = JSON.parse(jsonStr || run.stdout) as {
               ok: boolean;
               error?: string;
               results?: Array<{ url: string; markdown?: string; error?: string; success: boolean }>;
@@ -292,7 +408,7 @@ export default function (pi: ExtensionAPI) {
 
       // 2. Fall back to Apify actor
       onUpdate?.({
-        content: [{ type: "text", text: "Falling back to Apify crawl4ai actor …" }],
+        content: [{ type: "text", text: "Falling back to Apify actor …" }],
       });
       const apifyResult = await apifyCrawl(params.url, maxPages, signal);
       if (apifyResult) {
