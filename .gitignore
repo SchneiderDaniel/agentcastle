@@ -6,3 +6,4 @@ node_modules
 # crawl4ai auto-setup (venv + Chromium system libs)
 .pi/crawl4ai-venv/
 .pi/chromium-deps/
+npm/

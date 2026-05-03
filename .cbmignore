@@ -4,3 +4,4 @@
 node_modules/
 .env
 .agent_env
+npm/

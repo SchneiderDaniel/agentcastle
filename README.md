@@ -209,6 +209,48 @@ The extension calls the binary via `pi.exec()` directly from the Node.js runtime
 
 ---
 
+## 6. Real-Time Code Feedback (pi-lens)
+
+[pi-lens](https://pi.dev/packages/pi-lens) gives real-time inline code feedback on every write/edit. LSP diagnostics, tree-sitter structural rules, ast-grep security/correctness rules, format-on-save, secrets scan, read-before-edit guard.
+
+### 6.1 Install
+
+```bash
+pi install npm:pi-lens -l
+```
+
+### 6.2 What It Does
+
+| Hook | Action |
+|------|--------|
+| **write/edit** | Secrets scan (blocking), auto-format, auto-fix (Biome/Ruff/ESLint), LSP file sync, dispatch lint (LSP + tree-sitter + ast-grep + fact rules + linters), cascade diagnostics |
+| **agent_end** | Deferred formatting runs once per turn, summary notification |
+| **session_start** | Reset state, detect language profile, warm caches, LSP warm-files, tool hints |
+| **turn_end** | Impact cascade (review-graph), deferred findings, debt tracking |
+
+### 6.3 Key Commands
+
+| Command | Purpose |
+|---------|---------|
+| `/lens-booboo` | Full quality report |
+| `/lens-health` | Runtime health, latency, telemetry |
+| `/lens-tools` | Tool installation status |
+| `/lens-tdi` | Technical Debt Index |
+| `/lens-allow-edit <path>` | Override read-guard for one edit |
+
+### 6.4 Optional Flags
+
+```bash
+pi --no-lsp          # Disable LSP diagnostics
+pi --no-autoformat   # Skip auto-formatting
+pi --immediate-format # Format per-edit instead of deferred
+pi --no-autofix      # Skip auto-fix
+pi --no-tests        # Skip test runner
+pi --no-delta        # Show all diagnostics, not just new ones
+```
+
+---
+
 ## 7. The "Brain" Protocol (Context & Templates)
 
 Pi loads two different kinds of instruction files. They are **not** interchangeable.
@@ -279,7 +321,18 @@ Confirm that codebase-memory-mcp is installed and can index the project.
 ```
 *Expected Result:* The index command should report `"status":"indexed"` with node/edge counts. The search should return function names found in the project.
 
-### 9.5 Verify Execution Routing (The Acid Test)
+### 9.5 Verify pi-lens (Real-Time Code Feedback)
+Check that pi-lens is installed and registered:
+```bash
+# Verify package in project settings
+cat .pi/settings.json | grep pi-lens
+
+# List installed pi packages (run inside pi session or on host)
+pi list
+```
+*Expected Result:* `pi-lens` should appear in the package list and `.pi/settings.json`.
+
+### 9.6 Verify Execution Routing (The Acid Test)
 This ensures your `.pi/extensions/daytona-sandbox.ts` interceptor is successfully capturing and routing Pi's bash commands correctly.
 
 **Test A — Sandbox isolation:**
