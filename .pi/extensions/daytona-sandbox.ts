@@ -15,6 +15,7 @@ export default function (pi: ExtensionAPI) {
       "gh ",
       "cat ",
       "ls ",
+      "curl ",
       "npx impeccable ",
       "rm ",
       "mkdir ",
