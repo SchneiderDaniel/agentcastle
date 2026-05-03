@@ -38,7 +38,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     for (const entry of ctx.sessionManager.getEntries()) {
       if (entry.type === "custom" && entry.customType === "caveman-state") {
-        cavemanEnabled = entry.data?.enabled ?? true;
+        cavemanEnabled = (entry.data as { enabled?: boolean } | undefined)?.enabled ?? true;
       }
     }
   });

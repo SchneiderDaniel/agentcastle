@@ -123,7 +123,7 @@ export default function (pi: ExtensionAPI) {
   let venvReady: boolean | null = null;
   let depsReady: boolean | null = null;
 
-  async function ensurePythonVenv(onUpdate?: (u: { content: Array<{ type: "text"; text: string }> }) => void): Promise<string | null> {
+  async function ensurePythonVenv(onUpdate?: (u: { content: Array<{ type: "text"; text: string }>; details: unknown }) => void): Promise<string | null> {
     if (venvReady !== null) return venvReady ? VENV_PYTHON : null;
 
     // Check system python3 exists
@@ -146,7 +146,7 @@ export default function (pi: ExtensionAPI) {
     if (venvCheck.code !== 0) {
       // Clean up any broken partial venv first
       await pi.exec("rm", ["-rf", VENV_DIR]);
-      onUpdate?.({ content: [{ type: "text", text: "Creating Python virtual environment for crawl4ai…" }] });
+      onUpdate?.({ content: [{ type: "text", text: "Creating Python virtual environment for crawl4ai…" }], details: {} });
       const create = await pi.exec("python3", ["-m", "venv", "--clear", VENV_DIR]);
       if (create.code !== 0) {
         console.error("crawl4ai: failed to create venv");
@@ -156,7 +156,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Install crawl4ai in venv
-    onUpdate?.({ content: [{ type: "text", text: "Installing crawl4ai (this may take a minute)…" }] });
+    onUpdate?.({ content: [{ type: "text", text: "Installing crawl4ai (this may take a minute)…" }], details: {} });
     const install = await pi.exec(VENV_PYTHON, ["-m", "pip", "install", "crawl4ai"], { timeout: 180_000 });
     if (install.code !== 0) {
       console.error("crawl4ai: pip install failed:", install.stderr.slice(0, 500));
@@ -165,7 +165,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Install playwright browsers (best-effort)
-    onUpdate?.({ content: [{ type: "text", text: "Installing Chromium browser for crawl4ai…" }] });
+    onUpdate?.({ content: [{ type: "text", text: "Installing Chromium browser for crawl4ai…" }], details: {} });
     await pi.exec(VENV_PYTHON, ["-m", "playwright", "install", "chromium"], { timeout: 120_000 });
 
     // Verify
@@ -174,7 +174,7 @@ export default function (pi: ExtensionAPI) {
     return venvReady ? VENV_PYTHON : null;
   }
 
-  async function ensureChromiumDeps(onUpdate?: (u: { content: Array<{ type: "text"; text: string }> }) => void): Promise<string | null> {
+  async function ensureChromiumDeps(onUpdate?: (u: { content: Array<{ type: "text"; text: string }>; details: unknown }) => void): Promise<string | null> {
     if (depsReady !== null) return depsReady ? DEPS_LIB_DIR : null;
 
     // Check if deps already extracted and working
@@ -186,7 +186,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     // Download and extract Chromium system dependencies (without sudo)
-    onUpdate?.({ content: [{ type: "text", text: "Downloading Chromium system libraries…" }] });
+    onUpdate?.({ content: [{ type: "text", text: "Downloading Chromium system libraries…" }], details: {} });
 
     const pkgs = ["libnspr4", "libnss3", "libasound2t64"];
     for (const pkg of pkgs) {
@@ -351,6 +351,7 @@ export default function (pi: ExtensionAPI) {
 
       onUpdate?.({
         content: [{ type: "text", text: `Crawling ${params.url} …` }],
+        details: {},
       });
 
       // 1. Try local crawl4ai (preferred)
@@ -398,6 +399,7 @@ export default function (pi: ExtensionAPI) {
               );
               return {
                 content: [{ type: "text", text: texts.join("\n\n") }],
+                details: {},
               };
             }
           } catch {
@@ -409,18 +411,20 @@ export default function (pi: ExtensionAPI) {
       // 2. Fall back to Apify actor
       onUpdate?.({
         content: [{ type: "text", text: "Falling back to Apify actor …" }],
+        details: {},
       });
       const apifyResult = await apifyCrawl(params.url, maxPages, signal);
       if (apifyResult) {
-        return { content: [{ type: "text", text: apifyResult }] };
+        return { content: [{ type: "text", text: apifyResult }], details: {} };
       }
 
       // 3. Last resort: direct fetch + lightweight extraction
       onUpdate?.({
         content: [{ type: "text", text: "Falling back to direct HTTP fetch …" }],
+        details: {},
       });
       const directResult = await directFetchCrawl(params.url, maxPages, signal);
-      return { content: [{ type: "text", text: directResult }] };
+      return { content: [{ type: "text", text: directResult }], details: {} };
     },
   });
 }
