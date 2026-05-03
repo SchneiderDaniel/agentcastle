@@ -4,7 +4,7 @@
   "description": "---",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/crawl4ai.test.mjs"
+    "test": "node --test test/crawl4ai.mcp.test.mjs"
   },
   "keywords": [],
   "author": "",
