@@ -31,8 +31,13 @@ sudo npm install -g @mariozechner/pi-coding-agent
 # Install the adapter via Pi:
 sudo pi install npm:pi-mcp-adapter
 
-# 4. GitHub CLI 
-sudo apt-get install gh
+# 4. GitHub CLI (gh)
+(type -p wget >/dev/null || sudo apt-get install wget -y)
+sudo mkdir -p -m 755 /etc/apt/keyrings
+wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+sudo apt-get update
+sudo apt-get install gh -y
 ```
 
 ---
