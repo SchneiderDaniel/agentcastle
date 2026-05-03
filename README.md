@@ -3,6 +3,7 @@
 High-performance, secure, and local-first development environment using WSL (Ubuntu) + Zed + Git Worktrees + Pi AI.
 
 ## 0. Prerequisites
+
 Ensure your WSL (Ubuntu 24.04 LTS) has the necessary runtimes. This setup bypasses the broken install scripts by pulling the binaries directly.
 
 ```bash
@@ -48,10 +49,13 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ---
 
 ## 1. Security & Environment (The Foundation)
+
 We need to set up the environment for the MCP tools.
 
 ### 1.1 Create the Secret Store
+
 Pi's tools (like `crawl4ai`) inherit environment variables from your terminal. Create `~/.agent_env` in your **home directory**:
+
 ```bash
 export APIFY_TOKEN="apify_api_..."
 ```
@@ -61,7 +65,8 @@ export APIFY_TOKEN="apify_api_..."
 > **System requirements for local crawl4ai:** The extension auto-creates a Python venv at `.pi/crawl4ai-venv/` and downloads Chromium system libraries to `.pi/chromium-deps/` (no sudo needed). Requires: `python3`, `python3-venv`, `python3-pip`, `dpkg`, `apt-get` (for library downloads).
 
 ### 1.2 The Auto-Start (One-Click Setup)
-WSL doesn't automatically start background services like a normal Linux boot. This script automatically appends the necessary startup logic to your `~/.bashrc`. 
+
+WSL doesn't automatically start background services like a normal Linux boot. This script automatically appends the necessary startup logic to your `~/.bashrc`.
 
 Just copy, paste, and run this entire block in your WSL terminal:
 
@@ -71,8 +76,8 @@ cat << 'EOF' >> ~/.bashrc
 # ==========================================
 # AGENTCASTLE AUTO-START
 # ==========================================
-# 1. WSL Quirk: Start Docker silently if it isn't running. 
-if ! pgrep -x "dockerd" > /dev/null; then 
+# 1. WSL Quirk: Start Docker silently if it isn't running.
+if ! pgrep -x "dockerd" > /dev/null; then
     sudo service docker start > /dev/null 2>&1
 fi
 
@@ -95,26 +100,35 @@ source ~/.bashrc
 ---
 
 ## 2. AI Provider Setup (The OpenCode Config)
+
 OpenCode Go is natively supported by Pi. We will authenticate once via the CLI.
 
 ### 2.1 One-Time Authentication
+
 Run this command in your terminal, replacing the dummy key with your actual OpenCode Go key:
+
 ```bash
 pi --provider opencode-go --api-key "your-actual-api-key-here"
 ```
-*(Once Pi launches successfully, you can exit by pressing `Ctrl+C` twice).*
+
+_(Once Pi launches successfully, you can exit by pressing `Ctrl+C` twice)._
 
 ### 2.2 The Default Override (Project Local)
+
 Force Pi to use OpenCode Go by default for this specific project. Create a `.pi/settings.json` file in your **project root** and set `defaultProvider` to `opencode-go`. See the `.pi/settings.json` file in this repository.
 
 ---
 
 ## 3. Workspace & Git
+
 ### 3.1 WSL (Ubuntu) & SSH
-* **The Golden Rule:** All code lives in the Linux filesystem (`~/...`). **Never** use `/mnt/c/` for active dev work.
+
+- **The Golden Rule:** All code lives in the Linux filesystem (`~/...`). **Never** use `/mnt/c/` for active dev work.
 
 ### 3.2 Bare Worktree Workflow
+
 Run isolated Pi agents simultaneously in different Zed windows.
+
 ```bash
 mkdir my-project && cd my-project
 git clone --bare git@github.com:Username/repo.git .bare
@@ -129,6 +143,7 @@ cd feature-logic
 ---
 
 ## 4. The Core: Editor & Agent (Zed)
+
 Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults to your **WSL Ubuntu profile**.
 
 ---
@@ -136,14 +151,17 @@ Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults t
 ## 5. The Agent Toolchain (The MCP Bridge)
 
 ### 5.1 MCP Server Configuration
+
 Pi discovers MCP servers from `.mcp.json` in your **project root**. See the `.mcp.json` file in this repository for the `agentmemory` and `crawl4ai` server definitions.
 
 Make sure `pi-mcp-adapter` is installed so Pi can load these servers:
+
 ```bash
 pi install npm:pi-mcp-adapter
 ```
 
 ### 5.2 Custom Tools & Bash Interception (Pi Extension)
+
 Pi does **not** use a `pi.config.ts` file. Instead, it auto-discovers extensions from `.pi/extensions/` in your **project root**.
 
 Create `.pi/extensions/daytona-sandbox.ts` in your **project root**. See the `.pi/extensions/daytona-sandbox.ts` file in this repository for the Daytona sandbox interceptor and local AST graph search tool implementation.
@@ -151,6 +169,27 @@ Create `.pi/extensions/daytona-sandbox.ts` in your **project root**. See the `.p
 Create `.pi/extensions/crawl4ai.ts` in your **project root**. See the `.pi/extensions/crawl4ai.ts` file in this repository for the `web_crawl` tool — a three-tier web crawler that tries local crawl4ai (host, with real browser), falls back to Apify's cloud actor, then direct HTTP fetch.
 
 Extensions in `.pi/extensions/` are loaded automatically on Pi startup (no `--extension` flag needed).
+
+#### Session Logger (`session-logger.ts`)
+
+Writes every Pi session as an LLM-optimized Markdown file to `.pi/sessions/<session-id>/session.md` plus a `metadata.json` with token/cost stats. Feed the markdown to an LLM later to analyze your harness: spot system prompt bloat, tool description gaps, confusion patterns in thinking blocks, error loops, and context waste.
+
+```bash
+# Toggle on/off (takes effect next session):
+/session-logger        # toggle
+/session-logger on     # force on
+/session-logger off    # force off
+```
+
+**Output per session:**
+
+```
+.pi/sessions/<uuid>/
+├── session.md      # Full conversation: messages, thinking, tool calls, compactions
+└── metadata.json   # Token totals, cost, model/thinking changes, compaction count
+```
+
+**Why Markdown:** JSON/HTML carry 40-70% structural token overhead. Markdown is ~5-10% overhead — the LLM spends tokens on content, not syntax. Thinking blocks preserved in full (highest signal). Tool outputs truncated to 2000+500 chars.
 
 ### 5.3 Codebase Intelligence (`codebase-memory-mcp`)
 
@@ -176,22 +215,22 @@ The binary was installed in Step 0 (prerequisites). The extension at `.pi/extens
 
 The extension registers 14 tools, one per codebase-memory-mcp capability:
 
-| Tool | Description |
-|------|-------------|
-| `codebase_search` | Search graph by name pattern, label, file, degree |
-| `codebase_trace` | BFS call-path traversal (inbound/outbound/both) |
-| `codebase_query` | Cypher-like graph queries (MATCH...RETURN...) |
-| `codebase_overview` | Architecture: languages, packages, routes, hotspots, clusters |
-| `codebase_get_schema` | Graph schema: node labels, edge types, properties |
-| `codebase_snippet` | Read source code by qualified name |
-| `codebase_grep` | Full-text search within indexed files |
-| `codebase_detect_changes` | Git diff → affected symbols + risk classification |
-| `codebase_adr` | CRUD for Architecture Decision Records |
-| `codebase_index` | Explicit re-index trigger |
-| `codebase_list_projects` | List all indexed projects |
-| `codebase_index_status` | Per-project indexing status |
-| `codebase_delete_project` | Remove project from graph |
-| `codebase_ingest_traces` | Ingest runtime traces for HTTP edge validation |
+| Tool                      | Description                                                   |
+| ------------------------- | ------------------------------------------------------------- |
+| `codebase_search`         | Search graph by name pattern, label, file, degree             |
+| `codebase_trace`          | BFS call-path traversal (inbound/outbound/both)               |
+| `codebase_query`          | Cypher-like graph queries (MATCH...RETURN...)                 |
+| `codebase_overview`       | Architecture: languages, packages, routes, hotspots, clusters |
+| `codebase_get_schema`     | Graph schema: node labels, edge types, properties             |
+| `codebase_snippet`        | Read source code by qualified name                            |
+| `codebase_grep`           | Full-text search within indexed files                         |
+| `codebase_detect_changes` | Git diff → affected symbols + risk classification             |
+| `codebase_adr`            | CRUD for Architecture Decision Records                        |
+| `codebase_index`          | Explicit re-index trigger                                     |
+| `codebase_list_projects`  | List all indexed projects                                     |
+| `codebase_index_status`   | Per-project indexing status                                   |
+| `codebase_delete_project` | Remove project from graph                                     |
+| `codebase_ingest_traces`  | Ingest runtime traces for HTTP edge validation                |
 
 #### 5.3.3 Ignoring Files
 
@@ -201,7 +240,7 @@ The `.cbmignore` file in the project root excludes `.pi/chromium-deps/` and `.pi
 
 The extension calls the binary via `pi.exec()` directly from the Node.js runtime — it bypasses the Daytona sandbox interceptor entirely. The binary reads/writes to `~/.cache/codebase-memory-mcp/` (SQLite databases) and reads project files from the host filesystem. This is intentional: the codebase graph is a host-level index, shared across sandbox sessions.
 
-> **Sandbox Routing:** The extension routes commands into the Daytona sandbox *except* for file-management operations (`rm`, `mkdir`, `mv`, `cp`, `touch`, `chmod`, `chown`) which run on the host so the agent can manage actual project files. A basic guard blocks absolute paths outside the project directory. A persistent Daytona volume (`pi-sandbox-vol`) is mounted at `/workspace` so sandbox data survives restarts.
+> **Sandbox Routing:** The extension routes commands into the Daytona sandbox _except_ for file-management operations (`rm`, `mkdir`, `mv`, `cp`, `touch`, `chmod`, `chown`) which run on the host so the agent can manage actual project files. A basic guard blocks absolute paths outside the project directory. A persistent Daytona volume (`pi-sandbox-vol`) is mounted at `/workspace` so sandbox data survives restarts.
 >
 > **Auto-Recovery:** The extension automatically probes the sandbox state. If `pi-sandbox` is stopped, it attempts to start it (with retry backoff for transient conflicts). If the sandbox doesn't exist, it creates it (with the persistent volume) and polls until it's ready.
 >
@@ -221,22 +260,22 @@ pi install npm:pi-lens -l
 
 ### 6.2 What It Does
 
-| Hook | Action |
-|------|--------|
-| **write/edit** | Secrets scan (blocking), auto-format, auto-fix (Biome/Ruff/ESLint), LSP file sync, dispatch lint (LSP + tree-sitter + ast-grep + fact rules + linters), cascade diagnostics |
-| **agent_end** | Deferred formatting runs once per turn, summary notification |
-| **session_start** | Reset state, detect language profile, warm caches, LSP warm-files, tool hints |
-| **turn_end** | Impact cascade (review-graph), deferred findings, debt tracking |
+| Hook              | Action                                                                                                                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **write/edit**    | Secrets scan (blocking), auto-format, auto-fix (Biome/Ruff/ESLint), LSP file sync, dispatch lint (LSP + tree-sitter + ast-grep + fact rules + linters), cascade diagnostics |
+| **agent_end**     | Deferred formatting runs once per turn, summary notification                                                                                                                |
+| **session_start** | Reset state, detect language profile, warm caches, LSP warm-files, tool hints                                                                                               |
+| **turn_end**      | Impact cascade (review-graph), deferred findings, debt tracking                                                                                                             |
 
 ### 6.3 Key Commands
 
-| Command | Purpose |
-|---------|---------|
-| `/lens-booboo` | Full quality report |
-| `/lens-health` | Runtime health, latency, telemetry |
-| `/lens-tools` | Tool installation status |
-| `/lens-tdi` | Technical Debt Index |
-| `/lens-allow-edit <path>` | Override read-guard for one edit |
+| Command                   | Purpose                            |
+| ------------------------- | ---------------------------------- |
+| `/lens-booboo`            | Full quality report                |
+| `/lens-health`            | Runtime health, latency, telemetry |
+| `/lens-tools`             | Tool installation status           |
+| `/lens-tdi`               | Technical Debt Index               |
+| `/lens-allow-edit <path>` | Override read-guard for one edit   |
 
 ### 6.4 Optional Flags
 
@@ -256,29 +295,35 @@ pi --no-delta        # Show all diagnostics, not just new ones
 Pi loads two different kinds of instruction files. They are **not** interchangeable.
 
 ### 7.1 Always-On Context (`AGENTS.md`) — Use This for Caveman
+
 If you want instructions to be **automatically active** in every Pi session, put them in `AGENTS.md` (or `CLAUDE.md`) in your **project root**. Pi concatenates all discovered `AGENTS.md` files (walking up from the working directory) and appends them to the system prompt on every turn.
 
 **This project already has an `AGENTS.md`** with the caveman protocol (communication style + tool routing). It is active as soon as you run `pi` in this directory.
 
 ### 7.2 Reusable Prompt Templates (`.pi/prompts/*.md`)
+
 If you want **manual snippets** that you invoke on demand, create prompt templates in `.pi/prompts/`. See the `.pi/prompts/review.md` example in this repository. Invoke templates with `/review` inside Pi's editor. Templates are **not** automatically loaded — you must type `/` and select them.
 
 ---
 
 ## 8. Workflows & Pro-Tips
-| Action | Command |
-|---|---|
-| **Start Session** | `pi` |
-| **Check Sandbox** | `daytona list` |
+
+| Action             | Command                     |
+| ------------------ | --------------------------- |
+| **Start Session**  | `pi`                        |
+| **Check Sandbox**  | `daytona list`              |
 | **Restart Docker** | `sudo service docker start` |
 
 ---
 
 ## 9. Installation Check Up (Test Your Stack)
+
 Before writing your first line of code, verify that all components are communicating correctly.
 
 ### 9.1 Verify Base Services
+
 Open your WSL terminal and ensure the background auto-start scripts executed properly:
+
 ```bash
 # 1. Check Docker daemon (Should output headers without permission errors)
 docker ps
@@ -291,7 +336,9 @@ echo $APIFY_TOKEN
 ```
 
 ### 9.2 Verify the Sandbox
+
 Check that Daytona is running and capable of executing commands inside the isolated container.
+
 ```bash
 # Verify sandbox status (Look for 'pi-sandbox' in 'Running' state)
 daytona list
@@ -301,14 +348,18 @@ daytona exec pi-sandbox -- echo "Sandbox active"
 ```
 
 ### 9.3 Verify Pi Autonomy
+
 Ensure Pi is properly utilizing OpenCode Go without asking for provider selection.
+
 ```bash
 # Ask Pi a simple question directly from the CLI
 pi "Respond with exactly one word: 'Operational'."
 ```
 
 ### 9.4 Verify Codebase Memory (Knowledge Graph)
+
 Confirm that codebase-memory-mcp is installed and can index the project.
+
 ```bash
 # Check binary
 ~/.local/bin/codebase-memory-mcp --version
@@ -319,10 +370,13 @@ Confirm that codebase-memory-mcp is installed and can index the project.
 # Test a search query
 ~/.local/bin/codebase-memory-mcp cli search_graph "{\"project\": \"$(echo $PWD | sed 's|^/||; s|/|-|g')\", \"name_pattern\": \".*\", \"label\": \"Function\", \"limit\": 5}"
 ```
-*Expected Result:* The index command should report `"status":"indexed"` with node/edge counts. The search should return function names found in the project.
+
+_Expected Result:_ The index command should report `"status":"indexed"` with node/edge counts. The search should return function names found in the project.
 
 ### 9.5 Verify pi-lens (Real-Time Code Feedback)
+
 Check that pi-lens is installed and registered:
+
 ```bash
 # Verify package in project settings
 cat .pi/settings.json | grep pi-lens
@@ -330,22 +384,28 @@ cat .pi/settings.json | grep pi-lens
 # List installed pi packages (run inside pi session or on host)
 pi list
 ```
-*Expected Result:* `pi-lens` should appear in the package list and `.pi/settings.json`.
+
+_Expected Result:_ `pi-lens` should appear in the package list and `.pi/settings.json`.
 
 ### 9.6 Verify Execution Routing (The Acid Test)
+
 This ensures your `.pi/extensions/daytona-sandbox.ts` interceptor is successfully capturing and routing Pi's bash commands correctly.
 
 **Test A — Sandbox isolation:**
 Open Zed's terminal (Ctrl + ~), ensure you are in the project root, and run:
+
 ```bash
 pi -p "Run 'uname -n' in bash and tell me the hostname."
 ```
-*Expected Result:* Pi should report the hostname of the sandbox (e.g., `pi-sandbox` or a container ID). If it returns your actual WSL machine's hostname, the extension hook in Step 5 failed and arbitrary commands are not isolated.
+
+_Expected Result:_ Pi should report the hostname of the sandbox (e.g., `pi-sandbox` or a container ID). If it returns your actual WSL machine's hostname, the extension hook in Step 5 failed and arbitrary commands are not isolated.
 
 **Test B — Host file operations:**
+
 ```bash
 pi -p "Create a file named '.pi/test-file.txt' with the content 'host works', then tell me the absolute path where it was created."
 ```
-*Expected Result:* The file should appear on the host filesystem at `<project-root>/.pi/test-file.txt`. If the agent reports it can't find the path or the file doesn't appear on the host, file-management commands are being incorrectly routed to the sandbox.
+
+_Expected Result:_ The file should appear on the host filesystem at `<project-root>/.pi/test-file.txt`. If the agent reports it can't find the path or the file doesn't appear on the host, file-management commands are being incorrectly routed to the sandbox.
 
 > **Tip:** You can test the auto-recovery by stopping the sandbox first: `daytona stop pi-sandbox`. The extension should transparently start it back up on the next sandbox command.
