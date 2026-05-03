@@ -2,7 +2,6 @@
 .agent_env
 
 node_modules
-tmp-test
 
 # crawl4ai auto-setup (venv + Chromium system libs)
 .pi/crawl4ai-venv/

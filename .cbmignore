@@ -1,0 +1,6 @@
+# Exclude pi framework internals from codebase-memory indexing
+.pi/chromium-deps/
+.pi/crawl4ai-venv/
+node_modules/
+.env
+.agent_env

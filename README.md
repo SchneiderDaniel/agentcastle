@@ -38,6 +38,11 @@ wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo t
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
 sudo apt-get update
 sudo apt-get install gh -y
+
+# 5. Codebase Memory MCP (Knowledge Graph for Pi)
+curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --skip-config
+# Ensure ~/.local/bin is in PATH:
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 ```
 
 ---
@@ -147,6 +152,55 @@ Create `.pi/extensions/crawl4ai.ts` in your **project root**. See the `.pi/exten
 
 Extensions in `.pi/extensions/` are loaded automatically on Pi startup (no `--extension` flag needed).
 
+### 5.3 Codebase Intelligence (`codebase-memory-mcp`)
+
+Pi uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — a high-performance code intelligence engine that indexes your codebase into a persistent knowledge graph. Single static binary, zero runtime dependencies, 66 languages.
+
+**Why a pi extension instead of MCP?** The extension wraps the CLI (`codebase-memory-mcp cli <tool> <json>`) via `pi.exec()`. This is more token-efficient than exposing all 14 MCP tools through `pi-mcp-adapter` — tool descriptions are concise, project path is auto-injected, and results are formatted for LLM readability. The extension also auto-indexes the project on `session_start`, so the graph is always fresh.
+
+**Token savings:** Five structural queries consume ~3,400 tokens via the codebase graph vs ~412,000 tokens via file-by-file grep exploration — a **99.2% reduction**.
+
+#### 5.3.1 Installation
+
+The binary was installed in Step 0 (prerequisites). The extension at `.pi/extensions/codebase-memory.ts` is auto-discovered.
+
+```bash
+# Verify binary:
+~/.local/bin/codebase-memory-mcp --version
+
+# Manual reindex (extension auto-indexes on session start):
+~/.local/bin/codebase-memory-mcp cli index_repository '{"repo_path": "'$(pwd)'"}'
+```
+
+#### 5.3.2 Tools Exposed
+
+The extension registers 14 tools, one per codebase-memory-mcp capability:
+
+| Tool | Description |
+|------|-------------|
+| `codebase_search` | Search graph by name pattern, label, file, degree |
+| `codebase_trace` | BFS call-path traversal (inbound/outbound/both) |
+| `codebase_query` | Cypher-like graph queries (MATCH...RETURN...) |
+| `codebase_overview` | Architecture: languages, packages, routes, hotspots, clusters |
+| `codebase_get_schema` | Graph schema: node labels, edge types, properties |
+| `codebase_snippet` | Read source code by qualified name |
+| `codebase_grep` | Full-text search within indexed files |
+| `codebase_detect_changes` | Git diff → affected symbols + risk classification |
+| `codebase_adr` | CRUD for Architecture Decision Records |
+| `codebase_index` | Explicit re-index trigger |
+| `codebase_list_projects` | List all indexed projects |
+| `codebase_index_status` | Per-project indexing status |
+| `codebase_delete_project` | Remove project from graph |
+| `codebase_ingest_traces` | Ingest runtime traces for HTTP edge validation |
+
+#### 5.3.3 Ignoring Files
+
+The `.cbmignore` file in the project root excludes `.pi/chromium-deps/` and `.pi/crawl4ai-venv/` from indexing. Add additional patterns in gitignore syntax to skip vendored code, generated files, or large assets.
+
+#### 5.3.4 How It Works With Sandbox Routing
+
+The extension calls the binary via `pi.exec()` directly from the Node.js runtime — it bypasses the Daytona sandbox interceptor entirely. The binary reads/writes to `~/.cache/codebase-memory-mcp/` (SQLite databases) and reads project files from the host filesystem. This is intentional: the codebase graph is a host-level index, shared across sandbox sessions.
+
 > **Sandbox Routing:** The extension routes commands into the Daytona sandbox *except* for file-management operations (`rm`, `mkdir`, `mv`, `cp`, `touch`, `chmod`, `chown`) which run on the host so the agent can manage actual project files. A basic guard blocks absolute paths outside the project directory. A persistent Daytona volume (`pi-sandbox-vol`) is mounted at `/workspace` so sandbox data survives restarts.
 >
 > **Auto-Recovery:** The extension automatically probes the sandbox state. If `pi-sandbox` is stopped, it attempts to start it (with retry backoff for transient conflicts). If the sandbox doesn't exist, it creates it (with the persistent volume) and polls until it's ready.
@@ -211,7 +265,21 @@ Ensure Pi is properly utilizing OpenCode Go without asking for provider selectio
 pi "Respond with exactly one word: 'Operational'."
 ```
 
-### 9.4 Verify Execution Routing (The Acid Test)
+### 9.4 Verify Codebase Memory (Knowledge Graph)
+Confirm that codebase-memory-mcp is installed and can index the project.
+```bash
+# Check binary
+~/.local/bin/codebase-memory-mcp --version
+
+# Test indexing from CLI
+~/.local/bin/codebase-memory-mcp cli index_repository "{\"repo_path\": \"$PWD\"}"
+
+# Test a search query
+~/.local/bin/codebase-memory-mcp cli search_graph "{\"project\": \"$(echo $PWD | sed 's|^/||; s|/|-|g')\", \"name_pattern\": \".*\", \"label\": \"Function\", \"limit\": 5}"
+```
+*Expected Result:* The index command should report `"status":"indexed"` with node/edge counts. The search should return function names found in the project.
+
+### 9.5 Verify Execution Routing (The Acid Test)
 This ensures your `.pi/extensions/daytona-sandbox.ts` interceptor is successfully capturing and routing Pi's bash commands correctly.
 
 **Test A — Sandbox isolation:**
