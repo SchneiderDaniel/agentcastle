@@ -304,19 +304,6 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 
 MCP servers introduce a new attack surface. OWASP now maintains the [MCP Top 10](https://owasp.org/www-project-mcp-top-10/) — a dedicated vulnerability list for MCP-based systems:
 
-| Risk                       | MCP Exposure                                                           | How Extensions Avoid It                                                   |
-| -------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| **Token Mismanagement**    | Secrets in MCP server configs, env vars passed over stdio/HTTP         | Extensions access `process.env` directly — no serialization, no transport |
-| **Privilege Escalation**   | MCP tools declared at server level, scope creeps over time             | Extensions register tools per-session with explicit TypeBox schemas       |
-| **Tool Poisoning**         | MCP servers can be swapped or tampered via config                      | Extensions are git-tracked TypeScript — no runtime config injection       |
-| **Supply Chain Attacks**   | `@modelcontextprotocol/sdk`, `pi-mcp-adapter`, npm MCP server packages | Zero MCP dependencies. Only `pi.exec()` to call compiled CLI binaries     |
-| **Command Injection**      | MCP transports relay untrusted JSON-RPC to host                        | Extensions validate all params via TypeBox before any `pi.exec()` call    |
-| **Intent Flow Subversion** | MCP context can carry secondary instruction channels                   | No shared context between tools — each invocation is stateless            |
-| **Insufficient Auth**      | MCP servers lack built-in auth; rely on transport-layer trust          | Extensions run in-process — no network boundary to authenticate across    |
-| **No Audit Trail**         | MCP telemetry is optional, often absent                                | Session logger captures every tool call + result in `.pi/sessions/`       |
-| **Shadow MCP Servers**     | Developers spin up unapproved MCP instances                            | All tools live in `.pi/extensions/` — visible, reviewable, versioned      |
-| **Context Over-Sharing**   | Persistent context windows leak between tasks                          | Each tool execution is isolated — no shared memory between invocations    |
-
 > **Bottom line:** MCP treats tool execution as a client-server protocol. Extensions treat it as a function call. No network layer = no network attack surface.
 
 #### 📉 Token Efficiency
