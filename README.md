@@ -630,8 +630,6 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
 
 This project takes sandbox isolation seriously. AI commands execute in a Daytona container, not on the host.
 
-**To report a vulnerability:** Do not open a public issue. Email `security@example.com` (replace with your actual security contact). Include steps to reproduce. Expect acknowledgment within 48 hours.
-
 **Security properties:**
 
 - ✅ All AI-executed commands run in an isolated container
