@@ -2,6 +2,58 @@
 
 High-performance, secure, and local-first development environment using WSL (Ubuntu) + Zed + Git Worktrees + Pi AI.
 
+## SBOM — Software Bill of Materials
+
+| Component                                  | Version  | License      | Type       | Supplier/URL                                                                                             |
+| ------------------------------------------ | -------- | ------------ | ---------- | -------------------------------------------------------------------------------------------------------- |
+| **Runtime & Core**                         |          |              |            |                                                                                                          |
+| @mariozechner/pi-coding-agent              | ^0.72.1  | MIT          | runtime    | [pi.dev](https://pi.dev)                                                                                 |
+| @mariozechner/pi-agent-core                | 0.72.1   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @mariozechner/pi-ai                        | 0.72.1   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @mariozechner/clipboard                    | 0.3.5    | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @mariozechner/jiti                         | 2.6.5    | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| **AI Providers**                           |          |              |            |                                                                                                          |
+| @anthropic-ai/sdk                          | 0.91.1   | MIT          | transitive | [anthropic.com](https://www.anthropic.com)                                                               |
+| openai                                     | 6.26.0   | Apache-2.0   | transitive | [openai.com](https://openai.com)                                                                         |
+| @aws-sdk/client-bedrock-runtime            | 3.1041.0 | Apache-2.0   | transitive | [aws.amazon.com](https://aws.amazon.com)                                                                 |
+| @aws-crypto/sha256-browser                 | 5.2.0    | Apache-2.0   | transitive | [aws.amazon.com](https://aws.amazon.com)                                                                 |
+| **Schema & Validation**                    |          |              |            |                                                                                                          |
+| typebox                                    | 1.1.37   | MIT          | transitive | [github.com/typebox/typebox](https://github.com/typebox/typebox)                                         |
+| zod                                        | 4.4.2    | MIT          | transitive | [zod.dev](https://zod.dev)                                                                               |
+| **Utilities**                              |          |              |            |                                                                                                          |
+| fast-xml-parser                            | 5.7.2    | MIT          | transitive | [github.com/NaturalIntelligence/fast-xml-parser](https://github.com/NaturalIntelligence/fast-xml-parser) |
+| tslib                                      | 2.8.1    | 0BSD         | transitive | [github.com/microsoft/tslib](https://github.com/microsoft/tslib)                                         |
+| yoctocolors                                | 2.1.2    | MIT          | transitive | [github.com/sindresorhus/yoctocolors](https://github.com/sindresorhus/yoctocolors)                       |
+| std-env                                    | 3.10.0   | MIT          | transitive | [github.com/unjs/std-env](https://github.com/unjs/std-env)                                               |
+| **Pi Packages**                            |          |              |            |                                                                                                          |
+| pi-lens                                    | latest   | MIT          | plugin     | [pi.dev/packages/pi-lens](https://pi.dev/packages/pi-lens)                                               |
+| **System Runtimes**                        |          |              |            |                                                                                                          |
+| Node.js                                    | ≥22      | MIT          | system     | [nodejs.org](https://nodejs.org)                                                                         |
+| Python 3                                   | ≥3.10    | PSF          | system     | [python.org](https://python.org)                                                                         |
+| npm                                        | latest   | Artistic-2.0 | system     | [npmjs.com](https://npmjs.com)                                                                           |
+| **Container & Sandbox**                    |          |              |            |                                                                                                          |
+| Docker Engine                              | latest   | Apache-2.0   | system     | [docker.com](https://docker.com)                                                                         |
+| Daytona                                    | latest   | Apache-2.0   | system     | [daytona.io](https://daytona.io)                                                                         |
+| **Infrastructure Tools**                   |          |              |            |                                                                                                          |
+| GitHub CLI (gh)                            | latest   | MIT          | system     | [cli.github.com](https://cli.github.com)                                                                 |
+| **Code Intelligence**                      |          |              |            |                                                                                                          |
+| codebase-memory-mcp                        | 0.6.0    | Apache-2.0   | CLI tool   | [github.com/DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)               |
+| **Web Crawling (Python venv)**             |          |              |            |                                                                                                          |
+| crawl4ai                                   | latest   | Apache-2.0   | venv       | [github.com/unclecode/crawl4ai](https://github.com/unclecode/crawl4ai)                                   |
+| Playwright Chromium                        | latest   | Apache-2.0   | venv       | [playwright.dev](https://playwright.dev)                                                                 |
+| **Project Extensions (`.pi/extensions/`)** |          |              |            |                                                                                                          |
+| caveman.ts                                 | —        | ISC          | project    | This repository                                                                                          |
+| codebase-memory.ts                         | —        | ISC          | project    | This repository                                                                                          |
+| crawl4ai.ts                                | —        | ISC          | project    | This repository                                                                                          |
+| daytona-sandbox.ts                         | —        | ISC          | project    | This repository                                                                                          |
+| session-logger.ts                          | —        | ISC          | project    | This repository                                                                                          |
+| **Project Dev Dependencies**               |          |              |            |                                                                                                          |
+| @mariozechner/pi-coding-agent (dev)        | ^0.72.1  | MIT          | dev        | [pi.dev](https://pi.dev)                                                                                 |
+
+> **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, ISC, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (audited via `npm ls --all`).
+
+> **SBOM Generation:** This table is manually maintained. Regenerate the full transitive tree via `npm ls --all --depth=999` and `pip freeze` in `.pi/crawl4ai-venv/`. For automated CycloneDX/SPDX SBOM: `npx cyclonedx-npm` + `pip freeze \| cyclonedx-py`.
+
 ## 0. Prerequisites
 
 Ensure your WSL (Ubuntu 24.04 LTS) has the necessary runtimes. This setup bypasses the broken install scripts by pulling the binaries directly.
