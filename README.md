@@ -707,4 +707,6 @@ Built on top of these excellent projects:
 - [crawl4ai](https://github.com/unclecode/crawl4ai) — LLM-friendly web crawler
 - [pi-lens](https://pi.dev/packages/pi-lens) — Real-time code feedback
 - [Zed](https://zed.dev) — The editor
+- [Caveman](https://github.com/JuliusBrussee/caveman) — Token-efficient AI communication protocol
+- [pi-caveman](https://github.com/jonjonrankin/pi-caveman) — Multi-level caveman mode for Pi
 - [Matt Pocock's Skills](https://github.com/mattpocock/skills) — Inspiration for the `issue-refinement` prompt (grill-with-docs pattern)
