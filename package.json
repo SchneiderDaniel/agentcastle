@@ -4,15 +4,13 @@
   "description": "---",
   "main": "index.js",
   "scripts": {
-    "test": "node --test test/crawl4ai.mcp.test.mjs"
+    "test": "node --test test/session-logger.test.mts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.72.1",
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "pi-mcp-adapter": "^2.5.3"
+    "@mariozechner/pi-coding-agent": "^0.72.1"
   }
 }

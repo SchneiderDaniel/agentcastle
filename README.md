@@ -25,12 +25,8 @@ sudo chmod +x /usr/local/bin/daytona
 daytona login
 daytona create --name pi-sandbox # This is where Pi will execute code
 
-# 3. Pi Agent & MCP Adapter
-# Install the agent first:
+# 3. Pi Agent
 sudo npm install -g @mariozechner/pi-coding-agent
-
-# Install the adapter via Pi:
-sudo pi install npm:pi-mcp-adapter
 
 # 4. GitHub CLI (gh)
 (type -p wget >/dev/null || sudo apt-get install wget -y)
@@ -40,7 +36,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubc
 sudo apt-get update
 sudo apt-get install gh -y
 
-# 5. Codebase Memory MCP (Knowledge Graph for Pi)
+# 5. Codebase Memory (Knowledge Graph for Pi)
 curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --skip-config
 # Ensure ~/.local/bin is in PATH:
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
@@ -50,7 +46,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
 ## 1. Security & Environment (The Foundation)
 
-We need to set up the environment for the MCP tools.
+We need to set up the environment for the tools.
 
 ### 1.1 Create the Secret Store
 
@@ -81,10 +77,6 @@ if ! pgrep -x "dockerd" > /dev/null; then
     sudo service docker start > /dev/null 2>&1
 fi
 
-# 2. Background Task: Keep the local AgentMemory vector store alive for Pi.
-if ! pgrep -f "agentmemory" > /dev/null; then
-    npx -y @agentmemory/agentmemory > /dev/null 2>&1 &
-fi
 
 # 3. Environment: Load the API keys into the session.
 if [ -f "$HOME/.agent_env" ]; then
@@ -148,19 +140,9 @@ Pi lives in Zed's integrated terminal (Ctrl + ~). Ensure the terminal defaults t
 
 ---
 
-## 5. The Agent Toolchain (The MCP Bridge)
+## 5. The Agent Toolchain (Extensions)
 
-### 5.1 MCP Server Configuration
-
-Pi discovers MCP servers from `.mcp.json` in your **project root**. See the `.mcp.json` file in this repository for the `agentmemory` and `crawl4ai` server definitions.
-
-Make sure `pi-mcp-adapter` is installed so Pi can load these servers:
-
-```bash
-pi install npm:pi-mcp-adapter
-```
-
-### 5.2 Custom Tools & Bash Interception (Pi Extension)
+### 5.1 Custom Tools & Bash Interception
 
 Pi does **not** use a `pi.config.ts` file. Instead, it auto-discovers extensions from `.pi/extensions/` in your **project root**.
 
@@ -191,15 +173,13 @@ Writes every Pi session as an LLM-optimized Markdown file to `.pi/sessions/<sess
 
 **Why Markdown:** JSON/HTML carry 40-70% structural token overhead. Markdown is ~5-10% overhead — the LLM spends tokens on content, not syntax. Thinking blocks preserved in full (highest signal). Tool outputs truncated to 2000+500 chars.
 
-### 5.3 Codebase Intelligence (`codebase-memory-mcp`)
+### 5.2 Codebase Intelligence (`codebase-memory-mcp`)
 
 Pi uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — a high-performance code intelligence engine that indexes your codebase into a persistent knowledge graph. Single static binary, zero runtime dependencies, 66 languages.
 
-**Why a pi extension instead of MCP?** The extension wraps the CLI (`codebase-memory-mcp cli <tool> <json>`) via `pi.exec()`. This is more token-efficient than exposing all 14 MCP tools through `pi-mcp-adapter` — tool descriptions are concise, project path is auto-injected, and results are formatted for LLM readability. The extension also auto-indexes the project on `session_start`, so the graph is always fresh.
-
 **Token savings:** Five structural queries consume ~3,400 tokens via the codebase graph vs ~412,000 tokens via file-by-file grep exploration — a **99.2% reduction**.
 
-#### 5.3.1 Installation
+#### 5.2.1 Installation
 
 The binary was installed in Step 0 (prerequisites). The extension at `.pi/extensions/codebase-memory.ts` is auto-discovered.
 
@@ -211,7 +191,7 @@ The binary was installed in Step 0 (prerequisites). The extension at `.pi/extens
 ~/.local/bin/codebase-memory-mcp cli index_repository '{"repo_path": "'$(pwd)'"}'
 ```
 
-#### 5.3.2 Tools Exposed
+#### 5.2.2 Tools Exposed
 
 The extension registers 14 tools, one per codebase-memory-mcp capability:
 
@@ -232,11 +212,11 @@ The extension registers 14 tools, one per codebase-memory-mcp capability:
 | `codebase_delete_project` | Remove project from graph                                     |
 | `codebase_ingest_traces`  | Ingest runtime traces for HTTP edge validation                |
 
-#### 5.3.3 Ignoring Files
+#### 5.2.3 Ignoring Files
 
 The `.cbmignore` file in the project root excludes `.pi/chromium-deps/` and `.pi/crawl4ai-venv/` from indexing. Add additional patterns in gitignore syntax to skip vendored code, generated files, or large assets.
 
-#### 5.3.4 How It Works With Sandbox Routing
+#### 5.2.4 How It Works With Sandbox Routing
 
 The extension calls the binary via `pi.exec()` directly from the Node.js runtime — it bypasses the Daytona sandbox interceptor entirely. The binary reads/writes to `~/.cache/codebase-memory-mcp/` (SQLite databases) and reads project files from the host filesystem. This is intentional: the codebase graph is a host-level index, shared across sandbox sessions.
 
@@ -328,8 +308,6 @@ Open your WSL terminal and ensure the background auto-start scripts executed pro
 # 1. Check Docker daemon (Should output headers without permission errors)
 docker ps
 
-# 2. Check AgentMemory (Should return a process ID integer)
-pgrep -f "agentmemory"
 
 # 3. Check API Keys (Should print your Apify token)
 echo $APIFY_TOKEN
