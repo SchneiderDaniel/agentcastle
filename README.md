@@ -175,7 +175,27 @@ wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo t
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
 sudo apt-get update
 sudo apt-get install gh -y
+
+# Authenticate (web browser flow — no PAT, no key upload)
+gh auth login
 ```
+
+**Interactive prompts — answer as follows:**
+
+| Prompt                                              | Your answer                      |
+| --------------------------------------------------- | -------------------------------- |
+| What account do you want to log into?               | **GitHub.com**                   |
+| What is your preferred protocol for Git operations? | **SSH**                          |
+| Upload your SSH public key to your GitHub account?  | **Skip** (key already on GitHub) |
+| How would you like to authenticate GitHub CLI?      | **Login with a web browser**     |
+
+`gh` prints a one-time code and a URL. Open the URL in your Windows browser, enter the code, confirm. Done.
+
+```bash
+gh auth status   # verify: should show "Logged in to github.com"
+```
+
+> `gh` stores an OAuth token for API operations (issues, PRs, repo management). Your SSH key in `~/.ssh/id_ed25519` handles `git push/pull` — separate, already working.
 
 ### Codebase Memory
 
@@ -330,6 +350,25 @@ Pi auto-discovers extensions from `.pi/extensions/` in your **project root**. No
 | **Codebase Memory**  | `codebase-memory.ts` | Wraps codebase-memory-mcp CLI. Auto-indexes on session start. 14 tools exposed.                                |
 | **Session Logger**   | `session-logger.ts`  | Logs sessions to `.pi/sessions/<id>/session.md` + `metadata.json`. Toggle with `/session-logger`.              |
 | **Caveman Protocol** | `caveman.ts`         | Token-efficient communication style. Active via `AGENTS.md`.                                                   |
+
+### Prompt Templates
+
+User-invocable prompt expansions in `.pi/prompts/`. Type `/name` in the editor to expand a template.
+
+| Template             | Description                                                                                                                       | Config                                                                                         |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **issue-cutter**     | Split a GitHub epic into ordered, testable sub-issues and create them on GitHub as children of the parent.                        | Set `projectRepo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-cutter <number>`     |
+| **issue-refinement** | Grill a GitHub issue against the codebase, sharpen vague language into concrete ACs, replace the issue body with refined version. | Set `projectRepo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-refinement <number>` |
+
+### Skills
+
+Skills are expert procedural guides stored in `.pi/skills/`. The agent loads the full skill only when a task matches its trigger description — but **every skill's description is injected into the context window on every turn**, regardless of whether the skill is needed.
+
+**Why we use skills sparingly:** Each skill description (~50-150 tokens) consumes the LLM's finite attention budget on every single turn. With many skills, these descriptions silently bloat the context window with low-signal tokens the model must attend to. This causes [**context rot**](https://docs.anthropic.com/en/docs/build-with-claude/context-windows): as token count grows, the model's recall and reasoning accuracy progressively degrade — a phenomenon documented in Anthropic's [Effective Context Engineering for AI Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) and the ["Lost in the Middle"](https://arxiv.org/abs/2307.03172) paper (Liu et al., 2023).
+
+> **Design decision:** Prefer pi **extensions** (`.pi/extensions/`) or manual **prompt templates** (`.pi/prompts/`) over skills. Extensions only expose concise prompt snippets (~50-120 tokens) instead of full JSON Schema. Prompt templates are lazy — only loaded when explicitly invoked. If a skill is truly unavoidable, keep its description minimal and its scope narrow.
+
+Currently no skills installed.
 
 #### Session Logger
 
@@ -610,6 +649,16 @@ The extension auto-indexes on session start. For manual reindex:
 echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 ```
 
+### `gh auth status` shows "not logged in"
+
+Run `gh auth login` and choose **Login with a web browser** (not Paste token, not SSH key upload). If web browser fails:
+
+```bash
+# Generate a PAT at https://github.com/settings/tokens (scopes: repo, read:org)
+# Then pipe it directly:
+cat ~/my-pat-token.txt | gh auth login --with-token
+```
+
 ---
 
 ## Contributing
@@ -658,3 +707,4 @@ Built on top of these excellent projects:
 - [crawl4ai](https://github.com/unclecode/crawl4ai) — LLM-friendly web crawler
 - [pi-lens](https://pi.dev/packages/pi-lens) — Real-time code feedback
 - [Zed](https://zed.dev) — The editor
+- [Matt Pocock's Skills](https://github.com/mattpocock/skills) — Inspiration for the `issue-refinement` prompt (grill-with-docs pattern)

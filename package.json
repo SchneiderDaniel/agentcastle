@@ -1,16 +1,16 @@
 {
-  "name": "main",
-  "version": "1.0.0",
-  "description": "---",
-  "main": "index.js",
-  "scripts": {
-    "test": "node --test test/session-logger.test.mts"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "MIT",
-  "type": "commonjs",
-  "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.72.1"
-  }
+    "name": "main",
+    "version": "1.0.0",
+    "description": "---",
+    "main": "index.js",
+    "scripts": {
+        "test": "node --test test/session-logger.test.mts"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "MIT",
+    "type": "commonjs",
+    "devDependencies": {
+        "@mariozechner/pi-coding-agent": "^0.73.0"
+    }
 }

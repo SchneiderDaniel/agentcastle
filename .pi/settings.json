@@ -1,5 +1,6 @@
 {
   "packages": [
     "npm:pi-lens"
-  ]
+  ],
+  "projectRepo": "SchneiderDaniel/agentcastle-project"
 }

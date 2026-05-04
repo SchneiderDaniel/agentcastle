@@ -1,1 +1,1 @@
-For read and edit in the .pi folder, please consult always the pi framework documention.
+For read and edit in the .pi folder, please consult always the pi framework documention and Update @README.me
