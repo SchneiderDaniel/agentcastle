@@ -1,6 +1,6 @@
 # Agentcastle: The Pi Stack
 
-[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.72.1-6e3bf0)](https://pi.dev)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
@@ -110,6 +110,7 @@ pi
   - [AI Provider Setup](#ai-provider-setup)
   - [Workspace & Git](#workspace--git)
 - [📦 Architecture](#architecture)
+  - [Why extensions instead of MCP?](#why-extensions-instead-of-mcp)
   - [Extensions](#extensions)
   - [Codebase Intelligence](#codebase-intelligence)
   - [Real-Time Code Feedback (pi-lens)](#real-time-code-feedback-pi-lens)
@@ -292,6 +293,44 @@ Pi lives in Zed's integrated terminal (`Ctrl + ~`). Set the terminal profile to 
 ```
 
 **Key principle:** AI commands execute in the sandbox. File-management commands (`rm`, `mkdir`, `mv`, `cp`, `touch`, `chmod`, `chown`) run on the host. Codebase intelligence and web crawling run on the host (read-only for code, network-only for crawl).
+
+### Why extensions instead of MCP?
+
+This project deliberately avoids the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/). All tools are implemented as **pi extensions** — TypeScript files in `.pi/extensions/` that run inside the agent's Node.js runtime. No external MCP servers, no network-exposed tool endpoints, no separate processes.
+
+**Two reasons: security and token efficiency.**
+
+#### 🔒 Security
+
+MCP servers introduce a new attack surface. OWASP now maintains the [MCP Top 10](https://owasp.org/www-project-mcp-top-10/) — a dedicated vulnerability list for MCP-based systems:
+
+| Risk                       | MCP Exposure                                                           | How Extensions Avoid It                                                   |
+| -------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **Token Mismanagement**    | Secrets in MCP server configs, env vars passed over stdio/HTTP         | Extensions access `process.env` directly — no serialization, no transport |
+| **Privilege Escalation**   | MCP tools declared at server level, scope creeps over time             | Extensions register tools per-session with explicit TypeBox schemas       |
+| **Tool Poisoning**         | MCP servers can be swapped or tampered via config                      | Extensions are git-tracked TypeScript — no runtime config injection       |
+| **Supply Chain Attacks**   | `@modelcontextprotocol/sdk`, `pi-mcp-adapter`, npm MCP server packages | Zero MCP dependencies. Only `pi.exec()` to call compiled CLI binaries     |
+| **Command Injection**      | MCP transports relay untrusted JSON-RPC to host                        | Extensions validate all params via TypeBox before any `pi.exec()` call    |
+| **Intent Flow Subversion** | MCP context can carry secondary instruction channels                   | No shared context between tools — each invocation is stateless            |
+| **Insufficient Auth**      | MCP servers lack built-in auth; rely on transport-layer trust          | Extensions run in-process — no network boundary to authenticate across    |
+| **No Audit Trail**         | MCP telemetry is optional, often absent                                | Session logger captures every tool call + result in `.pi/sessions/`       |
+| **Shadow MCP Servers**     | Developers spin up unapproved MCP instances                            | All tools live in `.pi/extensions/` — visible, reviewable, versioned      |
+| **Context Over-Sharing**   | Persistent context windows leak between tasks                          | Each tool execution is isolated — no shared memory between invocations    |
+
+> **Bottom line:** MCP treats tool execution as a client-server protocol. Extensions treat it as a function call. No network layer = no network attack surface.
+
+#### 📉 Token Efficiency
+
+MCP servers expose tool descriptions via JSON-RPC introspection. Every tool's full JSON Schema is transmitted to the LLM on every request — including tools that are irrelevant to the current prompt.
+
+Pi extensions use **prompt snippets** — concise one-line descriptions that replace full JSON Schema in the system prompt. The agent only sees the full schema when it actually calls the tool. This saves thousands of tokens per turn.
+
+| Approach                        | Tokens per tool (system prompt) | 14 tools      |
+| ------------------------------- | ------------------------------- | ------------- |
+| MCP JSON-RPC (full JSON Schema) | ~300-800                        | ~4,200-11,200 |
+| Pi extension (prompt snippet)   | ~50-120                         | ~700-1,680    |
+
+> Combined with the codebase graph (99.2% token savings vs file-by-file grep), the extension approach keeps the agent focused on your problem, not on parsing tool schemas.
 
 ### Extensions
 
@@ -516,13 +555,13 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | crawl4ai                                   | latest   | Apache-2.0   | venv       | [github.com/unclecode/crawl4ai](https://github.com/unclecode/crawl4ai)                                   |
 | Playwright Chromium                        | latest   | Apache-2.0   | venv       | [playwright.dev](https://playwright.dev)                                                                 |
 | **Project Extensions (`.pi/extensions/`)** |          |              |            |                                                                                                          |
-| caveman.ts                                 | —        | ISC          | project    | This repository                                                                                          |
-| codebase-memory.ts                         | —        | ISC          | project    | This repository                                                                                          |
-| crawl4ai.ts                                | —        | ISC          | project    | This repository                                                                                          |
-| daytona-sandbox.ts                         | —        | ISC          | project    | This repository                                                                                          |
-| session-logger.ts                          | —        | ISC          | project    | This repository                                                                                          |
+| caveman.ts                                 | —        | MIT          | project    | This repository                                                                                          |
+| codebase-memory.ts                         | —        | MIT          | project    | This repository                                                                                          |
+| crawl4ai.ts                                | —        | MIT          | project    | This repository                                                                                          |
+| daytona-sandbox.ts                         | —        | MIT          | project    | This repository                                                                                          |
+| session-logger.ts                          | —        | MIT          | project    | This repository                                                                                          |
 
-> **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, ISC, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
+> **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
 
 > **SBOM Generation:** This table is manually maintained. For automated CycloneDX/SPDX SBOM: `npx cyclonedx-npm` + `pip freeze | cyclonedx-py` in `.pi/crawl4ai-venv/`.
 
@@ -618,7 +657,7 @@ This project takes sandbox isolation seriously. AI commands execute in a Daytona
 
 ## License
 
-ISC © 2025. See [LICENSE](./LICENSE) for full text.
+MIT © 2025. See [LICENSE](./LICENSE) for full text.
 
 All third-party components are OSI-approved open source (see [SBOM](#sbom---software-bill-of-materials)).
 
