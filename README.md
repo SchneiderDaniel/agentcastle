@@ -37,8 +37,11 @@ This repository contains the **configuration and extensions**. You clone it and 
 | `.pi/extensions/crawl4ai.ts`        | Three-tier web crawler                  |
 | `.pi/extensions/daytona-sandbox.ts` | Sandbox command router + auto-recovery  |
 | `.pi/extensions/session-logger.ts`  | Session logging to markdown             |
+| `.pi/extensions/ask-user.ts`        | Interactive multiple-choice questions   |
 | `.pi/settings.json`                 | Provider config + pi-lens package       |
-| `.pi/prompts/review.md`             | Example prompt template                 |
+| `.pi/prompts/issue-cutter.md`       | Epic → sub-issues with layer labels     |
+| `.pi/prompts/issue-refinement.md`   | Socratic interview + MC refinement      |
+| `.pi/prompts/review.md`             | Code review prompt template             |
 | `AGENTS.md`                         | Caveman protocol (active every session) |
 | `.cbmignore`                        | Codebase index exclusions               |
 | `package.json`                      | Project metadata + test script          |
@@ -350,15 +353,16 @@ Pi auto-discovers extensions from `.pi/extensions/` in your **project root**. No
 | **Codebase Memory**  | `codebase-memory.ts` | Wraps codebase-memory-mcp CLI. Auto-indexes on session start. 14 tools exposed.                                |
 | **Session Logger**   | `session-logger.ts`  | Logs sessions to `.pi/sessions/<id>/session.md` + `metadata.json`. Toggle with `/session-logger`.              |
 | **Caveman Protocol** | `caveman.ts`         | Token-efficient communication style. Active via `AGENTS.md`.                                                   |
+| **Ask User**         | `ask-user.ts`        | Interactive multiple-choice picker for AI-to-user questions. Uses `ctx.ui.select()` with arrow-key navigation. |
 
 ### Prompt Templates
 
 User-invocable prompt expansions in `.pi/prompts/`. Type `/name` in the editor to expand a template.
 
-| Template             | Description                                                                                                                       | Config                                                                                         |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **issue-cutter**     | Split a GitHub epic into ordered, testable sub-issues and create them on GitHub as children of the parent.                        | Set `projectRepo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-cutter <number>`     |
-| **issue-refinement** | Grill a GitHub issue against the codebase, sharpen vague language into concrete ACs, replace the issue body with refined version. | Set `projectRepo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-refinement <number>` |
+| Template             | Description                                                                                                                                                                           | Config                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **issue-cutter**     | Split a refined epic into ordered, independently testable sub-issues. Each gets `refined` + layer label (e.g. `database`, `backend`). Auto-links children to parent epic via GraphQL. | Set `projectRepo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-cutter <number>`     |
+| **issue-refinement** | Grill an issue against the codebase, conduct Socratic interview via `ask_user` tool (≥3 MC options per question), replace body with concrete ACs.                                     | Set `projectRepo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-refinement <number>` |
 
 ### Skills
 
@@ -586,6 +590,7 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | crawl4ai.ts                                | —        | MIT          | project    | This repository                                                                                          |
 | daytona-sandbox.ts                         | —        | MIT          | project    | This repository                                                                                          |
 | session-logger.ts                          | —        | MIT          | project    | This repository                                                                                          |
+| ask-user.ts                                | —        | MIT          | project    | This repository                                                                                          |
 
 > **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
 

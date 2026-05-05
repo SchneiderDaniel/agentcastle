@@ -5,14 +5,15 @@ argument-hint: "<issue-number>"
 
 # Issue Refinement — One-Question-at-a-Time Socratic Interview
 
-⚠️ **YOU ARE AN INTERVIEWER. NOT A REPORT WRITER.** You ask ONE question at a time. You wait for the answer. You decide if the answer is sufficient, or if the topic needs follow-up. Only when that topic is fully understood do you move to the next topic. When ALL topics are exhausted, you summarize what was agreed and ask for approval to write the refined issue.
+⚠️ **YOU ARE AN INTERVIEWER. NOT A REPORT WRITER.** You ask ONE question at a time via the `ask_user` tool. You wait for the answer. You decide if the answer is sufficient, or if the topic needs follow-up. Only when that topic is fully understood do you move to the next topic. When ALL topics are exhausted, you immediately write the refined issue and update GitHub — no approval gates, no draft reviews.
 
-Fetch GitHub issue #$1, **grill it against the codebase**, then **interview the user one question at a time** until every topic is mutually understood. Then write the refined issue, present for review, and upon explicit "Approved", update GitHub.
+Fetch GitHub issue #$1, **grill it against the codebase**, then **interview the user one question at a time** until every topic is mutually understood. Then write the refined issue and update GitHub immediately. No waiting for confirmation.
 
 ## Prerequisites
 
 - `gh` installed and authenticated (`gh auth status`).
 - `.pi/settings.json` must contain `projectRepo` set to `owner/repo`.
+- `ask_user` tool available (provided by `.pi/extensions/ask-user.ts` — auto-loaded if present).
 
 ## Step 0 — Read Configuration
 
@@ -44,6 +45,15 @@ gh repo view "$REPO" --json name --jq '.name'
 
 You are a journalist conducting an interview. You ask ONE question. You listen to the answer. You probe that answer until it's concrete. Only then do you move to the next question. You NEVER present a list of questions.
 
+### Use `ask_user` for Every Question
+
+Never ask open-ended text questions. Instead, call the `ask_user` tool with:
+
+- **question**: the question text (include enough context)
+- **options**: at least 3 options, one marked `recommended: true`, plus "Other" is added automatically
+
+The tool presents an interactive picker to the user. The user selects with arrow keys or types a custom answer if they pick "Other".
+
 ### Grill Against Reality
 
 The issue is a proposal. The codebase is ground truth. Every claim must be verified against what actually exists.
@@ -64,9 +74,7 @@ Read the conversation history. Determine your state:
 
 - **INITIAL**: First invocation of `/issue-refinement` in this conversation. → Go to PHASE 0: INVESTIGATE.
 - **INTERVIEWING**: Investigation done, interview in progress. → Go to PHASE 1: INTERVIEW.
-- **COMPLETE**: All topics covered, understanding reached, user asked "ready?" → Go to PHASE 2: WRITE.
-- **DRAFTED**: Refined issue presented for review. → Await "Approved" or change requests.
-- **APPROVED**: User said "Approved" or "Proceed." → Go to PHASE 3: UPDATE.
+- **COMPLETE**: All topics covered, understanding reached. → Go to PHASE 2: WRITE & UPDATE (write the refined issue and update GitHub in one shot, no approval).
 
 ---
 
@@ -111,7 +119,9 @@ Based on your investigation, identify which topics need discussion. The core top
 
 You don't need all topics for every issue. Pick the ones relevant to THIS issue.
 
-### 0.5 — 🛑 Present Summary & Ask FIRST Question
+### 0.5 — 🛑 Present Summary & Use `ask_user` for FIRST Question
+
+Present the investigation summary, then immediately call the `ask_user` tool with the first question.
 
 ```
 🔍 Issue #$1 — Investigation Complete
@@ -124,21 +134,26 @@ You don't need all topics for every issue. Pick the ones relevant to THIS issue.
 ---
 
 Let's sharpen this together. I'll ask one question at a time.
-
-🎯 First question:
-
-[ONE specific question. Pick the most important topic to start with —
-usually "Why is this needed? For whom?"]
-
 ```
 
-⚠️ HARD STOP. Ask exactly ONE question. Do NOT list other questions. Do NOT proceed. Wait for answer.
+Then immediately call `ask_user`:
+
+```
+question: "Why is this feature needed? For whom does it solve what problem?"
+options:
+  - label: "For end-users to do X faster"    value: "end_users_x"     recommended: true
+  - label: "For admins to manage Y"          value: "admins_y"
+  - label: "For automated system Z"          value: "system_z"
+  - label: "Multiple audiences (explain)"    value: "multiple"
+```
+
+⚠️ HARD STOP. Call `ask_user` exactly ONCE. Do NOT proceed past the tool result. Wait for the answer.
 
 ---
 
 ## PHASE 1: INTERVIEW (INTERVIEWING state)
 
-**You are in the middle of an interview.** Your last message was a question. The user just answered. Now:
+**You are in the middle of an interview.** Your last `ask_user` call returned an answer. Now:
 
 ### Step 1 — Evaluate the Answer
 
@@ -150,29 +165,33 @@ Does this answer fully resolve the current topic? Ask yourself:
 - Are constraints specified? (max, format, required/optional)
 - Are error/edge cases addressed?
 
-**If the answer is insufficient** → Ask a follow-up on the SAME topic:
+**If the answer is insufficient** → Call `ask_user` with a follow-up on the SAME topic:
 
 ```
-🤔 I want to make sure I understand.
-
-[Specific follow-up probing the gap in the answer]
-
-For example: "You mentioned X should be fast. What's the specific performance target? Under 200ms? Under 1s?"
+question: "You mentioned X should be fast. What's the specific target?"
+options:
+  - label: "Under 200ms"      value: "lt_200ms"     recommended: true
+  - label: "Under 1 second"   value: "lt_1s"
+  - label: "Under 5 seconds"  value: "lt_5s"
 ```
 
-⚠️ HARD STOP. One follow-up at a time. Stay on this topic until it's solid.
+⚠️ HARD STOP. One `ask_user` call at a time. Stay on this topic until it's solid.
 
-**If the answer is sufficient** → Acknowledge, record the understanding, then move to the NEXT topic:
+**If the answer is sufficient** → Acknowledge, record the understanding, then call `ask_user` for the NEXT topic:
 
 ```
-✅ Got it. So for [current topic]: [1-sentence summary of what was agreed].
+✅ Got it. [current topic]: [1-sentence summary of what was agreed].
 
-Now, next topic:
+Now, next topic → call ask_user:
 
-[ONE question on the next most important unresolved topic]
+question: "[ONE question on the next most important unresolved topic]"
+options:
+  - label: "..."  value: "..."  recommended: true
+  - label: "..."  value: "..."
+  - label: "..."  value: "..."
 ```
 
-⚠️ HARD STOP. One new question at a time.
+⚠️ HARD STOP. One new `ask_user` call at a time.
 
 ### Step 2 — Track Topics
 
@@ -190,7 +209,7 @@ Keep a mental (or explicit) list of which topics are resolved and which remain. 
 
 ### Step 3 — When All Topics Are Resolved
 
-Present the completion summary:
+Present the completion summary, then immediately proceed to PHASE 2 to write and update the issue. **No confirmation needed.**
 
 ```
 ✅ We've covered all topics for issue #$1. Here's what we agreed:
@@ -205,19 +224,20 @@ Present the completion summary:
 🧪 EDGE CASES: [...]
 🔗 DEPENDENCIES: [...]
 
----
-
-Does this capture our shared understanding? Ready for me to write the refined issue?
-(Reply "yes" or "go ahead")
+Now writing the refined issue and updating GitHub...
 ```
 
-⚠️ HARD STOP. Do NOT write the refined issue until the user confirms.
+⚠️ Do NOT wait for confirmation. Immediately proceed to PHASE 2.
 
 ---
 
-## PHASE 2: WRITE (COMPLETE state)
+## PHASE 2: WRITE & UPDATE (COMPLETE state)
 
-User has confirmed they're ready. Write the refined issue based on all agreed-upon topics.
+All topics resolved. Write the refined issue based on all agreed-upon topics, then immediately update GitHub and add the `refined` label. **No approval gate. No draft review.**
+
+### 2.1 — Write the Refined Issue
+
+Use this exact template:
 
 ```markdown
 ## Summary
@@ -281,29 +301,7 @@ _Optional: key files, patterns._
 - <file/path> — <role in this change>
 ```
 
-### 🛑 DRAFT REVIEW GATE
-
-```
-📝 Draft — Refined Issue #$1
-
-[FULL REFINED ISSUE BODY]
-
----
-
-Review the draft. Does this match our understanding?
-
-Reply "Approved" or "Proceed" to update GitHub, or tell me what to change.
-```
-
-⚠️ HARD STOP. Wait for "Approved" or "Proceed."
-
-If user requests changes, make them and present again. Repeat until approved.
-
----
-
-## PHASE 3: UPDATE GITHUB (APPROVED state)
-
-### Update the Issue
+### 2.2 — Update the Issue on GitHub
 
 ```bash
 gh issue edit $1 \
@@ -311,7 +309,7 @@ gh issue edit $1 \
   --body '…refined body content…'
 ```
 
-### Add `refined` label
+### 2.3 — Add the `refined` Label
 
 ```bash
 gh label list --repo "$REPO" --search "refined" --json name --jq '.[].name'
@@ -332,7 +330,7 @@ Apply:
 gh issue edit $1 --repo "$REPO" --add-label "refined"
 ```
 
-### Confirm
+### 2.4 — Confirm
 
 ```
 ✅ Issue #$1 refined and updated.
@@ -340,24 +338,24 @@ gh issue edit $1 --repo "$REPO" --add-label "refined"
    View: https://github.com/$REPO/issues/$1
 ```
 
-### 🛑 Ask About Cutting
+### 2.5 — Ask About Cutting (via `ask_user`)
 
-After confirming the update, ask the user:
+Immediately after confirming the update, call `ask_user`:
 
 ```
-🔪 Would you like to call issue-cutter now to split issue #$1 into smaller, ordered sub-issues?
-
-(Reply "yes" or "no")
+question: "Issue #$1 is refined. What's next?"
+options:
+  - label: "Call issue-cutter to split into sub-issues"    value: "cut"      recommended: true
+  - label: "Done — no further action"                      value: "done"
+  - label: "Other (type your answer)"                      value: "other"
 ```
 
-⚠️ HARD STOP. Wait for answer.
-
-- If the user answers **"yes"** or equivalent → immediately load and follow `.pi/prompts/issue-cutter.md` for issue #$1.
-- If the user answers **"no"** or equivalent → acknowledge and end.
+- If user selects **"cut"** → immediately load and follow `.pi/prompts/issue-cutter.md` for issue #$1.
+- If user selects **"done"** or **"other"** → acknowledge and end.
 
 ---
 
-## Quality Checklist (Phase 2/3 only)
+## Quality Checklist (Phase 2 only)
 
 - [ ] Every claim checked against codebase
 - [ ] Vague language replaced with concrete, testable requirements

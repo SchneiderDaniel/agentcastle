@@ -48,18 +48,20 @@ Each sub-issue must be a **vertical slice** — self-contained, independently te
 
 ### Step 1 — Fetch the Epic
 
+⚠️ Save output to a **project-relative path** (e.g. `tmp/epic.json`). Do NOT use `/tmp/` — the bash tool blocks absolute paths outside the project directory.
+
 ```bash
-gh issue view $1 --repo "$REPO" --json title,body,comments,labels
+gh issue view $1 --repo "$REPO" --json title,body,comments,labels > tmp/epic.json
 ```
 
-Read the full output before proceeding.
+Read the full output before proceeding (use `cat tmp/epic.json | jq '{title, body, labels: [.labels[].name]}'` for a readable summary).
 
 ### Step 1.5 — Refinement Gate
 
 Check that the epic has the `refined` label. Extract labels from the JSON fetched in Step 1:
 
 ```bash
-echo '<STEP1_OUTPUT>' | jq -r '.labels[].name' | grep -x 'refined'
+jq -r '.labels[].name' tmp/epic.json | grep -x 'refined'
 ```
 
 If `grep` finds **no** match (empty output, exit code 1), **stop immediately** and tell the user:
@@ -81,17 +83,23 @@ Read key files the epic will touch. Record what **already exists** vs what is **
 
 ### Step 3 — Analyze & Categorize
 
-Map the epic across these layers (only those actually needed):
+Map the epic across these layers (only those actually needed). Each layer corresponds to a GitHub label that must exist in the repo:
 
-| Layer               | Examples                                          |
-| ------------------- | ------------------------------------------------- |
-| **Data / Database** | Schema changes, migrations, seed data             |
-| **Backend / API**   | Service logic, routes, validation, business rules |
-| **Frontend / UI**   | Templates, forms, JS interactions, CSS            |
-| **Infrastructure**  | Config, Docker, environment variables             |
-| **i18n / Content**  | Translation strings, locale files                 |
-| **Testing**         | Integration, E2E tests                            |
-| **Documentation**   | README, inline docs                               |
+| #   | Layer          | Title / Examples                                               |
+| --- | -------------- | -------------------------------------------------------------- |
+| 1   | infrastructure | Project scaffolding, dependencies, directory structure, config |
+| 2   | database       | Schema changes, migrations, seed data, persistence             |
+| 3   | backend        | Service logic, API routes, validation, business rules          |
+| 4   | frontend       | Templates, forms, JS interactions, CSS, dashboard UI           |
+| 5   | i18n           | Translation strings, locale files                              |
+| 6   | testing        | Integration, E2E, smoke tests                                  |
+| 7   | documentation  | README, inline docs                                            |
+
+Fetch available labels once and reuse:
+
+```bash
+gh label list --repo "$REPO" --json name | jq -r '.[].name' | sort
+```
 
 ### Step 4 — Derive Ordered Sub-Issues
 
@@ -106,9 +114,9 @@ Ordering rules:
 For each sub-issue define:
 
 - **Order number** (1, 2, 3…) — in body, NOT in title
-- **Title**: short, imperative, descriptive on its own
+- **Title**: short, imperative, descriptive on its own. **MUST NOT contain `/`** (see Bash Tool Constraints below).
 - **Body**: User Story + Acceptance Criteria (template below)
-- **Label** (use existing repo labels; check with `gh label list --repo "$REPO"`)
+- **Layer label** — exactly one from the table in Step 3 (e.g. `database`, `backend`, `frontend`). Must exist as a GitHub label in the repo.
 
 ### Step 5 — Confirm with User
 
@@ -116,9 +124,9 @@ Present the proposed breakdown as a numbered list:
 
 ```
 Proposed breakdown for issue #$1:
-1. [database] Add recipe_tag column to database schema
-2. [backend] Implement tag service and API endpoint
-3. [frontend] Build tag filter UI component
+1. Add recipe_tag column to database schema    → labels: `refined`, `database`
+2. Implement tag service and API endpoint       → labels: `refined`, `backend`
+3. Build tag filter UI component                → labels: `refined`, `frontend`
 …
 
 Create these as GitHub sub-issues?
@@ -126,42 +134,20 @@ Create these as GitHub sub-issues?
 
 Wait for user confirmation before creating.
 
-### Step 6 — Create Sub-Issues on GitHub
+### Step 6 — Create and Link Sub-Issues on GitHub
 
-**6a — Create each issue:**
+⚠️ **MANDATORY: Every sub-issue MUST be linked as a child of the epic. Creation alone is incomplete. Do not skip 6b.**
 
-Every sub-issue gets the `refined` and `sliced` labels plus its layer label.
+#### Bash Tool Constraints (READ BEFORE CREATING ISSUES)
 
-First, ensure the `sliced` label exists:
+The bash tool blocks any command containing a `/` that looks like an **absolute path** (e.g. `/foo`, `/nonexistent`, `/usr/...`). Specifically, any `/` preceded by space, `(`, `'`, `"`, or at line-start triggers path validation and blocks the command.
 
-```bash
-gh label list --repo "$REPO" --search "sliced" --json name --jq '.[].name'
-```
+**Rules for issue titles and bodies:**
 
-Create if missing:
+- **Titles**: MUST NOT contain standalone `/`. Replace `GET /` with `GET root`, `POST /api/users` with `POST api users`, `/path/:id` with `path by id`.
+- **Bodies**: `/` inside longer tokens (e.g. `data/visits.db`, `flask_app/app.py`, `http://...`) is fine — only standalone `/` (preceded by space or punctuation) triggers the block. Avoid phrases like `curl http://localhost:3000/api/users` where `/api/users` appears standalone. Rewrite as `curl localhost:3000/api/users` (no space before `/api`).
 
-```bash
-gh label create "sliced" \
-  --repo "$REPO" \
-  --color "FBCA04" \
-  --description "Issue has been sliced into sub-issues"
-```
-
-Then create each sub-issue:
-
-```bash
-gh issue create \
-  --repo "$REPO" \
-  --title "Add recipe_tag column to database schema" \
-  --body '…body content…' \
-  --label "refined,sliced"
-```
-
-Capture each new issue number from the output (e.g. `https://github.com/owner/repo/issues/42` gives issue number 42).
-
-**6b — Link as sub-issue:**
-
-Resolve the epic node ID:
+#### 6a — Resolve the epic node ID (ONCE, before the loop)
 
 ```bash
 EPIC_ID=$(gh api graphql \
@@ -175,29 +161,57 @@ EPIC_ID=$(gh api graphql \
       }
     }' --jq '.data.repository.issue.id')
 
+echo "$EPIC_ID" > tmp/epic_id.txt
 echo "Epic ID: $EPIC_ID"
 ```
 
-Resolve each child issue's node ID (repeat per sub-issue, replace `CHILD_NUM`):
+#### 6b — For EACH sub-issue (loop): write body to file → create → capture number → resolve child ID → link
+
+Every sub-issue gets exactly two labels: `refined` and its **layer label** (e.g. `database`, `backend`, `frontend`, `infrastructure`, `testing`, `i18n`, `documentation`). Do **not** add a `sliced` label.
+
+**Step-by-step for each sub-issue:**
+
+**Step 1: Write the body to a file first.** This avoids inline escaping issues and path validation on multi-line content. Use project-relative paths like `tmp/sub<N>_body.md`.
+
+**Step 2: Create the issue, reading body from file.**
+
+```bash
+BODY=$(cat tmp/sub1_body.md)
+CHILD_URL=$(gh issue create \
+  --repo "$REPO" \
+  --title "Your slash-free title here" \
+  --body "$BODY" \
+  --label "refined,database")
+echo "Created: $CHILD_URL"
+```
+
+**Step 3: Extract the issue number from the URL.**
+
+```bash
+CHILD_NUM=$(echo "$CHILD_URL" | grep -oP '/issues/\K\d+')
+echo "Child number: $CHILD_NUM"
+```
+
+**Step 4: Resolve the child issue's GraphQL node ID.**
 
 ```bash
 CHILD_ID=$(gh api graphql \
   -F owner="$OWNER" \
   -F repo="$REPO_NAME" \
-  -F num=CHILD_NUM \
+  -F num="$CHILD_NUM" \
   -f query='
     query($owner:String!, $repo:String!, $num:Int!) {
       repository(owner:$owner, name:$repo) {
         issue(number:$num) { id }
       }
     }' --jq '.data.repository.issue.id')
-
 echo "Child ID: $CHILD_ID"
 ```
 
-**6c — Add sub-issue relationship:**
+**Step 5: Link the child to the epic.**
 
 ```bash
+EPIC_ID=$(cat tmp/epic_id.txt)
 gh api graphql \
   -F issueId="$EPIC_ID" \
   -F subIssueId="$CHILD_ID" \
@@ -208,18 +222,36 @@ gh api graphql \
         subIssue { number }
       }
     }'
+echo "Linked #$CHILD_NUM as sub-issue of Epic #$1"
 ```
 
-Repeat 6b and 6c for every sub-issue.
+⚠️ **Do ALL FIVE steps for each sub-issue before moving to the next one. Do NOT batch all creations and then try to link afterward.**
 
-**6d — Print summary:**
+**Save each sub-issue number** for dependency references in later sub-issues:
+
+```bash
+echo "$CHILD_NUM" > tmp/sub<N>_num.txt
+```
+
+**Tip:** You can combine steps 2–5 into one chained command per sub-issue (using `&&`), but keep steps 1 (file write) separate since the body file won't change within a chained command after writing.
+
+#### 6c — Print summary
 
 ```
-✅ Sub-issues created under Epic #$1:
-  #101  (1) Add recipe_tag column to database schema
-  #102  (2) Implement tag service and API endpoint
-  #103  (3) Build tag filter UI component
+✅ Sub-issues created and linked under Epic #$1:
+  #101  [database]  (1) Add recipe_tag column to database schema
+  #102  [backend]   (2) Implement tag service and API endpoint
+  #103  [frontend]  (3) Build tag filter UI component
   …
+```
+
+Verify linkage:
+
+```bash
+gh api graphql \
+  -F owner="$OWNER" -F repo="$REPO_NAME" -F num=$1 \
+  -f query='query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){issue(number:$num){title subIssues(first:20){nodes{number title}}}}}' \
+  --jq '.data.repository.issue | {title, children: [.subIssues.nodes[] | {number, title}]}'
 ```
 
 ---
@@ -273,6 +305,8 @@ _Optional: sub-issues that must be completed before this one._
 - **Labels**: only use labels that exist (`gh label list --repo "$REPO"`).
 - **Fetch the epic once** — do not re-fetch in a loop.
 - **Use `--jq`** with `gh api` for JSON extraction, not `ConvertFrom-Json`.
+- **Bash tool path validation**: titles must not contain standalone `/`. Bodies must avoid standalone `/` paths. Use project-relative paths for all file I/O (not `/tmp/`).
+- **Write bodies to files first**, then create issues from files. Never inline multi-line bodies in the `gh issue create` command.
 
 ## Quality Checklist
 
@@ -285,3 +319,14 @@ Before creating any sub-issue, verify mentally:
 - [ ] Does not duplicate work in another sub-issue
 - [ ] Order number reflects valid implementation sequence
 - [ ] **How to Validate** section has step-by-step instructions executable without reading code
+- [ ] **Every created sub-issue is linked** to the parent epic (Step 6b completed for each)
+- [ ] Title contains no standalone `/` characters
+
+## Troubleshooting
+
+| Symptom                                                 | Likely Cause                                                      | Fix                                                                                                                         |
+| ------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `Blocked: absolute path "/..."`                         | Command contains a standalone `/` (in title, body, or file path). | Remove `/` from issue titles. Replace standalone `/paths` in body with inline equivalents. Use project-relative file paths. |
+| Body not appearing in created issue                     | Inline body in single quotes contains unescaped characters.       | Always write body to file first (`tmp/sub<N>_body.md`), then read via `BODY=$(cat file)`.                                   |
+| `gh issue create` fails with "422 Unprocessable Entity" | Label does not exist in the repo.                                 | Run `gh label list --repo "$REPO"` to verify labels exist.                                                                  |
+| Sub-issues not appearing under epic                     | Step 6b (link) was skipped or failed silently.                    | Run the verification GraphQL query from Step 6c. Re-link any unlinked sub-issues manually.                                  |
