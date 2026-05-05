@@ -340,6 +340,21 @@ gh issue edit $1 --repo "$REPO" --add-label "refined"
    View: https://github.com/$REPO/issues/$1
 ```
 
+### 🛑 Ask About Cutting
+
+After confirming the update, ask the user:
+
+```
+🔪 Would you like to call issue-cutter now to split issue #$1 into smaller, ordered sub-issues?
+
+(Reply "yes" or "no")
+```
+
+⚠️ HARD STOP. Wait for answer.
+
+- If the user answers **"yes"** or equivalent → immediately load and follow `.pi/prompts/issue-cutter.md` for issue #$1.
+- If the user answers **"no"** or equivalent → acknowledge and end.
+
 ---
 
 ## Quality Checklist (Phase 2/3 only)

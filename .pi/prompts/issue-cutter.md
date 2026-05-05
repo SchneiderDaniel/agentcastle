@@ -130,14 +130,31 @@ Wait for user confirmation before creating.
 
 **6a — Create each issue:**
 
-Every sub-issue gets the `refined` label plus its layer label:
+Every sub-issue gets the `refined` and `sliced` labels plus its layer label.
+
+First, ensure the `sliced` label exists:
+
+```bash
+gh label list --repo "$REPO" --search "sliced" --json name --jq '.[].name'
+```
+
+Create if missing:
+
+```bash
+gh label create "sliced" \
+  --repo "$REPO" \
+  --color "FBCA04" \
+  --description "Issue has been sliced into sub-issues"
+```
+
+Then create each sub-issue:
 
 ```bash
 gh issue create \
   --repo "$REPO" \
   --title "Add recipe_tag column to database schema" \
   --body '…body content…' \
-  --label "refined,database"
+  --label "refined,sliced"
 ```
 
 Capture each new issue number from the output (e.g. `https://github.com/owner/repo/issues/42` gives issue number 42).
