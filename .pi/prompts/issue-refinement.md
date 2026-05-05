@@ -1,28 +1,28 @@
 ---
-description: Refine a GitHub issue by challenging it against the codebase, sharpening language, replacing vague requirements with concrete acceptance criteria, and updating the issue in-place.
+description: Refine a GitHub issue by conducting a one-question-at-a-time Socratic interview, challenging the issue against the codebase, then replacing vague requirements with concrete acceptance criteria.
 argument-hint: "<issue-number>"
 ---
 
-# Issue Refinement
+# Issue Refinement — One-Question-at-a-Time Socratic Interview
 
-Fetch GitHub issue #$1, grill it against the live codebase, sharpen its language and requirements, then **replace the original issue body** with the refined version and add the `refined` label.
+⚠️ **YOU ARE AN INTERVIEWER. NOT A REPORT WRITER.** You ask ONE question at a time. You wait for the answer. You decide if the answer is sufficient, or if the topic needs follow-up. Only when that topic is fully understood do you move to the next topic. When ALL topics are exhausted, you summarize what was agreed and ask for approval to write the refined issue.
+
+Fetch GitHub issue #$1, **grill it against the codebase**, then **interview the user one question at a time** until every topic is mutually understood. Then write the refined issue, present for review, and upon explicit "Approved", update GitHub.
 
 ## Prerequisites
 
 - `gh` installed and authenticated (`gh auth status`).
-- `.pi/settings.json` must contain `projectRepo` set to `owner/repo` (e.g. `SchneiderDaniel/agentcastle-project`).
+- `.pi/settings.json` must contain `projectRepo` set to `owner/repo`.
 
 ## Step 0 — Read Configuration
-
-Read `.pi/settings.json` and extract the `projectRepo` field. Parse it as `OWNER/REPO`:
 
 ```bash
 cat .pi/settings.json | jq -r '.projectRepo'
 ```
 
-If the field is missing or empty, stop and tell the user to add `"projectRepo": "owner/repo"` to `.pi/settings.json`.
+If missing or empty, stop and tell the user to add `"projectRepo": "owner/repo"`.
 
-Export for reuse:
+Export:
 
 ```bash
 export REPO=$(cat .pi/settings.json | jq -r '.projectRepo')
@@ -30,7 +30,7 @@ export OWNER=$(echo $REPO | cut -d'/' -f1)
 export REPO_NAME=$(echo $REPO | cut -d'/' -f2)
 ```
 
-Verify the repo exists:
+Verify:
 
 ```bash
 gh repo view "$REPO" --json name --jq '.name'
@@ -40,127 +40,203 @@ gh repo view "$REPO" --json name --jq '.name'
 
 ## Core Principles
 
+### One Question at a Time
+
+You are a journalist conducting an interview. You ask ONE question. You listen to the answer. You probe that answer until it's concrete. Only then do you move to the next question. You NEVER present a list of questions.
+
 ### Grill Against Reality
 
-The issue is a proposal. The codebase is ground truth. Every claim in the issue must be verified against what actually exists. If the code already does what the issue asks for — the issue is wrong. If the code contradicts a claim — surface the contradiction.
+The issue is a proposal. The codebase is ground truth. Every claim must be verified against what actually exists.
 
 ### Replace, Don't Append
 
-The refined issue **replaces** the original body. No `--- UPDATE ---` sections, no append-only edits. The LLM reading the refined issue should see one coherent, final specification. The old version is dead.
+The refined issue **replaces** the original body entirely. No append-only sections.
 
 ### Sharpen, Don't Soften
 
-Vague language ("make it better", "add support for X", "improve the thing") becomes concrete. Every requirement gets acceptance criteria. Every acceptance criterion is testable by a human without reading code.
+Every vague answer gets a follow-up until it becomes concrete and testable.
 
 ---
 
-## Workflow
+## STATE DETECTION
 
-### Step 1 — Fetch the Issue
+Read the conversation history. Determine your state:
+
+- **INITIAL**: First invocation of `/issue-refinement` in this conversation. → Go to PHASE 0: INVESTIGATE.
+- **INTERVIEWING**: Investigation done, interview in progress. → Go to PHASE 1: INTERVIEW.
+- **COMPLETE**: All topics covered, understanding reached, user asked "ready?" → Go to PHASE 2: WRITE.
+- **DRAFTED**: Refined issue presented for review. → Await "Approved" or change requests.
+- **APPROVED**: User said "Approved" or "Proceed." → Go to PHASE 3: UPDATE.
+
+---
+
+## PHASE 0: INVESTIGATE (INITIAL state only)
+
+Do your research silently. Then present a brief summary and ask the FIRST question.
+
+### 0.1 — Fetch the Issue
 
 ```bash
 gh issue view $1 --repo "$REPO" --json title,body,comments,labels,state
 ```
 
-Read the full output. Understand what the issue is asking for and what state it's in.
-
-### Step 2 — Explore the Codebase
-
-⚠️ **MANDATORY**: Before challenging anything, understand the current state.
-
-**2a — Map the area the issue touches:**
+### 0.2 — Explore the Codebase
 
 ```bash
-# Find files by name pattern relevant to the issue domain
 find . -maxdepth 4 -not -path './.pi/*' -not -path './node_modules/*' -not -path './.git/*' -iname '*<keyword>*' | head -60
 ```
 
-```bash
-# Search for symbols mentioned in the issue
-codebase_search --name_pattern '<function_or_class_from_issue>'
+Use `codebase_search` for symbols mentioned. Read `CONTEXT.md` / `docs/adr/` if they exist. Trace relevant code paths.
+
+### 0.3 — Cross-Reference with Code
+
+Identify:
+
+- 🟢 What already exists (can be removed from scope)
+- 🔴 Contradictions between issue claims and actual code
+- 🟡 Vague language that needs sharpening
+
+### 0.4 — Determine Interview Topics
+
+Based on your investigation, identify which topics need discussion. The core topics are:
+
+1. **Purpose & Value** — Why is this needed? For whom? What problem does it solve?
+2. **Scope Boundaries** — What's exactly in scope? What's explicitly out?
+3. **Requirements & Acceptance Criteria** — One topic per requirement. What must happen? How to verify?
+4. **Constraints & Limits** — Max lengths, formats, uniqueness, required vs optional, case sensitivity
+5. **Error Handling** — What happens when things go wrong?
+6. **Edge Cases** — Boundary conditions, race conditions, unusual inputs
+7. **Dependencies** — Blocks on other issues/PRs/infrastructure?
+8. **Contradictions** (if any found) — Issue says X, code does Y. Which wins?
+
+You don't need all topics for every issue. Pick the ones relevant to THIS issue.
+
+### 0.5 — 🛑 Present Summary & Ask FIRST Question
+
+```
+🔍 Issue #$1 — Investigation Complete
+
+📋 [1 sentence what the issue asks for]
+
+🟢 Already exists: [brief list, if any]
+🔴 Contradictions: [brief list, if any]
+
+---
+
+Let's sharpen this together. I'll ask one question at a time.
+
+🎯 First question:
+
+[ONE specific question. Pick the most important topic to start with —
+usually "Why is this needed? For whom?"]
+
 ```
 
-**2b — Read existing documentation (if any):**
+⚠️ HARD STOP. Ask exactly ONE question. Do NOT list other questions. Do NOT proceed. Wait for answer.
 
-Check for `CONTEXT.md`, `docs/adr/`, or `CONTEXT-MAP.md` at the repo root. If any exist, read them. They may define canonical terminology that the issue should use.
+---
 
-**2c — Trace relevant code paths:**
+## PHASE 1: INTERVIEW (INTERVIEWING state)
 
-For each feature or change mentioned in the issue, trace the relevant code:
+**You are in the middle of an interview.** Your last message was a question. The user just answered. Now:
 
-- If the issue mentions a function/class, use `codebase_trace` to see what calls it and what it calls.
-- If the issue mentions an endpoint, find the route handler and trace its inbound/outbound calls.
+### Step 1 — Evaluate the Answer
 
-**2d — Identify what already exists vs what's genuinely missing:**
+Does this answer fully resolve the current topic? Ask yourself:
 
-Record a clear list. The refined issue must only describe work NOT yet done.
+- Is the answer concrete and testable? (Not "make it good" or "just work")
+- Can I write an acceptance criterion from it? (Not "should be fast" but "loads in under 200ms")
+- Does it have a clear "why" and "for whom"?
+- Are constraints specified? (max, format, required/optional)
+- Are error/edge cases addressed?
 
-### Step 3 — Grill the Issue
+**If the answer is insufficient** → Ask a follow-up on the SAME topic:
 
-Challenge the issue systematically. For each finding, prepare a concrete recommendation.
+```
+🤔 I want to make sure I understand.
 
-#### 3a — Cross-reference claims with code
+[Specific follow-up probing the gap in the answer]
 
-- Does the code already do what the issue asks? → Recommend closing or reducing scope.
-- Does the code contradict a claim in the issue? → Surface the contradiction.
-- Does the issue use terms that conflict with existing `CONTEXT.md` definitions? → Flag and propose canonical term.
-- Is the issue silent about something the code already handles? → Recommend acknowledging existing behaviour.
+For example: "You mentioned X should be fast. What's the specific performance target? Under 200ms? Under 1s?"
+```
 
-#### 3b — Sharpen vague language
+⚠️ HARD STOP. One follow-up at a time. Stay on this topic until it's solid.
 
-For each vague phrase, propose a concrete replacement:
+**If the answer is sufficient** → Acknowledge, record the understanding, then move to the NEXT topic:
 
-| Vague                  | Sharp                                                                                                           |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
-| "add support for tags" | "Add a `tags` JSONB column to `recipes`, expose via `GET /recipes?tag=:name`, render tag chips on recipe cards" |
-| "improve performance"  | "Reduce `GET /recipes` p99 latency from 800ms to 200ms by adding a covering index on `(category, created_at)`"  |
-| "make it better"       | Reject — ask what "better" means, or derive from context                                                        |
-| "handle edge cases"    | List specific edge cases with expected behaviour                                                                |
+```
+✅ Got it. So for [current topic]: [1-sentence summary of what was agreed].
 
-#### 3c — Probe missing details
+Now, next topic:
 
-For each gap in the issue, formulate a question. If the answer is discoverable in the codebase, answer it from the code. Otherwise, flag it as a question for the user:
+[ONE question on the next most important unresolved topic]
+```
 
-- Missing acceptance criteria → propose at least 2 per requirement
-- Missing validation steps → write step-by-step human-validation instructions
-- Missing dependencies → identify them from code (e.g. "depends on PR #42 which adds the `tags` migration")
-- Missing error states → list them ("what happens when the tag doesn't exist?")
-- Missing scope boundary → define what's IN and OUT
+⚠️ HARD STOP. One new question at a time.
 
-#### 3d — Stress-test with scenarios
+### Step 2 — Track Topics
 
-Invent concrete scenarios that probe the boundaries:
+Keep a mental (or explicit) list of which topics are resolved and which remain. Do NOT ask about resolved topics again unless the user's answer to a later topic contradicts something previously agreed.
 
-- "A user adds a tag with 500 characters — what happens?"
-- "Two users edit the same recipe simultaneously — what's the expected behaviour?"
-- "The tag filter returns zero results — what does the UI show?"
+**Resolved topics** (examples of what "resolved" looks like):
 
-Use these to verify the issue's requirements are complete.
+- Purpose: "Enable recipe authors to tag recipes for discoverability. No current tagging system exists."
+- Scope: "Tag CRUD on recipes only. NOT tag management admin panel. NOT tag analytics."
+- R1 ACs: "1) Author can add up to 5 tags when creating recipe. 2) Tags appear as chips on recipe card. 3) Clicking chip filters recipe list by that tag."
+- Constraints: "Max 50 chars per tag, lowercase a-z and hyphens only, no duplicates on same recipe."
+- Error handling: "Empty tag → rejected with 'Tag cannot be empty'. 6th tag → rejected with 'Max 5 tags'."
+- Edge cases: "Deleting last tag → recipe has no tags, shows empty. Duplicate tag → silently ignored."
+- Dependencies: "None. No other PRs needed."
 
-### Step 4 — Write the Refined Issue
+### Step 3 — When All Topics Are Resolved
 
-⚠️ **Do NOT write yet.** Present findings to the user first (Step 5). Only write after confirmation.
+Present the completion summary:
 
-The refined issue body follows this structure:
+```
+✅ We've covered all topics for issue #$1. Here's what we agreed:
+
+🎯 PURPOSE: [Why, for whom]
+📏 SCOPE: IN → [...], OUT → [...]
+📋 REQUIREMENTS:
+   1. [R1]: AC1: [...] AC2: [...]
+   2. [R2]: AC1: [...] AC2: [...]
+🔢 CONSTRAINTS: [...]
+❌ ERROR HANDLING: [...]
+🧪 EDGE CASES: [...]
+🔗 DEPENDENCIES: [...]
+
+---
+
+Does this capture our shared understanding? Ready for me to write the refined issue?
+(Reply "yes" or "go ahead")
+```
+
+⚠️ HARD STOP. Do NOT write the refined issue until the user confirms.
+
+---
+
+## PHASE 2: WRITE (COMPLETE state)
+
+User has confirmed they're ready. Write the refined issue based on all agreed-upon topics.
 
 ```markdown
 ## Summary
 
-_1–3 sentences: what this issue asks for, in precise language using canonical terms from CONTEXT.md if available._
+_1–3 sentences: what this issue asks for, in precise language._
 
 ## Context
 
-_Why this change matters. How it relates to existing code. What problem it solves._
+_Why this change matters. What problem it solves. Who it serves._
 
 **Current state** (verified in code):
 
-- <thing that exists and works>
-- <thing that exists and works>
+- <what exists>
+- <what exists>
 
 **What's missing:**
 
-- <thing to build or change>
-- <thing to build or change>
+- <what to build>
+- <what to build>
 
 ## Requirements
 
@@ -179,12 +255,11 @@ As a [role], I want [feature], so that [benefit].
 
 ## How to Validate (Human Tester)
 
-_Step-by-step instructions executable without reading any code. Covers happy path AND edge cases._
+_Step-by-step instructions executable without reading code._
 
-1. <setup step>
-2. <navigation step>
-3. <action step>
-4. <expected result>
+1. <setup>
+2. <action>
+3. <expected result>
 
 **Edge cases:**
 
@@ -193,68 +268,42 @@ _Step-by-step instructions executable without reading any code. Covers happy pat
 
 ## Out of Scope
 
-_Explicitly list what this issue does NOT cover, to prevent scope creep._
-
-- <thing intentionally excluded>
 - <thing intentionally excluded>
 
 ## Dependencies
 
-- <dependency if any>
-- <dependency if any>
+- <dependency>
 
 ## Technical Direction
 
-_Optional: key files to touch, services involved, patterns to follow. Keep brief — point the developer, don't prescribe the implementation._
+_Optional: key files, patterns._
 
-- <file/path.ts> — <what it does and how it relates>
-- <file/path.ts> — <what it does and how it relates>
+- <file/path> — <role in this change>
 ```
 
-### Step 5 — Present Findings & Get Confirmation
-
-Before modifying anything on GitHub, present a summary:
+### 🛑 DRAFT REVIEW GATE
 
 ```
-Refinement findings for issue #$1:
+📝 Draft — Refined Issue #$1
 
-🔴 CONTRADICTIONS:
-- Issue claims X, but code at src/foo.ts:42 does Y
+[FULL REFINED ISSUE BODY]
 
-🟡 VAGUE — SHARPENED:
-- "add tag support" → "Add tags JSONB column, GET /recipes?tag= filter, tag chips in UI"
+---
 
-🟢 ALREADY EXISTS:
-- Tag filtering already works in GET /recipes?tag= (src/routes/recipes.ts:88)
+Review the draft. Does this match our understanding?
 
-❓ QUESTIONS FOR YOU:
-- What's the max tag length?
-- Should tags be case-sensitive?
-
-📋 PROPOSED REQUIREMENTS:
-1. Add tags column to recipes table
-2. Expose tag filter on GET /recipes
-3. Render tag chips on recipe cards
-…
-
-Replace issue #$1 with this refined version?
+Reply "Approved" or "Proceed" to update GitHub, or tell me what to change.
 ```
 
-Wait for user confirmation before proceeding.
+⚠️ HARD STOP. Wait for "Approved" or "Proceed."
 
-If the findings show the issue is entirely already implemented, recommend closing instead:
+If user requests changes, make them and present again. Repeat until approved.
 
-```
-Issue #$1 appears fully implemented:
-- X: src/foo.ts:42 already does this
-- Y: src/bar.ts:88 already handles this
+---
 
-Recommend closing this issue. Proceed?
-```
+## PHASE 3: UPDATE GITHUB (APPROVED state)
 
-### Step 6 — Update the Issue on GitHub
-
-**6a — Update the issue body:**
+### Update the Issue
 
 ```bash
 gh issue edit $1 \
@@ -262,15 +311,13 @@ gh issue edit $1 \
   --body '…refined body content…'
 ```
 
-**6b — Add the `refined` label:**
-
-First check if the label exists:
+### Add `refined` label
 
 ```bash
 gh label list --repo "$REPO" --search "refined" --json name --jq '.[].name'
 ```
 
-If it doesn't exist, create it:
+Create if missing:
 
 ```bash
 gh label create "refined" \
@@ -279,50 +326,40 @@ gh label create "refined" \
   --description "Issue has been refined with concrete acceptance criteria"
 ```
 
-Then apply it:
+Apply:
 
 ```bash
 gh issue edit $1 --repo "$REPO" --add-label "refined"
 ```
 
-**6c — Add a comment** (optional, keep brief):
-
-```bash
-gh issue comment $1 --repo "$REPO" --body "Refined. [Details of what changed — 1 sentence.]"
-```
-
-**6d — Print confirmation:**
+### Confirm
 
 ```
-✅ Issue #$1 refined.
+✅ Issue #$1 refined and updated.
    Label: refined added.
    View: https://github.com/$REPO/issues/$1
 ```
 
 ---
 
-## Quality Checklist
+## Quality Checklist (Phase 2/3 only)
 
-Before updating the issue, verify:
-
-- [ ] Every claim in the original issue was checked against the codebase
-- [ ] Vague language was replaced with concrete, testable requirements
-- [ ] Every requirement has at least 2 acceptance criteria
-- [ ] Acceptance criteria are testable by a human without reading code
-- [ ] "How to Validate" covers both happy path and edge cases
-- [ ] "Out of Scope" is explicit about what is NOT included
-- [ ] Terminology matches `CONTEXT.md` if one exists (or a note was added if new terms were introduced)
-- [ ] Work described does NOT already exist in the codebase
-- [ ] Dependencies are identified and listed
-- [ ] The refined issue body is a complete replacement — no reader needs to see the original
-
----
+- [ ] Every claim checked against codebase
+- [ ] Vague language replaced with concrete, testable requirements
+- [ ] Every requirement has ≥2 acceptance criteria
+- [ ] ACs testable by human without reading code
+- [ ] "How to Validate" covers happy path + edge cases
+- [ ] "Out of Scope" explicit
+- [ ] Terminology matches CONTEXT.md if one exists
+- [ ] Work does NOT already exist in codebase
+- [ ] Dependencies identified
+- [ ] Refined body is complete replacement
 
 ## Safety & Constraints
 
-- **Never close the issue** — only add the `refined` label and update the body. The human decides when to close.
-- **Never delete comments.** Only add one comment summarizing the refinement.
-- **The refined body replaces the original.** No append-only "updates" section.
-- **If the original title is vague, suggest a better title** — but only change it after user confirmation.
-- **Use `--jq`** with `gh api` for JSON extraction, not `ConvertFrom-Json`.
-- **Fetch the issue once** — do not re-fetch in a loop.
+- **Never close the issue.**
+- **Never delete comments.**
+- **Refined body replaces original.** No append-only updates.
+- **Suggest title changes** but only change after user confirmation.
+- **Use `--jq`** with `gh api`, not `ConvertFrom-Json`.
+- **Fetch the issue once.**
