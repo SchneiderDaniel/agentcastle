@@ -1,2 +1,3 @@
 - For read and edit in the .pi folder, please consult always the pi framework documention https://pi.dev/docs/latest and Update @README.me
 - If you need to same temporary files, please save them to the `tmp/` folder in this project.
+- When creating GitHub issues, always use the repo defined in .pi/settings.json (projectRepo field). Never use git remote origin.

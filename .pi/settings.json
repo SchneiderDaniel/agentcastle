@@ -1,6 +1,16 @@
 {
-  "packages": [
-    "npm:pi-lens"
-  ],
-  "projectRepo": "SchneiderDaniel/agentcastle-project"
+    "packages": ["npm:pi-lens"],
+    "projectRepo": "SchneiderDaniel/agentcastle-project",
+    "supervisor": {
+        "repo": "SchneiderDaniel/agentcastle-project",
+        "projectNumber": 3,
+        "statusField": "Status",
+        "statusMapping": {
+            "Architecture": "architect",
+            "TestDesign": "test-designer",
+            "Implementation": "developer",
+            "Audit": "auditor"
+        },
+        "maxRejections": 1
+    }
 }
