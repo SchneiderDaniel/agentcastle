@@ -14,6 +14,7 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import { readFileSync, existsSync } from "node:fs";
 import { execSync, spawn } from "node:child_process";
+import { Container, Spacer, Text, truncateToWidth } from "@mariozechner/pi-tui";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -50,6 +51,35 @@ interface ProjectItem {
 	status?: string;
 	content?: { url?: string; number?: number };
 	fieldValues?: { fieldId: string; value: string; optionId?: string }[];
+}
+
+/** Structured result returned by runAgent for rendering */
+interface AgentRunResult {
+	output: string;
+	success: boolean;
+	agentName: string;
+	toolCount: number;
+	tokenCount: number;
+	durationMs: number;
+	/** Clean text output from the agent (no tool/emoji noise) */
+	textOutput: string;
+	/** Brief summary line: what the agent accomplished */
+	summaryLine: string;
+	/** Raw stderr if any */
+	errorOutput: string;
+}
+
+// ─── Message renderer details type ───────────────────────────────────
+
+interface SupervisorMessageDetails {
+	agentName: string;
+	success: boolean;
+	statusLabel: string;
+	toolCount: number;
+	tokenCount: number;
+	durationMs: number;
+	textOutput: string;
+	summaryLine: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -217,11 +247,38 @@ function getProjectId(projectNumber: number, owner: string): string {
 	return result?.id || "";
 }
 
+// ─── Formatting helpers ──────────────────────────────────────────────
+
+function formatTokens(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	return String(n);
+}
+
+function formatDuration(ms: number): string {
+	if (ms < 1_000) return `${ms}ms`;
+	const sec = Math.round(ms / 1_000);
+	if (sec < 60) return `${sec}s`;
+	const min = Math.floor(sec / 60);
+	const remainSec = sec % 60;
+	return `${min}m ${remainSec}s`;
+}
+
+function getTermWidth(): number {
+	return process.stdout.columns || 120;
+}
+
+function boldText(theme: any, text: string): string {
+	return theme.bold?.(text) ?? text;
+}
+
+// ─── runAgent ────────────────────────────────────────────────────────
+
 async function runAgent(
 	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,
-): Promise<{ output: string; success: boolean; summary: string }> {
+): Promise<AgentRunResult> {
 	const tools = agent.config.tools || "read,bash,write,edit";
 	const model = agent.config.model || "";
 
@@ -241,8 +298,11 @@ async function runAgent(
 	if (model) args.push("--model", model);
 
 	const widgetId = `agent-${agent.config.name}`;
-	ctx.ui.notify(`Running agent: ${agent.config.name}...`, "info");
-	ctx.ui.setStatus("supervisor", `Running ${agent.config.name}...`);
+	const agentName = agent.config.name;
+	ctx.ui.notify(`Running agent: ${agentName}...`, "info");
+	ctx.ui.setStatus("supervisor", `Running ${agentName}...`);
+
+	const startedAt = Date.now();
 
 	return new Promise((resolve) => {
 		const child = spawn("/usr/bin/pi", args, {
@@ -256,13 +316,15 @@ async function runAgent(
 		let stderr = "";
 		let jsonBuffer = "";
 
-		// Progress state (like pi-subagents)
-		const recentOutput: string[] = [];
-		const MAX_RECENT = 40;
+		// Structured tracking
 		let currentTool: string | undefined;
+		let currentToolArgs: string | undefined;
 		let tokenCount = 0;
-		const summaryLines: string[] = [];
-		let lastToolCall: string | undefined;
+		let toolCount = 0;
+		const textOutputLines: string[] = [];
+		const recentOutput: string[] = [];
+		const MAX_RECENT = 20;
+		let lastToolName: string | undefined;
 
 		const pushRecent = (line: string) => {
 			if (!line.trim()) return;
@@ -270,28 +332,55 @@ async function runAgent(
 			if (recentOutput.length > MAX_RECENT) recentOutput.shift();
 		};
 
-		const setCurrentTool = (tool: string | undefined) => {
-			currentTool = tool;
-		};
-
 		let flushTimer: NodeJS.Timeout | null = null;
+
+		const buildWidgetLines = (): string[] => {
+			const lines: string[] = [];
+			// Header: agent name + spinner
+			const header = `⚙ ${agentName}`;
+			lines.push(header);
+
+			// Status line with current tool and stats
+			const statsParts: string[] = [];
+			if (tokenCount > 0) statsParts.push(`📊 ${formatTokens(tokenCount)} tokens`);
+			if (toolCount > 0) statsParts.push(`🔧 ${toolCount} tools`);
+			const elapsed = formatDuration(Date.now() - startedAt);
+			statsParts.push(`⏱ ${elapsed}`);
+
+			if (currentTool) {
+				const toolLabel = currentToolArgs
+					? `${currentTool}: ${currentToolArgs.slice(0, 100)}`
+					: currentTool;
+				lines.push(`  ${toolLabel}  ${statsParts.join(" · ")}`);
+			} else if (statsParts.length > 0) {
+				lines.push(`  ${statsParts.join(" · ")}`);
+			}
+
+			// Recent output tail (last few lines, trimmed)
+			const tail = recentOutput.slice(-5);
+			if (tail.length > 0) {
+				for (const line of tail) {
+					const w = Math.max(20, getTermWidth() - 4);
+					lines.push(`  ⎿ ${truncateToWidth(line, w - 3)}`);
+				}
+			}
+			return lines;
+		};
 
 		const flushWidget = () => {
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			const lines: string[] = [];
-			if (currentTool) lines.push(`🔧 Running: ${currentTool}`);
-			if (tokenCount > 0) lines.push(`📊 ${tokenCount} tokens`);
-			if (recentOutput.length > 0) {
-				if (lines.length > 0) lines.push("");
-				lines.push(...recentOutput);
-			}
-			ctx.ui.setWidget(widgetId, lines);
+			ctx.ui.setWidget(widgetId, buildWidgetLines());
 		};
 
-		const flushNow = () => flushWidget();
+		// Batch widget updates to avoid flicker
+		const scheduleFlush = () => {
+			if (!flushTimer) {
+				flushTimer = setTimeout(flushWidget, 80);
+			}
+		};
 
 		const processJsonLine = (line: string) => {
 			if (!line.trim()) return;
@@ -300,46 +389,41 @@ async function runAgent(
 				switch (ev.type) {
 					case "session":
 						break;
+
 					case "tool_execution_start":
-						setCurrentTool(ev.toolName || "tool");
-						lastToolCall = ev.toolName
-							? `${ev.toolName} ${JSON.stringify(ev.args || {}).slice(0, 200)}`
+						currentTool = ev.toolName || "tool";
+						currentToolArgs = ev.args
+							? JSON.stringify(ev.args).slice(0, 200)
 							: undefined;
+						lastToolName = ev.toolName;
 						pushRecent(`🔧 ${ev.toolName}`);
+						scheduleFlush();
 						break;
-					case "tool_execution_end": {
-						const icon = ev.isError ? "❌" : "✅";
-						setCurrentTool(undefined);
-						pushRecent(`${icon} ${ev.toolName}`);
-						flushNow();
+
+					case "tool_execution_end":
+						toolCount++;
+						currentTool = undefined;
+						currentToolArgs = undefined;
+						pushRecent(`${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
+						scheduleFlush();
 						break;
-					}
+
 					case "message_end": {
 						const msg = ev.message;
 						if (!msg) break;
+
 						if (msg.role === "assistant") {
-							// Capture thinking and tool calls from content blocks
+							// Capture text content (the agent's actual output)
 							if (Array.isArray(msg.content)) {
 								for (const block of msg.content) {
 									if (block.type === "thinking" && block.thinking) {
-										const t = block.thinking.trim();
-										if (t) {
-											summaryLines.push(
-												`💭 ${t.length > 300 ? t.slice(0, 300) + "..." : t}`,
-											);
-											pushRecent(`💭 thinking...`);
-										}
-									}
-									if (block.type === "toolCall" && block.name) {
-										lastToolCall = `${block.name} ${JSON.stringify(block.arguments || {}).slice(0, 200)}`;
-										summaryLines.push(`🔧 ${lastToolCall}`);
+										pushRecent("💭 thinking...");
 									}
 								}
 							}
-							// Capture text
 							const text = extractTextFromContent(msg.content);
 							if (text && text.trim()) {
-								summaryLines.push(text.trim());
+								textOutputLines.push(text.trim());
 								for (const t of text.split("\n")) {
 									if (t.trim()) pushRecent(t);
 								}
@@ -348,30 +432,24 @@ async function runAgent(
 								tokenCount =
 									msg.usage.totalTokens || msg.usage.input + msg.usage.output;
 							}
-							flushNow();
+							scheduleFlush();
 						} else if (msg.role === "toolResult") {
-							// Capture tool result (truncated)
 							const resultText = extractTextFromContent(msg.content);
-							const label =
-								msg.toolName || lastToolCall?.split(" ")[0] || "tool";
+							const label = msg.toolName || lastToolName || "tool";
 							if (resultText && resultText.trim()) {
-								const truncated =
-									resultText.length > 500
-										? resultText.slice(0, 500) + "..."
-										: resultText;
-								const prefix = msg.isError ? "❌" : "📋";
-								summaryLines.push(
-									`${prefix} ${label}: ${truncated.split("\n")[0]?.slice(0, 120)}`,
+								pushRecent(
+									`📋 ${label}: ${resultText.split("\n")[0]?.slice(0, 120)}`,
 								);
 							}
-							lastToolCall = undefined;
+							lastToolName = undefined;
+							scheduleFlush();
 						}
 						break;
 					}
+
 					case "agent_end":
 					case "turn_end":
 					case "message_update":
-						// delta events captured via message_end, skip for widget
 						break;
 				}
 			} catch {
@@ -398,18 +476,30 @@ async function runAgent(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			const finalLines: string[] = [];
-			if (currentTool) finalLines.push(`🔧 Running: ${currentTool}`);
-			if (tokenCount > 0) finalLines.push(`📊 ${tokenCount} tokens total`);
-			if (summaryLines.length > 0) {
-				finalLines.push("");
-				finalLines.push(...summaryLines.slice(-40));
-			}
-			ctx.ui.setWidget(widgetId, finalLines);
+
+			const durationMs = Date.now() - startedAt;
+			const textOutput = textOutputLines.join("\n").trim();
+			const rawOutput = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
+			const success = code === 0;
+
+			// Extract a one-line summary from the text output
+			const summaryLine = extractSummaryLine(textOutput, success, agentName);
+
+			// Clear the widget — results go to chat via message renderer
+			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setStatus("supervisor", "");
-			const readable = summaryLines.join("\n").trim();
-			const output = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
-			resolve({ output, success: code === 0, summary: readable || output });
+
+			resolve({
+				output: rawOutput,
+				success,
+				agentName,
+				toolCount,
+				tokenCount,
+				durationMs,
+				textOutput,
+				summaryLine,
+				errorOutput: stderr,
+			});
 		});
 
 		child.on("error", (err) => {
@@ -417,18 +507,24 @@ async function runAgent(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			ctx.ui.setWidget(widgetId, []);
+			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setStatus("supervisor", "");
 			resolve({
 				output: `Failed to start pi: ${err.message}`,
 				success: false,
-				summary: `Failed to start pi: ${err.message}`,
+				agentName: agent.config.name,
+				toolCount: 0,
+				tokenCount: 0,
+				durationMs: Date.now() - startedAt,
+				textOutput: "",
+				summaryLine: `Failed to start: ${err.message}`,
+				errorOutput: err.message,
 			});
 		});
 	});
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────
+// ─── Output helpers ──────────────────────────────────────────────────
 
 function extractTextFromContent(content: any): string {
 	if (typeof content === "string") return content;
@@ -437,6 +533,37 @@ function extractTextFromContent(content: any): string {
 		.filter((b: any) => b.type === "text" && b.text)
 		.map((b: any) => b.text)
 		.join("\n");
+}
+
+/** Pull a one-line summary from the agent's text output */
+function extractSummaryLine(
+	textOutput: string,
+	success: boolean,
+	agentName: string,
+): string {
+	if (!textOutput) return success ? `${agentName} completed` : `${agentName} failed`;
+
+	// Look for completion markers
+	for (const marker of [
+		"ARCHITECTURE_COMPLETE",
+		"TEST_PLAN_COMPLETE",
+		"IMPLEMENTATION_COMPLETE",
+		"AUDIT_APPROVED",
+		"AUDIT_REJECTED",
+	]) {
+		if (textOutput.includes(marker)) {
+			return marker.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+		}
+	}
+
+	// Use first non-empty, non-tool line
+	const firstLine = textOutput.split("\n").find(
+		(l) => l.trim() && !l.startsWith("🔧") && !l.startsWith("📋") && !l.startsWith("💭"),
+	);
+	if (firstLine) {
+		return firstLine.trim().slice(0, 120);
+	}
+	return success ? `${agentName} completed` : `${agentName} failed`;
 }
 
 function countRejections(comments: any[]): number {
@@ -522,6 +649,78 @@ function determineNextStatus(
 // ─── Extension ───────────────────────────────────────────────────────
 
 export default function supervisor(pi: ExtensionAPI) {
+	// ── Message renderer: styled supervisor result ──────────────────
+
+	pi.registerMessageRenderer<SupervisorMessageDetails>("supervisor", (message, _options, theme) => {
+		const details = message.details as SupervisorMessageDetails | undefined;
+		// Fallback for old-format messages that only have content string
+		if (!details && typeof message.content === "string") {
+			return new Text(message.content, 1, 1);
+		}
+		if (!details) return new Text("(no details)", 1, 1);
+
+		const w = Math.max(40, getTermWidth() - 4);
+		const fit = (s: string) => truncateToWidth(s, w);
+
+		const c = new Container();
+		const statusColor = details.success ? "success" : "error";
+		const statusIcon = details.success ? "✓" : "✗";
+		const statusText = details.success ? "SUCCESS" : "FAILED";
+
+		// Header: status icon + agent name + status
+		c.addChild(new Text(
+			fit(`${theme.fg(statusColor, statusIcon)} ${theme.fg("toolTitle", boldText(theme, details.agentName))} — ${theme.fg(statusColor, statusText)}`),
+			1, 0,
+		));
+
+		// Stats line: tools, tokens, duration
+		const statsParts: string[] = [];
+		if (details.toolCount > 0) statsParts.push(`${details.toolCount} tool${details.toolCount === 1 ? "" : "s"}`);
+		if (details.tokenCount > 0) statsParts.push(`${formatTokens(details.tokenCount)} tokens`);
+		if (details.durationMs > 0) statsParts.push(formatDuration(details.durationMs));
+		if (statsParts.length > 0) {
+			c.addChild(new Spacer(1));
+			c.addChild(new Text(
+				fit(theme.fg("dim", statsParts.join(" · "))),
+				1, 0,
+			));
+		}
+
+		// Summary line
+		if (details.summaryLine) {
+			c.addChild(new Spacer(1));
+			c.addChild(new Text(
+				fit(theme.fg("dim", details.summaryLine)),
+				1, 0,
+			));
+		}
+
+		// Text output (trimmed for readability)
+		if (details.textOutput) {
+			c.addChild(new Spacer(1));
+			const outputPreview = details.textOutput.length > 800
+				? details.textOutput.slice(0, 800) + "\n...\n[output trimmed]"
+				: details.textOutput;
+			const outputLines = outputPreview.split("\n");
+			for (const line of outputLines.slice(0, 20)) {
+				c.addChild(new Text(
+					fit(theme.fg("muted", line || " ")),
+					1, 0,
+				));
+			}
+			if (outputLines.length > 20) {
+				c.addChild(new Text(
+					fit(theme.fg("dim", `... ${outputLines.length - 20} more lines`)),
+					1, 0,
+				));
+			}
+		}
+
+		return c;
+	});
+
+	// ── Slash command ───────────────────────────────────────────────
+
 	pi.registerCommand("supervisor", {
 		description: "Process a GitHub issue through the full Kanban pipeline",
 		handler: async (args, ctx) => {
@@ -723,33 +922,34 @@ export default function supervisor(pi: ExtensionAPI) {
 						);
 						result = await runAgent(agent, task, ctx);
 						usedRetry = true;
-						if (!result.success) {
-							ctx.ui.notify(
-								`Agent ${agent.config.name} failed after retry.`,
-								"error",
-							);
-							pi.sendMessage({
-								customType: "supervisor",
-								content: `## Agent: ${agent.config.name} — FAILED\n\n\`\`\`\n${result.summary || result.output}\n\`\`\``,
-								display: true,
-							});
-							break;
-						}
 					}
 
-					// Show output summary in chat on success (or retry success)
-					const statusLabel = usedRetry ? "SUCCESS (after retry)" : "SUCCESS";
-					const trimLen = 3000;
-					const trimmedOutput =
-						(result.summary || result.output).length > trimLen
-							? (result.summary || result.output).slice(0, trimLen) +
-								"\n...\n[output trimmed]"
-							: result.summary || result.output;
+					// Send structured result to chat (rendered by message renderer)
+					const statusLabel = !result.success
+						? "FAILED"
+						: usedRetry
+							? "SUCCESS (after retry)"
+							: "SUCCESS";
+
 					pi.sendMessage({
 						customType: "supervisor",
-						content: `## Agent: ${agent.config.name} — ${statusLabel}\n\n\`\`\`\n${trimmedOutput}\n\`\`\``,
+						content: `## Agent: ${result.agentName} — ${statusLabel}\n\n${result.textOutput || result.summaryLine}`,
 						display: true,
+						details: {
+							agentName: result.agentName,
+							success: result.success,
+							statusLabel,
+							toolCount: result.toolCount,
+							tokenCount: result.tokenCount,
+							durationMs: result.durationMs,
+							textOutput: result.textOutput,
+							summaryLine: result.summaryLine,
+						} satisfies SupervisorMessageDetails,
 					});
+
+					if (!result.success) {
+						break;
+					}
 
 					// Determine and apply next status
 					const nextStatus = determineNextStatus(
