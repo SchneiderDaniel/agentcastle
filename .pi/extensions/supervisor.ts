@@ -322,15 +322,8 @@ async function runAgent(
 		let tokenCount = 0;
 		let toolCount = 0;
 		const textOutputLines: string[] = [];
-		const recentOutput: string[] = [];
-		const MAX_RECENT = 20;
+		const fullLog: string[] = [];
 		let lastToolName: string | undefined;
-
-		const pushRecent = (line: string) => {
-			if (!line.trim()) return;
-			recentOutput.push(line.trim());
-			if (recentOutput.length > MAX_RECENT) recentOutput.shift();
-		};
 
 		let flushTimer: NodeJS.Timeout | null = null;
 
@@ -356,14 +349,6 @@ async function runAgent(
 				lines.push(`  ${statsParts.join(" · ")}`);
 			}
 
-			// Recent output tail (last few lines, trimmed)
-			const tail = recentOutput.slice(-5);
-			if (tail.length > 0) {
-				for (const line of tail) {
-					const w = Math.max(20, getTermWidth() - 4);
-					lines.push(`  ⎿ ${truncateToWidth(line, w - 3)}`);
-				}
-			}
 			return lines;
 		};
 
@@ -396,7 +381,12 @@ async function runAgent(
 							? JSON.stringify(ev.args).slice(0, 200)
 							: undefined;
 						lastToolName = ev.toolName;
-						pushRecent(`🔧 ${ev.toolName}`);
+						const logArgs = ev.args
+							? JSON.stringify(ev.args).slice(0, 200)
+							: "";
+						fullLog.push(
+							`🔧 ${ev.toolName}${logArgs ? ` ${logArgs}` : ""}`
+						);
 						scheduleFlush();
 						break;
 
@@ -404,7 +394,7 @@ async function runAgent(
 						toolCount++;
 						currentTool = undefined;
 						currentToolArgs = undefined;
-						pushRecent(`${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
+						fullLog.push(`${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
 						scheduleFlush();
 						break;
 
@@ -417,7 +407,12 @@ async function runAgent(
 							if (Array.isArray(msg.content)) {
 								for (const block of msg.content) {
 									if (block.type === "thinking" && block.thinking) {
-										pushRecent("💭 thinking...");
+										const thinkingText = typeof block.thinking === "string"
+											? block.thinking
+											: JSON.stringify(block.thinking).slice(0, 500);
+										for (const t of thinkingText.split("\n")) {
+											if (t.trim()) fullLog.push(`💭 ${t.slice(0, 200)}`);
+										}
 									}
 								}
 							}
@@ -425,7 +420,7 @@ async function runAgent(
 							if (text && text.trim()) {
 								textOutputLines.push(text.trim());
 								for (const t of text.split("\n")) {
-									if (t.trim()) pushRecent(t);
+									if (t.trim()) fullLog.push(t);
 								}
 							}
 							if (msg.usage) {
@@ -437,9 +432,16 @@ async function runAgent(
 							const resultText = extractTextFromContent(msg.content);
 							const label = msg.toolName || lastToolName || "tool";
 							if (resultText && resultText.trim()) {
-								pushRecent(
-									`📋 ${label}: ${resultText.split("\n")[0]?.slice(0, 120)}`,
+								const lines = resultText.split("\n");
+								fullLog.push(
+									`📋 ${label}: ${lines[0]?.slice(0, 300) || "(no output)"}`
 								);
+								for (let i = 1; i < Math.min(lines.length, 6); i++) {
+									if (lines[i].trim())
+										fullLog.push(`   ${lines[i].slice(0, 200)}`);
+								}
+							} else {
+								fullLog.push(`📋 ${label}: (no output)`);
 							}
 							lastToolName = undefined;
 							scheduleFlush();
@@ -478,7 +480,7 @@ async function runAgent(
 			}
 
 			const durationMs = Date.now() - startedAt;
-			const textOutput = textOutputLines.join("\n").trim();
+			const textOutput = fullLog.join("\n").trim();
 			const rawOutput = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
 			const success = code === 0;
 
@@ -695,22 +697,27 @@ export default function supervisor(pi: ExtensionAPI) {
 			));
 		}
 
-		// Text output (trimmed for readability)
+		// Text output (full, no truncation, color-coded by event type)
 		if (details.textOutput) {
 			c.addChild(new Spacer(1));
-			const outputPreview = details.textOutput.length > 800
-				? details.textOutput.slice(0, 800) + "\n...\n[output trimmed]"
-				: details.textOutput;
-			const outputLines = outputPreview.split("\n");
-			for (const line of outputLines.slice(0, 20)) {
+			const outputLines = details.textOutput.split("\n");
+			for (const line of outputLines) {
+				let styledLine: string;
+				if (line.startsWith("🔧 ")) {
+					styledLine = theme.fg("toolTitle", line);
+				} else if (line.startsWith("✓ ")) {
+					styledLine = theme.fg("success", line);
+				} else if (line.startsWith("✗ ")) {
+					styledLine = theme.fg("error", line);
+				} else if (line.startsWith("💭 ")) {
+					styledLine = theme.fg("dim", line);
+				} else if (line.startsWith("📋 ")) {
+					styledLine = theme.fg("dim", line);
+				} else {
+					styledLine = line;
+				}
 				c.addChild(new Text(
-					fit(theme.fg("muted", line || " ")),
-					1, 0,
-				));
-			}
-			if (outputLines.length > 20) {
-				c.addChild(new Text(
-					fit(theme.fg("dim", `... ${outputLines.length - 20} more lines`)),
+					fit(styledLine || " "),
 					1, 0,
 				));
 			}
