@@ -255,24 +255,52 @@ async function runAgent(
 		let rawStdout = "";
 		let stderr = "";
 		let jsonBuffer = "";
-		let widgetLines: string[] = [];
-		const MAX_WIDGET_LINES = 80;
-		// Build readable summary for final output
-		const summaryParts: string[] = [];
 
-		const pushWidget = (line: string) => {
-			if (
-				line === "" &&
-				widgetLines.length > 0 &&
-				widgetLines[widgetLines.length - 1] === ""
-			)
-				return;
-			widgetLines.push(line);
-			if (widgetLines.length > MAX_WIDGET_LINES) {
-				widgetLines = widgetLines.slice(-MAX_WIDGET_LINES);
-			}
-			ctx.ui.setWidget(widgetId, widgetLines);
+		// Progress state (like pi-subagents)
+		const recentOutput: string[] = [];
+		const MAX_RECENT = 40;
+		let currentTool: string | undefined;
+		let tokenCount = 0;
+		let dirty = false;
+		const assistantMessages: string[] = [];
+
+		const pushRecent = (line: string) => {
+			if (!line.trim()) return;
+			recentOutput.push(line.trim());
+			if (recentOutput.length > MAX_RECENT) recentOutput.shift();
+			dirty = true;
 		};
+
+		const setCurrentTool = (tool: string | undefined) => {
+			currentTool = tool;
+			dirty = true;
+		};
+
+		let flushTimer: NodeJS.Timeout | null = null;
+		const FLUSH_MS = 250;
+
+		const flushWidget = () => {
+			if (flushTimer) {
+				clearTimeout(flushTimer);
+				flushTimer = null;
+			}
+			const lines: string[] = [];
+			if (currentTool) lines.push(`🔧 Running: ${currentTool}`);
+			if (tokenCount > 0) lines.push(`📊 ${tokenCount} tokens`);
+			if (recentOutput.length > 0) {
+				if (lines.length > 0) lines.push("");
+				lines.push(...recentOutput);
+			}
+			ctx.ui.setWidget(widgetId, lines);
+			dirty = false;
+		};
+
+		const scheduleFlush = () => {
+			if (!dirty) return;
+			if (!flushTimer) flushTimer = setTimeout(flushWidget, FLUSH_MS);
+		};
+
+		const flushNow = () => flushWidget();
 
 		const processJsonLine = (line: string) => {
 			if (!line.trim()) return;
@@ -280,59 +308,64 @@ async function runAgent(
 				const ev = JSON.parse(line);
 				switch (ev.type) {
 					case "session":
-						break; // skip header
-					case "message_start":
-						if (ev.message?.role === "assistant") {
-							pushWidget("");
-							summaryParts.push("");
-						}
 						break;
 					case "message_update": {
 						const delta = ev.assistantMessageEvent;
 						if (!delta) break;
 						if (delta.type === "text_delta" && delta.delta) {
-							if (widgetLines.length === 0) pushWidget("");
-							widgetLines[widgetLines.length - 1] += delta.delta;
 							if (
-								summaryParts.length === 0 ||
-								summaryParts[summaryParts.length - 1]?.startsWith("🔧")
+								recentOutput.length === 0 ||
+								recentOutput[recentOutput.length - 1]?.startsWith("🔧")
 							) {
-								summaryParts.push(delta.delta);
+								recentOutput.push(delta.delta);
 							} else {
-								summaryParts[summaryParts.length - 1] += delta.delta;
+								recentOutput[recentOutput.length - 1] += delta.delta;
 							}
-							ctx.ui.setWidget(widgetId, widgetLines);
-						} else if (delta.type === "thinking_delta" && delta.delta) {
-							pushWidget(`💭 ${delta.delta.trim()}`);
+							dirty = true;
+							scheduleFlush();
 						} else if (delta.type === "tool_call_start") {
-							const line = `🔧 ${delta.name}(${JSON.stringify(delta.args || {}).slice(0, 120)})`;
-							pushWidget(line);
-							summaryParts.push(line);
+							setCurrentTool(
+								`${delta.name}(${JSON.stringify(delta.args || {}).slice(0, 100)})`,
+							);
+							pushRecent(
+								`🔧 ${delta.name}(${JSON.stringify(delta.args || {}).slice(0, 120)})`,
+							);
 						}
 						break;
 					}
-					case "tool_execution_start": {
-						const line = `⏳ ${ev.toolName}...`;
-						pushWidget(line);
+					case "tool_execution_start":
+						setCurrentTool(ev.toolName || "tool");
 						break;
-					}
 					case "tool_execution_end": {
 						const icon = ev.isError ? "❌" : "✅";
-						const line = `${icon} ${ev.toolName} done`;
-						pushWidget(line);
+						setCurrentTool(undefined);
+						pushRecent(`${icon} ${ev.toolName} done`);
+						flushNow();
 						break;
 					}
-					case "turn_end":
-					case "agent_end":
-						break; // ignored for widget
-					case "message_end":
-						if (ev.message?.role === "assistant") {
-							pushWidget("");
+					case "message_end": {
+						const msg = ev.message;
+						if (!msg) break;
+						if (msg.role === "assistant") {
+							const text = extractTextFromContent(msg.content);
+							if (text) {
+								assistantMessages.push(text);
+								for (const t of text.split("\n")) pushRecent(t);
+							}
+							if (msg.usage) {
+								tokenCount =
+									msg.usage.totalTokens || msg.usage.input + msg.usage.output;
+							}
+							flushNow();
 						}
+						break;
+					}
+					case "agent_end":
+					case "turn_end":
 						break;
 				}
 			} catch {
-				// non-JSON interspersed output (rare)
+				// non-JSON stdout lines
 			}
 		};
 
@@ -350,18 +383,30 @@ async function runAgent(
 		});
 
 		child.on("close", (code) => {
-			// flush remaining buffer
 			if (jsonBuffer.trim()) processJsonLine(jsonBuffer);
-			ctx.ui.setWidget(widgetId, []);
+			if (flushTimer) {
+				clearTimeout(flushTimer);
+				flushTimer = null;
+			}
+			const finalLines: string[] = [];
+			if (currentTool) finalLines.push(`🔧 Running: ${currentTool}`);
+			if (tokenCount > 0) finalLines.push(`📊 ${tokenCount} tokens total`);
+			if (assistantMessages.length > 0) {
+				finalLines.push("");
+				finalLines.push(...assistantMessages);
+			}
+			ctx.ui.setWidget(widgetId, finalLines);
 			ctx.ui.setStatus("supervisor", "");
-			// Build readable summary from collected parts
-			const readable = summaryParts.join("\n").trim();
-			// rawStdout for marker detection, readable for display
+			const readable = assistantMessages.join("\n\n").trim();
 			const output = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
 			resolve({ output, success: code === 0, summary: readable || output });
 		});
 
 		child.on("error", (err) => {
+			if (flushTimer) {
+				clearTimeout(flushTimer);
+				flushTimer = null;
+			}
 			ctx.ui.setWidget(widgetId, []);
 			ctx.ui.setStatus("supervisor", "");
 			resolve({
@@ -371,6 +416,17 @@ async function runAgent(
 			});
 		});
 	});
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+
+function extractTextFromContent(content: any): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((b: any) => b.type === "text" && b.text)
+		.map((b: any) => b.text)
+		.join("\n");
 }
 
 function countRejections(comments: any[]): number {
