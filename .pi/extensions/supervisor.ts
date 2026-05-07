@@ -261,23 +261,20 @@ async function runAgent(
 		const MAX_RECENT = 40;
 		let currentTool: string | undefined;
 		let tokenCount = 0;
-		let dirty = false;
-		const assistantMessages: string[] = [];
+		const summaryLines: string[] = [];
+		let lastToolCall: string | undefined;
 
 		const pushRecent = (line: string) => {
 			if (!line.trim()) return;
 			recentOutput.push(line.trim());
 			if (recentOutput.length > MAX_RECENT) recentOutput.shift();
-			dirty = true;
 		};
 
 		const setCurrentTool = (tool: string | undefined) => {
 			currentTool = tool;
-			dirty = true;
 		};
 
 		let flushTimer: NodeJS.Timeout | null = null;
-		const FLUSH_MS = 250;
 
 		const flushWidget = () => {
 			if (flushTimer) {
@@ -292,12 +289,6 @@ async function runAgent(
 				lines.push(...recentOutput);
 			}
 			ctx.ui.setWidget(widgetId, lines);
-			dirty = false;
-		};
-
-		const scheduleFlush = () => {
-			if (!dirty) return;
-			if (!flushTimer) flushTimer = setTimeout(flushWidget, FLUSH_MS);
 		};
 
 		const flushNow = () => flushWidget();
@@ -309,37 +300,17 @@ async function runAgent(
 				switch (ev.type) {
 					case "session":
 						break;
-					case "message_update": {
-						const delta = ev.assistantMessageEvent;
-						if (!delta) break;
-						if (delta.type === "text_delta" && delta.delta) {
-							if (
-								recentOutput.length === 0 ||
-								recentOutput[recentOutput.length - 1]?.startsWith("🔧")
-							) {
-								recentOutput.push(delta.delta);
-							} else {
-								recentOutput[recentOutput.length - 1] += delta.delta;
-							}
-							dirty = true;
-							scheduleFlush();
-						} else if (delta.type === "tool_call_start") {
-							setCurrentTool(
-								`${delta.name}(${JSON.stringify(delta.args || {}).slice(0, 100)})`,
-							);
-							pushRecent(
-								`🔧 ${delta.name}(${JSON.stringify(delta.args || {}).slice(0, 120)})`,
-							);
-						}
-						break;
-					}
 					case "tool_execution_start":
 						setCurrentTool(ev.toolName || "tool");
+						lastToolCall = ev.toolName
+							? `${ev.toolName} ${JSON.stringify(ev.args || {}).slice(0, 200)}`
+							: undefined;
+						pushRecent(`🔧 ${ev.toolName}`);
 						break;
 					case "tool_execution_end": {
 						const icon = ev.isError ? "❌" : "✅";
 						setCurrentTool(undefined);
-						pushRecent(`${icon} ${ev.toolName} done`);
+						pushRecent(`${icon} ${ev.toolName}`);
 						flushNow();
 						break;
 					}
@@ -347,21 +318,60 @@ async function runAgent(
 						const msg = ev.message;
 						if (!msg) break;
 						if (msg.role === "assistant") {
+							// Capture thinking and tool calls from content blocks
+							if (Array.isArray(msg.content)) {
+								for (const block of msg.content) {
+									if (block.type === "thinking" && block.thinking) {
+										const t = block.thinking.trim();
+										if (t) {
+											summaryLines.push(
+												`💭 ${t.length > 300 ? t.slice(0, 300) + "..." : t}`,
+											);
+											pushRecent(`💭 thinking...`);
+										}
+									}
+									if (block.type === "toolCall" && block.name) {
+										lastToolCall = `${block.name} ${JSON.stringify(block.arguments || {}).slice(0, 200)}`;
+										summaryLines.push(`🔧 ${lastToolCall}`);
+									}
+								}
+							}
+							// Capture text
 							const text = extractTextFromContent(msg.content);
-							if (text) {
-								assistantMessages.push(text);
-								for (const t of text.split("\n")) pushRecent(t);
+							if (text && text.trim()) {
+								summaryLines.push(text.trim());
+								for (const t of text.split("\n")) {
+									if (t.trim()) pushRecent(t);
+								}
 							}
 							if (msg.usage) {
 								tokenCount =
 									msg.usage.totalTokens || msg.usage.input + msg.usage.output;
 							}
 							flushNow();
+						} else if (msg.role === "toolResult") {
+							// Capture tool result (truncated)
+							const resultText = extractTextFromContent(msg.content);
+							const label =
+								msg.toolName || lastToolCall?.split(" ")[0] || "tool";
+							if (resultText && resultText.trim()) {
+								const truncated =
+									resultText.length > 500
+										? resultText.slice(0, 500) + "..."
+										: resultText;
+								const prefix = msg.isError ? "❌" : "📋";
+								summaryLines.push(
+									`${prefix} ${label}: ${truncated.split("\n")[0]?.slice(0, 120)}`,
+								);
+							}
+							lastToolCall = undefined;
 						}
 						break;
 					}
 					case "agent_end":
 					case "turn_end":
+					case "message_update":
+						// delta events captured via message_end, skip for widget
 						break;
 				}
 			} catch {
@@ -391,13 +401,13 @@ async function runAgent(
 			const finalLines: string[] = [];
 			if (currentTool) finalLines.push(`🔧 Running: ${currentTool}`);
 			if (tokenCount > 0) finalLines.push(`📊 ${tokenCount} tokens total`);
-			if (assistantMessages.length > 0) {
+			if (summaryLines.length > 0) {
 				finalLines.push("");
-				finalLines.push(...assistantMessages);
+				finalLines.push(...summaryLines.slice(-40));
 			}
 			ctx.ui.setWidget(widgetId, finalLines);
 			ctx.ui.setStatus("supervisor", "");
-			const readable = assistantMessages.join("\n\n").trim();
+			const readable = summaryLines.join("\n").trim();
 			const output = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
 			resolve({ output, success: code === 0, summary: readable || output });
 		});
