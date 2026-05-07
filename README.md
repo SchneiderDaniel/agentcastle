@@ -16,7 +16,6 @@ Agentcastle is a pre-configured AI coding harness that gives the [Pi coding agen
 - **Sandboxed execution** — AI commands run in an isolated Daytona container, not on your host
 - **Codebase knowledge graph** — Persistent index of your entire codebase (66 languages, 14 query tools)
 - **Web crawling** — Three-tier fallback: local Chromium → Apify cloud → HTTP
-- **Real-time code feedback** — LSP diagnostics, secrets scan, auto-format, lint cascade via [pi-lens](https://pi.dev/packages/pi-lens)
 - **Session logging** — Every session saved as LLM-optimized markdown for later analysis
 - **Extensions-based** — Secure pi extensions, no MCP servers
 
@@ -38,7 +37,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 | `.pi/extensions/daytona-sandbox.ts` | Sandbox command router + auto-recovery  |
 | `.pi/extensions/session-logger.ts`  | Session logging to markdown             |
 | `.pi/extensions/ask-user.ts`        | Interactive multiple-choice questions   |
-| `.pi/settings.json`                 | Provider config + pi-lens package       |
+| `.pi/settings.json`                 | Provider config                         |
 | `.pi/prompts/issue-cutter.md`       | Epic → sub-issues with layer labels     |
 | `.pi/prompts/issue-refinement.md`   | Socratic interview + MC refinement      |
 | `.pi/prompts/review.md`             | Code review prompt template             |
@@ -57,7 +56,6 @@ This repository contains the **configuration and extensions**. You clone it and 
 | GitHub CLI (gh)                 | Git operations from Pi                |
 | `@mariozechner/pi-coding-agent` | The agent itself (global npm install) |
 | `codebase-memory-mcp` binary    | Code intelligence engine              |
-| `pi-lens` (pi package)          | Real-time code feedback               |
 | `~/.agent_env` file             | API keys (Apify token, etc.)          |
 | `~/.bashrc` auto-start block    | Docker + env loading on WSL boot      |
 
@@ -67,16 +65,15 @@ This repository contains the **configuration and extensions**. You clone it and 
 
 ## Features
 
-| Category             | Capability                                                                                                         |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 🔒 **Sandbox**       | Daytona container isolates all AI-executed commands. Host file ops still work. Auto-recovery if sandbox stops.     |
-| 🧠 **Code Intel**    | 14 tools: search, trace, query, overview, schema, snippet, grep, change detection, ADR management, trace ingestion |
-| 🕷️ **Web Crawl**     | `web_crawl` tool: local crawl4ai (real Chromium) → Apify cloud actor → direct HTTP + regex extraction              |
-| 🔍 **Code Feedback** | LSP diagnostics, secrets scan (blocking), tree-sitter rules, ast-grep security/correctness, format-on-save         |
-| 📝 **Session Log**   | Full conversation + thinking blocks + tool calls saved as markdown + metadata JSON                                 |
-| 🦴 **Caveman Mode**  | Token-efficient communication via `AGENTS.md` — active in every session                                            |
-| 📋 **SBOM**          | Full software bill of materials included in this README                                                            |
-| 🧩 **Extensions**    | Auto-discovered from `.pi/extensions/`. No config files, no MCP servers.                                           |
+| Category            | Capability                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 🔒 **Sandbox**      | Daytona container isolates all AI-executed commands. Host file ops still work. Auto-recovery if sandbox stops.     |
+| 🧠 **Code Intel**   | 14 tools: search, trace, query, overview, schema, snippet, grep, change detection, ADR management, trace ingestion |
+| 🕷️ **Web Crawl**    | `web_crawl` tool: local crawl4ai (real Chromium) → Apify cloud actor → direct HTTP + regex extraction              |
+| 📝 **Session Log**  | Full conversation + thinking blocks + tool calls saved as markdown + metadata JSON                                 |
+| 🦴 **Caveman Mode** | Token-efficient communication via `AGENTS.md` — active in every session                                            |
+| 📋 **SBOM**         | Full software bill of materials included in this README                                                            |
+| 🧩 **Extensions**   | Auto-discovered from `.pi/extensions/`. No config files, no MCP servers.                                           |
 
 ---
 
@@ -116,7 +113,6 @@ pi
   - [Why extensions instead of MCP?](#why-extensions-instead-of-mcp)
   - [Extensions](#extensions)
   - [Codebase Intelligence](#codebase-intelligence)
-  - [Real-Time Code Feedback (pi-lens)](#real-time-code-feedback-pi-lens)
 - [📦 Daily Usage](#daily-usage)
   - [Workflows](#workflows)
   - [Context & Templates](#context--templates)
@@ -258,7 +254,6 @@ Set the default provider for this project in `.pi/settings.json`:
 
 ```json
 {
-  "packages": ["npm:pi-lens"],
   "defaultProvider": "opencode-go"
 }
 ```
@@ -297,10 +292,10 @@ Pi lives in Zed's integrated terminal (`Ctrl + ~`). Set the terminal profile to 
 │  ┌────────────────────────────────────────┐  │
 │  │  Pi TUI (Terminal)                      │  │
 │  │  ┌──────┐  ┌──────┐  ┌──────────────┐  │  │
-│  │  │pi-lens│  │Exts  │  │AI Provider   │  │  │
-│  │  │LSP    │  │.pi/  │  │OpenCode Go   │  │  │
-│  │  │lint   │  │exts/ │  │Anthropic/... │  │  │
-│  │  └──────┘  └──┬───┘  └──────────────┘  │  │
+│  │  │Exts  │  │AI Provider   │  │  │
+│  │  │.pi/  │  │OpenCode Go   │  │  │
+│  │  │exts/ │  │Anthropic/... │  │  │
+│  │  └──┬───┘  └──────────────┘  │  │
 │  │               │                          │  │
 │  └───────────────┼──────────────────────────┘  │
 └──────────────────┼─────────────────────────────┘
@@ -419,42 +414,6 @@ Uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — 
 
 `.cbmignore` in the project root excludes `.pi/chromium-deps/` and `.pi/crawl4ai-venv/` from indexing. Add patterns in gitignore syntax for vendored code, generated files, or large assets.
 
-### Real-Time Code Feedback (pi-lens)
-
-[pi-lens](https://pi.dev/packages/pi-lens) hooks into every write/edit for inline feedback.
-
-```bash
-pi install npm:pi-lens -l
-```
-
-| Hook              | Action                                                                                                                                             |
-| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **write/edit**    | Secrets scan (blocking), auto-format, auto-fix, LSP sync, dispatch lint (LSP + tree-sitter + ast-grep + fact rules + linters), cascade diagnostics |
-| **agent_end**     | Deferred formatting, summary notification                                                                                                          |
-| **session_start** | Reset state, detect language profile, warm caches, LSP warm-files, tool hints                                                                      |
-| **turn_end**      | Impact cascade, deferred findings, debt tracking                                                                                                   |
-
-#### Commands
-
-| Command                   | Purpose                            |
-| ------------------------- | ---------------------------------- |
-| `/lens-booboo`            | Full quality report                |
-| `/lens-health`            | Runtime health, latency, telemetry |
-| `/lens-tools`             | Tool installation status           |
-| `/lens-tdi`               | Technical Debt Index               |
-| `/lens-allow-edit <path>` | Override read-guard for one edit   |
-
-#### Optional Flags
-
-```bash
-pi --no-lsp           # Disable LSP diagnostics
-pi --no-autoformat    # Skip auto-formatting
-pi --immediate-format # Format per-edit instead of deferred
-pi --no-autofix       # Skip auto-fix
-pi --no-tests         # Skip test runner
-pi --no-delta         # Show all diagnostics, not just new ones
-```
-
 ---
 
 ## 📦 Daily Usage
@@ -516,14 +475,7 @@ pi "Respond with exactly one word: 'Operational'."
 
 _Expected:_ Index reports `"status":"indexed"` with node/edge counts. Search returns function names.
 
-### 5. pi-lens
-
-```bash
-cat .pi/settings.json | grep pi-lens
-pi list                      # pi-lens should appear
-```
-
-### 6. Execution Routing (Acid Test)
+### 5. Execution Routing (Acid Test)
 
 **Sandbox isolation:**
 
@@ -568,8 +520,6 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | tslib                                      | 2.8.1    | 0BSD         | transitive | [github.com/microsoft/tslib](https://github.com/microsoft/tslib)                                         |
 | yoctocolors                                | 2.1.2    | MIT          | transitive | [github.com/sindresorhus/yoctocolors](https://github.com/sindresorhus/yoctocolors)                       |
 | std-env                                    | 3.10.0   | MIT          | transitive | [github.com/unjs/std-env](https://github.com/unjs/std-env)                                               |
-| **Pi Packages**                            |          |              |            |                                                                                                          |
-| pi-lens                                    | latest   | MIT          | plugin     | [pi.dev/packages/pi-lens](https://pi.dev/packages/pi-lens)                                               |
 | **System Runtimes**                        |          |              |            |                                                                                                          |
 | Node.js                                    | ≥22      | MIT          | system     | [nodejs.org](https://nodejs.org)                                                                         |
 | Python 3                                   | ≥3.10    | PSF          | system     | [python.org](https://python.org)                                                                         |
@@ -689,7 +639,6 @@ This project takes sandbox isolation seriously. AI commands execute in a Daytona
 - ✅ All AI-executed commands run in an isolated container
 - ✅ Host file operations are path-guarded (no escape outside project root)
 - ✅ No MCP servers — only pi extensions (no network-exposed tool servers)
-- ✅ Secrets scan on every write/edit (via pi-lens)
 - ✅ API keys loaded from `~/.agent_env`, never committed
 
 ---
@@ -710,7 +659,6 @@ Built on top of these excellent projects:
 - [Daytona](https://daytona.io) — Sandboxed execution environment
 - [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — Code intelligence engine
 - [crawl4ai](https://github.com/unclecode/crawl4ai) — LLM-friendly web crawler
-- [pi-lens](https://pi.dev/packages/pi-lens) — Real-time code feedback
 - [Zed](https://zed.dev) — The editor
 - [Caveman](https://github.com/JuliusBrussee/caveman) — Token-efficient AI communication protocol
 - [pi-caveman](https://github.com/jonjonrankin/pi-caveman) — Multi-level caveman mode for Pi
