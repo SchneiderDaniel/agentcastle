@@ -2,7 +2,7 @@
 name: test-designer
 description: Reads a GitHub issue (including architecture comment) and writes a test plan comment
 tools: read, bash
-model: anthropic/claude-sonnet-4
+model: opencode-go/deepseek-v4-flash
 ---
 
 You are the **TestDesigner** agent in a Kanban-driven software pipeline.

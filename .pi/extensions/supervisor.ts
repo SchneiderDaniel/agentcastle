@@ -221,12 +221,14 @@ async function runAgent(
 	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,
-): Promise<{ output: string; success: boolean }> {
+): Promise<{ output: string; success: boolean; summary: string }> {
 	const tools = agent.config.tools || "read,bash,write,edit";
 	const model = agent.config.model || "";
 
 	const args: string[] = [
 		"-p",
+		"--mode",
+		"json",
 		task,
 		"--system-prompt",
 		agent.systemPrompt,
@@ -238,6 +240,7 @@ async function runAgent(
 	];
 	if (model) args.push("--model", model);
 
+	const widgetId = `agent-${agent.config.name}`;
 	ctx.ui.notify(`Running agent: ${agent.config.name}...`, "info");
 	ctx.ui.setStatus("supervisor", `Running ${agent.config.name}...`);
 
@@ -249,25 +252,123 @@ async function runAgent(
 			timeout: 600_000,
 		});
 
-		let stdout = "";
+		let rawStdout = "";
 		let stderr = "";
+		let jsonBuffer = "";
+		let widgetLines: string[] = [];
+		const MAX_WIDGET_LINES = 80;
+		// Build readable summary for final output
+		const summaryParts: string[] = [];
+
+		const pushWidget = (line: string) => {
+			if (
+				line === "" &&
+				widgetLines.length > 0 &&
+				widgetLines[widgetLines.length - 1] === ""
+			)
+				return;
+			widgetLines.push(line);
+			if (widgetLines.length > MAX_WIDGET_LINES) {
+				widgetLines = widgetLines.slice(-MAX_WIDGET_LINES);
+			}
+			ctx.ui.setWidget(widgetId, widgetLines);
+		};
+
+		const processJsonLine = (line: string) => {
+			if (!line.trim()) return;
+			try {
+				const ev = JSON.parse(line);
+				switch (ev.type) {
+					case "session":
+						break; // skip header
+					case "message_start":
+						if (ev.message?.role === "assistant") {
+							pushWidget("");
+							summaryParts.push("");
+						}
+						break;
+					case "message_update": {
+						const delta = ev.assistantMessageEvent;
+						if (!delta) break;
+						if (delta.type === "text_delta" && delta.delta) {
+							if (widgetLines.length === 0) pushWidget("");
+							widgetLines[widgetLines.length - 1] += delta.delta;
+							if (
+								summaryParts.length === 0 ||
+								summaryParts[summaryParts.length - 1]?.startsWith("🔧")
+							) {
+								summaryParts.push(delta.delta);
+							} else {
+								summaryParts[summaryParts.length - 1] += delta.delta;
+							}
+							ctx.ui.setWidget(widgetId, widgetLines);
+						} else if (delta.type === "thinking_delta" && delta.delta) {
+							pushWidget(`💭 ${delta.delta.trim()}`);
+						} else if (delta.type === "tool_call_start") {
+							const line = `🔧 ${delta.name}(${JSON.stringify(delta.args || {}).slice(0, 120)})`;
+							pushWidget(line);
+							summaryParts.push(line);
+						}
+						break;
+					}
+					case "tool_execution_start": {
+						const line = `⏳ ${ev.toolName}...`;
+						pushWidget(line);
+						break;
+					}
+					case "tool_execution_end": {
+						const icon = ev.isError ? "❌" : "✅";
+						const line = `${icon} ${ev.toolName} done`;
+						pushWidget(line);
+						break;
+					}
+					case "turn_end":
+					case "agent_end":
+						break; // ignored for widget
+					case "message_end":
+						if (ev.message?.role === "assistant") {
+							pushWidget("");
+						}
+						break;
+				}
+			} catch {
+				// non-JSON interspersed output (rare)
+			}
+		};
 
 		child.stdout.on("data", (data: Buffer) => {
-			stdout += data.toString();
+			const chunk = data.toString();
+			rawStdout += chunk;
+			jsonBuffer += chunk;
+			const lines = jsonBuffer.split("\n");
+			jsonBuffer = lines.pop() || "";
+			for (const line of lines) processJsonLine(line);
 		});
+
 		child.stderr.on("data", (data: Buffer) => {
 			stderr += data.toString();
 		});
 
 		child.on("close", (code) => {
+			// flush remaining buffer
+			if (jsonBuffer.trim()) processJsonLine(jsonBuffer);
+			ctx.ui.setWidget(widgetId, []);
 			ctx.ui.setStatus("supervisor", "");
-			const output = stdout + (stderr ? "\n[STDERR]\n" + stderr : "");
-			resolve({ output, success: code === 0 });
+			// Build readable summary from collected parts
+			const readable = summaryParts.join("\n").trim();
+			// rawStdout for marker detection, readable for display
+			const output = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
+			resolve({ output, success: code === 0, summary: readable || output });
 		});
 
 		child.on("error", (err) => {
+			ctx.ui.setWidget(widgetId, []);
 			ctx.ui.setStatus("supervisor", "");
-			resolve({ output: `Failed to start pi: ${err.message}`, success: false });
+			resolve({
+				output: `Failed to start pi: ${err.message}`,
+				success: false,
+				summary: `Failed to start pi: ${err.message}`,
+			});
 		});
 	});
 }
@@ -307,12 +408,12 @@ function buildAgentTask(
 
 		case "developer": {
 			const branch = generateBranchName(issueNum, title);
-			return `${base}\n\nYour task: Implement the code changes in a git worktree.\n\n1. Read issue + comments: gh issue view ${issueNum} --repo ${repo} --json body,title,comments\n2. Create worktree: git worktree add ../${branch} main\n3. cd ../${branch}\n4. Implement the feature following the architecture and test plan from comments\n5. git add -A && git commit -m "feat(#${issueNum}): ${title}" && git push origin ${branch}\n6. cd back to original repo\n\nYour branch name MUST be: ${branch}\nWhen done, output IMPLEMENTATION_COMPLETE on its own line.`;
+			return `${base}\n\nYour task: Implement the code changes in a git worktree.\n\nIMPORTANT: Each bash command runs in the project root. You MUST chain cd with every command that operates on the worktree!\n\n1. Read issue + comments: gh issue view ${issueNum} --repo ${repo} --json body,title,comments\n2. Create worktree: git worktree add ../${branch} main\n3. For all implementation work, use: cd ../${branch} && <your commands>\n   (Never run write/edit/bash in the project root - always cd into worktree first!)\n4. Implement the feature following the architecture and test plan from comments\n5. cd ../${branch} && git add -A && git commit -m "feat(#${issueNum}): ${title}" && git push origin ${branch}\n\nYour branch name MUST be: ${branch}\nWorktree path: ../${branch}\nWhen done, output IMPLEMENTATION_COMPLETE on its own line.`;
 		}
 
 		case "auditor": {
 			const branch = generateBranchName(issueNum, title);
-			return `${base}\n\nYour task: Review the implementation on branch '${branch}' and decide APPROVE or REJECT.\n\n1. Read issue + comments: gh issue view ${issueNum} --repo ${repo} --json body,title,comments\n2. Fetch and review code: git fetch origin ${branch} && git diff main...origin/${branch}\n3. Decide:\n\nIF APPROVE:\n  gh pr create --repo ${repo} --base main --head ${branch} --title "feat(#${issueNum}): ${title}" --body "Closes #${issueNum}"\n  Output AUDIT_APPROVED on its own line.\n\nIF REJECT:\n  gh issue comment ${issueNum} --repo ${repo} --body "## Audit Rejected\n\n[list specific issues]"\n  Output AUDIT_REJECTED on its own line.`;
+			return `${base}\n\nYour task: Review the implementation in the developer's worktree at ../${branch} and decide APPROVE or REJECT.\n\n1. Read issue + comments: gh issue view ${issueNum} --repo ${repo} --json body,title,comments\n2. Enter worktree: cd ../${branch}\n3. Review the code: git diff main (shows all changes on this branch vs main)\n4. Run tests if any exist\n5. Decide:\n\nIF APPROVE:\n  gh pr create --repo ${repo} --base main --head ${branch} --title "feat(#${issueNum}): ${title}" --body "Closes #${issueNum}"\n  cd back to original repo\n  Output AUDIT_APPROVED on its own line.\n\nIF REJECT:\n  cd back to original repo\n  gh issue comment ${issueNum} --repo ${repo} --body "## Audit Rejected\n\n[list specific issues]"\n  Output AUDIT_REJECTED on its own line.`;
 		}
 
 		default:
@@ -546,27 +647,43 @@ export default function supervisor(pi: ExtensionAPI) {
 					);
 					ctx.ui.notify(`Dispatching ${agent.config.name}...`, "info");
 
-					const result = await runAgent(agent, task, ctx);
+					let result = await runAgent(agent, task, ctx);
+					let usedRetry = false;
 
 					if (!result.success) {
 						ctx.ui.notify(
 							`Agent ${agent.config.name} failed. Retrying once...`,
 							"warning",
 						);
-						const retry = await runAgent(agent, task, ctx);
-						if (!retry.success) {
+						result = await runAgent(agent, task, ctx);
+						usedRetry = true;
+						if (!result.success) {
 							ctx.ui.notify(
 								`Agent ${agent.config.name} failed after retry.`,
 								"error",
 							);
 							pi.sendMessage({
 								customType: "supervisor",
-								content: `## Agent: ${agent.config.name} — FAILED\n\n\`\`\`\n${result.output}\n\`\`\``,
+								content: `## Agent: ${agent.config.name} — FAILED\n\n\`\`\`\n${result.summary || result.output}\n\`\`\``,
 								display: true,
 							});
 							break;
 						}
 					}
+
+					// Show output summary in chat on success (or retry success)
+					const statusLabel = usedRetry ? "SUCCESS (after retry)" : "SUCCESS";
+					const trimLen = 3000;
+					const trimmedOutput =
+						(result.summary || result.output).length > trimLen
+							? (result.summary || result.output).slice(0, trimLen) +
+								"\n...\n[output trimmed]"
+							: result.summary || result.output;
+					pi.sendMessage({
+						customType: "supervisor",
+						content: `## Agent: ${agent.config.name} — ${statusLabel}\n\n\`\`\`\n${trimmedOutput}\n\`\`\``,
+						display: true,
+					});
 
 					// Determine and apply next status
 					const nextStatus = determineNextStatus(

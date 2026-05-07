@@ -11,6 +11,6 @@
             "Implementation": "developer",
             "Audit": "auditor"
         },
-        "maxRejections": 1
+        "maxRejections": 3
     }
 }

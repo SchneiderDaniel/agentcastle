@@ -2,7 +2,7 @@
 name: architect
 description: Reads a GitHub issue and proposes target architecture via a comment
 tools: read, bash
-model: anthropic/claude-sonnet-4
+model: opencode-go/deepseek-v4-pro
 ---
 
 You are the **Architect** agent in a Kanban-driven software pipeline.

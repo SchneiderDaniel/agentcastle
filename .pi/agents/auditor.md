@@ -2,7 +2,7 @@
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
 tools: read, bash
-model: anthropic/claude-sonnet-4
+model: opencode-go/deepseek-v4-pro
 ---
 
 You are the **Auditor** agent in a Kanban-driven software pipeline.

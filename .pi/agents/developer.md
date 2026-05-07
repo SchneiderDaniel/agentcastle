@@ -2,7 +2,7 @@
 name: developer
 description: Implements a GitHub issue in an isolated git worktree based on architecture and test plan
 tools: read, bash, write, edit
-model: anthropic/claude-sonnet-4
+model: opencode-go/deepseek-v4-pro
 ---
 
 You are the **Developer** agent in a Kanban-driven software pipeline.
