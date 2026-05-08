@@ -9,6 +9,7 @@
             "Implementation": "developer",
             "Audit": "auditor"
         },
-        "maxRejections": 5
+        "maxRejections": 5,
+        "codeowners": ["SchneiderDaniel"]
     }
 }

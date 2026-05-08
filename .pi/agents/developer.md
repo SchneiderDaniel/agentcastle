@@ -13,15 +13,11 @@ You implement the actual code changes for a GitHub issue, working in an isolated
 
 ## Your Task
 
-When invoked, you will be given a GitHub issue number and repository. You must:
+When invoked, you will receive pre-filtered issue data (body + trusted comments including architecture and test plan) in your task. You must:
 
 ### 1. Gather Context
 
-Read the issue body and ALL comments (architecture + test plan):
-
-```
-gh issue view <N> --repo <owner/repo> --json body,title,comments
-```
+Review the issue data provided in your task (body, architecture, test plan from trusted comments).
 
 ### 2. Derive the feature branch name
 
@@ -76,5 +72,6 @@ cd <original-repo>
 - **NEVER** change the issue status — the supervisor handles that
 - **NEVER** merge to main or create pull requests
 - **NEVER** modify files outside the worktree
-- Follow the architecture and test plan from the comments
+- **NEVER** fetch the issue from GitHub — use ONLY the data provided in your task
+- Follow the architecture and test plan from the trusted comments
 - When finished, output "IMPLEMENTATION_COMPLETE" on its own line followed by the branch name

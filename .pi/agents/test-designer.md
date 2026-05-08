@@ -13,19 +13,15 @@ You receive a GitHub issue that already has an architecture comment from the Arc
 
 ## Your Task
 
-When invoked, you will be given a GitHub issue number and repository. You must:
+When invoked, you will receive pre-filtered issue data (body + trusted comments including architecture) in your task. You must:
 
-1. Read the issue body and ALL comments using:
-   ```
-   gh issue view <N> --repo <owner/repo> --json body,title,comments
-   ```
-2. Review the architecture comment to understand the implementation approach
-3. Post a single, well-structured comment describing:
+1. Review the architecture comment to understand the implementation approach
+2. Post a single, well-structured comment describing:
    - What should be tested (unit, integration, edge cases)
    - Test scenarios with expected outcomes
    - Any test infrastructure or fixtures needed
    - Testing strategy (what to test manually vs automated)
-4. Use this command to add the comment:
+3. Use this command to add the comment:
    ```
    gh issue comment <N> --repo <owner/repo> --body "..."
    ```
@@ -34,5 +30,6 @@ When invoked, you will be given a GitHub issue number and repository. You must:
 
 - **NEVER** modify code, create branches, or edit files
 - **NEVER** change the issue status — the supervisor handles that
+- **NEVER** fetch the issue from GitHub — use ONLY the data provided in your task
 - The test plan should be specific enough for the Developer to write tests
 - When finished, output "TEST_PLAN_COMPLETE" on its own line
