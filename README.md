@@ -110,6 +110,7 @@ pi
   - [Extensions](#extensions)
   - [Codebase Intelligence](#codebase-intelligence)
 - [📦 Daily Usage](#daily-usage)
+  - [Project Setup (one-time)](#project-setup-one-time)
   - [Workflows](#workflows)
   - [Context & Templates](#context--templates)
 - [📦 Verification](#verification)
@@ -392,6 +393,23 @@ Uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — 
 
 ## 📦 Daily Usage
 
+### Project Setup (one-time)
+
+Create a GitHub Project (v2) with Kanban statuses derived from your `.pi/settings.json`:
+
+```bash
+./scripts/setup-github-project.sh
+```
+
+The script:
+- Reads `supervisor.statusMapping` from `.pi/settings.json`
+- Prompts for a project name
+- Creates a GitHub Project under the `supervisor.repo` owner
+- Adds a `Status` single-select field with: **Backlog** → your custom statuses → **Done**
+- Writes the new project number back to `.pi/settings.json`
+
+Switch the project to **Board** layout (group by Status) in the browser for a full Kanban view.
+
 ### Workflows
 
 | Action                | Command                                                                                                                    |
@@ -591,3 +609,52 @@ Built on top of these excellent projects:
 - [Caveman](https://github.com/JuliusBrussee/caveman) — Token-efficient AI communication protocol
 - [pi-caveman](https://github.com/jonjonrankin/pi-caveman) — Multi-level caveman mode for Pi
 - [Matt Pocock's Skills](https://github.com/mattpocock/skills) — Inspiration for the `issue-refinement` prompt (grill-with-docs pattern)
+That is an impressive arsenal of models you have available. When building a multi-agent system, assigning the right "personalities" and strengths is crucial for the efficiency of your pipeline.
+
+Based on the capabilities of these models, here is the optimal lineup for your team.
+
+---
+
+## Optimal Agent-Model Assignment with OpenCode Go 
+
+| Agent | Recommended Model | Core Competency |
+| --- | --- | --- |
+| **Supervisor Agent** | **Qwen3.6 Plus** | Planning, Delegation & Reasoning |
+| **Architect** | **Kimi K2.6** | Long-Context System Design |
+| **Auditor** | **GLM-5.1** | Precision & Logical Consistency |
+| **Testdesigner** | **DeepSeek V4 Flash** | Speed & Logic Coverage |
+| **Developer (Python)** | **DeepSeek V4 Pro** | State-of-the-art Coding Performance |
+
+---
+
+## Detailed Reasoning
+
+### 1. Supervisor Agent: Qwen3.6 Plus
+
+The Supervisor needs to keep the big picture in mind.
+
+* **Why:** The Qwen3.6 series (especially Plus) shines with exceptionally high instruction-following capabilities and a balanced worldview. It must understand your intent and break it down into tasks that the other agents can process. Qwen is highly stable when it comes to generating reliable JSON outputs for inter-agent communication.
+
+### 2. Architect: Kimi K2.6
+
+An Architect must hold the entire codebase and all documentation "in its head" simultaneously.
+
+* **Why:** Kimi models are renowned for their massive context windows. The Architect needs to understand dependencies across hundreds of files. With K2.6, it can analyze the entire existing architecture without forgetting crucial details from the beginning of the prompt. It designs the skeleton that the Developer will later flesh out.
+
+### 3. Auditor: GLM-5.1
+
+The Auditor is your safety net. It must catch the errors that others overlook.
+
+* **Why:** GLM-5.1 (General Language Model) is known for its academic rigor and remarkably low hallucination rate. While other models might get "creatively" side-tracked, GLM-5.1 strictly adheres to facts and logic. This makes it perfect for reviewing code for security vulnerabilities, compliance issues, and hidden logical flaws.
+
+### 4. Testdesigner: DeepSeek V4 Flash
+
+Tests need to be generated quickly, accurately, and in large volumes.
+
+* **Why:** The Flash variant of DeepSeek V4 offers an unbeatable ratio of logic to speed. Since writing unit tests is often repetitive but logically demanding work, Flash is the most efficient choice here. It grasps Python logic instantly and generates comprehensive test suites in fractions of a second without bottlenecking the workflow.
+
+### 5. Developer (Python): DeepSeek V4 Pro
+
+This is where the heavy lifting gets done.
+
+* **Why:** DeepSeek V4 Pro is the gold standard for pure programming tasks. In Python benchmarks, it consistently performs exceptionally well. It perfectly handles modern libraries (like FastAPI, Pydantic v2, or complex data science stacks). The Pro version features deeper reasoning capabilities, ensuring the code doesn't just work, but is written in a clean, efficient, and truly "Pythonic" way.
