@@ -10,7 +10,7 @@ Split GitHub epic #$1 into small, ordered, independently testable sub-issues and
 ## Prerequisites
 
 - `gh` installed and authenticated (`gh auth status`).
-- `.pi/settings.json` must contain `projectRepo` set to `owner/repo` (e.g. `SchneiderDaniel/agentcastle-project`).
+- `.pi/settings.json` must contain `projectRepo` set to `owner/repo` (e.g. `SchneiderDaniel/agentcastle`).
 
 ## Step 0 — Read Configuration
 
