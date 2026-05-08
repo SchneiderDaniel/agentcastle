@@ -3,7 +3,7 @@ name: test-designer
 description: Reads a GitHub issue (including architecture comment) and writes a test plan comment
 tools: read, bash
 model: opencode-go/deepseek-v4-flash
-extensions: "caveman,crawl4ai"
+extensions: "caveman,crawl4ai,piignore"
 ---
 
 You are the **TestDesigner** agent in a Kanban-driven software pipeline.

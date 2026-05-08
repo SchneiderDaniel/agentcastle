@@ -3,7 +3,7 @@ name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
 tools: read, bash
 model: opencode-go/glm-5.1
-extensions: "caveman,crawl4ai"
+extensions: "caveman,crawl4ai,piignore"
 ---
 
 You are the **Auditor** agent in a Kanban-driven software pipeline.

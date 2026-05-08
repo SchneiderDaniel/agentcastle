@@ -3,7 +3,7 @@ name: developer
 description: Implements a GitHub issue in an isolated git worktree based on architecture and test plan
 tools: read, bash, write, edit
 model: opencode-go/deepseek-v4-pro
-extensions: "caveman,crawl4ai"
+extensions: "caveman,crawl4ai,piignore"
 ---
 
 You are the **Developer** agent in a Kanban-driven software pipeline.

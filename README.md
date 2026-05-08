@@ -1,7 +1,7 @@
 # Agentcastle: The Pi Stack
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Pi](https://img.shields.io/badge/Pi-%3E%3D0.72.1-6e3bf0)](https://pi.dev)
+[![Pi](https://img.shields.io/badge/Pi-%3E%3D0.74.0-6e3bf0)](https://pi.dev)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 **Secure, local-first AI development environment.**
@@ -30,20 +30,25 @@ This repository contains the **configuration and extensions**. You clone it and 
 
 | File/Path                           | What it is                              |
 | ----------------------------------- | --------------------------------------- |
-| `.pi/extensions/caveman.ts`         | Token-efficient communication protocol  |
-| `.pi/extensions/codebase-memory.ts` | Codebase knowledge graph (14 tools)     |
-| `.pi/extensions/crawl4ai.ts`        | Three-tier web crawler                  |
-| `.pi/extensions/search-graph.ts`    | Local AST graph search tool             |
-| `.pi/extensions/session-logger.ts`  | Session logging to markdown             |
-| `.pi/extensions/ask-user.ts`        | Interactive multiple-choice questions   |
-| `.pi/settings.json`                 | Provider config                         |
-| `.pi/prompts/issue-cutter.md`       | Epic → sub-issues with layer labels     |
-| `.pi/prompts/issue-refinement.md`   | Socratic interview + MC refinement      |
-| `.pi/prompts/review.md`             | Code review prompt template             |
-| `AGENTS.md`                         | Caveman protocol (active every session) |
-| `.cbmignore`                        | Codebase index exclusions               |
-| `package.json`                      | Project metadata + test script          |
-| `test/session-logger.test.mts`      | Session logger test                     |
+| `.pi/extensions/caveman.ts`              | Token-efficient communication protocol    |
+| `.pi/extensions/codebase-memory.ts`      | Codebase knowledge graph (14 tools)       |
+| `.pi/extensions/crawl4ai.ts`             | Three-tier web crawler                    |
+| `.pi/extensions/search-graph.ts`         | Local AST graph search tool               |
+| `.pi/extensions/session-logger.ts`       | Session logging to markdown               |
+| `.pi/extensions/ask-user.ts`             | Interactive multiple-choice questions     |
+| `.pi/extensions/supervisor.ts`           | Kanban-driven multi-agent orchestration   |
+| `.pi/agents/architect.md`               | Architect agent system prompt             |
+| `.pi/agents/developer.md`               | Developer agent system prompt             |
+| `.pi/agents/auditor.md`                 | Auditor agent system prompt               |
+| `.pi/agents/test-designer.md`           | TestDesigner agent system prompt          |
+| `.pi/settings.json`                      | Provider + supervisor config              |
+| `.pi/prompts/issue-cutter.md`            | Epic → sub-issues with layer labels       |
+| `.pi/prompts/issue-refinement.md`        | Socratic interview + MC refinement        |
+| `AGENTS.md`                              | Caveman protocol (active every session)   |
+| `.cbmignore`                             | Codebase index exclusions                 |
+| `package.json`                           | Project metadata + test script            |
+| `test/session-logger.test.mts`           | Session logger test                       |
+| `test/supervisor-extensions.test.mts`    | Supervisor extension resolution tests     |
 
 ### 🔧 You install once on your machine
 
@@ -70,7 +75,8 @@ This repository contains the **configuration and extensions**. You clone it and 
 | 📝 **Session Log**  | Full conversation + thinking blocks + tool calls saved as markdown + metadata JSON                                 |
 | 🦴 **Caveman Mode** | Token-efficient communication via `AGENTS.md` — active in every session                                            |
 | 📋 **SBOM**         | Full software bill of materials included in this README                                                            |
-| 🧩 **Extensions**   | Auto-discovered from `.pi/extensions/`. No config files, no MCP servers.                                           |
+| 🤖 **Multi-Agent**  | Kanban-driven pipeline: Supervisor dispatches Architect → TestDesigner → Developer → Auditor in loop |
+| 🧩 **Extensions**   | 7 extensions auto-discovered from `.pi/extensions/`. No config files, no MCP servers.                              |
 
 ---
 
@@ -108,9 +114,11 @@ pi
 - [📦 Architecture](#architecture)
   - [Why extensions instead of MCP?](#why-extensions-instead-of-mcp)
   - [Extensions](#extensions)
+  - [Agent Definitions](#agent-definitions)
   - [Codebase Intelligence](#codebase-intelligence)
 - [📦 Daily Usage](#daily-usage)
   - [Project Setup (one-time)](#project-setup-one-time)
+  - [Running the Supervisor](#running-the-supervisor)
   - [Workflows](#workflows)
   - [Context & Templates](#context--templates)
 - [📦 Verification](#verification)
@@ -318,12 +326,26 @@ Pi auto-discovers extensions from `.pi/extensions/` in your **project root**. No
 
 | Extension            | File                 | Purpose                                                                                                        |
 | -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Supervisor**       | `supervisor.ts`      | Kanban-driven multi-agent pipeline. Reads issue from GitHub project board, dispatches Architect → TestDesigner → Developer → Auditor in loop until Done. Registers `/supervisor <issue-number>` slash command. |
 | **Web Crawler**      | `crawl4ai.ts`        | Three-tier web crawling: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps.     |
 | **Codebase Memory**  | `codebase-memory.ts` | Wraps codebase-memory-mcp CLI. Auto-indexes on session start. 14 tools exposed.                                |
 | **Session Logger**   | `session-logger.ts`  | Logs sessions to `.pi/sessions/<id>/session.md` + `metadata.json`. Toggle with `/session-logger`.              |
 | **Caveman Protocol** | `caveman.ts`         | Token-efficient communication style. Active via `AGENTS.md`.                                                   |
 | **Ask User**         | `ask-user.ts`        | Interactive multiple-choice picker for AI-to-user questions. Uses `ctx.ui.select()` with arrow-key navigation. |
 | **Search Graph**     | `search-graph.ts`    | Local AST graph search via localhost:9749.                                                                     |
+
+### Agent Definitions
+
+Agents are defined as Markdown files in `.pi/agents/` with YAML frontmatter specifying their name, description, allowed tools, and model. The supervisor reads these definitions at runtime.
+
+| Agent              | File                   | Model                        | Tools                  |
+| ------------------ | ---------------------- | ---------------------------- | ---------------------- |
+| **Architect**      | `architect.md`         | `opencode-go/kimi-k2.6`      | `read`, `bash`         |
+| **Developer**      | `developer.md`         | `opencode-go/deepseek-v4-pro` | `read`, `bash`, `write`, `edit` |
+| **Auditor**        | `auditor.md`           | `opencode-go/glm-5.1`       | `read`, `bash`         |
+| **TestDesigner**   | `test-designer.md`     | `opencode-go/deepseek-v4-flash` | `read`, `bash`        |
+
+Each agent's system prompt defines its role in the Kanban pipeline. The supervisor reads the issue's status from the GitHub project board and dispatches the matching agent. See the [Supervisor workflow](#running-the-supervisor) below.
 
 ### Prompt Templates
 
@@ -387,7 +409,7 @@ Uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — 
 
 #### File Ignoring
 
-`.cbmignore` in the project root excludes `.pi/chromium-deps/` and `.pi/crawl4ai-venv/` from indexing. Add patterns in gitignore syntax for vendored code, generated files, or large assets.
+`.cbmignore` in the project root excludes `.pi/chromium-deps/`, `.pi/crawl4ai-venv/`, `node_modules/`, `.env`, `.agent_env`, `npm/`, and `tmp/` from indexing. Add patterns in gitignore syntax for vendored code, generated files, or large assets.
 
 ---
 
@@ -410,13 +432,32 @@ The script:
 
 Switch the project to **Board** layout in the browser and change **Group by** from the default `Status` to `Workflow` for a full Kanban view.
 
+### Running the Supervisor
+
+The supervisor processes GitHub issues through a Kanban pipeline:
+
+1. Create an issue in your GitHub repo (`supervisor.repo` in `.pi/settings.json`)
+2. Add it to the GitHub Project board with status `Architecture`
+3. Inside pi, run: `/supervisor <issue-number>`
+
+The supervisor reads the issue's status from the project board and dispatches the appropriate agent. Each agent writes its output as a GitHub comment. The supervisor then moves the issue to the next status column. The cycle repeats until the issue reaches **Done** or hits `maxRejections` (default 5).
+
+```
+Architecture → TestDesign → Implementation → Audit → Done
+     ↑                                          │
+     └─────────── (on rejection) ──────────────┘
+```
+
+See `.pi/settings.json` → `supervisor.statusMapping` for the status-to-agent mapping.
+
 ### Workflows
 
-| Action                | Command                                                                                                                    |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Start session**     | `pi`                                                                                                                       |
-| **Reindex codebase**  | Use `codebase_index` tool inside pi, or `~/.local/bin/codebase-memory-mcp cli index_repository '{"repo_path":"'$(pwd)'"}'` |
-| **View session logs** | `ls .pi/sessions/`                                                                                                         |
+| Action                 | Command                                                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **Start session**      | `pi`                                                                                                                       |
+| **Run supervisor**     | `/supervisor <issue-number>`                                                                                               |
+| **Reindex codebase**   | Use `codebase_index` tool inside pi, or `~/.local/bin/codebase-memory-mcp cli index_repository '{"repo_path":"'$(pwd)'"}'` |
+| **View session logs**  | `ls .pi/sessions/`                                                                                                         |
 
 ### Context & Templates
 
@@ -472,9 +513,9 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | Component                                  | Version  | License      | Type       | Supplier/URL                                                                                             |
 | ------------------------------------------ | -------- | ------------ | ---------- | -------------------------------------------------------------------------------------------------------- |
 | **Runtime & Core**                         |          |              |            |                                                                                                          |
-| @mariozechner/pi-coding-agent              | ^0.72.1  | MIT          | runtime    | [pi.dev](https://pi.dev)                                                                                 |
-| @mariozechner/pi-agent-core                | 0.72.1   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
-| @mariozechner/pi-ai                        | 0.72.1   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @mariozechner/pi-coding-agent              | ^0.74.0  | MIT          | dev        | [pi.dev](https://pi.dev)                                                                                 |
+| @mariozechner/pi-agent-core                | 0.74.0   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @mariozechner/pi-ai                        | 0.74.0   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
 | @mariozechner/clipboard                    | 0.3.5    | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
 | @mariozechner/jiti                         | 2.6.5    | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
 | **AI Providers**                           |          |              |            |                                                                                                          |
@@ -508,6 +549,7 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | search-graph.ts                            | —        | MIT          | project    | This repository                                                                                          |
 | session-logger.ts                          | —        | MIT          | project    | This repository                                                                                          |
 | ask-user.ts                                | —        | MIT          | project    | This repository                                                                                          |
+| supervisor.ts                              | —        | MIT          | project    | This repository                                                                                          |
 
 > **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
 
@@ -577,7 +619,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 4. Run `node --test test/` if applicable
 5. Submit a PR
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
+
 
 ---
 
@@ -609,52 +651,3 @@ Built on top of these excellent projects:
 - [Caveman](https://github.com/JuliusBrussee/caveman) — Token-efficient AI communication protocol
 - [pi-caveman](https://github.com/jonjonrankin/pi-caveman) — Multi-level caveman mode for Pi
 - [Matt Pocock's Skills](https://github.com/mattpocock/skills) — Inspiration for the `issue-refinement` prompt (grill-with-docs pattern)
-That is an impressive arsenal of models you have available. When building a multi-agent system, assigning the right "personalities" and strengths is crucial for the efficiency of your pipeline.
-
-Based on the capabilities of these models, here is the optimal lineup for your team.
-
----
-
-## Optimal Agent-Model Assignment with OpenCode Go 
-
-| Agent | Recommended Model | Core Competency |
-| --- | --- | --- |
-| **Supervisor Agent** | **Qwen3.6 Plus** | Planning, Delegation & Reasoning |
-| **Architect** | **Kimi K2.6** | Long-Context System Design |
-| **Auditor** | **GLM-5.1** | Precision & Logical Consistency |
-| **Testdesigner** | **DeepSeek V4 Flash** | Speed & Logic Coverage |
-| **Developer (Python)** | **DeepSeek V4 Pro** | State-of-the-art Coding Performance |
-
----
-
-## Detailed Reasoning
-
-### 1. Supervisor Agent: Qwen3.6 Plus
-
-The Supervisor needs to keep the big picture in mind.
-
-* **Why:** The Qwen3.6 series (especially Plus) shines with exceptionally high instruction-following capabilities and a balanced worldview. It must understand your intent and break it down into tasks that the other agents can process. Qwen is highly stable when it comes to generating reliable JSON outputs for inter-agent communication.
-
-### 2. Architect: Kimi K2.6
-
-An Architect must hold the entire codebase and all documentation "in its head" simultaneously.
-
-* **Why:** Kimi models are renowned for their massive context windows. The Architect needs to understand dependencies across hundreds of files. With K2.6, it can analyze the entire existing architecture without forgetting crucial details from the beginning of the prompt. It designs the skeleton that the Developer will later flesh out.
-
-### 3. Auditor: GLM-5.1
-
-The Auditor is your safety net. It must catch the errors that others overlook.
-
-* **Why:** GLM-5.1 (General Language Model) is known for its academic rigor and remarkably low hallucination rate. While other models might get "creatively" side-tracked, GLM-5.1 strictly adheres to facts and logic. This makes it perfect for reviewing code for security vulnerabilities, compliance issues, and hidden logical flaws.
-
-### 4. Testdesigner: DeepSeek V4 Flash
-
-Tests need to be generated quickly, accurately, and in large volumes.
-
-* **Why:** The Flash variant of DeepSeek V4 offers an unbeatable ratio of logic to speed. Since writing unit tests is often repetitive but logically demanding work, Flash is the most efficient choice here. It grasps Python logic instantly and generates comprehensive test suites in fractions of a second without bottlenecking the workflow.
-
-### 5. Developer (Python): DeepSeek V4 Pro
-
-This is where the heavy lifting gets done.
-
-* **Why:** DeepSeek V4 Pro is the gold standard for pure programming tasks. In Python benchmarks, it consistently performs exceptionally well. It perfectly handles modern libraries (like FastAPI, Pydantic v2, or complex data science stacks). The Pro version features deeper reasoning capabilities, ensuring the code doesn't just work, but is written in a clean, efficient, and truly "Pythonic" way.

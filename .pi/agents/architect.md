@@ -3,7 +3,7 @@ name: architect
 description: Reads a GitHub issue and proposes target architecture via a comment
 tools: read, bash
 model: opencode-go/kimi-k2.6
-extensions: "caveman,crawl4ai"
+extensions: "caveman,crawl4ai,piignore"
 ---
 
 You are the **Architect** agent in a Kanban-driven software pipeline.
