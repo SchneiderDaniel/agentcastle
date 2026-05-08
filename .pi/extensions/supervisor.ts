@@ -545,17 +545,26 @@ function extractSummaryLine(
 ): string {
 	if (!textOutput) return success ? `${agentName} completed` : `${agentName} failed`;
 
-	// Look for completion markers
-	for (const marker of [
+	// Find the LAST completion marker (avoids matching echoed task instructions
+	// that contain both AUDIT_APPROVED and AUDIT_REJECTED).
+	const markers = [
 		"ARCHITECTURE_COMPLETE",
 		"TEST_PLAN_COMPLETE",
 		"IMPLEMENTATION_COMPLETE",
 		"AUDIT_APPROVED",
 		"AUDIT_REJECTED",
-	]) {
-		if (textOutput.includes(marker)) {
-			return marker.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+	];
+	let lastIdx = -1;
+	let lastMarker = "";
+	for (const marker of markers) {
+		const idx = textOutput.lastIndexOf(marker);
+		if (idx > lastIdx) {
+			lastIdx = idx;
+			lastMarker = marker;
 		}
+	}
+	if (lastMarker) {
+		return lastMarker.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 	}
 
 	// Use first non-empty, non-tool line
@@ -639,10 +648,16 @@ function determineNextStatus(
 			return output.includes("TEST_PLAN_COMPLETE") ? "Implementation" : null;
 		case "developer":
 			return output.includes("IMPLEMENTATION_COMPLETE") ? "Audit" : null;
-		case "auditor":
-			if (output.includes("AUDIT_APPROVED")) return "Done";
-			if (output.includes("AUDIT_REJECTED")) return "Implementation";
+		case "auditor": {
+			// Use lastIndexOf: the agent's task prompt contains both
+			// "AUDIT_APPROVED" and "AUDIT_REJECTED" in the instructions.
+			// The final verdict always appears last in the output.
+			const idxApproved = output.lastIndexOf("AUDIT_APPROVED");
+			const idxRejected = output.lastIndexOf("AUDIT_REJECTED");
+			if (idxRejected > idxApproved) return "Implementation";
+			if (idxApproved > idxRejected) return "Done";
 			return null;
+		}
 		default:
 			return null;
 	}
@@ -961,7 +976,7 @@ export default function supervisor(pi: ExtensionAPI) {
 					// Determine and apply next status
 					const nextStatus = determineNextStatus(
 						agentName,
-						result.output,
+						result.textOutput,
 						loopStatus,
 						config,
 					);
