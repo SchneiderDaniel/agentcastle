@@ -32,6 +32,7 @@ interface AgentFrontmatter {
 	description?: string;
 	tools?: string;
 	model?: string;
+	extensions?: string;
 	[key: string]: unknown;
 }
 
@@ -312,6 +313,35 @@ function boldText(theme: any, text: string): string {
 	return theme.bold?.(text) ?? text;
 }
 
+// ─── Extension resolution ───────────────────────────────────────────
+
+/**
+ * Resolve the extensions CLI flags for a given agent frontmatter.
+ * - If extensions field is present and non-empty, split, trim, filter out
+ *   "supervisor" (case-insensitive), and return `--extensions <list>`.
+ * - If nothing remains after filtering, fall back to `--no-extensions`.
+ * - If extensions field is missing or empty, return `--no-extensions`.
+ *
+ * This is a pure function exported for unit testing.
+ */
+export function resolveExtensions(extensionsRaw: string | undefined): string[] {
+	if (!extensionsRaw || !extensionsRaw.trim()) {
+		return ["--no-extensions"];
+	}
+
+	const extensions = extensionsRaw
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0)
+		.filter((s) => s.toLowerCase() !== "supervisor");
+
+	if (extensions.length === 0) {
+		return ["--no-extensions"];
+	}
+
+	return ["--extensions", extensions.join(",")];
+}
+
 // ─── runAgent ────────────────────────────────────────────────────────
 
 async function runAgent(
@@ -321,6 +351,7 @@ async function runAgent(
 ): Promise<AgentRunResult> {
 	const tools = agent.config.tools || "read,bash,write,edit";
 	const model = agent.config.model || "";
+	const extFlags = resolveExtensions(agent.config.extensions);
 
 	const args: string[] = [
 		"-p",
@@ -331,7 +362,7 @@ async function runAgent(
 		agent.systemPrompt,
 		"--tools",
 		tools,
-		"--no-extensions",
+		...extFlags,
 		"--no-skills",
 		"--no-context-files",
 	];
