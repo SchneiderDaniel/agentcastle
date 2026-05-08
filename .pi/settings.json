@@ -1,15 +1,17 @@
 {
-    "supervisor": {
-        "repo": "SchneiderDaniel/agentcastle",
-        "projectNumber": 3,
-        "statusField": "Status",
-        "statusMapping": {
-            "Architecture": "architect",
-            "TestDesign": "test-designer",
-            "Implementation": "developer",
-            "Audit": "auditor"
-        },
-        "maxRejections": 5,
-        "codeowners": ["SchneiderDaniel"]
-    }
+  "supervisor": {
+    "repo": "SchneiderDaniel/agentcastle",
+    "projectNumber": 10,
+    "statusField": "Status",
+    "statusMapping": {
+      "Architecture": "architect",
+      "TestDesign": "test-designer",
+      "Implementation": "developer",
+      "Audit": "auditor"
+    },
+    "maxRejections": 5,
+    "codeowners": [
+      "SchneiderDaniel"
+    ]
+  }
 }

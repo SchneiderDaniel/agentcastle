@@ -405,10 +405,10 @@ The script:
 - Reads `supervisor.statusMapping` from `.pi/settings.json`
 - Prompts for a project name
 - Creates a GitHub Project under the `supervisor.repo` owner
-- Adds a `Status` single-select field with: **Backlog** → your custom statuses → **Done**
+- Adds a `Workflow` single-select field with: **Backlog** → your custom statuses → **Done**
 - Writes the new project number back to `.pi/settings.json`
 
-Switch the project to **Board** layout (group by Status) in the browser for a full Kanban view.
+Switch the project to **Board** layout in the browser and change **Group by** from the default `Status` to `Workflow` for a full Kanban view.
 
 ### Workflows
 

@@ -81,8 +81,8 @@ fi
 info "Creating project '$PROJECT_NAME'..."
 
 RESPONSE=$(gh api graphql -f query='
-    mutation($input: CreateProjectV2Input!) {
-        createProjectV2(input: $input) {
+    mutation($ownerId: ID!, $title: String!) {
+        createProjectV2(input: {ownerId: $ownerId, title: $title}) {
             projectV2 {
                 id
                 number
@@ -90,7 +90,7 @@ RESPONSE=$(gh api graphql -f query='
             }
         }
     }
-' -f input="{\"ownerId\":\"$OWNER_ID\",\"title\":\"$PROJECT_NAME\"}")
+' -f ownerId="$OWNER_ID" -f title="$PROJECT_NAME")
 
 PROJECT_ID=$(echo "$RESPONSE"    | jq -r '.data.createProjectV2.projectV2.id')
 PROJECT_NUMBER=$(echo "$RESPONSE" | jq -r '.data.createProjectV2.projectV2.number')
@@ -101,25 +101,33 @@ PROJECT_URL=$(echo "$RESPONSE"   | jq -r '.data.createProjectV2.projectV2.url')
 
 ok "Project #$PROJECT_NUMBER created — $PROJECT_URL"
 
-# --- build Status field with custom options --------------------------------
-info "Adding Status field with custom options..."
+# --- build custom Workflow field ---------------------------------------------
+# GitHub creates a system "Status" field (Todo/InProgress/Done) that cannot
+# be deleted or renamed. We create a custom "Workflow" field with the user's
+# statuses. The user sets their Board view to group by "Workflow" instead.
+info "Adding custom Workflow field..."
 
-# Build the singleSelectOptions JSON array
-# Start with Backlog (gray), then each statusMapping key (cycling colors), end with Done (green)
+# Build the singleSelectOptions GraphQL literal (inline in query, not as variable)
+# Format: [{name: "X", color: COLOR}, ...]  — GraphQL enum colors, no quotes on colors
 COLORS=("BLUE" "GREEN" "YELLOW" "ORANGE" "RED" "PINK" "PURPLE")
 
-OPTIONS_JSON='[{"name":"Backlog","color":"GRAY"}'
+OPTIONS_GQL='[{name: "Backlog", color: GRAY, description: ""}'
 COLOR_IDX=0
 for key in "${STATUS_KEYS_ARR[@]}"; do
-    OPTIONS_JSON+=",{\"name\":\"$key\",\"color\":\"${COLORS[$COLOR_IDX]}\"}"
+    OPTIONS_GQL+=", {name: \"$key\", color: ${COLORS[$COLOR_IDX]}, description: \"\"}"
     COLOR_IDX=$(( (COLOR_IDX + 1) % ${#COLORS[@]} ))
 done
-OPTIONS_JSON+=',{"name":"Done","color":"GREEN"}]'
+OPTIONS_GQL+=', {name: "Done", color: GREEN, description: ""}]'
 
-# Create the field via GraphQL
-FIELD_RESPONSE=$(gh api graphql --raw-field query='
-    mutation($input: CreateProjectV2FieldInput!) {
-        createProjectV2Field(input: $input) {
+# Create the field — options inlined directly in query to avoid complex variable types
+FIELD_RESPONSE=$(gh api graphql -f query="
+    mutation(\$projectId: ID!) {
+        createProjectV2Field(input: {
+            projectId: \$projectId,
+            name: \"Workflow\",
+            dataType: SINGLE_SELECT,
+            singleSelectOptions: $OPTIONS_GQL
+        }) {
             projectV2Field {
                 ... on ProjectV2SingleSelectField {
                     id
@@ -129,13 +137,13 @@ FIELD_RESPONSE=$(gh api graphql --raw-field query='
             }
         }
     }
-' -f input="{\"projectId\":\"$PROJECT_ID\",\"name\":\"Status\",\"dataType\":\"SINGLE_SELECT\",\"singleSelectOptions\":$OPTIONS_JSON}")
+" -f projectId="$PROJECT_ID")
 
 STATUS_FIELD_ID=$(echo "$FIELD_RESPONSE" | jq -r '.data.createProjectV2Field.projectV2Field.id')
 [ -n "$STATUS_FIELD_ID" ] && [ "$STATUS_FIELD_ID" != "null" ] \
-    || die "Failed to create Status field. Response: $FIELD_RESPONSE"
+    || die "Failed to create Workflow field. Response: $FIELD_RESPONSE"
 
-ok "Status field ready — columns: Backlog, ${STATUS_KEYS_ARR[*]}, Done"
+ok "Workflow field ready — columns: Backlog, ${STATUS_KEYS_ARR[*]}, Done"
 
 # --- update settings.json with new project number --------------------------
 info "Updating .pi/settings.json → projectNumber: $PROJECT_NUMBER"
@@ -150,7 +158,9 @@ ok "Updated supervisor.projectNumber: $OLD_PROJECT_NUMBER → $PROJECT_NUMBER"
 echo ""
 echo -e "${GREEN}${BOLD}Done.${NC}  Project: ${BOLD}$PROJECT_URL${NC}"
 echo ""
-echo "  Status field:  Backlog  →  ${STATUS_KEYS_ARR[*]}  →  Done"
+echo "  Workflow field:  Backlog  →  ${STATUS_KEYS_ARR[*]}  →  Done"
 echo ""
-echo "  Next step — open the project in your browser and switch to"
-echo "  the 'Board' layout (group by 'Status') for a Kanban view."
+echo "  Next steps — open the project in your browser:"
+echo "  1. Switch to 'Board' layout"
+echo "  2. Change 'Group by' from Status to Workflow"
+echo "  3. Hide the default Status field if desired"
