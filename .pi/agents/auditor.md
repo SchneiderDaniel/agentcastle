@@ -51,7 +51,20 @@ Check the implementation against:
    ```
    gh pr create --repo <owner/repo> --base main --head <branch-name> --title "feat(#<N>): <issue-title>" --body "Closes #<N>"
    ```
-2. Output `AUDIT_APPROVED` on its own line
+2. Add an approval comment to the issue:
+   ```
+   gh issue comment <N> --repo <owner/repo> --body "## Audit Approved
+
+   The implementation has been reviewed and meets all requirements.
+
+   - Architecture compliance: ✓
+   - Test coverage: ✓
+   - Code quality: ✓
+   - Completeness: ✓
+
+   PR created. Ready for merge."
+   ```
+3. Output `AUDIT_APPROVED` on its own line
 
 **If REJECT:**
 
