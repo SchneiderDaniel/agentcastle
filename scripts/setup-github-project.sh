@@ -25,8 +25,12 @@ command -v jq >/dev/null 2>&1 || die "jq not found. Install: sudo apt-get instal
 
 gh auth status >/dev/null 2>&1 || die "Not logged into GitHub. Run: gh auth login"
 
-SETTINGS=".pi/settings.json"
-[ -f "$SETTINGS" ] || die "$SETTINGS not found. Run from the project root."
+# Resolve project root (parent of the script's directory)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+SETTINGS="$PROJECT_ROOT/.pi/settings.json"
+[ -f "$SETTINGS" ] || die "$SETTINGS not found. Is this an agentcastle project?"
 
 # --- read settings ---------------------------------------------------------
 REPO=$(jq -r '.supervisor.repo' "$SETTINGS")
@@ -38,7 +42,7 @@ OLD_PROJECT_NUMBER=$(jq -r '.supervisor.projectNumber // "none"' "$SETTINGS")
 STATUS_KEYS_ARR=()
 while IFS= read -r key; do
     STATUS_KEYS_ARR+=("$key")
-done < <(jq -r '.supervisor.statusMapping | keys[]' "$SETTINGS")
+done < <(jq -r '.supervisor.statusMapping | keys_unsorted[]' "$SETTINGS")
 
 [ ${#STATUS_KEYS_ARR[@]} -gt 0 ] || die "No statusMapping entries in $SETTINGS."
 
