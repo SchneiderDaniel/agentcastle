@@ -12,21 +12,21 @@ Fetch GitHub issue #$1, **grill it against the codebase**, then **interview the 
 ## Prerequisites
 
 - `gh` installed and authenticated (`gh auth status`).
-- `.pi/settings.json` must contain `projectRepo` set to `owner/repo`.
+- `.pi/settings.json` must contain `supervisor.repo` set to `owner/repo`.
 - `ask_user` tool available (provided by `.pi/extensions/ask-user.ts` — auto-loaded if present).
 
 ## Step 0 — Read Configuration
 
 ```bash
-cat .pi/settings.json | jq -r '.projectRepo'
+cat .pi/settings.json | jq -r '.supervisor.repo'
 ```
 
-If missing or empty, stop and tell the user to add `"projectRepo": "owner/repo"`.
+If missing or empty, stop and tell the user to add `"supervisor": { "repo": "owner/repo" }`.
 
 Export:
 
 ```bash
-export REPO=$(cat .pi/settings.json | jq -r '.projectRepo')
+export REPO=$(cat .pi/settings.json | jq -r '.supervisor.repo')
 export OWNER=$(echo $REPO | cut -d'/' -f1)
 export REPO_NAME=$(echo $REPO | cut -d'/' -f2)
 ```

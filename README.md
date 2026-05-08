@@ -13,7 +13,6 @@ WSL (Ubuntu) + Zed + Git Worktrees + Pi AI — sandboxed execution, codebase int
 
 Agentcastle is a pre-configured AI coding harness that gives the [Pi coding agent](https://pi.dev) a full toolchain:
 
-- **Sandboxed execution** — AI commands run in an isolated Daytona container, not on your host
 - **Codebase knowledge graph** — Persistent index of your entire codebase (66 languages, 14 query tools)
 - **Web crawling** — Three-tier fallback: local Chromium → Apify cloud → HTTP
 - **Session logging** — Every session saved as LLM-optimized markdown for later analysis
@@ -34,7 +33,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 | `.pi/extensions/caveman.ts`         | Token-efficient communication protocol  |
 | `.pi/extensions/codebase-memory.ts` | Codebase knowledge graph (14 tools)     |
 | `.pi/extensions/crawl4ai.ts`        | Three-tier web crawler                  |
-| `.pi/extensions/daytona-sandbox.ts` | Sandbox command router + auto-recovery  |
+| `.pi/extensions/search-graph.ts`    | Local AST graph search tool             |
 | `.pi/extensions/session-logger.ts`  | Session logging to markdown             |
 | `.pi/extensions/ask-user.ts`        | Interactive multiple-choice questions   |
 | `.pi/settings.json`                 | Provider config                         |
@@ -52,7 +51,6 @@ This repository contains the **configuration and extensions**. You clone it and 
 | ------------------------------- | ------------------------------------- |
 | Node.js ≥22 + npm               | Pi runtime                            |
 | Python 3.10+ + venv + pip       | crawl4ai local web crawler            |
-| Docker + Daytona                | Sandboxed command execution           |
 | GitHub CLI (gh)                 | Git operations from Pi                |
 | `@mariozechner/pi-coding-agent` | The agent itself (global npm install) |
 | `codebase-memory-mcp` binary    | Code intelligence engine              |
@@ -67,7 +65,6 @@ This repository contains the **configuration and extensions**. You clone it and 
 
 | Category            | Capability                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 🔒 **Sandbox**      | Daytona container isolates all AI-executed commands. Host file ops still work. Auto-recovery if sandbox stops.     |
 | 🧠 **Code Intel**   | 14 tools: search, trace, query, overview, schema, snippet, grep, change detection, ADR management, trace ingestion |
 | 🕷️ **Web Crawl**    | `web_crawl` tool: local crawl4ai (real Chromium) → Apify cloud actor → direct HTTP + regex extraction              |
 | 📝 **Session Log**  | Full conversation + thinking blocks + tool calls saved as markdown + metadata JSON                                 |
@@ -103,7 +100,6 @@ pi
 - [What's in this repo vs what you set up](#whats-in-this-repo-vs-what-you-set-up)
 - [🔧 Prerequisites](#prerequisites)
 - [🔧 Installation & Setup](#installation--setup)
-  - [Docker & Daytona Sandbox](#docker--daytona-sandbox)
   - [GitHub CLI](#github-cli)
   - [Codebase Memory](#codebase-memory)
   - [Security & Environment](#security--environment)
@@ -147,23 +143,6 @@ sudo npm install -g @mariozechner/pi-coding-agent
 ---
 
 ## 🔧 Installation & Setup
-
-### Docker & Daytona Sandbox
-
-```bash
-# Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-sudo usermod -aG docker $USER   # Restart WSL after this
-
-# Daytona (manual install — fixes 404/silent errors from the official script)
-sudo curl -L "https://github.com/daytonaio/daytona/releases/latest/download/daytona-linux-amd64" -o /usr/local/bin/daytona
-sudo chmod +x /usr/local/bin/daytona
-
-# Initialize sandbox
-daytona login
-daytona create --name pi-sandbox
-```
 
 ### GitHub CLI
 
@@ -225,12 +204,7 @@ cat << 'EOF' >> ~/.bashrc
 # ==========================================
 # AGENTCASTLE AUTO-START
 # ==========================================
-# 1. Start Docker silently if not running
-if ! pgrep -x "dockerd" > /dev/null; then
-    sudo service docker start > /dev/null 2>&1
-fi
-
-# 2. Load API keys
+# Load API keys
 if [ -f "$HOME/.agent_env" ]; then
     source "$HOME/.agent_env"
 fi
@@ -292,25 +266,25 @@ Pi lives in Zed's integrated terminal (`Ctrl + ~`). Set the terminal profile to 
 │  ┌────────────────────────────────────────┐  │
 │  │  Pi TUI (Terminal)                      │  │
 │  │  ┌──────┐  ┌──────┐  ┌──────────────┐  │  │
-│  │  │Exts  │  │AI Provider   │  │  │
-│  │  │.pi/  │  │OpenCode Go   │  │  │
-│  │  │exts/ │  │Anthropic/... │  │  │
-│  │  └──┬───┘  └──────────────┘  │  │
-│  │               │                          │  │
-│  └───────────────┼──────────────────────────┘  │
-└──────────────────┼─────────────────────────────┘
-                   │
-    ┌──────────────┼──────────────┐
-    │              │              │
-┌───▼────┐  ┌──────▼─────┐  ┌───▼──────────┐
-│Daytona │  │Codebase    │  │crawl4ai      │
-│Sandbox │  │Memory MCP  │  │Python venv   │
-│(isolat-│  │(host index)│  │(host browser)│
-│ed exec)│  │            │  │              │
-└────────┘  └────────────┘  └──────────────┘
+│  │  │Exts  │  │AI Provider   │            │  │
+│  │  │.pi/  │  │OpenCode Go   │            │  │
+│  │  │exts/ │  │Anthropic/... │            │  │
+│  │  └──┬───┘  └──────────────┘            │  │
+│  │     │                                    │  │
+│  └─────┼────────────────────────────────────┘  │
+└────────┼───────────────────────────────────────┘
+         │
+    ┌────┴────────────┐
+    │                 │
+┌───▼──────────┐  ┌───▼──────────┐
+│Codebase      │  │crawl4ai      │
+│Memory MCP    │  │Python venv   │
+│(host index)  │  │(host browser)│
+│              │  │              │
+└──────────────┘  └──────────────┘
 ```
 
-**Key principle:** AI commands execute in the sandbox. File-management commands (`rm`, `mkdir`, `mv`, `cp`, `touch`, `chmod`, `chown`) run on the host. Codebase intelligence and web crawling run on the host (read-only for code, network-only for crawl).
+**Key principle:** Codebase intelligence and web crawling run on the host (read-only for code, network-only for crawl).
 
 ### Why extensions instead of MCP?
 
@@ -343,12 +317,12 @@ Pi auto-discovers extensions from `.pi/extensions/` in your **project root**. No
 
 | Extension            | File                 | Purpose                                                                                                        |
 | -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Sandbox Router**   | `daytona-sandbox.ts` | Routes bash commands into Daytona. Auto-recovers stopped/deleted sandboxes. Persistent volume at `/workspace`. |
 | **Web Crawler**      | `crawl4ai.ts`        | Three-tier web crawling: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps.     |
 | **Codebase Memory**  | `codebase-memory.ts` | Wraps codebase-memory-mcp CLI. Auto-indexes on session start. 14 tools exposed.                                |
 | **Session Logger**   | `session-logger.ts`  | Logs sessions to `.pi/sessions/<id>/session.md` + `metadata.json`. Toggle with `/session-logger`.              |
 | **Caveman Protocol** | `caveman.ts`         | Token-efficient communication style. Active via `AGENTS.md`.                                                   |
 | **Ask User**         | `ask-user.ts`        | Interactive multiple-choice picker for AI-to-user questions. Uses `ctx.ui.select()` with arrow-key navigation. |
+| **Search Graph**     | `search-graph.ts`    | Local AST graph search via localhost:9749.                                                                     |
 
 ### Prompt Templates
 
@@ -356,8 +330,8 @@ User-invocable prompt expansions in `.pi/prompts/`. Type `/name` in the editor t
 
 | Template             | Description                                                                                                                                                                           | Config                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **issue-cutter**     | Split a refined epic into ordered, independently testable sub-issues. Each gets `refined` + layer label (e.g. `database`, `backend`). Auto-links children to parent epic via GraphQL. | Set `projectRepo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-cutter <number>`     |
-| **issue-refinement** | Grill an issue against the codebase, conduct Socratic interview via `ask_user` tool (≥3 MC options per question), replace body with concrete ACs.                                     | Set `projectRepo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-refinement <number>` |
+| **issue-cutter**     | Split a refined epic into ordered, independently testable sub-issues. Each gets `refined` + layer label (e.g. `database`, `backend`). Auto-links children to parent epic via GraphQL. | Set `supervisor.repo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-cutter <number>`     |
+| **issue-refinement** | Grill an issue against the codebase, conduct Socratic interview via `ask_user` tool (≥3 MC options per question), replace body with concrete ACs.                                     | Set `supervisor.repo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-refinement <number>` |
 
 ### Skills
 
@@ -387,7 +361,7 @@ Output:
 
 ### Codebase Intelligence
 
-Uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — single static binary, zero runtime dependencies, 66 languages. The extension wraps the CLI via `pi.exec()`, bypassing the Daytona sandbox (the graph is a host-level index shared across sessions).
+Uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — single static binary, zero runtime dependencies, 66 languages. The extension wraps the CLI via `pi.exec()`. The graph is a host-level index shared across sessions.
 
 **Token savings:** Five structural queries consume ~3,400 tokens via the graph vs ~412,000 tokens via file-by-file grep — a **99.2% reduction**.
 
@@ -423,8 +397,6 @@ Uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — 
 | Action                | Command                                                                                                                    |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | **Start session**     | `pi`                                                                                                                       |
-| **Check sandbox**     | `daytona list`                                                                                                             |
-| **Restart Docker**    | `sudo service docker start`                                                                                                |
 | **Reindex codebase**  | Use `codebase_index` tool inside pi, or `~/.local/bin/codebase-memory-mcp cli index_repository '{"repo_path":"'$(pwd)'"}'` |
 | **View session logs** | `ls .pi/sessions/`                                                                                                         |
 
@@ -448,24 +420,16 @@ Before writing your first line of code, verify all components.
 ### 1. Base Services
 
 ```bash
-docker ps                    # Should output headers without permission errors
 echo $APIFY_TOKEN            # Should print your token
 ```
 
-### 2. Daytona Sandbox
-
-```bash
-daytona list                 # Look for 'pi-sandbox' in 'Running' state
-daytona exec pi-sandbox -- echo "Sandbox active"
-```
-
-### 3. Pi Autonomy
+### 2. Pi Autonomy
 
 ```bash
 pi "Respond with exactly one word: 'Operational'."
 ```
 
-### 4. Codebase Memory
+### 3. Codebase Memory
 
 ```bash
 ~/.local/bin/codebase-memory-mcp --version
@@ -475,25 +439,13 @@ pi "Respond with exactly one word: 'Operational'."
 
 _Expected:_ Index reports `"status":"indexed"` with node/edge counts. Search returns function names.
 
-### 5. Execution Routing (Acid Test)
-
-**Sandbox isolation:**
-
-```bash
-pi -p "Run 'uname -n' in bash and tell me the hostname."
-```
-
-_Expected:_ Pi reports the sandbox hostname (e.g., `pi-sandbox`), not your WSL hostname.
-
-**Host file operations:**
+### 4. Execution Routing (Acid Test)
 
 ```bash
 pi -p "Create a file named '.pi/test-file.txt' with the content 'host works', then tell me the absolute path where it was created."
 ```
 
 _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
-
-> **Tip:** Test auto-recovery: `daytona stop pi-sandbox` then run a sandbox command. The extension should transparently restart it.
 
 ---
 
@@ -524,9 +476,6 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | Node.js                                    | ≥22      | MIT          | system     | [nodejs.org](https://nodejs.org)                                                                         |
 | Python 3                                   | ≥3.10    | PSF          | system     | [python.org](https://python.org)                                                                         |
 | npm                                        | latest   | Artistic-2.0 | system     | [npmjs.com](https://npmjs.com)                                                                           |
-| **Container & Sandbox**                    |          |              |            |                                                                                                          |
-| Docker Engine                              | latest   | Apache-2.0   | system     | [docker.com](https://docker.com)                                                                         |
-| Daytona                                    | latest   | Apache-2.0   | system     | [daytona.io](https://daytona.io)                                                                         |
 | **Infrastructure Tools**                   |          |              |            |                                                                                                          |
 | GitHub CLI (gh)                            | latest   | MIT          | system     | [cli.github.com](https://cli.github.com)                                                                 |
 | **Code Intelligence**                      |          |              |            |                                                                                                          |
@@ -538,7 +487,7 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | caveman.ts                                 | —        | MIT          | project    | This repository                                                                                          |
 | codebase-memory.ts                         | —        | MIT          | project    | This repository                                                                                          |
 | crawl4ai.ts                                | —        | MIT          | project    | This repository                                                                                          |
-| daytona-sandbox.ts                         | —        | MIT          | project    | This repository                                                                                          |
+| search-graph.ts                            | —        | MIT          | project    | This repository                                                                                          |
 | session-logger.ts                          | —        | MIT          | project    | This repository                                                                                          |
 | ask-user.ts                                | —        | MIT          | project    | This repository                                                                                          |
 
@@ -550,27 +499,11 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 
 ## FAQ / Troubleshooting
 
-### Docker: "permission denied"
-
-```bash
-sudo usermod -aG docker $USER
-# Restart WSL (close terminal, wsl --shutdown, reopen)
-```
-
 ### `pi: command not found`
 
 ```bash
 sudo npm install -g @mariozechner/pi-coding-agent
 # If still missing, check: echo $PATH | grep npm
-```
-
-### Daytona sandbox won't start
-
-```bash
-daytona list                    # Check state
-daytona stop pi-sandbox         # Force stop
-daytona start pi-sandbox        # Restart
-# If broken: daytona delete pi-sandbox && daytona create --name pi-sandbox
 ```
 
 ### Web crawl fails with Chromium errors
@@ -632,12 +565,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
 
 ## Security
 
-This project takes sandbox isolation seriously. AI commands execute in a Daytona container, not on the host.
-
 **Security properties:**
 
-- ✅ All AI-executed commands run in an isolated container
-- ✅ Host file operations are path-guarded (no escape outside project root)
 - ✅ No MCP servers — only pi extensions (no network-exposed tool servers)
 - ✅ API keys loaded from `~/.agent_env`, never committed
 
@@ -656,7 +585,6 @@ All third-party components are OSI-approved open source (see [SBOM](#sbom---soft
 Built on top of these excellent projects:
 
 - [Pi Coding Agent](https://pi.dev) — The agent runtime
-- [Daytona](https://daytona.io) — Sandboxed execution environment
 - [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — Code intelligence engine
 - [crawl4ai](https://github.com/unclecode/crawl4ai) — LLM-friendly web crawler
 - [Zed](https://zed.dev) — The editor

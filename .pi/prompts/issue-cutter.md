@@ -10,22 +10,22 @@ Split GitHub epic #$1 into small, ordered, independently testable sub-issues and
 ## Prerequisites
 
 - `gh` installed and authenticated (`gh auth status`).
-- `.pi/settings.json` must contain `projectRepo` set to `owner/repo` (e.g. `SchneiderDaniel/agentcastle`).
+- `.pi/settings.json` must contain `supervisor.repo` set to `owner/repo` (e.g. `SchneiderDaniel/agentcastle`).
 
 ## Step 0 — Read Configuration
 
-Read `.pi/settings.json` and extract the `projectRepo` field. Parse it as `OWNER/REPO`:
+Read `.pi/settings.json` and extract the `supervisor.repo` field. Parse it as `OWNER/REPO`:
 
 ```bash
-cat .pi/settings.json | jq -r '.projectRepo'
+cat .pi/settings.json | jq -r '.supervisor.repo'
 ```
 
-If the field is missing or empty, stop and tell the user to add `"projectRepo": "owner/repo"` to `.pi/settings.json`.
+If the field is missing or empty, stop and tell the user to add `"supervisor": { "repo": "owner/repo" }` to `.pi/settings.json`.
 
 Export for reuse in later commands:
 
 ```bash
-export REPO=$(cat .pi/settings.json | jq -r '.projectRepo')
+export REPO=$(cat .pi/settings.json | jq -r '.supervisor.repo')
 export OWNER=$(echo $REPO | cut -d'/' -f1)
 export REPO_NAME=$(echo $REPO | cut -d'/' -f2)
 ```
