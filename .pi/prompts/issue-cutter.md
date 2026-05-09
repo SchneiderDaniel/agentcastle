@@ -225,7 +225,45 @@ gh api graphql \
 echo "Linked #$CHILD_NUM as sub-issue of Epic #$1"
 ```
 
-⚠️ **Do ALL FIVE steps for each sub-issue before moving to the next one. Do NOT batch all creations and then try to link afterward.**
+**Step 6: Set dependency chain**
+
+> **If only 1 sub-issue was created (N ≤ 1), skip the dependency wiring step entirely.** No `addBlockedBy` call is needed for a single sub-issue.
+
+Sub-issues form a linear chain: sub-issue N is blocked by sub-issue N−1 (for N > 1). The first sub-issue has no blocker. The chain is stored via `tmp/prev_child_id.txt`.
+
+**For the first sub-issue (N=1):** save its node ID as the blocker for the next sub-issue. No mutation call.
+
+```bash
+echo "$CHILD_ID" > tmp/prev_child_id.txt
+```
+
+**For each subsequent sub-issue (N > 1):** read the previous sub-issue ID, set the `blockedBy` relationship, then overwrite the file with its own ID for the next iteration.
+
+```bash
+PREV_CHILD_ID=$(cat tmp/prev_child_id.txt)
+gh api graphql \
+  -F issueId="$CHILD_ID" \
+  -F blockingIssueId="$PREV_CHILD_ID" \
+  -f query='
+    mutation($issueId:ID!, $blockingIssueId:ID!) {
+      addBlockedBy(input:{issueId:$issueId, blockingIssueId:$blockingIssueId}) {
+        clientMutationId
+      }
+    }'
+if [ $? -ne 0 ]; then
+  echo "ERROR: Failed to set dependency for sub-issue N=<N>"
+  echo "  issueId: $CHILD_ID"
+  echo "  blockingIssueId: $PREV_CHILD_ID"
+  echo "  Raw GraphQL error above"
+  echo "  Stopping: remaining sub-issues will NOT be created."
+  exit 1
+fi
+echo "🔗 Blocked #$CHILD_NUM by previous sub-issue"
+# Save current child ID as the blocker for the next sub-issue
+echo "$CHILD_ID" > tmp/prev_child_id.txt
+```
+
+⚠️ **Do ALL SIX steps for each sub-issue before moving to the next one. Do NOT batch all creations and then try to link afterward. Stop immediately on any failure — remaining sub-issues must NOT be created.**
 
 **Save each sub-issue number** for dependency references in later sub-issues:
 
@@ -233,25 +271,34 @@ echo "Linked #$CHILD_NUM as sub-issue of Epic #$1"
 echo "$CHILD_NUM" > tmp/sub<N>_num.txt
 ```
 
-**Tip:** You can combine steps 2–5 into one chained command per sub-issue (using `&&`), but keep steps 1 (file write) separate since the body file won't change within a chained command after writing.
+**Tip:** You can combine steps 2–6 into one chained command per sub-issue (using `&&`), but keep steps 1 (file write) separate since the body file won't change within a chained command after writing.
 
 #### 6c — Print summary
 
 ```
 ✅ Sub-issues created and linked under Epic #$1:
   #101  [database]  (1) Add recipe_tag column to database schema
-  #102  [backend]   (2) Implement tag service and API endpoint
-  #103  [frontend]  (3) Build tag filter UI component
+  #102  [backend]   (2) Implement tag service and API endpoint  🔗 blocked by #101
+  #103  [frontend]  (3) Build tag filter UI component           🔗 blocked by #102
   …
 ```
 
-Verify linkage:
+Verify epic linkage:
 
 ```bash
 gh api graphql \
   -F owner="$OWNER" -F repo="$REPO_NAME" -F num=$1 \
   -f query='query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){issue(number:$num){title subIssues(first:20){nodes{number title}}}}}' \
   --jq '.data.repository.issue | {title, children: [.subIssues.nodes[] | {number, title}]}'
+```
+
+Verify dependency chain (run for each sub-issue starting from N=2):
+
+```bash
+gh api graphql \
+  -F owner="$OWNER" -F repo="$REPO_NAME" -F num=<CHILD_NUM> \
+  -f query='query($owner:String!,$repo:String!,$num:Int!){repository(owner:$owner,name:$repo){issue(number:$num){number title blockedBy(first:5){nodes{number title}}}}}' \
+  --jq '.data.repository.issue | {number, title, blockedBy: [.blockedBy.nodes[] | {number, title}]}'
 ```
 
 ---
@@ -329,4 +376,7 @@ Before creating any sub-issue, verify mentally:
 | `Blocked: absolute path "/..."`                         | Command contains a standalone `/` (in title, body, or file path). | Remove `/` from issue titles. Replace standalone `/paths` in body with inline equivalents. Use project-relative file paths. |
 | Body not appearing in created issue                     | Inline body in single quotes contains unescaped characters.       | Always write body to file first (`tmp/sub<N>_body.md`), then read via `BODY=$(cat file)`.                                   |
 | `gh issue create` fails with "422 Unprocessable Entity" | Label does not exist in the repo.                                 | Run `gh label list --repo "$REPO"` to verify labels exist.                                                                  |
-| Sub-issues not appearing under epic                     | Step 6b (link) was skipped or failed silently.                    | Run the verification GraphQL query from Step 6c. Re-link any unlinked sub-issues manually.                                  |
+| Sub-issues not appearing under epic                     | Step 5 (link) was skipped or failed silently.                     | Run the verification GraphQL query from Step 6c. Re-link any unlinked sub-issues manually.                                  |
+| `addBlockedBy` mutation fails with error in JSON        | `issueId` or `blockingIssueId` is not a valid node ID.            | Verify both IDs are GraphQL node IDs (format `I_xxx`), not plain issue numbers. Use Step 4 to resolve node IDs correctly.   |
+| `addBlockedBy` returns HTTP 403/429                     | GraphQL rate limit or permission error.                           | Check token scopes (`repo` write access required). Wait for rate limit window to reset. Remaining sub-issues NOT created.   |
+| Dependency not showing in GitHub UI                     | Mutation returned HTTP 200 but contained GraphQL errors.          | Re-run the `addBlockedBy` mutation. Check raw response for `errors` array in JSON body.                                     |
