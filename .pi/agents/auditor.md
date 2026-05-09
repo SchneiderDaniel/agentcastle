@@ -31,7 +31,61 @@ git diff main...origin/<branch-name>
 
 Also examine the changed files directly with the `read` tool.
 
-### 3. Evaluate
+### 3. Execute Tests (Mandatory)
+
+Before evaluating, you MUST execute the test command from the test plan.
+
+1. **Extract the test command:** Read the test plan comment and find the first fenced code block (```bash or ``` with no language tag). Extract the command(s) inside it.
+   - If no fenced code block is found → REJECT immediately with: "No runnable test command found in test plan"
+   - Do NOT guess or invent a test command — only use what the TestDesigner specified
+
+2. **Run the tests:** Execute the extracted command inside the developer's worktree with a 60-second timeout:
+   ```
+   cd ../<branch> && <test command>
+   ```
+   Capture stdout and stderr separately.
+
+3. **Check the result:**
+   - **Exit code 0 (success):** Tests passed. Continue to step 4 (Evaluate).
+   - **Exit code non-zero (failure):** REJECT with test failure details (see rejection format below).
+   - **Timeout (>60s):** REJECT — treated as test failure.
+   - **Command error (file not found, syntax error):** REJECT with the error output.
+
+**Rejection Format — Test Failure:**
+
+```
+## Audit Rejected
+
+Tests failed. Fix before resubmitting.
+
+Failed tests:
+- [parsed test name 1]
+- [parsed test name 2]
+
+Stdout:
+[first 20 lines of stdout]
+...output truncated...
+
+Stderr:
+[first 20 lines of stderr]
+...output truncated...
+```
+
+- Parse failed test names heuristically from stdout/stderr (look for lines containing `✗`, `FAIL`, `not ok`, or assertion error messages). If parsing fails, omit the "Failed tests" section.
+- Truncate stdout and stderr to first 20 lines each. Append `...output truncated...` only when output exceeds 20 lines.
+- For non-test errors (file not found, syntax errors), include the full error output (same truncation rules) but omit the "Failed tests" section.
+
+**Rejection Format — Missing Command:**
+
+```
+## Audit Rejected
+
+No runnable test command found in test plan.
+
+Please fix and resubmit.
+```
+
+### 4. Evaluate
 
 Check the implementation against:
 
@@ -40,7 +94,7 @@ Check the implementation against:
 - Code quality — is the code clean, well-structured, free of obvious bugs?
 - Completeness — does the implementation fully address the issue?
 
-### 4. Decide: APPROVE or REJECT
+### 5. Decide: APPROVE or REJECT
 
 **If APPROVE:**
 
@@ -55,15 +109,17 @@ Check the implementation against:
    The implementation has been reviewed and meets all requirements.
 
    - Architecture compliance: ✓
+   - Tests passed: ✓ (ran: <test command>)
    - Test coverage: ✓
    - Code quality: ✓
    - Completeness: ✓
 
    PR created. Ready for merge."
    ```
+   Replace `<test command>` with the actual command that was executed.
 3. Output `AUDIT_APPROVED` on its own line
 
-**If REJECT:**
+**If REJECT (non-test reasons):**
 
 1. Add a rejection comment explaining what needs to be fixed:
 
@@ -79,6 +135,8 @@ Check the implementation against:
    ```
 
 2. Output `AUDIT_REJECTED` on its own line
+
+**Note:** Test failures are also REJECT but use the dedicated test failure format from Step 3.
 
 ## Rules
 

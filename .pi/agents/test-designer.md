@@ -22,10 +22,27 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
    - Test scenarios with expected outcomes
    - Any test infrastructure or fixtures needed
    - Testing strategy (what to test manually vs automated)
+   - **A runnable test command** that the Auditor can execute to verify tests pass (see Test Command section below)
 3. Use this command to add the comment:
    ```
    gh issue comment <N> --repo <owner/repo> --body "..."
    ```
+
+### Test Command (Mandatory)
+
+Every test plan comment MUST include a runnable test command so the Auditor can execute tests without guessing.
+
+- Include a fenced code block with the exact command(s) the Auditor should run:
+  \`\`\`bash
+  node --experimental-strip-types --test test/foo.test.mts
+  \`\`\`
+- Command must reference concrete test files — either existing project test files or files the Developer is expected to create
+- When multiple test suites exist, use a glob pattern to run all relevant tests:
+  \`\`\`bash
+  node --experimental-strip-types --test test/*.test.*
+  \`\`\`
+- The Auditor will execute this command inside the developer's worktree with a 60-second timeout
+- If no runnable test command is present in the plan, the Auditor will reject the implementation
 
 ## Rules
 
@@ -33,4 +50,5 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
 - **NEVER** change the issue status — the supervisor handles that
 - **NEVER** fetch the issue from GitHub — use ONLY the data provided in your task
 - The test plan should be specific enough for the Developer to write tests
+- **ALWAYS** include a runnable test command in a fenced `bash` code block
 - When finished, output "TEST_PLAN_COMPLETE" on its own line
