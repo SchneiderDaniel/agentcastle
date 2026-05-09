@@ -209,7 +209,7 @@ Keep a mental (or explicit) list of which topics are resolved and which remain. 
 
 ### Step 3 — When All Topics Are Resolved
 
-Present the completion summary, then immediately proceed to PHASE 2 to write and update the issue. **No confirmation needed.**
+Present the completion summary, then ask ONE final question before writing.
 
 ```
 ✅ We've covered all topics for issue #$1. Here's what we agreed:
@@ -223,11 +223,21 @@ Present the completion summary, then immediately proceed to PHASE 2 to write and
 ❌ ERROR HANDLING: [...]
 🧪 EDGE CASES: [...]
 🔗 DEPENDENCIES: [...]
-
-Now writing the refined issue and updating GitHub...
 ```
 
-⚠️ Do NOT wait for confirmation. Immediately proceed to PHASE 2.
+Then immediately call `ask_user` with the final question:
+
+```
+question: "After discussing all these topics — does anything else come to mind that you'd now like to add as a requirement?"
+options:
+  - label: "No, this covers everything"            value: "no_done"        recommended: true
+  - label: "Yes, I want to add something (explain)"  value: "yes_add"
+```
+
+⚠️ HARD STOP. Wait for the answer.
+
+- If user selects **"No"** → immediately proceed to PHASE 2 (write & update).
+- If user selects **"Yes"** and types details → treat this as a new topic. Ask follow-up questions until it's concrete and resolved, then re-present the completion summary and ask the final question again.
 
 ---
 
