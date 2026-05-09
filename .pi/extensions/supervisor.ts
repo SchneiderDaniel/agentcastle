@@ -15,6 +15,7 @@ import type {
 import { readFileSync, existsSync } from "node:fs";
 import { execSync, spawn } from "node:child_process";
 import { Container, Spacer, Text, truncateToWidth } from "@mariozechner/pi-tui";
+import { checkBlockedByDependencies } from "./supervisor/deps.js";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -930,6 +931,34 @@ export default function supervisor(pi: ExtensionAPI) {
 				if (!loopItem) {
 					ctx.ui.notify(
 						`Issue #${issueNum} not on project board #${config.projectNumber}.`,
+						"error",
+					);
+					ctx.ui.setStatus("supervisor", "");
+					return;
+				}
+
+				// ── Dependency gate: check "blocked by" links ──────
+				ctx.ui.setStatus("supervisor", "Checking dependencies...");
+				try {
+					const depsResult = await checkBlockedByDependencies(
+						issueNum,
+						config.repo,
+					);
+					if (depsResult.blocked) {
+						const lines = depsResult.blockers.map((b) => {
+							const prefix = b.type === "pullrequest" ? "!" : "#";
+							return `${prefix}${b.number}: ${b.title} (open)`;
+						});
+						ctx.ui.notify(
+							`Issue #${issueNum} is blocked by unresolved dependencies:\n${lines.join("\n")}`,
+							"error",
+						);
+						ctx.ui.setStatus("supervisor", "");
+						return;
+					}
+				} catch (err: any) {
+					ctx.ui.notify(
+						`Dependency check failed: ${err.message}`,
 						"error",
 					);
 					ctx.ui.setStatus("supervisor", "");
