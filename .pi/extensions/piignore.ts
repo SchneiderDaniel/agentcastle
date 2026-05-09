@@ -2,8 +2,11 @@
  * PiIgnore Extension
  *
  * Reads .piignore files (gitignore format) from the project root and
- * walking up parent directories. Blocks read/write/edit access
- * to any path matching the ignore patterns.
+ * walking up parent directories. Blocks read/write/edit/bash/grep/find/ls
+ * access to any path matching the ignore patterns.
+ *
+ * For bash commands, extracts path-like tokens from the command string
+ * and checks each against ignore patterns.
  *
  * Zero dependencies — uses only Node built-ins.
  *
@@ -148,6 +151,73 @@ function isIgnored(
 }
 
 // ---------------------------------------------------------------------------
+// Helpers: extract paths from tool inputs
+// ---------------------------------------------------------------------------
+
+/** Check a single path against ignore patterns. Returns the matched path or null. */
+function checkPath(
+  targetPath: string | undefined,
+  entries: IgnoreEntry[],
+  cwd: string,
+): string | null {
+  if (!targetPath) return null;
+  if (isIgnored(targetPath, entries, cwd)) return targetPath;
+  return null;
+}
+
+/**
+ * Extract potential file/directory paths from a bash command string.
+ * Looks for tokens that look like paths (contain / or common extensions)
+ * and checks each against ignore patterns.
+ */
+function checkBashCommand(
+  command: string,
+  entries: IgnoreEntry[],
+  cwd: string,
+): string | null {
+  // Split into tokens, respecting quoted strings
+  const tokens: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (inSingle) {
+      if (ch === "'") { inSingle = false; continue; }
+      current += ch;
+    } else if (inDouble) {
+      if (ch === '"') { inDouble = false; continue; }
+      current += ch;
+    } else if (ch === "'") {
+      inSingle = true;
+    } else if (ch === '"') {
+      inDouble = true;
+    } else if (ch === " " || ch === "\t") {
+      if (current) tokens.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current) tokens.push(current);
+
+  // Filter tokens that look like paths (not options/flags/keywords)
+  const pathLike = tokens.filter((t) => {
+    if (t.startsWith("-")) return false;  // options like -rf, --verbose
+    if (t === "|" || t === ";" || t === "&&" || t === "||") return false;
+    if (t === ">" || t === ">>" || t === "<" || t === "2>" || t === "2>>" || t === "&>" || t === "1>" ) return false;
+    // Contains path separator or known path indicators
+    return t.includes("/") || t.includes(".") || t.includes("~");
+  });
+
+  for (const t of pathLike) {
+    const result = checkPath(t, entries, cwd);
+    if (result) return result;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
 
@@ -160,23 +230,45 @@ export default function (pi: ExtensionAPI) {
     entries = loadPiIgnore(process.cwd());
   });
 
-  const blockableTools = ["read", "write", "edit"];
+  // Tools that take a direct path parameter
+  const pathTools = ["read", "write", "edit"];
+  // Tools that take an optional path/directory parameter
+  const optPathTools = ["grep", "find", "ls"];
+  // Tools that take a command string containing paths
+  const commandTools = ["bash"];
 
   pi.on("tool_call", async (event, ctx) => {
-    if (!blockableTools.includes(event.toolName)) return;
+    let blockedPath: string | null = null;
 
-    const targetPath: string | undefined = (
-      event.input as { path?: string }
-    ).path;
-    if (!targetPath) return;
+    if (pathTools.includes(event.toolName)) {
+      blockedPath = checkPath(
+        (event.input as { path?: string }).path,
+        entries,
+        ctx.cwd,
+      );
+    } else if (optPathTools.includes(event.toolName)) {
+      blockedPath = checkPath(
+        (event.input as { path?: string }).path,
+        entries,
+        ctx.cwd,
+      );
+    } else if (commandTools.includes(event.toolName)) {
+      blockedPath = checkBashCommand(
+        (event.input as { command?: string }).command ?? "",
+        entries,
+        ctx.cwd,
+      );
+    } else {
+      return;
+    }
 
-    if (isIgnored(targetPath, entries, ctx.cwd)) {
+    if (blockedPath) {
       if (ctx.hasUI) {
-        ctx.ui.notify(`Blocked by .piignore: ${targetPath}`, "warning");
+        ctx.ui.notify(`Blocked by .piignore: ${blockedPath}`, "warning");
       }
       return {
         block: true,
-        reason: `Path "${targetPath}" matches .piignore patterns`,
+        reason: `Path "${blockedPath}" matches .piignore patterns`,
       };
     }
   });
