@@ -74,6 +74,7 @@ Read the conversation history. Determine your state:
 
 - **INITIAL**: First invocation of `/issue-refinement` in this conversation. → Go to PHASE 0: INVESTIGATE.
 - **INTERVIEWING**: Investigation done, interview in progress. → Go to PHASE 1: INTERVIEW.
+- **FRONTEND_INTERVIEWING**: Core interview done, but `frontend_flag` is `true` and frontend refinement questions remain. → Go to PHASE 1.5: FRONTEND REFINEMENT.
 - **COMPLETE**: All topics covered, understanding reached. → Go to PHASE 2: WRITE & UPDATE (write the refined issue and update GitHub in one shot, no approval).
 
 ---
@@ -104,7 +105,17 @@ Identify:
 - 🔴 Contradictions between issue claims and actual code
 - 🟡 Vague language that needs sharpening
 
-### 0.4 — Determine Interview Topics
+### 0.4 — Frontend Detection
+
+Inspect the issue and codebase context to determine whether the change involves **new or modified HTML templates, CSS, or browser-rendered JavaScript**. You must reach one of three outcomes:
+
+| Detection Outcome | Action |
+|---|---|
+| **Confident frontend** | Set `frontend_flag=true`. Announce: PHASE 1.5 (frontend refinement) will run after PHASE 1. |
+| **Unsure** | Call `ask_user` with exactly ONE confirmation question: *"Does this issue involve any UI changes (HTML, CSS, or browser-rendered JS)?"* — Options: `"Yes, it involves UI changes"` / `"No, no UI changes"`. Set `frontend_flag` based on answer. Do NOT ask any follow-up. |
+| **Confident no frontend** | Set `frontend_flag=false`. Skip silently — flow goes directly from PHASE 1 to PHASE 2 with no mention of a frontend phase. |
+
+### 0.5 — Determine Interview Topics
 
 Based on your investigation, identify which topics need discussion. The core topics are:
 
@@ -119,7 +130,7 @@ Based on your investigation, identify which topics need discussion. The core top
 
 You don't need all topics for every issue. Pick the ones relevant to THIS issue.
 
-### 0.5 — 🛑 Present Summary & Use `ask_user` for FIRST Question
+### 0.6 — 🛑 Present Summary & Use `ask_user` for FIRST Question
 
 Present the investigation summary, then immediately call the `ask_user` tool with the first question.
 
@@ -236,8 +247,41 @@ options:
 
 ⚠️ HARD STOP. Wait for the answer.
 
-- If user selects **"No"** → immediately proceed to PHASE 2 (write & update).
+- If user selects **"No"** → if `frontend_flag` is `true`, proceed to PHASE 1.5 (frontend refinement); otherwise proceed directly to PHASE 2 (write & update).
 - If user selects **"Yes"** and types details → treat this as a new topic. Ask follow-up questions until it's concrete and resolved, then re-present the completion summary and ask the final question again.
+
+---
+
+## PHASE 1.5: FRONTEND REFINEMENT (conditional)
+
+**Only execute this phase if `frontend_flag` is `true`.** When `frontend_flag` is `false`, skip this entire section and proceed directly to PHASE 2.
+
+This phase runs between PHASE 1 (core interview) and PHASE 2 (write & update). Its purpose is to gather UI design decisions before writing the refined issue, so implementation does not need to re-ask design questions.
+
+### Rules
+
+- **One question at a time** via `ask_user`, same discipline as PHASE 1.
+- **Cover all 5 aspects** in order:
+  1. **Layout / Placement** — Where do elements go on the page? Above/below what? Sidebar, header, main content area?
+  2. **Visual Style** — Colors, typography, spacing, existing design system to follow?
+  3. **Interactions** — Hover, click, animations, transitions, loading states?
+  4. **Responsive Behavior** — Mobile, tablet, desktop breakpoints? Stack vs side-by-side?
+  5. **Accessibility** — ARIA labels, keyboard navigation, focus management, screen reader considerations?
+
+- **Skip any aspect with a brief justification** (e.g., "No responsive concerns — desktop-only internal tool"). Record the skip reason.
+- **On "I don't know" or "I don't care"**: pick a reasonable default, document it, and move on. Do NOT pressure the user.
+- **Follow up on vague answers** until concrete (same discipline as core interview).
+- **Exit** when all 5 aspects are considered and you are satisfied you know enough. There is no fixed question count.
+
+### Protocol
+
+1. Announce: "Now, let's cover UI design. I'll ask one question at a time about 5 aspects."
+2. For each aspect, call `ask_user` with one question. Evaluate the answer.
+3. If the answer is sufficient, record the decision and move to the next aspect.
+4. If the answer is vague, follow up on the SAME aspect.
+5. If the user says "I don't know" / "I don't care", pick a default, document it, proceed.
+6. If you skip an aspect, record: "[Aspect]: SKIPPED — [brief justification]".
+7. After all 5 aspects are addressed, announce completion and proceed to PHASE 2.
 
 ---
 
@@ -300,6 +344,18 @@ As a [role], I want [feature], so that [benefit].
 ### R2: <Short imperative title>
 
 ...
+
+## UI Design Decisions
+
+_If and only if the frontend refinement phase ran._ Omit this entire section when the frontend phase was skipped.
+
+- **Layout / Placement**: <decision or "SKIPPED — justification">
+- **Visual Style**: <decision or "SKIPPED — justification">
+- **Interactions**: <decision or "SKIPPED — justification">
+- **Responsive Behavior**: <decision or "SKIPPED — justification">
+- **Accessibility**: <decision or "SKIPPED — justification">
+
+_Where the LLM chose a default (due to "I don't know"), note it: "DEFAULT: Follow existing project style."_
 
 ## How to Validate (Human Tester)
 
