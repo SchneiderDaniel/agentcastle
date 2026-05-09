@@ -74,12 +74,105 @@ Do **not** proceed past this gate if the `refined` label is absent.
 
 ⚠️ **MANDATORY**: Explore the relevant codebase area before decomposing. Cutting issues without knowing current state leads to incorrect sub-issues.
 
+Follow these steps in order. Record all findings in a **discovery map** — a structured list of `(file path, symbol, outbound dependencies)` for every symbol found. This map will be injected into each sub-issue under "Files Touched" (Step 4).
+
+---
+
+#### 2.0 — Ensure Codebase Index
+
+Before searching, the codebase must be indexed. Run `codebase_index` to ensure the index exists and is current:
+
 ```bash
-# List project structure (adjust depth as needed)
-find . -maxdepth 3 -not -path './.pi/*' -not -path './node_modules/*' -not -path './.git/*' | head -80
+codebase_index
 ```
 
-Read key files the epic will touch. Record what **already exists** vs what is **genuinely missing**. Sub-issues must only describe work not yet done.
+Wait for indexing to complete before proceeding. There is no timeout — wait until the command finishes.
+
+---
+
+#### 2.1 — Extract Keywords from the Epic
+
+Read the epic title and body (from `tmp/epic.json` fetched in Step 1). Extract **up to 5 keywords** that are most likely to match code in the codebase. Prioritize:
+
+- **Nouns** and **entity names** (e.g. "User", "Recipe", "Tag", "Profile")
+- **Route paths** (e.g. `/api/users`, `/dashboard` — strip leading `/` and use as token: `api users`, `dashboard`)
+- **File names** or **module names** mentioned in the issue body
+- **Function/class names** explicitly called out
+
+```bash
+# Read a summary of the epic to extract keywords from
+cat tmp/epic.json | jq '{title, body}'
+```
+
+**If 0 keywords can be extracted** (epic body too short or generic), skip to the **Greenfield Fallback** (2.5) immediately.
+
+---
+
+#### 2.2 — Search the Codebase
+
+For each keyword, run `codebase_search` with `name_pattern` matching:
+
+```bash
+codebase_search --name_pattern "<keyword>"
+```
+
+**Cap results at the top 3 per keyword.** If a keyword returns more than 50 results, take only the first 3. Record each result's file path and symbol name.
+
+---
+
+#### 2.3 — Read Matching Code
+
+For each result from 2.2, run `codebase_snippet` to read the actual code:
+
+```bash
+codebase_snippet --file "<file_path>" --symbol "<symbol_name>"
+```
+
+This gives you the source content to understand what the code does before you cut it into sub-issues.
+
+---
+
+#### 2.4 — Trace Dependencies
+
+For each symbol discovered in 2.2–2.3, trace what it calls (outbound dependencies) to understand the blast radius of changes:
+
+```bash
+codebase_trace --direction outbound --depth 1 --symbol "<symbol_name>"
+```
+
+Record the discovered dependencies alongside each symbol in the discovery map. Format:
+
+```
+Discovery Map:
+- file: src/models/user.py | symbol: User | deps: [BaseModel, db.Column]
+- file: src/routes/api.py | symbol: get_users | deps: [User.query, jsonify]
+...
+```
+
+---
+
+#### 2.5 — Greenfield Fallback
+
+If no results were found across all keywords (no `codebase_search` hits), record:
+
+```
+No existing code found — greenfield
+```
+
+Proceed to text-only cutting. The "Files Touched" section in each sub-issue will state: `No existing code — new files will be created`.
+
+---
+
+#### 2.6 — Handle Edge Cases
+
+- **Referenced file not found by search**: Note it in the discovery map as `referenced but not found` and continue. Do not block cutting.
+- **0 keywords extracted**: Skip directly to greenfield fallback (2.5).
+- **>50 results per keyword**: Take top 3 only; ignore the rest.
+- **No indexing timeout**: Wait until `codebase_index` completes.
+
+---
+
+**After Step 2**: You have a discovery map of existing code. Sub-issues must only describe work not yet done. The discovery map feeds into each sub-issue body under "Files Touched" (see Step 4 template).
 
 ### Step 3 — Analyze & Categorize
 
@@ -332,6 +425,14 @@ _Step-by-step instructions executable without reading any code._
 3. <action step>
 4. <expected result>
 5. <edge case / negative test>
+
+## Files Touched
+
+_Discovered during Step 2 codebase exploration._
+
+- **Existing files/symbols**: <list file paths and symbols from discovery map relevant to this sub-issue>
+- **New files to create**: <list paths for files this sub-issue will create, if any>
+- **Greenfield**: No existing code — new files will be created
 
 ## Technical Notes
 
