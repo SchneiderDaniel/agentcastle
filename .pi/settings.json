@@ -5,6 +5,7 @@
         "statusField": "Status",
         "statusMapping": {
             "Architecture": "architect",
+            "Research": "researcher",
             "TestDesign": "test-designer",
             "Implementation": "developer",
             "Audit": "auditor"
