@@ -13,9 +13,9 @@ import type {
 	ExtensionCommandContext,
 } from "@mariozechner/pi-coding-agent";
 import { readFileSync, existsSync } from "node:fs";
-import { execSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { Container, Spacer, Text, truncateToWidth } from "@mariozechner/pi-tui";
-import { checkBlockedByDependencies } from "./supervisor/deps.js";
+
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -175,7 +175,7 @@ function filterIssueData(rawIssue: any, codeowners: string[]): FilteredIssueData
 
 function gh(args: string[]): string {
 	try {
-		return execSync(`gh ${args.join(" ")}`, {
+		return execFileSync("gh", args, {
 			encoding: "utf-8",
 			stdio: ["pipe", "pipe", "pipe"],
 			timeout: 30_000,
@@ -287,6 +287,157 @@ function getProjectId(projectNumber: number, owner: string): string {
 		"json",
 	]);
 	return result?.id || "";
+}
+
+// ─── Dependency gate ("blocked by" links) ─────────────────────────
+
+interface BlockerInfo {
+	number: number;
+	title: string;
+	type: "issue" | "pullrequest";
+	state: string;
+}
+
+interface DepsResult {
+	blocked: boolean;
+	blockers: BlockerInfo[];
+}
+
+interface GhBlockingIssue {
+	id: string;
+	number: number;
+	title: string;
+	state: string;
+}
+
+interface GhTimelineNode {
+	__typename: string;
+	blockingIssue?: GhBlockingIssue | null;
+}
+
+interface GhTimelineResponse {
+	data?: {
+		repository?: {
+			issue?: {
+				timelineItems?: {
+					nodes?: GhTimelineNode[];
+				};
+			};
+		};
+	};
+	errors?: Array<{ message: string }>;
+}
+
+function ghGraphQL(query: string): any {
+	const result = gh([
+		"api",
+		"graphql",
+		"--header",
+		"Accept: application/vnd.github+json",
+		"-f",
+		`query=${query}`,
+	]);
+	if (!result) return null;
+	return JSON.parse(result);
+}
+
+function parseTimelineResponse(
+	response: GhTimelineResponse | null,
+): DepsResult {
+	if (response?.errors && response.errors.length > 0) {
+		const msgs = response.errors.map((e) => e.message).join("; ");
+		throw new Error(`GitHub GraphQL error: ${msgs}`);
+	}
+
+	const nodes = response?.data?.repository?.issue?.timelineItems?.nodes;
+	if (!nodes || nodes.length === 0) {
+		return { blocked: false, blockers: [] };
+	}
+
+	const lastEventByIssue = new Map<string, string>();
+
+	for (const node of nodes) {
+		const blockingId = node?.blockingIssue?.id;
+		if (!blockingId) continue;
+		lastEventByIssue.set(blockingId, node.__typename);
+	}
+
+	const blockers: BlockerInfo[] = [];
+	const seenNumbers = new Set<number>();
+
+	for (const node of nodes) {
+		const issue = node.blockingIssue;
+		if (!issue) continue;
+
+		const lastEvent = lastEventByIssue.get(issue.id);
+		if (lastEvent !== "BlockedByAddedEvent") continue;
+
+		if (seenNumbers.has(issue.number)) continue;
+		seenNumbers.add(issue.number);
+
+		const state = issue.state || "UNKNOWN";
+		if (state === "CLOSED") continue;
+
+		blockers.push({
+			number: issue.number,
+			title: issue.title || "",
+			type: "issue",
+			state,
+		});
+	}
+
+	return {
+		blocked: blockers.length > 0,
+		blockers,
+	};
+}
+
+async function checkBlockedByDependencies(
+	issueNumber: number,
+	repo: string,
+): Promise<DepsResult> {
+	const [owner, name] = repo.split("/");
+	if (!owner || !name) {
+		throw new Error(`Invalid repo format: ${repo} (expected owner/name)`);
+	}
+
+	const query = `
+    query {
+      repository(owner: "${owner}", name: "${name}") {
+        issue(number: ${issueNumber}) {
+          timelineItems(itemTypes: [BLOCKED_BY_ADDED_EVENT, BLOCKED_BY_REMOVED_EVENT], first: 100) {
+            nodes {
+              __typename
+              ... on BlockedByAddedEvent {
+                blockingIssue {
+                  id
+                  number
+                  title
+                  state
+                }
+              }
+              ... on BlockedByRemovedEvent {
+                blockingIssue {
+                  id
+                  number
+                  title
+                  state
+                }
+              }
+            }
+          }
+        }
+      }
+    }`;
+
+	let response: GhTimelineResponse;
+	try {
+		response = ghGraphQL(query) as GhTimelineResponse;
+	} catch (err: any) {
+		throw new Error(`Failed to query GitHub for dependencies: ${err.message}`);
+	}
+
+	return parseTimelineResponse(response);
 }
 
 // ─── Formatting helpers ──────────────────────────────────────────────
