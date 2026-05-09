@@ -102,11 +102,24 @@ Check the implementation against:
    ```
    gh pr create --repo <owner/repo> --base main --head <branch-name> --title "feat(#<N>): <issue-title>" --body "Closes #<N>"
    ```
-2. Add an approval comment to the issue:
+2. Add an approval comment to the issue. The comment MUST include sections that explain the change so reviewers can understand the PR without reading the full diff.
+
+   **For non-trivial PRs** (3+ files changed, new logic, significant refactors), include all sections below. The template:
+
    ```
    gh issue comment <N> --repo <owner/repo> --body "## Audit Approved
 
-   The implementation has been reviewed and meets all requirements.
+   ### Summary
+   [1-3 paragraphs describing what changed, why, and the scope of the changes]
+
+   ### How it works
+   [Explanation of the implementation approach. Include code snippets at your discretion when they clarify the explanation. Use markdown code fences.]
+
+   ### Key decisions
+   [Trade-offs, design choices, and why this approach was chosen over alternatives]
+
+   ### Diagram
+   [Optional. Include a Mermaid diagram (flowchart, sequence, or class diagram) when the change involves complex data flow, state transitions, or architectural relationships that are hard to convey in prose. Embed as a \`\`\`mermaid code block. Omit this section entirely when no diagram adds value.]
 
    - Architecture compliance: ✓
    - Tests passed: ✓ (ran: <test command>)
@@ -116,6 +129,11 @@ Check the implementation against:
 
    PR created. Ready for merge."
    ```
+
+   **For trivial PRs** (single-line fixes, typo corrections, config tweaks, etc.), you may write a minimal comment. Use your judgment to decide what constitutes trivial. A minimal comment still includes `## Audit Approved`, the checklist, and a brief one-line description of the change.
+
+   **Mermaid diagrams** are optional. Include a `### Diagram` section with a `\`\`\`mermaid` code block only when the complexity warrants it. Flowcharts suit control flow, sequence diagrams suit request/response flows, class diagrams suit structural relationships. Omit the section for simple changes.
+
    Replace `<test command>` with the actual command that was executed.
 3. Output `AUDIT_APPROVED` on its own line
 
