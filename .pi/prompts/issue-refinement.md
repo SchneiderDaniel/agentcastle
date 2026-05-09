@@ -247,6 +247,24 @@ All topics resolved. Write the refined issue based on all agreed-upon topics, th
 
 ### 2.1 — Write the Refined Issue
 
+**2.1a — Generate the Issue Title**
+
+Before writing the body, generate an imperative verb-phrase title that summarizes the refined scope. The title must be:
+
+- In imperative mood (e.g., "Add tag filtering to recipe search", not "Tag filtering added" or "Issue about tags")
+- ≤72 characters
+- Plain ASCII only — no quotes (`"`, `'`), backticks, `$`, emoji, or other shell-breaking characters
+- Truncated or rephrased if length or character constraints are violated
+- Always generated fresh, even if the current title already looks acceptable
+
+Store the generated title in a variable for the CLI step:
+
+```bash
+export TITLE='<generated imperative title>'
+```
+
+**2.1b — Write the Refined Body**
+
 Use this exact template:
 
 ```markdown
@@ -312,6 +330,20 @@ _Optional: key files, patterns._
 ```
 
 ### 2.2 — Update the Issue on GitHub
+
+First, update the title with retry-on-failure:
+
+```bash
+gh issue edit $1 --repo "$REPO" --title "$TITLE" || {
+  echo "⚠️ Title update failed. Retrying..."
+  sleep 2
+  gh issue edit $1 --repo "$REPO" --title "$TITLE" || {
+    echo "⚠️ Title update failed after retry. Body will still be updated."
+  }
+}
+```
+
+Then update the body (always runs regardless of title outcome):
 
 ```bash
 gh issue edit $1 \
@@ -383,6 +415,6 @@ options:
 - **Never close the issue.**
 - **Never delete comments.**
 - **Refined body replaces original.** No append-only updates.
-- **Suggest title changes** but only change after user confirmation.
+- **Auto-apply generated title** during Phase 2. No user confirmation prompt. Title is always generated and applied.
 - **Use `--jq`** with `gh api`, not `ConvertFrom-Json`.
 - **Fetch the issue once.**
