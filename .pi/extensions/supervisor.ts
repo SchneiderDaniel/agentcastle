@@ -318,9 +318,12 @@ function boldText(theme: any, text: string): string {
 /**
  * Resolve the extensions CLI flags for a given agent frontmatter.
  * - If extensions field is present and non-empty, split, trim, filter out
- *   "supervisor" (case-insensitive), and return `--extensions <list>`.
+ *   "supervisor" (case-insensitive), and return `--extension <path>` flags.
  * - If nothing remains after filtering, fall back to `--no-extensions`.
  * - If extensions field is missing or empty, return `--no-extensions`.
+ *
+ * pi CLI uses `--extension` (singular) with a file path per flag.
+ * Extension names are resolved relative to .pi/extensions/<name>.ts
  *
  * This is a pure function exported for unit testing.
  */
@@ -339,7 +342,11 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 		return ["--no-extensions"];
 	}
 
-	return ["--extensions", extensions.join(",")];
+	const result: string[] = [];
+	for (const ext of extensions) {
+		result.push("--extension", `.pi/extensions/${ext}.ts`);
+	}
+	return result;
 }
 
 // ─── runAgent ────────────────────────────────────────────────────────
