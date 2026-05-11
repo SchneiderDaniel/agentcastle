@@ -48,14 +48,46 @@ git pull
 git submodule update --init --recursive
 ```
 
-### 4. Implement the changes
+### 4. Branch the submodule
+
+Create a matching branch in each submodule so changes can be tracked in both repos:
+
+```
+cd flask_blogs
+git checkout -b <branch-name> 2>/dev/null || git checkout <branch-name>
+git push -u origin <branch-name>
+cd ..
+```
+
+- Same `<branch-name>` as the agentcastle worktree.
+- If the branch already exists locally (previous session), fallback to `git checkout <branch-name>`.
+- If the branch already exists remotely, `git push -u` succeeds and sets upstream tracking.
+- Push errors are NOT suppressed — a failed push here means the later `push.recurseSubmodules check` will also fail, so fail early.
+
+### 5. Implement the changes
 
 - Read the relevant source files using the `read` tool
 - Implement the feature according to the architecture comment
 - Write tests according to the test plan comment
 - Make focused, minimal changes
+- You may edit files in BOTH the agentcastle repo AND any submodule (e.g. `flask_blogs/`)
 
-### 5. Commit and push
+### 6. Commit and push
+
+**Step A — Push submodule changes first (if any):**
+
+```
+# Check if submodule has changes
+cd flask_blogs
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  git add -A
+  git commit -m "feat(#<N>): <issue-title>"
+  git push origin <branch-name>
+fi
+cd ..
+```
+
+**Step B — Push agentcastle (always):**
 
 ```
 git add -A
@@ -63,7 +95,9 @@ git commit -m "feat(#<N>): <issue-title>"
 git push origin <branch-name>
 ```
 
-### 6. Clean up
+The `git add -A` in step B automatically stages any submodule pointer change (new commit hash in flask_blogs).
+
+### 7. Clean up
 
 ```
 cd <original-repo>
