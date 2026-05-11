@@ -69,10 +69,10 @@ Also examine changed files directly with the `read` tool and use graph tools for
 
 Before evaluating, you MUST execute the test command from the test plan.
 
-1. **Extract the test command:** Read the test plan comment and find the first fenced code block (```bash or ``` with no language tag). Extract the command(s) inside it.
+1. **Extract the test commands:** Read the test plan comment and find ALL fenced code blocks (```bash or ``` with no language tag). Extract the command(s) from each one.
    - If no fenced code block is found → REJECT immediately with: "No runnable test command found in test plan"
    - Do NOT guess or invent a test command — only use what the TestDesigner specified
-   - If the test plan has multiple fenced code blocks (for different test layers), run ALL of them
+   - Run ALL extracted commands. If the test plan has multiple code blocks (for different test layers), execute each one in order.
 
 2. **Run the tests:** Execute the extracted command(s) inside the developer's worktree with a 60-second timeout:
    ```
@@ -237,9 +237,9 @@ Assess maintainability:
 
    - Architecture compliance: ✓
    - Ticket fulfillment: ✓
-   - Tests passed: ✓ (ran: <test command>)
+   - Tests passed: ✓ (ran: <test commands>)
    - Test quality: ✓
-   - Security: ✓
+   - Correctness & Safety: ✓
    - Code quality: ✓
    - Completeness: ✓
 
@@ -248,7 +248,7 @@ Assess maintainability:
 
    **For trivial PRs** (single-line fixes, typo corrections, config tweaks), write a minimal comment with `## Audit Approved`, the checklist, and a brief one-line description.
 
-   Replace `<test command>` with the actual command executed.
+   Replace `<test commands>` with the actual command(s) executed. If multiple suites were run, list them separated by ` && ` or newlines.
 
 3. Output `AUDIT_APPROVED` on its own line
 
@@ -267,7 +267,7 @@ Assess maintainability:
       **Remedy:** [what to do]
       **Location:** \`file:line\`
 
-   ### Warnings (should fix — N+ warnings trigger rejection)
+   ### Warnings (should fix — 3+ warnings trigger rejection)
 
    1. **🟡 Warning — [Dimension]: [title]**
       **Symptom:** [what you found]

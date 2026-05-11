@@ -138,18 +138,22 @@ git pull
 git submodule update --init --recursive
 ```
 
-### 4. Branch the submodule
+### 4. Branch each submodule
 
-Create a matching branch in each submodule so changes can be tracked in both repos:
+If the repository has git submodules, create a matching branch in each one so changes can be tracked across repos. Check for submodules first:
 
 ```
-cd flask_blogs
-git checkout -b <branch-name> 2>/dev/null || git checkout <branch-name>
-git push -u origin <branch-name>
-cd ..
+git submodule status | awk '{print $2}' | while read submodule; do
+  cd "$submodule"
+  git checkout -b <branch-name> 2>/dev/null || git checkout <branch-name>
+  git push -u origin <branch-name>
+  cd ..
+done
 ```
 
-- Same `<branch-name>` as the agentcastle worktree.
+If no submodules exist (command produces no output), skip this step.
+
+- Same `<branch-name>` as the worktree.
 - If the branch already exists locally (previous session), fallback to `git checkout <branch-name>`.
 - If the branch already exists remotely, `git push -u` succeeds and sets upstream tracking.
 - Push errors are NOT suppressed — a failed push here means the later `push.recurseSubmodules check` will also fail, so fail early.
@@ -183,14 +187,16 @@ Follow the **Test First** rule:
 **Step A — Push submodule changes first (if any):**
 
 ```
-# Check if submodule has changes
-cd flask_blogs
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  git add -A
-  git commit -m "feat(#<N>): <issue-title>"
-  git push origin <branch-name>
-fi
-cd ..
+# Push changes in each submodule that has modifications
+git submodule status | awk '{print $2}' | while read submodule; do
+  cd "$submodule"
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    git add -A
+    git commit -m "feat(#<N>): <issue-title>"
+    git push origin <branch-name>
+  fi
+  cd ..
+done
 ```
 
 **Step B — Push agentcastle (always):**
