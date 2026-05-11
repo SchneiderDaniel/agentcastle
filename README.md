@@ -31,9 +31,8 @@ This repository contains the **configuration and extensions**. You clone it and 
 | File/Path                           | What it is                              |
 | ----------------------------------- | --------------------------------------- |
 | `.pi/extensions/caveman.ts`              | Token-efficient communication protocol    |
-| `.pi/extensions/codebase-memory.ts`      | Codebase knowledge graph (14 tools)       |
+| `.pi/extensions/codebase-memory.ts`      | Codebase knowledge graph (14 tools) + auto-index + tool-use guidance |
 | `.pi/extensions/crawl4ai.ts`             | Three-tier web crawler                    |
-| `.pi/extensions/search-graph.ts`         | Local AST graph search tool               |
 | `.pi/extensions/session-logger.ts`       | Session logging to markdown               |
 | `.pi/extensions/ask-user.ts`             | Interactive multiple-choice questions     |
 | `.pi/extensions/supervisor.ts`           | Kanban-driven multi-agent orchestration   |
@@ -78,7 +77,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 | 🦴 **Caveman Mode** | Token-efficient communication via `AGENTS.md` — active in every session                                            |
 | 📋 **SBOM**         | Full software bill of materials included in this README                                                            |
 | 🤖 **Multi-Agent**  | Kanban-driven pipeline: Supervisor dispatches Architect → TestDesigner → Developer → Auditor in loop |
-| 🧩 **Extensions**   | 7 extensions auto-discovered from `.pi/extensions/`. No config files, no MCP servers.                              |
+| 🧩 **Extensions**   | 6 extensions auto-discovered from `.pi/extensions/`. No config files, no MCP servers.                              |
 
 ---
 
@@ -396,11 +395,10 @@ Pi auto-discovers extensions from `.pi/extensions/` in your **project root**. No
 | -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
 | **Supervisor**       | `supervisor.ts`      | Kanban-driven multi-agent pipeline. Reads issue from GitHub project board, dispatches Architect → TestDesigner → Developer → Auditor in loop until Done. Registers `/supervisor <issue-number>` slash command. |
 | **Web Crawler**      | `crawl4ai.ts`        | Three-tier web crawling: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps.     |
-| **Codebase Memory**  | `codebase-memory.ts` | Wraps codebase-memory-mcp CLI. Auto-indexes on session start. 14 tools exposed.                                |
+| **Codebase Memory**  | `codebase-memory.ts` | Wraps codebase-memory-mcp CLI. Auto-indexes on session start. 14 tools exposed. Injects codebase exploration guidance into every agent turn. |
 | **Session Logger**   | `session-logger.ts`  | Logs sessions to `.pi/sessions/<id>/session.md` + `metadata.json`. Toggle with `/session-logger`.              |
 | **Caveman Protocol** | `caveman.ts`         | Token-efficient communication style. Active via `AGENTS.md`.                                                   |
 | **Ask User**         | `ask-user.ts`        | Interactive multiple-choice picker for AI-to-user questions. Uses `ctx.ui.select()` with arrow-key navigation. |
-| **Search Graph**     | `search-graph.ts`    | Local AST graph search via localhost:9749.                                                                     |
 
 ### Agent Definitions
 
@@ -474,6 +472,10 @@ Uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — 
 | `codebase_index_status`   | Per-project indexing status                                   |
 | `codebase_delete_project` | Remove project from graph                                     |
 | `codebase_ingest_traces`  | Ingest runtime traces for HTTP edge validation                |
+
+#### Tool-Use Guidance
+
+The `codebase-memory.ts` extension injects a **Codebase Exploration Strategy** section into every agent's system prompt via a `before_agent_start` hook. This instructs all agents (Architect, Developer, Auditor, TestDesigner) to use graph tools before falling back to file reads or grep. Graph queries use ~120× fewer tokens than file-by-file exploration — documented in the [codebase-memory-mcp arXiv paper](https://arxiv.org/abs/2603.27277) (83% answer quality, 10× fewer tokens, 2.1× fewer tool calls vs. file-by-file).
 
 #### File Ignoring
 
@@ -614,7 +616,6 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | caveman.ts                                 | —        | MIT          | project    | This repository                                                                                          |
 | codebase-memory.ts                         | —        | MIT          | project    | This repository                                                                                          |
 | crawl4ai.ts                                | —        | MIT          | project    | This repository                                                                                          |
-| search-graph.ts                            | —        | MIT          | project    | This repository                                                                                          |
 | session-logger.ts                          | —        | MIT          | project    | This repository                                                                                          |
 | ask-user.ts                                | —        | MIT          | project    | This repository                                                                                          |
 | supervisor.ts                              | —        | MIT          | project    | This repository                                                                                          |

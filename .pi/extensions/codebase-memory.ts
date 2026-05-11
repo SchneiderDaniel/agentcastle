@@ -59,6 +59,24 @@ export default async function (pi: ExtensionAPI) {
     }
   });
 
+  // ── Inject tool-use guidance into every agent turn ──
+  pi.on("before_agent_start", async (event, _ctx) => {
+    const guide =
+      "\n\n### Codebase Exploration Strategy\n" +
+      "Before reading files or running grep, use graph tools to explore structure:\n" +
+      "- `codebase_search` — find functions/classes by name pattern, label, or file. Use BEFORE reading code.\n" +
+      "- `codebase_trace` — trace callers/callees of any function. Replaces manual file-by-file call-chain tracing.\n" +
+      "- `codebase_overview` — get architecture overview (entry points, routes, hotspots, clusters) in one call.\n" +
+      "- `codebase_query` — run Cypher-like graph queries for complex structural questions.\n" +
+      "- `codebase_snippet` — read source by qualified name (from search results).\n" +
+      "- `codebase_detect_changes` — map git diff to affected symbols + risk classification.\n" +
+      "\nGraph queries use ~120x fewer tokens than file-by-file grep/read. Always prefer graph tools over bash grep or read for structural questions about the codebase.";
+
+    return {
+      systemPrompt: event.systemPrompt + guide,
+    };
+  });
+
   // ── 1. index_repository ──
   pi.registerTool({
     name: "codebase_index",
