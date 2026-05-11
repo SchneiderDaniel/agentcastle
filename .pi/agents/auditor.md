@@ -2,7 +2,7 @@
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
 tools: read, bash
-model: opencode-go/glm-5.1
+model: opencode-go/glm-5
 extensions: "caveman,crawl4ai,piignore"
 ---
 
