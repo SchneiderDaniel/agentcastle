@@ -11,6 +11,12 @@
             "Audit": "auditor"
         },
         "maxRejections": 5,
-        "codeowners": ["SchneiderDaniel"]
+        "codeowners": ["SchneiderDaniel"],
+        "submodules": [
+            {
+                "path": "flask_blogs",
+                "repo": "SchneiderDaniel/flask_blogs"
+            }
+        ]
     }
 }

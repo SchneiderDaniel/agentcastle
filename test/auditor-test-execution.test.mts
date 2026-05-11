@@ -349,10 +349,10 @@ describe("Command execution (mocked)", () => {
 
 describe("Worktree path construction", () => {
 	it("2.34: builds correct worktree path from branch name", () => {
-		const branch = "git-issue#10-some-feat";
+		const branch = "worktree-git-issue-10-some-feat";
 		const worktreePath = `../${branch}`;
 		const cmd = `cd ${worktreePath} && node --test test/x.test.mts`;
-		assert.ok(cmd.startsWith("cd ../git-issue#10-some-feat"));
+		assert.ok(cmd.startsWith("cd ../worktree-git-issue-10-some-feat"));
 	});
 });
 
