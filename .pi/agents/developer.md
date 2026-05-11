@@ -36,6 +36,7 @@ Extract a slug from the issue title:
 ```
 git worktree add ../<branch-name> main
 cd ../<branch-name>
+git submodule update --init --recursive
 ```
 
 If the worktree already exists, reuse it:
@@ -44,6 +45,7 @@ If the worktree already exists, reuse it:
 cd ../<branch-name>
 git checkout main
 git pull
+git submodule update --init --recursive
 ```
 
 ### 4. Implement the changes

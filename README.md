@@ -39,6 +39,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 | `.pi/extensions/supervisor.ts`           | Kanban-driven multi-agent orchestration   |
 | `.pi/agents/architect.md`               | Architect agent system prompt             |
 | `.pi/agents/developer.md`               | Developer agent system prompt             |
+| `flask_blogs/`                            | Submodule: Flask blog apps (hippocooking, planhead, sudoku) |
 | `.pi/agents/auditor.md`                 | Auditor agent system prompt               |
 | `.pi/agents/test-designer.md`           | TestDesigner agent system prompt          |
 | `.pi/settings.json`                      | Provider + supervisor config              |
@@ -49,6 +50,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 | `package.json`                           | Project metadata + test script            |
 | `test/session-logger.test.mts`           | Session logger test                       |
 | `test/supervisor-extensions.test.mts`    | Supervisor extension resolution tests     |
+| `.gitmodules`                             | Submodule configuration                   |
 
 ### 🔧 You install once on your machine
 
@@ -260,6 +262,26 @@ echo ".env" >> .gitignore
 git worktree add -b feature/logic feature-logic
 cd feature-logic
 ```
+
+#### Submodule Configuration
+
+This repo uses git submodules. The following configs are set in the bare repo (shared across all worktrees):
+
+```bash
+# Automatically update submodules after a pull
+git config submodule.recurse true
+
+# Ensure submodule commits are pushed before pushing the main repo
+git config push.recurseSubmodules check
+
+# View submodule change history in git diff
+git config diff.submodule log
+
+# Keep a summary of submodule status in git status
+git config status.submoduleSummary true
+```
+
+These prevent the "Three Pipe Problem" — submodule changes lost or uncommitted during multi-worktree workflows.
 
 #### Editor
 
