@@ -3,6 +3,19 @@ import { Type } from "typebox";
 
 const BINARY = `${process.env.HOME}/.local/bin/codebase-memory-mcp`;
 
+/** Timeout for lightweight query ops (search, trace, schema, etc.) */
+const QUERY_TIMEOUT = 10_000;
+/** Timeout for heavy ops (indexing, architecture) */
+const HEAVY_TIMEOUT = 120_000;
+
+/** Lightweight tools — sub-10ms queries */
+const LIGHT_TOOLS = new Set([
+  "search_graph", "trace_call_path", "query_graph",
+  "get_graph_schema", "get_code_snippet", "search_code",
+  "list_projects", "delete_project", "index_status",
+  "manage_adr", "ingest_traces",
+]);
+
 /** Derive project name from cwd path: /home/miria/git/main → home-miria-git-main */
 function projectName(cwd: string): string {
   return cwd.replace(/^\//, "").replace(/\//g, "-");
@@ -15,9 +28,10 @@ async function cbmCli(
   args: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; data: unknown; error?: string }> {
+  const timeout = LIGHT_TOOLS.has(tool) ? QUERY_TIMEOUT : HEAVY_TIMEOUT;
   const result = await pi.exec(BINARY, ["cli", tool, JSON.stringify(args)], {
     signal,
-    timeout: 120_000,
+    timeout,
   });
 
   if (result.code !== 0) {
@@ -278,17 +292,58 @@ export default async function (pi: ExtensionAPI) {
       const lines: string[] = [];
       if (callers.length > 0) {
         lines.push(`Callers (inbound, ${callers.length}):`);
-        for (const c of callers) lines.push(`  ← ${c.name} (hop ${c.hop})`);
+        for (const c of callers) lines.push(`  ← ${c.name} (hop ${c.hop})  |  ${c.file_path || ""}`);
       }
       if (callees.length > 0) {
         lines.push(`Callees (outbound, ${callees.length}):`);
-        for (const c of callees) lines.push(`  → ${c.name} (hop ${c.hop})`);
+        for (const c of callees) lines.push(`  → ${c.name} (hop ${c.hop})  |  ${c.file_path || ""}`);
       }
       if (lines.length === 0) {
         return { content: [{ type: "text", text: `No call paths found for "${params.function_name}". Try codebase_search to verify the name.` }], details: data };
       }
       return {
         content: [{ type: "text", text: `Trace for ${params.function_name} (direction: ${data.direction}):\n${lines.join("\n")}` }],
+        details: data,
+      };
+    },
+  });
+
+  // ── 6b. semantic_query ── (available in binary >= 0.6.1)
+  pi.registerTool({
+    name: "codebase_semantic_search",
+    label: "Semantic Search",
+    description:
+      "Vector similarity search across codebase symbols using Nomic embeddings (binary >= 0.6.1). Falls back gracefully on older binaries.",
+    promptSnippet: "Semantic vector search across the codebase graph",
+    promptGuidelines: [
+      "Use codebase_semantic_search for natural-language code discovery when regex patterns are insufficient.",
+      "Falls back with an error on binary versions < 0.6.1 — use codebase_search instead.",
+    ],
+    parameters: Type.Object({
+      query: Type.String({ description: "Natural language query (e.g. 'authentication middleware')" }),
+      project: Type.Optional(
+        Type.String({ description: "Project name (auto-detected if omitted)" }),
+      ),
+      limit: Type.Optional(Type.Number({ description: "Max results (default 10)" })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const proj = params.project || projectName(ctx.cwd);
+      const res = await cbmCli(pi, "semantic_query", {
+        project: proj,
+        query: params.query,
+        limit: params.limit || 10,
+      }, signal);
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      const data = res.data as any;
+      const results = data.results || [];
+      if (results.length === 0) {
+        return { content: [{ type: "text", text: `No semantic matches for "${params.query}".` }], details: data };
+      }
+      const lines = results.map((r: any) =>
+        `[${r.label}] ${r.name} (score: ${r.score?.toFixed?.(3) ?? r.score})  |  ${r.file_path}`
+      );
+      return {
+        content: [{ type: "text", text: `${results.length} results:\n${lines.join("\n")}` }],
         details: data,
       };
     },
@@ -418,6 +473,39 @@ export default async function (pi: ExtensionAPI) {
     },
   });
 
+  // ── 10b. update_binary ──
+  pi.registerTool({
+    name: "codebase_update",
+    label: "Update Binary",
+    description:
+      "Check codebase-memory-mcp version and upgrade to latest release.",
+    promptSnippet: "Check and upgrade codebase-memory-mcp binary",
+    promptGuidelines: [
+      "Use codebase_update when the user asks to update the codebase memory tools.",
+      "Updates check latest GitHub release and self-upgrade the binary.",
+    ],
+    parameters: Type.Object({
+      check_only: Type.Optional(
+        Type.Boolean({ description: "If true, only check version without upgrading (default false)" }),
+      ),
+    }),
+    async execute(_id, params, signal, _onUpdate, _ctx) {
+      const args = params.check_only ? ["update", "--check"] : ["update", "-y"];
+      // update subcommand is not a CLI tool — run directly
+      const result = await pi.exec(BINARY, args, { signal, timeout: 60_000 });
+      if (result.code !== 0) {
+        return {
+          content: [{ type: "text", text: `Update failed: ${result.stderr || result.stdout}` }],
+          details: {},
+        };
+      }
+      return {
+        content: [{ type: "text", text: result.stdout || "Update completed." }],
+        details: {},
+      };
+    },
+  });
+
   // ── 11. get_architecture ──
   pi.registerTool({
     name: "codebase_overview",
@@ -492,15 +580,21 @@ export default async function (pi: ExtensionAPI) {
         return { content: [{ type: "text", text: `No matches for "${params.pattern}"` }], details: data };
       }
       const lines: string[] = [];
+      const MAX_GRAPH = 10;
+      const MAX_RAW = 15;
       if (graphResults.length > 0) {
-        lines.push(`Graph matches (${graphResults.length} symbols):`);
-        for (const r of graphResults.slice(0, 10)) {
+        const shown = graphResults.slice(0, MAX_GRAPH);
+        const omitted = graphResults.length - shown.length;
+        lines.push(`Graph matches (${graphResults.length} symbols${omitted > 0 ? `, showing ${shown.length}, ${omitted} omitted` : ""}):`);
+        for (const r of shown) {
           lines.push(`  [${r.label}] ${r.node || r.name}  |  ${r.file}  |  matches at lines: ${(r.match_lines || []).slice(0, 5).join(",")}`);
         }
       }
       if (rawMatches.length > 0) {
-        lines.push(`Raw matches (${rawMatches.length} lines):`);
-        for (const r of rawMatches.slice(0, 15)) {
+        const shown = rawMatches.slice(0, MAX_RAW);
+        const omitted = rawMatches.length - shown.length;
+        lines.push(`Raw matches (${rawMatches.length} lines${omitted > 0 ? `, showing ${shown.length}, ${omitted} omitted` : ""}):`);
+        for (const r of shown) {
           lines.push(`  ${r.file}:${r.line}: ${(r.content || "").substring(0, 120)}`);
         }
       }
@@ -516,25 +610,29 @@ export default async function (pi: ExtensionAPI) {
     name: "codebase_adr",
     label: "Manage ADR",
     description:
-      "CRUD for Architecture Decision Records. Store, retrieve, list, or delete architectural decisions.",
-    promptSnippet: "Manage Architecture Decision Records (store, retrieve, list, delete)",
+      "CRUD for Architecture Decision Records. Update (create/modify), retrieve, list, or delete architectural decisions.",
+    promptSnippet: "Manage Architecture Decision Records (update, retrieve, list, delete)",
     promptGuidelines: [
       "Use codebase_adr to persist architectural decisions that survive across sessions.",
+      "Use mode='update' to create or modify an ADR. Use mode='retrieve' to read it back.",
       "After analyzing the codebase, consider creating an ADR to document key architectural insights.",
     ],
     parameters: Type.Object({
       mode: Type.String({
-        description: "Operation: store, retrieve, list, delete",
+        description: "Operation: update (create/modify), retrieve, list, delete",
       }),
-      title: Type.Optional(Type.String({ description: "ADR title (for store/retrieve/delete)" })),
-      content: Type.Optional(Type.String({ description: "ADR content in markdown (for store)" })),
+      title: Type.Optional(Type.String({ description: "ADR title (for update/retrieve/delete)" })),
+      content: Type.Optional(Type.String({ description: "ADR content in markdown (for update)" })),
       project: Type.Optional(
         Type.String({ description: "Project name (auto-detected if omitted)" }),
       ),
     }),
     async execute(_id, params, signal, _onUpdate, ctx) {
       const proj = params.project || projectName(ctx.cwd);
-      const args: Record<string, unknown> = { project: proj, mode: params.mode };
+      // Normalize mode: binary uses "update" not "store"
+      let mode = params.mode;
+      if (mode === "store") mode = "update";
+      const args: Record<string, unknown> = { project: proj, mode };
       if (params.title) args.title = params.title;
       if (params.content) args.content = params.content;
       const res = await cbmCli(pi, "manage_adr", args, signal);
