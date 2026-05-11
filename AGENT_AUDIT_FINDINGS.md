@@ -200,16 +200,6 @@ Same fix applied to the push step (Step 6A).
 
 Also fixed sibling line `- Tests passed: ✓ (ran: <test command>)` → `<test commands>` (plural) to support multi-suite test plans.
 
----
-
-### 🟢 10. Architect: Overlapping checklist items
-
-**File**: `architect.md`, Architecture Proposal Checklist  
-**Severity**: Suggestion — **NOT FIXED**
-
-**Symptom**: Clean Architecture, PEAA, and Software Design checklists test the same underlying properties (separation of concerns, low coupling, testability) from three angles. ~15 items overlap conceptually.
-
-**Decision**: Kept as-is. This is intentional multi-angle verification. Each angle catches different failure modes. The cost (cognitive load) is justified by the benefit (comprehensive coverage). Consolidation would risk missing nuanced issues.
 
 ---
 
@@ -270,4 +260,10 @@ These aspects were checked and found consistent across all agents:
 
 2. **Phase-gated test plan is a new convention**: Fix #2 changes the TestDesigner's output structure. The Developer and Auditor both consume the test plan. They should be aware of the new phase-gated format. The Developer's instructions say "Read the test plan from the TestDesigner comment" — generic enough to handle the new format. The Auditor's instructions say "find ALL fenced code blocks" — also handles the new format. No further changes needed.
 
-3. **Checklist overlap (#10) kept intentionally**: If the Architect agent struggles with token budget due to redundant checklist items, revisit consolidation.
+
+
+# Descisions 
+
+- We switch the order of the researcher and the archtiect. we do not want to add a backloop. The archtiect then build it sarchtiecture on a well researched prd. without creation contradictions.
+- make sure that things like in 6. are not present. we want the agents to be neutral to the repositories so that the agents can also be used in other repositories.
+-
