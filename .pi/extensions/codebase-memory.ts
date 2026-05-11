@@ -39,14 +39,27 @@ async function cbmCli(
   }
 
   try {
-    // Output is MCP content wrapper: {"content":[{"type":"text","text":"<json>"}]}
     const outer = JSON.parse(result.stdout);
+    // Output can be MCP content wrapper {"content":[{"type":"text","text":"<json>"}]}
+    // or direct JSON from some subcommands.
+    const contentArr = Array.isArray(outer.content) ? outer.content : null;
+    const rawText = contentArr?.[0]?.text ?? null;
+
     if (outer.isError) {
-      const inner = JSON.parse(outer.content[0]?.text || "{}");
-      return { ok: false, data: null, error: inner.error || inner.hint || "cbm error" };
+      if (rawText) {
+        const inner = JSON.parse(rawText);
+        return { ok: false, data: null, error: inner.error || inner.hint || "cbm error" };
+      }
+      return { ok: false, data: null, error: outer.error || "cbm error" };
     }
-    const inner = JSON.parse(outer.content[0]?.text || "{}");
-    return { ok: true, data: inner };
+
+    if (rawText) {
+      const inner = JSON.parse(rawText);
+      return { ok: true, data: inner };
+    }
+
+    // No MCP wrapper — treat outer as the data itself
+    return { ok: true, data: outer };
   } catch (e) {
     return { ok: false, data: null, error: `parse error: ${e}` };
   }
