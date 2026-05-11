@@ -1,0 +1,10 @@
+{
+	"type": "message",
+	"message": {
+		"role": "user",
+		"timestamp": "2025-06-01T10:00:00.000Z",
+		"content": [
+			{ "type": "text", "text": "Hello, how are you?" }
+		]
+	}
+}

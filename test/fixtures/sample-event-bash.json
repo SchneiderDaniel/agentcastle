@@ -1,0 +1,11 @@
+{
+	"type": "message",
+	"message": {
+		"role": "bashExecution",
+		"timestamp": "2025-06-01T10:00:03.000Z",
+		"command": "ls -la",
+		"output": "total 42\ndrwxr-xr-x  2 user group 4096 May 11 12:00 .\ndrwxr-xr-x 10 user group 4096 May 11 12:00 ..",
+		"exitCode": 0,
+		"cancelled": false
+	}
+}
