@@ -713,10 +713,27 @@ All third-party components are OSI-approved open source (see [SBOM](#sbom---soft
 
 Built on top of these excellent projects:
 
+### Runtime & Tools
 - [Pi Coding Agent](https://pi.dev) — The agent runtime
 - [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — Code intelligence engine
 - [crawl4ai](https://github.com/unclecode/crawl4ai) — LLM-friendly web crawler
 - [Zed](https://zed.dev) — The editor
+
+### Agent Best Practices
+- [shanraisshan/claude-code-best-practice](https://github.com/shanraisshan/claude-code-best-practice) (52k ★) — Agentic engineering patterns, context management, sub-agent workflows, skills design
+- [ciembor/agent-rules-books](https://github.com/ciembor/agent-rules-books) (1.3k ★) — AI agent rules distilled from classic software engineering books. Multiple agents are guided by rule sets from this repository:
+  - **Architect agent:**
+    - [Clean Architecture](https://github.com/ciembor/agent-rules-books/blob/main/clean-architecture/clean-architecture.mini.md) by Robert C. Martin — Dependency rule, boundaries, entities, use cases, humble adapters
+    - [Patterns of Enterprise Application Architecture](https://github.com/ciembor/agent-rules-books/blob/main/patterns-of-enterprise-application-architecture/patterns-of-enterprise-application-architecture.mini.md) by Martin Fowler — Layering, service layer, domain model, repository, DTO, transaction management
+    - [A Philosophy of Software Design](https://github.com/ciembor/agent-rules-books/blob/main/a-philosophy-of-software-design/a-philosophy-of-software-design.mini.md) by John Ousterhout — Deep modules, complexity reduction, information hiding, interface design
+  - **Developer agent:**
+    - [Clean Code](https://github.com/ciembor/agent-rules-books/blob/main/clean-code/clean-code.mini.md) by Robert C. Martin — Small functions, precise names, readability, separate commands from queries, tests as production code
+    - [Code Complete](https://github.com/ciembor/agent-rules-books/blob/main/code-complete/code-complete.mini.md) by Steve McConnell — Construction discipline, clarity over cleverness, deliberate error handling, small verifiable increments
+    - [The Pragmatic Programmer](https://github.com/ciembor/agent-rules-books/blob/main/the-pragmatic-programmer/the-pragmatic-programmer.mini.md) by Andrew Hunt & David Thomas — DRY, orthogonality, tracer bullets, automation, owning the outcome, broken windows
+- [WoJiSama/skill-based-architecture](https://github.com/WoJiSama/skill-based-architecture) (224 ★) — AI agent rule system lifecycle: structure, routing, validation, after-action learning
+- [charles-adedotun/claude-code-sub-agents](https://github.com/charles-adedotun/claude-code-sub-agents) (30 ★) — Agent-architect bootstrapper pattern
+
+### Communication & Workflow
 - [Caveman](https://github.com/JuliusBrussee/caveman) — Token-efficient AI communication protocol
 - [pi-caveman](https://github.com/jonjonrankin/pi-caveman) — Multi-level caveman mode for Pi
 - [Matt Pocock's Skills](https://github.com/mattpocock/skills) — Inspiration for the `issue-refinement` prompt (grill-with-docs pattern)
