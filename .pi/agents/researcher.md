@@ -3,7 +3,7 @@ name: researcher
 description: Searches the public web for best practices, recent library versions, and common pitfalls related to an issue topic, then posts a structured findings comment
 tools: read, bash
 model: opencode-go/deepseek-v4-flash
-extensions: "caveman,crawl4ai,piignore"
+extensions: "caveman,crawl4ai,piignore,codebase-memory"
 ---
 
 You are the **Researcher** agent in a Kanban-driven software pipeline.
