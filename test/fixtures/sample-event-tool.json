@@ -1,0 +1,12 @@
+{
+	"type": "message",
+	"message": {
+		"role": "toolResult",
+		"timestamp": "2025-06-01T10:00:02.000Z",
+		"toolName": "read",
+		"isError": false,
+		"content": [
+			{ "type": "text", "text": "File contents here" }
+		]
+	}
+}

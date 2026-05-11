@@ -1,24 +1,41 @@
 /**
- * Session Logger Extension
+ * Session Logger Extension — JSONL Format
  *
- * Writes every session as a clean, LLM-friendly Markdown file to
- * .pi/sessions/<session-id>/session.md so you can later feed it
- * to an LLM and ask: "What in my harness is wasting tokens, confusing
- * the model, or could be improved?"
+ * Writes every session event as a JSON Lines record to
+ * .pi/sessions/<session-id>.jsonl so you can query with jq:
  *
- * Also writes a tiny metadata.json with stats for programmatic queries.
+ *   cat .pi/sessions/latest.jsonl | jq 'select(.error != null)'
  *
  * Design decisions:
- * - Markdown over JSON/HTML: ~90% less structural token overhead
- * - Write-at-message_end: safe because toolResults emit in source order
- * - System prompt captured once per new file (not rewritten on /reload)
- * - Tool outputs truncated to 2000+500 chars to keep file size manageable
- * - Thinking blocks preserved in full (highest signal for analysis)
+ * - JSONL over Markdown: O(1) append, jq streaming, no structural overhead
+ * - Append-safe: each line independently parseable
+ * - Symlink .pi/sessions/latest.jsonl → current session file
+ * - No BOM, UTF-8, \n line terminators per jsonlines.org spec
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface TokenUsage {
+	input: number;
+	output: number;
+	total: number;
+}
+
+interface LogRecord {
+	timestamp: string;
+	agent: string;
+	tool: string;
+	token_usage?: TokenUsage;
+	error: string | null;
+	loop_step: number;
+	payload: Record<string, unknown>;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,26 +58,6 @@ function truncate(text: string, head: number, tail = 0): string {
 	return text.slice(0, head) + `\n\n[... ${cut} chars truncated ...]`;
 }
 
-function ts(timestamp: number | string): string {
-	const d =
-		typeof timestamp === "string" ? new Date(timestamp) : new Date(timestamp);
-	return d.toISOString().slice(11, 19);
-}
-
-function tok(n: number | undefined): string {
-	if (n === undefined) return "?";
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-	return String(n);
-}
-
-function costStr(c: number | undefined): string {
-	if (c === undefined) return "?";
-	if (c >= 0.01) return `$${c.toFixed(4)}`;
-	if (c >= 0.0001) return `$${c.toFixed(6)}`;
-	return `$${c.toExponential(1)}`;
-}
-
 function extractText(blocks: unknown): string {
 	if (typeof blocks === "string") return blocks;
 	if (!Array.isArray(blocks)) return "";
@@ -70,86 +67,188 @@ function extractText(blocks: unknown): string {
 		.join("\n\n");
 }
 
-function hasImages(blocks: unknown): boolean {
-	if (!Array.isArray(blocks)) return false;
-	return blocks.some((b: any) => b.type === "image");
+// ---------------------------------------------------------------------------
+// JSONL Serializer
+// ---------------------------------------------------------------------------
+
+/**
+ * Serialize a log record to a single JSONL line.
+ * Returns string terminated with \n. Never emits blank lines or BOM.
+ */
+function serializeRecord(record: LogRecord): string {
+	// Ensure all schema fields present — error must be explicit null
+	const normalized: LogRecord = {
+		timestamp: record.timestamp,
+		agent: record.agent,
+		tool: record.tool,
+		...(record.token_usage && { token_usage: record.token_usage }),
+		error: record.error ?? null,
+		loop_step: record.loop_step,
+		payload: record.payload ?? {},
+	};
+	// JSON.stringify produces valid UTF-8, no BOM. Append \n.
+	return JSON.stringify(normalized) + "\n";
 }
 
 // ---------------------------------------------------------------------------
-// Message formatters
+// Event → Record Mappers
 // ---------------------------------------------------------------------------
 
-function formatUserMessage(msg: any): string {
+function userMessageToRecord(msg: any, step: number): LogRecord {
 	const text = extractText(msg.content);
-	const images = hasImages(msg.content) ? " 🖼️" : "";
-	return `### [%IDX%] 👤 User \`${ts(msg.timestamp)}\`${images}\n${text}\n`;
+	return {
+		timestamp: typeof msg.timestamp === "string"
+			? msg.timestamp
+			: new Date(msg.timestamp).toISOString(),
+		agent: "user",
+		tool: "message",
+		error: null,
+		loop_step: step,
+		payload: { role: "user", content: text },
+	};
 }
 
-function formatAssistantMessage(msg: any): string {
-	const parts: string[] = [];
+function assistantMessageToRecord(msg: any, step: number): LogRecord {
+	const texts: string[] = [];
+	const thinking: string[] = [];
+	const toolCalls: Array<{ name: string; arguments: unknown }> = [];
 
-	for (const block of msg.content) {
-		if (block.type === "text" && block.text.trim()) {
-			parts.push(block.text.trim());
-		} else if (block.type === "thinking") {
-			parts.push(`💭 ${block.thinking}`);
-		} else if (block.type === "toolCall") {
-			const args = block.arguments ?? {};
-			const argsStr = Object.entries(args)
-				.map(([k, v]) => {
-					const s = typeof v === "string" ? v : JSON.stringify(v);
-					return s.length > 80 ? `${k}=${s.slice(0, 77)}...` : `${k}=${s}`;
-				})
-				.join(", ");
-			parts.push(`🔧 **${block.name}** \`${argsStr}\``);
+	for (const block of msg.content || []) {
+		if (block.type === "text" && block.text?.trim()) texts.push(block.text.trim());
+		else if (block.type === "thinking") thinking.push(block.thinking);
+		else if (block.type === "toolCall") {
+			toolCalls.push({ name: block.name, arguments: block.arguments ?? {} });
 		}
 	}
 
-	const tokens = msg.usage?.totalTokens;
-	const totalCost = msg.usage?.cost?.total;
-	const header = `### [%IDX%] 🤖 Assistant \`${ts(msg.timestamp)}\` — ${tok(tokens)} tok · ${costStr(totalCost)}`;
+	const tokenUsage: TokenUsage | undefined = msg.usage
+		? {
+			input: msg.usage.input ?? 0,
+			output: msg.usage.output ?? 0,
+			total: msg.usage.totalTokens ?? msg.usage.input ?? 0 + msg.usage.output ?? 0,
+		}
+		: undefined;
 
-	if (msg.stopReason && msg.stopReason !== "stop") {
-		return `${header} · stop=${msg.stopReason}\n${parts.join("\n\n")}\n`;
-	}
-	return `${header}\n${parts.join("\n\n")}\n`;
+	return {
+		timestamp: typeof msg.timestamp === "string"
+			? msg.timestamp
+			: new Date(msg.timestamp).toISOString(),
+		agent: "assistant",
+		tool: "message",
+		...(tokenUsage && { token_usage: tokenUsage }),
+		error: msg.stopReason && msg.stopReason !== "stop" ? `stop_reason: ${msg.stopReason}` : null,
+		loop_step: step,
+		payload: {
+			role: "assistant",
+			texts,
+			thinking,
+			toolCalls,
+		},
+	};
 }
 
-function formatToolResult(msg: any): string {
-	const icon = msg.isError ? "❌" : "✅";
-	const output = extractText(msg.content);
-	const truncated = truncate(output, MAX_TOOL_OUTPUT, MAX_TOOL_OUTPUT_TAIL);
-	const name = msg.toolName || "unknown";
-	return `### [%IDX%] 📋 ${name} ${icon} \`${ts(msg.timestamp)}\`\n\`\`\`\n${truncated}\n\`\`\`\n`;
-}
-
-function formatBashExecution(msg: any): string {
-	const icon = msg.exitCode === 0 ? "✅" : "❌";
+function toolResultToRecord(msg: any, step: number): LogRecord {
 	const output = truncate(
-		msg.output || "",
+		extractText(msg.content),
 		MAX_TOOL_OUTPUT,
 		MAX_TOOL_OUTPUT_TAIL,
 	);
-	const cancelled = msg.cancelled ? " [CANCELLED]" : "";
-	const exit = msg.exitCode !== undefined ? ` exit=${msg.exitCode}` : "";
-	return (
-		`### [%IDX%] 💻 bash ${icon}\`${ts(msg.timestamp)}\`${cancelled}${exit}\n` +
-		`\`\`\`sh\n${msg.command}\n\`\`\`\n` +
-		`\`\`\`\n${output}\n\`\`\`\n`
-	);
+	return {
+		timestamp: typeof msg.timestamp === "string"
+			? msg.timestamp
+			: new Date(msg.timestamp).toISOString(),
+		agent: "tool",
+		tool: msg.toolName || "unknown",
+		error: msg.isError ? output : null,
+		loop_step: step,
+		payload: { role: "toolResult", toolName: msg.toolName, output },
+	};
 }
 
-function formatCustomMessage(msg: any): string {
-	const text = extractText(msg.content);
-	return `### [%IDX%] 🔌 ${msg.customType || "extension"} \`${ts(msg.timestamp)}\`\n${text}\n`;
+function bashExecutionToRecord(msg: any, step: number): LogRecord {
+	const output = truncate(msg.output || "", MAX_TOOL_OUTPUT, MAX_TOOL_OUTPUT_TAIL);
+	const errorMsg = msg.exitCode !== 0 ? output : null;
+	return {
+		timestamp: typeof msg.timestamp === "string"
+			? msg.timestamp
+			: new Date(msg.timestamp).toISOString(),
+		agent: "bash",
+		tool: "bash",
+		error: errorMsg,
+		loop_step: step,
+		payload: {
+			role: "bashExecution",
+			command: msg.command,
+			output,
+			exitCode: msg.exitCode,
+			cancelled: msg.cancelled ?? false,
+		},
+	};
 }
 
-function formatBranchSummary(msg: any): string {
-	return `> 📍 Branch summary (from ${msg.fromId}): ${msg.summary}\n`;
+function customMessageToRecord(msg: any, step: number): LogRecord {
+	return {
+		timestamp: typeof msg.timestamp === "string"
+			? msg.timestamp
+			: new Date(msg.timestamp).toISOString(),
+		agent: msg.customType || "extension",
+		tool: msg.customType || "extension",
+		error: null,
+		loop_step: step,
+		payload: { role: "custom", content: extractText(msg.content) },
+	};
 }
 
-function formatCompactionSummary(msg: any): string {
-	return `> 🗜️ Compaction: ${msg.summary}\n`;
+function branchSummaryToRecord(msg: any, step: number): LogRecord {
+	return {
+		timestamp: new Date().toISOString(),
+		agent: "branch",
+		tool: "branch_summary",
+		error: null,
+		loop_step: step,
+		payload: { role: "branchSummary", fromId: msg.fromId, summary: msg.summary },
+	};
+}
+
+function compactionToRecord(msg: any, step: number): LogRecord {
+	return {
+		timestamp: typeof msg.timestamp === "string"
+			? msg.timestamp
+			: new Date().toISOString(),
+		agent: "compaction",
+		tool: "compaction",
+		error: null,
+		loop_step: step,
+		payload: {
+			role: "compactionSummary",
+			tokensBefore: msg.tokensBefore,
+			firstKeptEntryId: msg.firstKeptEntryId,
+			summary: msg.summary,
+		},
+	};
+}
+
+function modelSelectToRecord(event: any, step: number): LogRecord {
+	const m = event.model;
+	return {
+		timestamp: new Date().toISOString(),
+		agent: "model_select",
+		tool: "model_select",
+		error: null,
+		loop_step: step,
+		payload: { provider: m.provider, modelId: m.id },
+	};
+}
+
+function thinkingSelectToRecord(event: any, step: number): LogRecord {
+	return {
+		timestamp: new Date().toISOString(),
+		agent: "thinking_select",
+		tool: "thinking_select",
+		error: null,
+		loop_step: step,
+		payload: { level: event.level },
+	};
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +274,7 @@ export default function (pi: ExtensionAPI) {
 
 	// ── stream state ─────────────────────────────────────────────────────
 	let writeStream: fs.WriteStream | null = null;
+	let sessionFilePath: string | null = null;
 	let sessionDir: string | null = null;
 	let messageIdx = 0;
 	let systemPromptWritten = false;
@@ -196,22 +296,29 @@ export default function (pi: ExtensionAPI) {
 		return writeStream;
 	}
 
-	function writeln(line: string) {
-		if (writeStream) writeStream.write(`${line}\n`);
+	/**
+	 * Write a single JSONL line to the stream.
+	 * Each call appends exactly one line terminated with \n.
+	 */
+	function writeRecord(record: LogRecord) {
+		if (writeStream) {
+			const line = serializeRecord(record);
+			writeStream.write(line);
+		}
 	}
 
 	function writeMessage(msg: any) {
 		if (!writeStream) return;
 
 		messageIdx++;
-		let formatted: string;
 
 		switch (msg.role) {
-			case "user":
-				formatted = formatUserMessage(msg);
+			case "user": {
+				writeRecord(userMessageToRecord(msg, messageIdx));
 				break;
-			case "assistant":
-				formatted = formatAssistantMessage(msg);
+			}
+			case "assistant": {
+				writeRecord(assistantMessageToRecord(msg, messageIdx));
 				// Accumulate stats
 				if (msg.usage) {
 					totalInputTokens += msg.usage.input || 0;
@@ -221,53 +328,40 @@ export default function (pi: ExtensionAPI) {
 					totalCost += msg.usage.cost?.total || 0;
 				}
 				break;
-			case "toolResult":
-				formatted = formatToolResult(msg);
+			}
+			case "toolResult": {
+				writeRecord(toolResultToRecord(msg, messageIdx));
 				break;
-			case "bashExecution":
-				formatted = formatBashExecution(msg);
+			}
+			case "bashExecution": {
+				writeRecord(bashExecutionToRecord(msg, messageIdx));
 				break;
-			case "custom":
-				formatted = formatCustomMessage(msg);
+			}
+			case "custom": {
+				writeRecord(customMessageToRecord(msg, messageIdx));
 				break;
-			case "branchSummary":
-				formatted = formatBranchSummary(msg);
+			}
+			case "branchSummary": {
+				writeRecord(branchSummaryToRecord(msg, messageIdx));
 				break;
-			case "compactionSummary":
-				formatted = formatCompactionSummary(msg);
+			}
+			case "compactionSummary": {
+				writeRecord(compactionToRecord(msg, messageIdx));
 				break;
-			default:
-				formatted = `### [${messageIdx}] ❓ ${msg.role} \`${ts(msg.timestamp)}\`\n\`\`\`json\n${JSON.stringify(msg, null, 2)}\n\`\`\`\n`;
+			}
+			default: {
+				writeRecord({
+					timestamp: typeof msg.timestamp === "string"
+						? msg.timestamp
+						: new Date(msg.timestamp).toISOString(),
+					agent: msg.role ?? "unknown",
+					tool: "unknown",
+					error: null,
+					loop_step: messageIdx,
+					payload: { role: msg.role, raw: msg },
+				});
+			}
 		}
-
-		writeln(formatted.replace("%IDX%", String(messageIdx)));
-	}
-
-	function writeCompactionEntry(entry: any) {
-		if (!writeStream) return;
-		compactionCount++;
-		writeln("---");
-		writeln(`## Compaction \`${ts(entry.timestamp)}\``);
-		writeln(`**Tokens before:** ${tok(entry.tokensBefore)}`);
-		if (entry.firstKeptEntryId)
-			writeln(`**Kept from:** \`${entry.firstKeptEntryId}\``);
-		writeln("");
-		writeln(entry.summary || "");
-		writeln("");
-		writeln("---");
-		writeln("");
-	}
-
-	function writeHeader(ctx: any) {
-		const sm = ctx.sessionManager;
-		const header = sm.getHeader();
-		writeln(`# Session ${(header?.id || sm.getSessionId()).slice(0, 8)}`);
-		writeln(
-			`**Started:** ${header?.timestamp || new Date().toISOString()} | **CWD:** ${sm.getCwd()}`,
-		);
-		writeln("");
-		writeln("---");
-		writeln("");
 	}
 
 	function writeMetadata() {
@@ -308,14 +402,16 @@ export default function (pi: ExtensionAPI) {
 
 		const sm = ctx.sessionManager;
 		const sessionId = sm.getSessionId();
-		sessionDir = path.join(sm.getCwd(), ".pi", "sessions", sessionId);
+		const sessionsDir = path.join(sm.getCwd(), ".pi", "sessions");
+		sessionDir = path.join(sessionsDir, sessionId);
 		fs.mkdirSync(sessionDir, { recursive: true });
 
-		const filePath = path.join(sessionDir, "session.md");
-		isNewFile = !fs.existsSync(filePath);
+		// JSONL file per session
+		sessionFilePath = path.join(sessionsDir, `${sessionId}.jsonl`);
+		isNewFile = !fs.existsSync(sessionFilePath);
 		systemPromptWritten = !isNewFile;
 
-		// Reset stats if starting fresh (new file)
+		// Reset stats if starting fresh
 		if (isNewFile) {
 			messageIdx = 0;
 			totalInputTokens = 0;
@@ -328,36 +424,67 @@ export default function (pi: ExtensionAPI) {
 			compactionCount = 0;
 		}
 
-		writeStream = fs.createWriteStream(filePath, { flags: "a" });
+		// Create/update symlink latest.jsonl → current session
+		const latestLink = path.join(sessionsDir, "latest.jsonl");
+		try {
+			fs.unlinkSync(latestLink);
+		} catch {
+			// symlink didn't exist, ignore
+		}
+		fs.symlinkSync(sessionFilePath, latestLink);
+
+		writeStream = fs.createWriteStream(sessionFilePath, { flags: "a" });
 
 		if (isNewFile) {
-			writeHeader(ctx);
+			// Write session header as a special record
+			writeRecord({
+				timestamp: new Date().toISOString(),
+				agent: "system",
+				tool: "session_start",
+				error: null,
+				loop_step: 0,
+				payload: {
+					role: "session_start",
+					sessionId: sessionId.slice(0, 8),
+					cwd: sm.getCwd(),
+				},
+			});
 
+			// Replay existing entries
 			for (const entry of sm.getEntries()) {
 				if (entry.type === "message") {
 					writeMessage(entry.message);
 				} else if (entry.type === "compaction") {
-					writeCompactionEntry(entry);
+					messageIdx++;
+					writeRecord(compactionToRecord(entry, messageIdx));
 				} else if (entry.type === "model_change") {
 					const m = entry as any;
 					modelChanges.push({
-						time: ts(m.timestamp),
+						time: new Date(m.timestamp).toISOString(),
 						model: `${m.provider || "?"}/${m.modelId}`,
 					});
-					writeln(
-						`> 🔄 Model → **${m.provider || "?"}/${m.modelId}** \`${ts(m.timestamp)}\``,
-					);
-					writeln("");
+					writeRecord({
+						timestamp: new Date(m.timestamp).toISOString(),
+						agent: "model_change",
+						tool: "model_select",
+						error: null,
+						loop_step: ++messageIdx,
+						payload: { provider: m.provider, modelId: m.modelId },
+					});
 				} else if (entry.type === "thinking_level_change") {
 					const t = entry as any;
 					thinkingChanges.push({
-						time: ts(t.timestamp),
+						time: new Date(t.timestamp).toISOString(),
 						level: t.thinkingLevel,
 					});
-					writeln(
-						`> 🧠 Thinking → **${t.thinkingLevel}** \`${ts(t.timestamp)}\``,
-					);
-					writeln("");
+					writeRecord({
+						timestamp: new Date(t.timestamp).toISOString(),
+						agent: "thinking_change",
+						tool: "thinking_select",
+						error: null,
+						loop_step: ++messageIdx,
+						payload: { level: t.thinkingLevel },
+					});
 				}
 			}
 		}
@@ -370,18 +497,18 @@ export default function (pi: ExtensionAPI) {
 		const prompt = (event as any).systemPrompt || "";
 		if (!prompt) return;
 
-		writeln("## System Prompt");
-		writeln("```");
-		writeln(truncate(prompt, MAX_SYSTEM_PROMPT, 0));
-		if (prompt.length > MAX_SYSTEM_PROMPT) {
-			writeln(
-				`\n[... ${prompt.length - MAX_SYSTEM_PROMPT} more chars truncated ...]`,
-			);
-		}
-		writeln("```");
-		writeln("");
-		writeln("---");
-		writeln("");
+		writeRecord({
+			timestamp: new Date().toISOString(),
+			agent: "system",
+			tool: "system_prompt",
+			error: null,
+			loop_step: ++messageIdx,
+			payload: {
+				role: "system_prompt",
+				prompt: truncate(prompt, MAX_SYSTEM_PROMPT, 0),
+				truncated: prompt.length > MAX_SYSTEM_PROMPT,
+			},
+		});
 
 		systemPromptWritten = true;
 	});
@@ -393,23 +520,24 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_compact", async (event, _ctx) => {
 		if (!ensureStream()) return;
-		writeCompactionEntry(event.compactionEntry);
+		messageIdx++;
+		writeRecord(compactionToRecord(event.compactionEntry, messageIdx));
 	});
 
 	pi.on("model_select", async (event, _ctx) => {
 		if (!ensureStream()) return;
 		const m = event.model;
 		const label = `${m.provider}/${m.id}`;
-		modelChanges.push({ time: ts(Date.now()), model: label });
-		writeln(`> 🔄 Model → **${label}** \`${ts(Date.now())}\``);
-		writeln("");
+		modelChanges.push({ time: new Date().toISOString(), model: label });
+		messageIdx++;
+		writeRecord(modelSelectToRecord(event, messageIdx));
 	});
 
 	pi.on("thinking_level_select", async (event, _ctx) => {
 		if (!ensureStream()) return;
-		thinkingChanges.push({ time: ts(Date.now()), level: event.level });
-		writeln(`> 🧠 Thinking → **${event.level}** \`${ts(Date.now())}\``);
-		writeln("");
+		thinkingChanges.push({ time: new Date().toISOString(), level: event.level });
+		messageIdx++;
+		writeRecord(thinkingSelectToRecord(event, messageIdx));
 	});
 
 	pi.on("session_shutdown", async (_event, _ctx) => {

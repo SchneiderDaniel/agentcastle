@@ -4,7 +4,7 @@
     "description": "---",
     "main": "index.js",
     "scripts": {
-        "test": "node --test test/session-logger.test.mts"
+        "test": "node --experimental-strip-types --test test/session-logger.test.mts test/session-query.test.mts"
     },
     "keywords": [],
     "author": "",
