@@ -290,19 +290,19 @@ These prevent the "Three Pipe Problem" — submodule changes lost or uncommitted
 When the Developer agent picks up an issue, it works on BOTH repos simultaneously using a matched-branch pattern:
 
 ```
-## Issue #42 "Add user auth" → branch: git-issue#42-add-user-auth
+## Issue #42 "Add user auth" → branch: worktree-git-issue-42-add-user-authentication
 
 # 1. Create worktree for agentcastle
-git worktree add ../git-issue#42-add-user-auth main
-cd ../git-issue#42-add-user-auth
+git worktree add ../worktree-git-issue-42-add-user-authentication main
+cd ../worktree-git-issue-42-add-user-authentication
 
 # 2. Init submodule (arrives in detached HEAD state — by design)
 git submodule update --init --recursive
 
 # 3. Create matching branch in submodule (required before editing)
 cd flask_blogs
-git checkout -b git-issue#42-add-user-auth
-git push -u origin git-issue#42-add-user-auth
+git checkout -b worktree-git-issue-42-add-user-authentication
+git push -u origin worktree-git-issue-42-add-user-authentication
 cd ..
 
 # 4. Developer edits files in agentcastle AND/OR flask_blogs/
@@ -310,13 +310,13 @@ cd ..
 # 5. Push submodule FIRST (critical order)
 cd flask_blogs
 git add -A && git commit -m "feat(#42): Add user auth"
-git push origin git-issue#42-add-user-auth
+git push origin worktree-git-issue-42-add-user-authentication
 cd ..
 
 # 6. Push agentcastle (includes submodule pointer update)
 git add -A
 git commit -m "feat(#42): Add user auth"
-git push origin git-issue#42-add-user-auth
+git push origin worktree-git-issue-42-add-user-authentication
 ```
 
 **Why submodule must be pushed first:** The agentcastle commit records a specific submodule SHA. If that SHA only exists in your local clone, teammates get `fatal: reference is not a tree` when they pull. The `push.recurseSubmodules check` config blocks the agentcastle push if submodule commits haven't been pushed yet — a safety net, not a replacement for correct order.
@@ -324,8 +324,8 @@ git push origin git-issue#42-add-user-auth
 **Why submodules start in detached HEAD:** Git submodules pin a specific commit, not a branch. `git submodule update` checks out that exact commit. To make editable changes, you must explicitly checkout a branch — this is standard Git submodule behavior, not a bug.
 
 **Result:** Two branches with the same name exist after the workflow:
-- `agentcastle:git-issue#42-add-user-auth` — agentcastle changes + optional submodule pointer bump
-- `flask_blogs:git-issue#42-add-user-auth` — submodule changes (only if submodule was edited)
+- `agentcastle:worktree-git-issue-42-add-user-authentication` — agentcastle changes + optional submodule pointer bump
+- `flask_blogs:worktree-git-issue-42-add-user-authentication` — submodule changes (only if submodule was edited)
 
 **Disk usage note:** Each worktree clones submodules independently (under `.git/worktrees/<name>/modules/`). For large submodules, this duplicates disk usage. This is a known design tradeoff in Git's worktree implementation — submodule objects are not shared across worktrees.
 

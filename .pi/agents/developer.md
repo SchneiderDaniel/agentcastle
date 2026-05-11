@@ -28,8 +28,10 @@ Extract a slug from the issue title:
 - Replace non-alphanumeric chars with hyphens
 - Collapse multiple hyphens
 - Trim leading/trailing hyphens
-- Format: `git-issue#<N>-<slug>`
-- Example: issue #42 "Add user authentication" → `git-issue#42-add-user-authentication`
+- Format: `worktree-git-issue-<N>-<slug>`
+- Example: issue #42 "Add user authentication" → `worktree-git-issue-42-add-user-authentication`
+
+Note: `#` is deliberately dropped — it's a shell comment character and unsafe in paths/branch names. The `worktree-` prefix distinguishes worktree directories from regular branches.
 
 ### 3. Create a git worktree
 
