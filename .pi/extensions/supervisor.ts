@@ -123,6 +123,7 @@ function loadConfig(): SupervisorConfig {
 		statusMapping: cfg.statusMapping,
 		maxRejections: cfg.maxRejections ?? 3,
 		codeowners,
+		submodules: Array.isArray(cfg.submodules) ? cfg.submodules : [],
 	};
 }
 
