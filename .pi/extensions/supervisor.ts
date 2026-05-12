@@ -85,6 +85,30 @@ interface AgentRunResult {
 	summaryLine: string;
 	/** Raw stderr if any */
 	errorOutput: string;
+	/** Thinking output from sub-agent (for expanded message renderer view) */
+	thinkingOutput?: string;
+}
+
+// ─── AgentRunState: mutable state during agent execution ────────────
+
+type AgentPhase = "idle" | "thinking" | "tool" | "text";
+
+interface AgentRunState {
+	currentTool?: string;
+	currentToolArgs?: string;
+	toolCount: number;
+	tokenCount: number;
+	fullLog: string[];
+	liveThinking: string;
+	liveText: string;
+	textOutputLines: string[];
+	thinkingOutputLines: string[];
+	lastToolName?: string;
+	phase: AgentPhase;
+	startedAt: number;
+	contextTokens?: number;
+	contextWindow?: number;
+	contextInfoReceived: boolean;
 }
 
 // ─── Message renderer details type ───────────────────────────────────
@@ -98,6 +122,10 @@ interface SupervisorMessageDetails {
 	durationMs: number;
 	textOutput: string;
 	summaryLine: string;
+	/** Thinking output for expanded view */
+	thinkingOutput?: string;
+	/** Whether thinking output is available */
+	hasThinking?: boolean;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -568,6 +596,321 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 	return result;
 }
 
+// ─── Constants ──────────────────────────────────────────────────────
+
+const MAX_FULL_LOG = 200;
+const WIDGET_LINES = 12;
+const MAX_LIVE_THINKING = 500;
+
+// ─── Pure helpers (no framework imports) ────────────────────────────
+
+/** Numeric priority for phase ordering. Higher = more important. */
+function phasePriority(phase: AgentPhase): number {
+	switch (phase) {
+		case "tool": return 3;
+		case "thinking": return 2;
+		case "text": return 1;
+		case "idle": return 0;
+	}
+}
+
+function pushLog(state: AgentRunState, entry: string): void {
+	state.fullLog.push(entry);
+	if (state.fullLog.length > MAX_FULL_LOG) state.fullLog.shift();
+}
+
+/** Determine phase from a JSON event. Tool > thinking > text > idle. */
+function getPhaseFromEvent(ev: any): AgentPhase {
+	if (!ev) return "idle";
+
+	if (ev.type === "tool_execution_start") return "tool";
+	if (ev.type === "tool_execution_end") return "idle";
+
+	if (ev.type === "message_update") {
+		const delta = ev.delta;
+		if (!delta) return "idle";
+		switch (delta.type) {
+			case "thinking_delta":
+			case "thinking_start":
+				return "thinking";
+			case "text_delta":
+			case "text_start":
+				return "text";
+			case "thinking_end":
+			case "text_end":
+				return "idle";
+		}
+	}
+
+	if (ev.type === "message_end") return "idle";
+	return "idle";
+}
+
+/**
+ * Process a single JSON line from pi's stdout.
+ * Mutates state in place. Returns flush + workingChange flags.
+ */
+function processJsonLine(
+	line: string,
+	state: AgentRunState,
+): { flush: boolean; workingChange: boolean } {
+	if (!line.trim()) return { flush: false, workingChange: false };
+	try {
+		const ev = JSON.parse(line);
+		switch (ev.type) {
+			case "session":
+				break;
+
+			case "context_info": {
+				const tokens = ev.contextTokens;
+				const window = ev.contextWindow;
+				if (typeof tokens === "number" && typeof window === "number" && window > 0) {
+					state.contextTokens = tokens;
+					state.contextWindow = window;
+					state.contextInfoReceived = true;
+					pushLog(state, `📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
+					return { flush: true, workingChange: false };
+				}
+				break;
+			}
+
+			case "tool_execution_start": {
+				const prevPhase = state.phase;
+				state.currentTool = ev.toolName || "tool";
+				state.currentToolArgs = ev.args
+					? JSON.stringify(ev.args).slice(0, 200)
+					: undefined;
+				state.lastToolName = ev.toolName;
+				state.phase = "tool";
+				const logArgs = ev.args
+					? JSON.stringify(ev.args).slice(0, 200)
+					: "";
+				pushLog(state, `🔧 ${ev.toolName}${logArgs ? ` ${logArgs}` : ""}`);
+				return { flush: true, workingChange: prevPhase !== "tool" };
+			}
+
+			case "tool_execution_end": {
+				state.toolCount++;
+				state.currentTool = undefined;
+				state.currentToolArgs = undefined;
+				state.phase = "idle";
+				pushLog(state, `${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
+				return { flush: true, workingChange: true };
+			}
+
+			// ── message_update (streaming events) ────────────
+			case "message_update": {
+				const delta = ev.delta;
+				if (!delta) break;
+
+				const prevPhase = state.phase;
+				const eventPhase = getPhaseFromEvent(ev);
+				// Never downgrade: tool > thinking > text > idle
+				if (eventPhase !== "idle" && phasePriority(eventPhase) >= phasePriority(state.phase)) {
+					state.phase = eventPhase;
+				}
+
+				switch (delta.type) {
+					case "thinking_delta": {
+						const td = delta.thinking_delta;
+						if (typeof td === "string" && td.length > 0) {
+							state.liveThinking += td;
+							// Prevent unbounded buffer growth
+							if (state.liveThinking.length > MAX_LIVE_THINKING * 2) {
+								state.liveThinking = state.liveThinking.slice(-MAX_LIVE_THINKING);
+							}
+							return { flush: true, workingChange: prevPhase !== "thinking" };
+						}
+						break;
+					}
+
+					case "text_delta": {
+						const td = delta.text_delta;
+						if (typeof td === "string" && td.length > 0) {
+							state.liveText += td;
+							if (state.liveText.length > 10_000) {
+								state.liveText = state.liveText.slice(-8_000);
+							}
+							return { flush: true, workingChange: prevPhase !== "text" };
+						}
+						break;
+					}
+
+					case "thinking_end": {
+						if (state.liveThinking.trim()) {
+							state.thinkingOutputLines.push(state.liveThinking.trim());
+							for (const t of state.liveThinking.split("\n")) {
+								const trimmed = t.trim();
+								if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 200)}`);
+							}
+						}
+						state.liveThinking = "";
+						state.phase = "idle";
+						return { flush: true, workingChange: true };
+					}
+
+					case "text_end": {
+						if (state.liveText.trim()) {
+							state.textOutputLines.push(state.liveText.trim());
+							for (const t of state.liveText.split("\n")) {
+								const trimmed = t.trim();
+								if (trimmed) pushLog(state, trimmed);
+							}
+						}
+						// Capture usage from text_end or parent message
+						if (ev.usage) {
+							state.tokenCount =
+								ev.usage.totalTokens || ev.usage.input + ev.usage.output || state.tokenCount;
+						}
+						state.liveText = "";
+						state.phase = "idle";
+						return { flush: true, workingChange: true };
+					}
+				}
+				break;
+			}
+
+			// ── message_end ──────────────────────────────────
+			case "message_end": {
+				const msg = ev.message;
+				if (!msg) break;
+
+				if (msg.role === "assistant") {
+					// Capture thinking from content blocks
+					if (Array.isArray(msg.content)) {
+						for (const block of msg.content) {
+							if (block.type === "thinking" && block.thinking) {
+								const thinkingText = typeof block.thinking === "string"
+									? block.thinking
+									: JSON.stringify(block.thinking).slice(0, 500);
+								for (const t of thinkingText.split("\n")) {
+									if (t.trim()) pushLog(state, `💭 ${t.slice(0, 200)}`);
+								}
+							}
+						}
+					}
+					const text = extractTextFromContent(msg.content);
+					if (text && text.trim()) {
+						state.textOutputLines.push(text.trim());
+						for (const t of text.split("\n")) {
+							if (t.trim()) pushLog(state, t);
+						}
+					}
+					if (msg.usage) {
+						state.tokenCount =
+							msg.usage.totalTokens || msg.usage.input + msg.usage.output;
+					}
+				} else if (msg.role === "toolResult") {
+					const resultText = extractTextFromContent(msg.content);
+					const label = msg.toolName || state.lastToolName || "tool";
+					if (resultText && resultText.trim()) {
+						const resultLines = resultText.split("\n");
+						pushLog(state, `📋 ${label}: ${resultLines[0]?.slice(0, 300) || "(no output)"}`);
+						for (let i = 1; i < Math.min(resultLines.length, 6); i++) {
+							if (resultLines[i].trim())
+								pushLog(state, `   ${resultLines[i].slice(0, 200)}`);
+						}
+					} else {
+						pushLog(state, `📋 ${label}: (no output)`);
+					}
+					state.lastToolName = undefined;
+				}
+				state.phase = "idle";
+				return { flush: true, workingChange: true };
+			}
+
+			case "agent_end":
+			case "turn_end":
+				break;
+		}
+	} catch {
+		// non-JSON stdout lines
+	}
+	return { flush: false, workingChange: false };
+}
+
+/**
+ * Build widget lines from state. Pure function — no side effects.
+ * Returns at most WIDGET_LINES (12) lines.
+ */
+function buildWidgetLines(
+	state: AgentRunState,
+	agentName: string,
+): string[] {
+	const lines: string[] = [];
+	const now = Date.now();
+
+	// Header
+	lines.push(`⚙ ${agentName}`);
+
+	// Context line
+	if (state.contextInfoReceived && state.contextTokens !== undefined && state.contextWindow !== undefined) {
+		lines.push(`  Context: ${formatTokens(state.contextTokens)}/${formatTokens(state.contextWindow)}`);
+	} else {
+		lines.push("  Context: computing...");
+	}
+
+	// Live thinking (accent line, ... prefix while incomplete)
+	if (state.phase === "thinking" && state.liveThinking.trim()) {
+		const live = state.liveThinking.slice(-MAX_LIVE_THINKING);
+		const condensed = live.replace(/\s+/g, " ").trim().slice(-100);
+		if (condensed) lines.push(`  ... ${condensed}`);
+	}
+
+	// Live text (streaming output)
+	if (state.phase === "text" && state.liveText.trim()) {
+		const live = state.liveText.slice(-500);
+		const condensed = live.replace(/\s+/g, " ").trim().slice(-100);
+		if (condensed) lines.push(`  ${condensed}`);
+	}
+
+	// Current tool display
+	if (state.currentTool) {
+		const toolLabel = state.currentToolArgs
+			? `${state.currentTool}: ${state.currentToolArgs.slice(0, 80)}`
+			: state.currentTool;
+		lines.push(`  🔧 ${toolLabel}`);
+	}
+
+	// Recent fullLog entries (fill remaining lines up to WIDGET_LINES)
+	const remaining = WIDGET_LINES - lines.length - 1; // -1 for stats footer
+	if (remaining > 0 && state.fullLog.length > 0) {
+		const recent = state.fullLog.slice(-remaining);
+		for (const entry of recent) {
+			// Strip emoji prefix to avoid clutter
+			const display = entry.replace(/^[^\s]+\s/, "").slice(0, 90);
+			lines.push(`  ${display}`);
+		}
+	}
+
+	// Stats footer
+	const statsParts: string[] = [];
+	if (state.tokenCount > 0) statsParts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
+	if (state.toolCount > 0) statsParts.push(`🔧 ${state.toolCount} tools`);
+	const elapsed = formatDuration(now - state.startedAt);
+	statsParts.push(`⏱ ${elapsed}`);
+	if (statsParts.length > 0) {
+		lines.push(`  ${statsParts.join(" · ")}`);
+	}
+
+	return lines.slice(0, WIDGET_LINES);
+}
+
+/** Build working message from phase. Priority: tool > thinking > text. */
+function getWorkingMessage(state: AgentRunState, agentName: string): string | null {
+	switch (state.phase) {
+		case "tool":
+			if (state.currentTool) return `${agentName}: ${state.currentTool}`;
+			return `${agentName}: working...`;
+		case "thinking":
+			return `${agentName}: thinking...`;
+		case "text":
+			return `${agentName}: responding...`;
+		default:
+			return null;
+	}
+}
+
 // ─── runAgent ────────────────────────────────────────────────────────
 
 async function runAgent(
@@ -601,72 +944,41 @@ async function runAgent(
 
 	const startedAt = Date.now();
 
+	// ── Mutable state ─────────────────────────────────────────────
+	const state: AgentRunState = {
+		toolCount: 0,
+		tokenCount: 0,
+		fullLog: [],
+		liveThinking: "",
+		liveText: "",
+		textOutputLines: [],
+		thinkingOutputLines: [],
+		phase: "idle",
+		startedAt,
+		contextInfoReceived: false,
+	};
+
 	return new Promise((resolve) => {
 		const child = spawn("/usr/bin/pi", args, {
 			cwd: process.cwd(),
 			env: { ...process.env, PI_NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
-			timeout: 600_000,
+			timeout: 1_800_000, // 30 minutes — developer may need 50+ turns
 		});
 
+		const MAX_RAW_STDOUT = 500_000; // prevent RangeError on huge output
 		let rawStdout = "";
 		let stderr = "";
 		let jsonBuffer = "";
 
-		// Structured tracking
-		let currentTool: string | undefined;
-		let currentToolArgs: string | undefined;
-		let tokenCount = 0;
-		let toolCount = 0;
-		const textOutputLines: string[] = [];
-		const fullLog: string[] = [];
-		let lastToolName: string | undefined;
-
-		// Context-info state
-		let contextTokens: number | undefined;
-		let contextWindow: number | undefined;
-		let contextInfoReceived = false;
-
 		let flushTimer: NodeJS.Timeout | null = null;
-
-		const buildWidgetLines = (): string[] => {
-			const lines: string[] = [];
-			// Header: agent name + spinner
-			const header = `⚙ ${agentName}`;
-			lines.push(header);
-
-			// Context line
-			if (contextInfoReceived && contextTokens !== undefined && contextWindow !== undefined) {
-				lines.push(`  Context: ${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`);
-			} else {
-				lines.push("  Context: computing...");
-			}
-
-			// Status line with current tool and stats
-			const statsParts: string[] = [];
-			if (tokenCount > 0) statsParts.push(`📊 ${formatTokens(tokenCount)} tokens`);
-			if (toolCount > 0) statsParts.push(`🔧 ${toolCount} tools`);
-			const elapsed = formatDuration(Date.now() - startedAt);
-			statsParts.push(`⏱ ${elapsed}`);
-
-			if (currentTool) {
-				const toolLabel = currentToolArgs
-					? `${currentTool}: ${currentToolArgs.slice(0, 100)}`
-					: currentTool;
-				lines.push(`  ${toolLabel}  ${statsParts.join(" · ")}`);
-			} else if (statsParts.length > 0) {
-				lines.push(`  ${statsParts.join(" · ")}`);
-			}
-
-			return lines;
-		};
 
 		const flushWidget = () => {
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			ctx.ui.setWidget(widgetId, buildWidgetLines());
+			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName));
 		};
 
 		// Batch widget updates to avoid flicker
@@ -676,153 +988,77 @@ async function runAgent(
 			}
 		};
 
-		const processJsonLine = (line: string) => {
-			if (!line.trim()) return;
-			try {
-				const ev = JSON.parse(line);
-				switch (ev.type) {
-					case "session":
-						break;
-
-					case "context_info": {
-						const tokens = ev.contextTokens;
-						const window = ev.contextWindow;
-						if (typeof tokens === "number" && typeof window === "number" && window > 0) {
-							contextTokens = tokens;
-							contextWindow = window;
-							contextInfoReceived = true;
-							fullLog.push(`📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
-							scheduleFlush();
-						}
-						break;
-					}
-
-					case "tool_execution_start":
-						currentTool = ev.toolName || "tool";
-						currentToolArgs = ev.args
-							? JSON.stringify(ev.args).slice(0, 200)
-							: undefined;
-						lastToolName = ev.toolName;
-						const logArgs = ev.args
-							? JSON.stringify(ev.args).slice(0, 200)
-							: "";
-						fullLog.push(
-							`🔧 ${ev.toolName}${logArgs ? ` ${logArgs}` : ""}`
-						);
-						scheduleFlush();
-						break;
-
-					case "tool_execution_end":
-						toolCount++;
-						currentTool = undefined;
-						currentToolArgs = undefined;
-						fullLog.push(`${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
-						scheduleFlush();
-						break;
-
-					case "message_end": {
-						const msg = ev.message;
-						if (!msg) break;
-
-						if (msg.role === "assistant") {
-							// Capture text content (the agent's actual output)
-							if (Array.isArray(msg.content)) {
-								for (const block of msg.content) {
-									if (block.type === "thinking" && block.thinking) {
-										const thinkingText = typeof block.thinking === "string"
-											? block.thinking
-											: JSON.stringify(block.thinking).slice(0, 500);
-										for (const t of thinkingText.split("\n")) {
-											if (t.trim()) fullLog.push(`💭 ${t.slice(0, 200)}`);
-										}
-									}
-								}
-							}
-							const text = extractTextFromContent(msg.content);
-							if (text && text.trim()) {
-								textOutputLines.push(text.trim());
-								for (const t of text.split("\n")) {
-									if (t.trim()) fullLog.push(t);
-								}
-							}
-							if (msg.usage) {
-								tokenCount =
-									msg.usage.totalTokens || msg.usage.input + msg.usage.output;
-							}
-							scheduleFlush();
-						} else if (msg.role === "toolResult") {
-							const resultText = extractTextFromContent(msg.content);
-							const label = msg.toolName || lastToolName || "tool";
-							if (resultText && resultText.trim()) {
-								const lines = resultText.split("\n");
-								fullLog.push(
-									`📋 ${label}: ${lines[0]?.slice(0, 300) || "(no output)"}`
-								);
-								for (let i = 1; i < Math.min(lines.length, 6); i++) {
-									if (lines[i].trim())
-										fullLog.push(`   ${lines[i].slice(0, 200)}`);
-								}
-							} else {
-								fullLog.push(`📋 ${label}: (no output)`);
-							}
-							lastToolName = undefined;
-							scheduleFlush();
-						}
-						break;
-					}
-
-					case "agent_end":
-					case "turn_end":
-					case "message_update":
-						break;
-				}
-			} catch {
-				// non-JSON stdout lines
+		const handleLine = (line: string) => {
+			const result = processJsonLine(line, state);
+			if (result.flush) scheduleFlush();
+			if (result.workingChange) {
+				const wm = getWorkingMessage(state, agentName);
+				ctx.ui.setWorkingMessage(wm ?? undefined);
 			}
 		};
 
 		child.stdout.on("data", (data: Buffer) => {
 			const chunk = data.toString();
-			rawStdout += chunk;
+			if (rawStdout.length + chunk.length > MAX_RAW_STDOUT) {
+				// Truncate from beginning to avoid RangeError
+				const keep = MAX_RAW_STDOUT - chunk.length;
+				rawStdout = rawStdout.slice(-Math.max(keep, 0)) + chunk;
+			} else {
+				rawStdout += chunk;
+			}
 			jsonBuffer += chunk;
 			const lines = jsonBuffer.split("\n");
 			jsonBuffer = lines.pop() || "";
-			for (const line of lines) processJsonLine(line);
+			for (const line of lines) handleLine(line);
 		});
 
 		child.stderr.on("data", (data: Buffer) => {
-			stderr += data.toString();
+			const chunk = data.toString();
+			if (stderr.length + chunk.length <= MAX_RAW_STDOUT) {
+				stderr += chunk;
+			}
 		});
 
-		child.on("close", (code) => {
-			if (jsonBuffer.trim()) processJsonLine(jsonBuffer);
+		child.on("close", (code, signal) => {
+			if (jsonBuffer.trim()) handleLine(jsonBuffer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
 
 			const durationMs = Date.now() - startedAt;
-			const textOutput = fullLog.join("\n").trim();
+			const textOutput = state.fullLog.join("\n").trim();
 			const rawOutput = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
-			const success = code === 0;
+			const killed = signal !== null;
+			const success = code === 0 && !killed;
+			if (killed) {
+				pushLog(state, `[Timeout: ${agentName} killed by ${signal} after ${formatDuration(durationMs)}]`);
+			}
+
+			// Build thinking output from accumulated lines
+			const thinkingOutput = state.thinkingOutputLines.length > 0
+				? state.thinkingOutputLines.join("\n\n")
+				: undefined;
 
 			// Extract a one-line summary from the text output
 			const summaryLine = extractSummaryLine(textOutput, success, agentName);
 
-			// Clear the widget — results go to chat via message renderer
+			// Clear widget and working message — results go to chat via message renderer
 			ctx.ui.setWidget(widgetId, undefined);
+			ctx.ui.setWorkingMessage(undefined);
 			ctx.ui.setStatus("supervisor", "");
 
 			resolve({
 				output: rawOutput,
 				success,
 				agentName,
-				toolCount,
-				tokenCount,
+				toolCount: state.toolCount,
+				tokenCount: state.tokenCount,
 				durationMs,
 				textOutput,
 				summaryLine,
 				errorOutput: stderr,
+				thinkingOutput,
 			});
 		});
 
@@ -832,6 +1068,7 @@ async function runAgent(
 				flushTimer = null;
 			}
 			ctx.ui.setWidget(widgetId, undefined);
+			ctx.ui.setWorkingMessage(undefined);
 			ctx.ui.setStatus("supervisor", "");
 			resolve({
 				output: `Failed to start pi: ${err.message}`,
@@ -1110,6 +1347,22 @@ export default function supervisor(pi: ExtensionAPI) {
 				fit(theme.fg("dim", details.summaryLine)),
 				1, 0,
 			));
+		}
+
+		// Thinking output (expanded view, color-coded as dim)
+		if (details.hasThinking && details.thinkingOutput) {
+			c.addChild(new Spacer(1));
+			c.addChild(new Text(
+				fit(theme.fg("dim", "── Thinking ──")),
+				1, 0,
+			));
+			const thinkingLines = details.thinkingOutput.split("\n");
+			for (const line of thinkingLines) {
+				c.addChild(new Text(
+					fit(theme.fg("dim", line || " ")),
+					1, 0,
+				));
+			}
 		}
 
 		// Text output (full, no truncation, color-coded by event type)
@@ -1408,6 +1661,8 @@ export default function supervisor(pi: ExtensionAPI) {
 							durationMs: result.durationMs,
 							textOutput: result.textOutput,
 							summaryLine: result.summaryLine,
+							thinkingOutput: result.thinkingOutput,
+							hasThinking: !!result.thinkingOutput,
 						} satisfies SupervisorMessageDetails,
 					});
 
