@@ -629,6 +629,7 @@ async function runAgent(
 			timeout: 1_800_000, // 30 minutes — developer may need 50+ turns
 		});
 
+		const MAX_RAW_STDOUT = 500_000; // prevent RangeError on huge output
 		let rawStdout = "";
 		let stderr = "";
 		let jsonBuffer = "";
@@ -640,6 +641,11 @@ async function runAgent(
 		let toolCount = 0;
 		const textOutputLines: string[] = [];
 		const fullLog: string[] = [];
+		const MAX_FULL_LOG = 500;
+		const pushLog = (entry: string) => {
+			fullLog.push(entry);
+			if (fullLog.length > MAX_FULL_LOG) fullLog.shift();
+		};
 		let lastToolName: string | undefined;
 
 		// Context-info state
@@ -711,7 +717,7 @@ async function runAgent(
 							contextTokens = tokens;
 							contextWindow = window;
 							contextInfoReceived = true;
-							fullLog.push(`📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
+							pushLog(`📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
 							scheduleFlush();
 						}
 						break;
@@ -726,7 +732,7 @@ async function runAgent(
 						const logArgs = ev.args
 							? JSON.stringify(ev.args).slice(0, 200)
 							: "";
-						fullLog.push(
+						pushLog(
 							`🔧 ${ev.toolName}${logArgs ? ` ${logArgs}` : ""}`
 						);
 						scheduleFlush();
@@ -736,7 +742,7 @@ async function runAgent(
 						toolCount++;
 						currentTool = undefined;
 						currentToolArgs = undefined;
-						fullLog.push(`${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
+						pushLog(`${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
 						scheduleFlush();
 						break;
 
@@ -753,7 +759,7 @@ async function runAgent(
 											? block.thinking
 											: JSON.stringify(block.thinking).slice(0, 500);
 										for (const t of thinkingText.split("\n")) {
-											if (t.trim()) fullLog.push(`💭 ${t.slice(0, 200)}`);
+											if (t.trim()) pushLog(`💭 ${t.slice(0, 200)}`);
 										}
 									}
 								}
@@ -762,7 +768,7 @@ async function runAgent(
 							if (text && text.trim()) {
 								textOutputLines.push(text.trim());
 								for (const t of text.split("\n")) {
-									if (t.trim()) fullLog.push(t);
+									if (t.trim()) pushLog(t);
 								}
 							}
 							if (msg.usage) {
@@ -775,15 +781,15 @@ async function runAgent(
 							const label = msg.toolName || lastToolName || "tool";
 							if (resultText && resultText.trim()) {
 								const lines = resultText.split("\n");
-								fullLog.push(
+								pushLog(
 									`📋 ${label}: ${lines[0]?.slice(0, 300) || "(no output)"}`
 								);
 								for (let i = 1; i < Math.min(lines.length, 6); i++) {
 									if (lines[i].trim())
-										fullLog.push(`   ${lines[i].slice(0, 200)}`);
+										pushLog(`   ${lines[i].slice(0, 200)}`);
 								}
 							} else {
-								fullLog.push(`📋 ${label}: (no output)`);
+								pushLog(`📋 ${label}: (no output)`);
 							}
 							lastToolName = undefined;
 							scheduleFlush();
@@ -803,7 +809,13 @@ async function runAgent(
 
 		child.stdout.on("data", (data: Buffer) => {
 			const chunk = data.toString();
-			rawStdout += chunk;
+			if (rawStdout.length + chunk.length > MAX_RAW_STDOUT) {
+				// Truncate from beginning to avoid RangeError
+				const keep = MAX_RAW_STDOUT - chunk.length;
+				rawStdout = rawStdout.slice(-Math.max(keep, 0)) + chunk;
+			} else {
+				rawStdout += chunk;
+			}
 			jsonBuffer += chunk;
 			const lines = jsonBuffer.split("\n");
 			jsonBuffer = lines.pop() || "";
@@ -811,7 +823,10 @@ async function runAgent(
 		});
 
 		child.stderr.on("data", (data: Buffer) => {
-			stderr += data.toString();
+			const chunk = data.toString();
+			if (stderr.length + chunk.length <= MAX_RAW_STDOUT) {
+				stderr += chunk;
+			}
 		});
 
 		child.on("close", (code, signal) => {
@@ -827,7 +842,7 @@ async function runAgent(
 			const killed = signal !== null;
 			const success = code === 0 && !killed;
 			if (killed) {
-				fullLog.push(`[Timeout: ${agentName} killed by ${signal} after ${formatDuration(durationMs)}]`);
+				pushLog(`[Timeout: ${agentName} killed by ${signal} after ${formatDuration(durationMs)}]`);
 			}
 
 			// Extract a one-line summary from the text output
