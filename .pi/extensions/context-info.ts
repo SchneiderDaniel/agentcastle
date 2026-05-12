@@ -21,67 +21,71 @@
  * - Updates status bar (ctx.ui.setStatus) on every relevant event for live TUI display.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type {
+    ExtensionAPI,
+    ExtensionContext,
+} from "@mariozechner/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
-	let contextWindow: number | undefined;
-	let contextTokens: number | undefined;
-	let emitted = false;
+    let contextWindow: number | undefined;
+    let contextTokens: number | undefined;
+    let emitted = false;
 
-	function formatStatus(): string {
-		if (contextTokens === undefined || contextTokens <= 0) return "Context: …";
-		return `Context: ${(contextTokens / 1000).toFixed(1)}K`;
-	}
+    function formatStatus(): string {
+        if (contextTokens === undefined || contextTokens <= 0)
+            return "/ Context: …";
+        return `/ Context: ${(contextTokens / 1000).toFixed(1)}K`;
+    }
 
-	function emit(ctx: ExtensionContext) {
-		ctx.ui.setStatus("context-info", formatStatus());
-		if (emitted) return;
-		if (contextWindow === undefined || contextWindow <= 0) return;
-		if (contextTokens === undefined || contextTokens <= 0) return;
-		emitted = true;
-		console.log(
-			JSON.stringify({
-				type: "context_info",
-				contextTokens,
-				contextWindow,
-			}),
-		);
-	}
+    function emit(ctx: ExtensionContext) {
+        ctx.ui.setStatus("context-info", formatStatus());
+        if (emitted) return;
+        if (contextWindow === undefined || contextWindow <= 0) return;
+        if (contextTokens === undefined || contextTokens <= 0) return;
+        emitted = true;
+        console.log(
+            JSON.stringify({
+                type: "context_info",
+                contextTokens,
+                contextWindow,
+            }),
+        );
+    }
 
-	pi.on("session_start", async (_event, ctx) => {
-		contextWindow = undefined;
-		contextTokens = undefined;
-		emitted = false;
-		// model_select only fires on explicit model change, not at startup.
-		// Grab contextWindow from the already-loaded model.
-		const cw = ctx.model?.contextWindow;
-		if (typeof cw === "number" && cw > 0) {
-			contextWindow = cw;
-		}
-		ctx.ui.setStatus("context-info", formatStatus());
-	});
+    pi.on("session_start", async (_event, ctx) => {
+        contextWindow = undefined;
+        contextTokens = undefined;
+        emitted = false;
+        // model_select only fires on explicit model change, not at startup.
+        // Grab contextWindow from the already-loaded model.
+        const cw = ctx.model?.contextWindow;
+        if (typeof cw === "number" && cw > 0) {
+            contextWindow = cw;
+        }
+        ctx.ui.setStatus("context-info", formatStatus());
+    });
 
-	pi.on("model_select", async (event, ctx) => {
-		const cw = event.model?.contextWindow;
-		if (typeof cw === "number" && cw > 0) {
-			contextWindow = cw;
-			emit(ctx);
-		} else {
-			ctx.ui.setStatus("context-info", formatStatus());
-		}
-	});
+    pi.on("model_select", async (event, ctx) => {
+        const cw = event.model?.contextWindow;
+        if (typeof cw === "number" && cw > 0) {
+            contextWindow = cw;
+            emit(ctx);
+        } else {
+            ctx.ui.setStatus("context-info", formatStatus());
+        }
+    });
 
-	pi.on("message_end", async (event, ctx) => {
-		const msg = event.message;
-		if (!msg || msg.role !== "assistant") return;
-		// Prefer pi's own context calculation over raw API usage.input.
-		// API-reported input tokens often exclude cached/system prompt tokens
-		// and don't match pi's cumulative context estimate.
-		const usage = ctx.getContextUsage();
-		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
-			contextTokens = usage.tokens;
-			contextWindow = usage.contextWindow;
-			emit(ctx);
-		}
-	});
+    pi.on("message_end", async (event, ctx) => {
+        const msg = event.message;
+        if (!msg || msg.role !== "assistant") return;
+        // Prefer pi's own context calculation over raw API usage.input.
+        // API-reported input tokens often exclude cached/system prompt tokens
+        // and don't match pi's cumulative context estimate.
+        const usage = ctx.getContextUsage();
+        if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
+            contextTokens = usage.tokens;
+            contextWindow = usage.contextWindow;
+            emit(ctx);
+        }
+    });
 }

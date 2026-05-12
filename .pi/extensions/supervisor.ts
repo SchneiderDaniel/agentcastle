@@ -85,6 +85,24 @@ interface AgentRunResult {
 	summaryLine: string;
 	/** Raw stderr if any */
 	errorOutput: string;
+	/** Thinking output from sub-agent (for expanded message renderer view) */
+	thinkingOutput?: string;
+}
+
+// ─── AgentRunState: mutable state during agent execution ────────────
+
+interface AgentRunState {
+	currentTool?: string;
+	currentToolArgs?: string;
+	toolCount: number;
+	tokenCount: number;
+	fullLog: string[];
+	liveThinking: string;
+	liveText: string;
+	textOutputLines: string[];
+	thinkingOutputLines: string[];
+	lastToolName?: string;
+	phase: "idle" | "thinking" | "tool" | "text";
 }
 
 // ─── Message renderer details type ───────────────────────────────────
@@ -98,6 +116,8 @@ interface SupervisorMessageDetails {
 	durationMs: number;
 	textOutput: string;
 	summaryLine: string;
+	/** Thinking output for expanded view */
+	thinkingOutput?: string;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────

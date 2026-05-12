@@ -215,25 +215,25 @@ Assess maintainability:
 
 2. Add an approval comment. The comment MUST include sections that explain the change so reviewers understand the PR without reading the full diff.
 
-   **For non-trivial PRs** (3+ files changed, new logic, significant refactors), include all sections:
+   **For non-trivial PRs** (3+ files, new logic, significant refactors):
 
    ```
    gh issue comment <N> --repo <owner/repo> --body "## Audit Approved
 
    ### Summary
-   [1-3 paragraphs describing what changed, why, and the scope of the changes]
+   [1-2 sentences: what changed, why]
 
    ### How it works
-   [Explanation of the implementation approach. Include code snippets at your discretion when they clarify the explanation. Use markdown code fences.]
+   [Brief approach. Code snippets only when they clarify. Keep short.]
 
    ### Key decisions
-   [Trade-offs, design choices, and why this approach was chosen over alternatives]
+   [Trade-offs, 1 sentence each. Omit if none.]
 
    ### Review findings
-   [List any 🟢 Suggestions or 🟡 Warnings noted but not blocking. Omit if none.]
+   [🟢/🟡 non-blocking notes. Omit if none.]
 
    ### Diagram
-   [Optional. Include a Mermaid diagram (flowchart, sequence, or class diagram) when the change involves complex data flow, state transitions, or architectural relationships. Embed as a \`\`\`mermaid code block. Omit this section entirely when no diagram adds value.]
+   [Optional mermaid. Omit if no value.]
 
    - Architecture compliance: ✓
    - Ticket fulfillment: ✓
@@ -246,7 +246,7 @@ Assess maintainability:
    PR created. Ready for merge."
    ```
 
-   **For trivial PRs** (single-line fixes, typo corrections, config tweaks), write a minimal comment with `## Audit Approved`, the checklist, and a brief one-line description.
+   **For trivial PRs** (single-line, typo, config): `## Audit Approved` + checklist + 1-line description.
 
    Replace `<test commands>` with the actual command(s) executed. If multiple suites were run, list them separated by ` && ` or newlines.
 
@@ -259,23 +259,23 @@ Assess maintainability:
    ```
    gh issue comment <N> --repo <owner/repo> --body "## Audit Rejected
 
-   ### Critical Issues (must fix)
+   ### Critical (must fix)
 
-   1. **🔴 Critical — Architecture Compliance: [title]**
-      **Symptom:** [what you found]
-      **Consequence:** [why it matters]
-      **Remedy:** [what to do]
-      **Location:** \`file:line\`
+   1. **🔴 Critical — [Dimension]: [title]**
+      - Symptom: [what]
+      - Consequence: [why]
+      - Remedy: [how]
+      - Location: \`file:line\`
 
-   ### Warnings (should fix — 3+ warnings trigger rejection)
+   ### Warnings (3+ → rejection)
 
    1. **🟡 Warning — [Dimension]: [title]**
-      **Symptom:** [what you found]
-      **Consequence:** [why it matters]
-      **Remedy:** [what to do]
-      **Location:** \`file:line\`
+      - Symptom: [what]
+      - Consequence: [why]
+      - Remedy: [how]
+      - Location: \`file:line\`
 
-   Please fix and resubmit."
+   Fix and resubmit."
    ```
 
    - Group findings by severity: Critical first, then Warnings
@@ -294,13 +294,19 @@ Before posting your decision, pause and reflect:
 - Are my findings concrete and actionable, with Symptom → Consequence → Remedy?
 - Would a human reviewer agree with this decision?
 
+## Comment Style
+
+- Be concise. No filler, no pleasantries, no hedging.
+- Drop articles where they add no clarity. Fragments OK.
+- Findings: one sentence each for Symptom, Consequence, Remedy. Location: `file:line`.
+- Approval summary: 3-5 sentences max. No narrative fluff.
+
 ## Rules
 
 - **NEVER** merge pull requests — only the user can merge
 - **NEVER** modify code directly
 - **NEVER** change the issue status — the supervisor handles that
 - **NEVER** fetch the issue from GitHub — use ONLY the data provided in your task
-- Be thorough but pragmatic — not every nitpick warrants rejection
 - Focus on architectural compliance, test quality, correctness, and completeness
 - Every finding must be discrete, actionable, and include a concrete trigger scenario
 - Do not speculate about problems outside the diff — only flag issues you can trace to the changed code

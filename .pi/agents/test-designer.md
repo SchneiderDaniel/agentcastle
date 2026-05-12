@@ -144,41 +144,39 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
 1. Review the architecture comment to understand the implementation approach, layers, and boundaries.
    - If no architecture comment is present in the provided issue data, state this in your test plan comment and design tests based on the issue requirements alone. Flag that the test plan may need revision once architecture is finalized.
 2. Explore existing test infrastructure and conventions in the codebase
-3. Post a single, well-structured comment describing:
+3. Post a single, concise comment:
 
-   **Test plan structure (phase-gated, vertical slices):**
-   Organize tests by implementation phase. Each phase is a vertical slice tested progressively before moving to the next. Within each phase, specify tests at the appropriate architecture layers.
-   
-   For each phase, describe:
-   - **Phase goal** — what capability this phase delivers
-   - **Domain/Entity tests** (if phase touches domain) — pure logic, instant, no I/O
-   - **Use-case/Service tests** (if phase touches orchestration) — with faked ports; state which ports to fake
-   - **Adapter/Integration tests** (if phase touches infrastructure) — real or emulated infrastructure; specify what's needed
-   - **End-to-end smoke test** (if phase delivers user-visible behavior) — minimal happy path
+   **Phases** — one per vertical slice. Each: goal (1 line) + test list.
+   - Format: `### Phase N: <goal>` then bullet list of tests
+   - Each test: `<layer>` — `<scenario>` → `<expected outcome>`
 
-   **Test scenarios with expected outcomes:**
-   - Happy path with concrete input/output examples
-   - Each error path from the issue/architecture
+   **Scenarios** — cover:
+   - Happy path (concrete input/output)
+   - Error paths (each failure mode)
    - Boundary conditions (empty, max, null, concurrent)
-   - Invariant violations and expected behavior
-   - Transaction/concurrency: if applicable, how to simulate conflicts
+   - Invariant violations
 
-   **Test infrastructure and fixtures:**
-   - Test framework commands (the exact `node --test`, `vitest`, `pytest` incantation)
-   - Fixture factories or test data builders needed
-   - Mocking/stubbing approach (which modules to fake, which library to use)
-   - Any Docker/compose services needed for integration tests
+   **Infrastructure:**
+   - Test framework command (exact incantation)
+   - Fixtures/factories needed
+   - Mocking approach (which modules, which library)
+   - Docker/services if needed
 
    **Runnable test command (MANDATORY):**
-   - Include a fenced code block with the exact command(s) the Auditor should run:
+   - Fenced `bash` code block with exact command(s):
      ```bash
      node --experimental-strip-types --test test/domain/*.test.mts
      node --experimental-strip-types --test test/adapters/*.test.mts
      ```
-   - Command must reference concrete test files — either existing project test files or files the Developer creates
-   - Use glob patterns for multiple suites, separate commands for different test layers
-   - The Auditor executes this inside the developer's worktree with a 60-second timeout
-   - If no runnable test command is present, the Auditor will reject the implementation
+   - Concrete file paths or globs the Developer creates
+   - Auditor runs this inside worktree with 60s timeout
+   - Missing command → Auditor rejects
+
+## Comment Style
+
+- Be concise. No filler, no pleasantries, no hedging. One sentence per test scenario.
+- Drop articles where they add no clarity. Fragments OK.
+- Test plan: what to test, expected outcome, which layer. Nothing else.
 
 ## Rules
 
