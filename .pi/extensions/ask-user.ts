@@ -13,11 +13,11 @@ export default function askUser(pi: ExtensionAPI) {
 		name: "ask_user",
 		label: "Ask User",
 		description:
-			"Ask the user a multiple-choice question. Call this whenever you need user input during interviews, clarifications, or decision points. Present at least 3 options, mark one as recommended, and always include 'Other' for custom answers.",
+			"Ask the user a multiple-choice question. Call this whenever you need user input during interviews, clarifications, or decision points. Present at least 3 options, mark one as recommended, and the 'Other' option is added automatically by the tool — do not include it yourself.",
 		promptSnippet:
 			"Ask user a multiple-choice question with recommended option and free-text fallback",
 		promptGuidelines: [
-			"Use ask_user to ask the user structured questions instead of open-ended text questions. Always provide at least 3 options, mark one as recommended, and include an 'Other' option.",
+			"Use ask_user to ask the user structured questions instead of open-ended text questions. Always provide at least 3 options, mark one as recommended, and the 'Other' option is appended automatically — do not add it to the options array.",
 			"Call ask_user ONE question at a time. Do not batch multiple questions into one call.",
 		],
 		parameters: Type.Object({
