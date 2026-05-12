@@ -626,7 +626,7 @@ async function runAgent(
 			cwd: process.cwd(),
 			env: { ...process.env, PI_NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
-			timeout: 600_000,
+			timeout: 1_800_000, // 30 minutes — developer may need 50+ turns
 		});
 
 		let rawStdout = "";
@@ -814,7 +814,7 @@ async function runAgent(
 			stderr += data.toString();
 		});
 
-		child.on("close", (code) => {
+		child.on("close", (code, signal) => {
 			if (jsonBuffer.trim()) processJsonLine(jsonBuffer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
@@ -824,7 +824,11 @@ async function runAgent(
 			const durationMs = Date.now() - startedAt;
 			const textOutput = fullLog.join("\n").trim();
 			const rawOutput = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
-			const success = code === 0;
+			const killed = signal !== null;
+			const success = code === 0 && !killed;
+			if (killed) {
+				fullLog.push(`[Timeout: ${agentName} killed by ${signal} after ${formatDuration(durationMs)}]`);
+			}
 
 			// Extract a one-line summary from the text output
 			const summaryLine = extractSummaryLine(textOutput, success, agentName);
