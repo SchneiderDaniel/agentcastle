@@ -102,6 +102,36 @@ interface SupervisorMessageDetails {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
+/** Parse .gitmodules into submodule entries. Only returns entries with GitHub URLs. */
+function parseGitmodules(): Array<{path: string; repo: string}> {
+	const gitmodulesPath = ".gitmodules";
+	if (!existsSync(gitmodulesPath)) return [];
+	const content = readFileSync(gitmodulesPath, "utf-8");
+	const subs: Array<{path: string; repo: string}> = [];
+	const sectionRe = /\[submodule\s+"(.+?)"\]/g;
+	let match: RegExpExecArray | null;
+	while ((match = sectionRe.exec(content)) !== null) {
+		const name = match[1];
+		// Extract the section body between this [submodule] and the next one (or EOF)
+		const sectionStart = match.index + match[0].length;
+		const nextSection = content.indexOf("[", sectionStart);
+		const sectionBody = nextSection === -1
+			? content.slice(sectionStart)
+			: content.slice(sectionStart, nextSection);
+		const pathMatch = sectionBody.match(/^\s*path\s*=\s*(.+)$/m);
+		const urlMatch = sectionBody.match(/^\s*url\s*=\s*(.+)$/m);
+		if (!pathMatch || !urlMatch) continue;
+		const path = pathMatch[1].trim();
+		const url = urlMatch[1].trim();
+		// Extract owner/repo from GitHub URLs: https://github.com/owner/repo or git@github.com:owner/repo.git
+		const ghMatch = url.match(/github\.com[/:](.+?)\/(.+?)(?:\.git)?$/);
+		if (!ghMatch) continue; // skip non-GitHub submodules (gh CLI can't create PRs there)
+		const repo = `${ghMatch[1]}/${ghMatch[2]}`;
+		subs.push({ path, repo });
+	}
+	return subs;
+}
+
 function loadConfig(): SupervisorConfig {
 	const settingsPath = ".pi/settings.json";
 	if (!existsSync(settingsPath)) {
@@ -120,6 +150,13 @@ function loadConfig(): SupervisorConfig {
 	if (codeowners.length === 0) {
 		throw new Error("supervisor.codeowners must be a non-empty list of trusted GitHub usernames.");
 	}
+	// Submodules: explicit config takes precedence, otherwise auto-detect from .gitmodules
+	let submodules: Array<{path: string; repo: string}>;
+	if (Array.isArray(cfg.submodules) && cfg.submodules.length > 0) {
+		submodules = cfg.submodules;
+	} else {
+		submodules = parseGitmodules();
+	}
 	return {
 		repo: cfg.repo,
 		projectNumber: cfg.projectNumber,
@@ -127,7 +164,7 @@ function loadConfig(): SupervisorConfig {
 		statusMapping: cfg.statusMapping,
 		maxRejections: cfg.maxRejections ?? 3,
 		codeowners,
-		submodules: Array.isArray(cfg.submodules) ? cfg.submodules : [],
+		submodules,
 		defaultBranch: cfg.defaultBranch || "main",
 		remote: cfg.remote || "origin",
 		worktreeBase: cfg.worktreeBase || "../",

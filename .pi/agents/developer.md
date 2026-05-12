@@ -174,7 +174,7 @@ Follow the **Test First** rule:
 - Write the minimal code to make tests pass (green)
 - Follow Clean Code, Code Complete, and Pragmatic Programmer principles
 - Make focused, minimal changes — do not refactor unrelated code
-- You may edit files in BOTH the agentcastle repo AND any submodule (e.g. `flask_blogs/`)
+- You may edit files in BOTH the main repo AND any submodule
 
 **Step C — Verify:**
 
@@ -199,7 +199,7 @@ git submodule status | awk '{print $2}' | while read submodule; do
 done
 ```
 
-**Step B — Push agentcastle (always):**
+**Step B — Push main repo (always):**
 
 ```
 git add -A
@@ -207,7 +207,7 @@ git commit -m "feat(#<N>): <issue-title>"
 git push origin <branch-name>
 ```
 
-The `git add -A` in step B automatically stages any submodule pointer change (new commit hash in flask_blogs).
+The `git add -A` in step B automatically stages any submodule pointer change (new commit hash in the submodule).
 
 ### 7. Clean up
 

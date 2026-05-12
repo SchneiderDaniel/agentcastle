@@ -4,19 +4,13 @@
         "projectNumber": 3,
         "statusField": "Status",
         "statusMapping": {
-            "Architecture": "architect",
             "Research": "researcher",
+            "Architecture": "architect",
             "TestDesign": "test-designer",
             "Implementation": "developer",
             "Audit": "auditor"
         },
         "maxRejections": 5,
-        "codeowners": ["SchneiderDaniel"],
-        "submodules": [
-            {
-                "path": "flask_blogs",
-                "repo": "SchneiderDaniel/flask_blogs"
-            }
-        ]
+        "codeowners": ["SchneiderDaniel"]
     }
 }
