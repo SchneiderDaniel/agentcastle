@@ -526,9 +526,24 @@ function boldText(theme: any, text: string): string {
  *
  * This is a pure function exported for unit testing.
  */
+const CONTEXT_INFO_EXTENSION = ".pi/extensions/context-info.ts";
+
+/**
+ * Resolve the extensions CLI flags for a given agent frontmatter.
+ * - If extensions field is present and non-empty, split, trim, filter out
+ *   "supervisor" (case-insensitive), and return `--extension <path>` flags.
+ * - If nothing remains after filtering, fall back to context-info only.
+ * - If extensions field is missing or empty, return context-info only.
+ * - Context-info is always auto-injected (deduplicated).
+ *
+ * pi CLI uses `--extension` (singular) with a file path per flag.
+ * Extension names are resolved relative to .pi/extensions/<name>.ts
+ *
+ * This is a pure function exported for unit testing.
+ */
 export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 	if (!extensionsRaw || !extensionsRaw.trim()) {
-		return ["--no-extensions"];
+		return ["--extension", CONTEXT_INFO_EXTENSION];
 	}
 
 	const extensions = extensionsRaw
@@ -537,14 +552,19 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 		.filter((s) => s.length > 0)
 		.filter((s) => s.toLowerCase() !== "supervisor");
 
-	if (extensions.length === 0) {
-		return ["--no-extensions"];
-	}
-
 	const result: string[] = [];
 	for (const ext of extensions) {
 		result.push("--extension", `.pi/extensions/${ext}.ts`);
 	}
+
+	// Auto-inject context-info (deduplicated)
+	const hasContextInfo = result.some(
+		(r) => r === CONTEXT_INFO_EXTENSION || r.endsWith("/context-info.ts"),
+	);
+	if (!hasContextInfo) {
+		result.push("--extension", CONTEXT_INFO_EXTENSION);
+	}
+
 	return result;
 }
 
@@ -602,6 +622,11 @@ async function runAgent(
 		const fullLog: string[] = [];
 		let lastToolName: string | undefined;
 
+		// Context-info state
+		let contextTokens: number | undefined;
+		let contextWindow: number | undefined;
+		let contextInfoReceived = false;
+
 		let flushTimer: NodeJS.Timeout | null = null;
 
 		const buildWidgetLines = (): string[] => {
@@ -609,6 +634,11 @@ async function runAgent(
 			// Header: agent name + spinner
 			const header = `⚙ ${agentName}`;
 			lines.push(header);
+
+			// Context line
+			if (contextInfoReceived && contextTokens !== undefined && contextWindow !== undefined) {
+				lines.push(`  Context: ${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`);
+			}
 
 			// Status line with current tool and stats
 			const statsParts: string[] = [];
@@ -651,6 +681,19 @@ async function runAgent(
 				switch (ev.type) {
 					case "session":
 						break;
+
+					case "context_info": {
+						const tokens = ev.contextTokens;
+						const window = ev.contextWindow;
+						if (typeof tokens === "number" && typeof window === "number" && window > 0) {
+							contextTokens = tokens;
+							contextWindow = window;
+							contextInfoReceived = true;
+							fullLog.push(`📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
+							scheduleFlush();
+						}
+						break;
+					}
 
 					case "tool_execution_start":
 						currentTool = ev.toolName || "tool";
