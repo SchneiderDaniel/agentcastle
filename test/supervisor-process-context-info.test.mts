@@ -70,6 +70,8 @@ function buildContextWidgetLines(
 	const lines: string[] = [];
 	if (state.contextInfoReceived && state.contextTokens !== undefined && state.contextWindow !== undefined) {
 		lines.push(`Context: ${formatTokens(state.contextTokens)}/${formatTokens(state.contextWindow)}`);
+	} else {
+		lines.push("Context: computing...");
 	}
 	return lines;
 }
@@ -163,16 +165,17 @@ describe("handleContextJsonLine — context_info event handling", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildContextWidgetLines — context line rendering", () => {
-	it("P3.12: before context_info arrives → no Context line", () => {
+	it("P3.12: before context_info arrives → computing placeholder", () => {
 		const state: ContextInfoState = {
 			contextInfoReceived: false,
 			fullLog: [],
 		};
 		const lines = buildContextWidgetLines(state);
-		assert.strictEqual(lines.length, 0);
+		assert.strictEqual(lines.length, 1);
+		assert.strictEqual(lines[0], "Context: computing...");
 	});
 
-	it("P3.13: before context_info, has tokens → no context line", () => {
+	it("P3.13: before context_info, has tokens → computing placeholder", () => {
 		const state: ContextInfoState = {
 			contextInfoReceived: false,
 			contextTokens: 5000,
@@ -180,7 +183,8 @@ describe("buildContextWidgetLines — context line rendering", () => {
 			fullLog: [],
 		};
 		const lines = buildContextWidgetLines(state);
-		assert.strictEqual(lines.length, 0);
+		assert.strictEqual(lines.length, 1);
+		assert.strictEqual(lines[0], "Context: computing...");
 	});
 
 	it("P3.14: after context_info arrives → formatted line", () => {

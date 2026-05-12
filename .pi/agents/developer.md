@@ -2,7 +2,7 @@
 name: developer
 description: Implements a GitHub issue in an isolated git worktree based on architecture and test plan
 tools: read, bash, write, edit
-model: opencode-go/qwen3.6-plus
+model: opencode-go/deepseek-v4-pro
 extensions: "caveman,crawl4ai,piignore,codebase-memory"
 ---
 

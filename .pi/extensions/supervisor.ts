@@ -638,6 +638,8 @@ async function runAgent(
 			// Context line
 			if (contextInfoReceived && contextTokens !== undefined && contextWindow !== undefined) {
 				lines.push(`  Context: ${formatTokens(contextTokens)}/${formatTokens(contextWindow)}`);
+			} else {
+				lines.push("  Context: computing...");
 			}
 
 			// Status line with current tool and stats
@@ -1409,10 +1411,6 @@ export default function supervisor(pi: ExtensionAPI) {
 						} satisfies SupervisorMessageDetails,
 					});
 
-					if (!result.success) {
-						break;
-					}
-
 					// Determine and apply next status
 					const nextStatus = determineNextStatus(
 						agentName,
@@ -1420,6 +1418,17 @@ export default function supervisor(pi: ExtensionAPI) {
 						loopStatus,
 						config,
 					);
+
+					// Break on failure only if the next agent depends on this one's output.
+					// Auditor should still review a "failed" developer run (code exists
+					// despite non-zero exit e.g. from a hung tool).
+					if (!result.success && nextStatus !== "Audit") {
+						ctx.ui.notify(
+							`Agent ${agent.config.name} failed. Pipeline stops before ${nextStatus || "next stage"}.`,
+							"warning",
+						);
+						break;
+					}
 					if (!nextStatus) {
 						ctx.ui.notify(
 							`Agent ${agent.config.name} output unclear. Pipeline stopped.`,
