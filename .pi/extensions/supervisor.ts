@@ -1073,6 +1073,13 @@ export async function runAgent(
 				flushTimer = null;
 			}
 			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName));
+			// Update status bar with live time/tokens
+			const now = Date.now();
+			const parts: string[] = [];
+			parts.push(`⏱ ${formatDuration(now - state.startedAt)}`);
+			if (state.tokenCount > 0) parts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
+			if (state.toolCount > 0) parts.push(`🔧 ${state.toolCount} tools`);
+			ctx.ui.setStatus("supervisor", `${agentName}  ${parts.join(" · ")}`);
 		};
 
 		// Batch widget updates to avoid flicker
