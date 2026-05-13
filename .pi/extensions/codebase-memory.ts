@@ -1,5 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { BorderedLoader } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { createHash } from "node:crypto";
 
 const BINARY = `${process.env.HOME}/.local/bin/codebase-memory-mcp`;
 
@@ -16,9 +18,52 @@ const LIGHT_TOOLS = new Set([
   "manage_adr", "ingest_traces",
 ]);
 
-/** Derive project name from cwd path: /home/miria/git/main → home-miria-git-main */
+/** Derive unique project name from absolute path: basename-<8-char-md5-hex> */
 function projectName(cwd: string): string {
-  return cwd.replace(/^\//, "").replace(/\//g, "-");
+  const basename = cwd.split("/").pop() || "root";
+  const hash = createHash("md5").update(cwd).digest("hex").slice(0, 8);
+  return `${basename}-${hash}`;
+}
+
+/** Safe JSON extraction: find first balanced { } block, parse it. Returns null on failure. */
+function safeJsonParse(input: string): object | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const start = trimmed.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\" && inString) {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(trimmed.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 /** Call codebase-memory-mcp CLI and return parsed result */
@@ -38,36 +83,86 @@ async function cbmCli(
     return { ok: false, data: null, error: result.stderr || "cbm failed" };
   }
 
-  try {
-    const outer = JSON.parse(result.stdout);
-    // Output can be MCP content wrapper {"content":[{"type":"text","text":"<json>"}]}
-    // or direct JSON from some subcommands.
-    const contentArr = Array.isArray(outer.content) ? outer.content : null;
-    const rawText = contentArr?.[0]?.text ?? null;
-
-    if (outer.isError) {
-      if (rawText) {
-        const inner = JSON.parse(rawText);
-        return { ok: false, data: null, error: inner.error || inner.hint || "cbm error" };
-      }
-      return { ok: false, data: null, error: outer.error || "cbm error" };
-    }
-
-    if (rawText) {
-      const inner = JSON.parse(rawText);
-      return { ok: true, data: inner };
-    }
-
-    // No MCP wrapper — treat outer as the data itself
-    return { ok: true, data: outer };
-  } catch (e) {
-    return { ok: false, data: null, error: `parse error: ${e}` };
+  const outer = safeJsonParse(result.stdout);
+  if (!outer) {
+    const preview = result.stdout ? result.stdout.slice(0, 200) : "<empty output>";
+    return { ok: false, data: null, error: `parse error: ${preview}` };
   }
+
+  // Output can be MCP content wrapper {"content":[{"type":"text","text":"<json>"}]}
+  // or direct JSON from some subcommands.
+  const contentArr = Array.isArray((outer as any).content) ? (outer as any).content : null;
+  const rawText = contentArr?.[0]?.text ?? null;
+
+  if ((outer as any).isError) {
+    if (rawText) {
+      const inner = safeJsonParse(rawText);
+      if (inner) {
+        return { ok: false, data: null, error: (inner as any).error || (inner as any).hint || "cbm error" };
+      }
+      return { ok: false, data: null, error: rawText };
+    }
+    return { ok: false, data: null, error: (outer as any).error || "cbm error" };
+  }
+
+  if (rawText) {
+    const inner = safeJsonParse(rawText);
+    if (inner) return { ok: true, data: inner };
+    // rawText might not be JSON — return as-is
+    return { ok: true, data: rawText };
+  }
+
+  // No MCP wrapper — treat outer as the data itself
+  return { ok: true, data: outer };
+}
+
+/** Parse semver from version string. Returns [major, minor, patch] or null. */
+function parseVersion(versionString: string): [number, number, number] | null {
+  const match = versionString.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10)];
+}
+
+/** Compare version tuple against minimum. */
+function isVersionAtLeast(
+  version: [number, number, number],
+  minMajor: number,
+  minMinor: number,
+  minPatch: number,
+): boolean {
+  const [major, minor, patch] = version;
+  if (major !== minMajor) return major > minMajor;
+  if (minor !== minMinor) return minor > minMinor;
+  return patch >= minPatch;
 }
 
 export default async function (pi: ExtensionAPI) {
-  // On session start, auto-index if not already indexed
+  // ── Version check at init time (before tool registration) ──
+  let skipSemanticSearch = false;
+  let versionNotificationShown = false;
+
+  try {
+    const versionResult = await pi.exec(BINARY, ["--version"], { timeout: 5_000 });
+    const version = parseVersion(versionResult.stdout);
+    if (!version || !isVersionAtLeast(version, 0, 6, 1)) {
+      skipSemanticSearch = true;
+    }
+  } catch {
+    // If version check itself fails, assume old version (safe default)
+    skipSemanticSearch = true;
+  }
+
+  // On session start, auto-index if not already indexed (with spinner)
   pi.on("session_start", async (_event, ctx) => {
+    // One-time notification for missing semantic search
+    if (skipSemanticSearch && !versionNotificationShown) {
+      versionNotificationShown = true;
+      ctx.ui?.notify(
+        "Semantic search unavailable — codebase-memory binary is < 0.6.1. Run codebase_update to upgrade.",
+        "warning",
+      );
+    }
+
     const proj = projectName(ctx.cwd);
     const status = await cbmCli(pi, "list_projects", {});
 
@@ -77,11 +172,31 @@ export default async function (pi: ExtensionAPI) {
     const alreadyIndexed = projects.some((p: { name: string }) => p.name === proj);
 
     if (!alreadyIndexed) {
-      const res = await cbmCli(pi, "index_repository", { repo_path: ctx.cwd });
-      if (res.ok) {
-        ctx.ui?.notify(`Codebase indexed: ${(res.data as any)?.nodes ?? "?"} nodes`, "info");
+      if (ctx.hasUI && ctx.ui) {
+        await ctx.ui.custom((tui, theme, _kb, done) => {
+          const loader = new BorderedLoader(tui, theme, "Indexing codebase...");
+          (async () => {
+            try {
+              const res = await cbmCli(pi, "index_repository", { repo_path: ctx.cwd }, loader.signal);
+              if (res.ok) {
+                ctx.ui?.notify(`Codebase indexed: ${(res.data as any)?.nodes ?? "?"} nodes`, "info");
+              } else {
+                ctx.ui?.notify(`Codebase index failed: ${res.error}`, "warning");
+              }
+            } finally {
+              loader.dispose();
+              done(undefined);
+            }
+          })();
+          return loader;
+        }, { overlay: true });
       } else {
-        ctx.ui?.notify(`Codebase index failed: ${res.error}`, "warning");
+        const res = await cbmCli(pi, "index_repository", { repo_path: ctx.cwd });
+        if (res.ok) {
+          ctx.ui?.notify(`Codebase indexed: ${(res.data as any)?.nodes ?? "?"} nodes`, "info");
+        } else {
+          ctx.ui?.notify(`Codebase index failed: ${res.error}`, "warning");
+        }
       }
     }
   });
@@ -322,7 +437,8 @@ export default async function (pi: ExtensionAPI) {
   });
 
   // ── 6b. semantic_query ── (available in binary >= 0.6.1)
-  pi.registerTool({
+  if (!skipSemanticSearch) {
+    pi.registerTool({
     name: "codebase_semantic_search",
     label: "Semantic Search",
     description:
@@ -361,6 +477,7 @@ export default async function (pi: ExtensionAPI) {
       };
     },
   });
+  }
 
   // ── 7. detect_changes ──
   pi.registerTool({
@@ -479,8 +596,43 @@ export default async function (pi: ExtensionAPI) {
       const data = res.data as any;
       const src = data.source || data.snippet || data.code || "";
       const header = data.signature ? `// ${data.signature}\n` : "";
+      const full = `${header}${src}`;
+
+      // Truncate oversized snippets: max 500 lines or 15KB
+      const MAX_LINES = 500;
+      const MAX_BYTES = 15_000;
+      const lines = full.split("\n");
+
+      if (lines.length <= MAX_LINES && Buffer.byteLength(full, "utf-8") <= MAX_BYTES) {
+        return { content: [{ type: "text", text: full }], details: data };
+      }
+
+      // Truncate by lines first
+      let truncated = lines.slice(0, MAX_LINES);
+      let omitted = lines.length - MAX_LINES;
+      let text = truncated.join("\n");
+      const note = `// ...truncated (${omitted} lines omitted)`;
+
+      if (Buffer.byteLength(text, "utf-8") + Buffer.byteLength(note, "utf-8") > MAX_BYTES) {
+        // Binary search for line count that fits within byte limit
+        let lo = 0;
+        let hi = MAX_LINES;
+        while (lo < hi) {
+          const mid = Math.floor((lo + hi + 1) / 2);
+          const candidate = lines.slice(0, mid).join("\n");
+          if (Buffer.byteLength(candidate, "utf-8") + Buffer.byteLength(note, "utf-8") <= MAX_BYTES) {
+            lo = mid;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        truncated = lines.slice(0, lo);
+        omitted = lines.length - lo;
+        text = truncated.join("\n");
+      }
+
       return {
-        content: [{ type: "text", text: `${header}${src}` }],
+        content: [{ type: "text", text: `${text}\n// ...truncated (${omitted} lines omitted)` }],
         details: data,
       };
     },
