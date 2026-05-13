@@ -2,7 +2,7 @@
  * Session Logger Extension — JSONL Format
  *
  * Writes every session event as a JSON Lines record to
- * .pi/sessions/<session-id>.jsonl so you can query with jq:
+ * .pi/sessions/<datetime>_<short-id>/session.jsonl so you can query with jq:
  *
  *   cat .pi/sessions/latest.jsonl | jq 'select(.error != null)'
  *
@@ -10,6 +10,7 @@
  * - JSONL over Markdown: O(1) append, jq streaming, no structural overhead
  * - Append-safe: each line independently parseable
  * - Symlink .pi/sessions/latest.jsonl → current session file
+ * - Folder name: datetime + short-id so user can easily find latest session
  * - No BOM, UTF-8, \n line terminators per jsonlines.org spec
  */
 
@@ -422,8 +423,8 @@ export default function (pi: ExtensionAPI) {
 		sessionDir = path.join(sessionsDir, folderName);
 		fs.mkdirSync(sessionDir, { recursive: true });
 
-		// JSONL file per session
-		sessionFilePath = path.join(sessionsDir, `session.jsonl`);
+		// JSONL file per session (inside the timestamped folder)
+		sessionFilePath = path.join(sessionDir, `session.jsonl`);
 		isNewFile = !fs.existsSync(sessionFilePath);
 		systemPromptWritten = !isNewFile;
 
