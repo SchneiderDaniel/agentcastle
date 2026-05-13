@@ -52,13 +52,13 @@ function formatTokens(n: number): string {
 	return String(n);
 }
 
-/** Map user-facing color name to TUI theme key. */
-function resolveColor(name: string): ThemeColor {
+/** Map user-facing color name to a raw ANSI truecolor escape (bypasses theme). */
+function resolveColor(name: string): string {
 	switch (name) {
-		case "green": return "success";
-		case "orange": return "warning";
-		case "red": return "error";
-		default: return "dim";
+		case "green":  return "\x1b[38;2;0;200;0m";
+		case "orange": return "\x1b[38;2;255;165;0m";
+		case "red":    return "\x1b[38;2;220;50;50m";
+		default:        return "\x1b[39m";
 	}
 }
 
@@ -83,26 +83,26 @@ function pickThreshold(
 	return sorted[sorted.length - 1]!;
 }
 
-/** Build the status bar text and its theme color key. */
+/** Build the status bar text and its ANSI color code. */
 function buildStatus(
 	tokens: number | null,
 	contextWindow: number | undefined,
 	thresholds: ThresholdEntry[],
-): { text: string; themeColor: ThemeColor } {
+): { text: string; colorCode: string } {
 	const windowK =
 		contextWindow !== undefined && contextWindow > 0
 			? formatTokens(contextWindow)
 			: "?";
 
 	if (tokens === null || tokens === undefined) {
-		return { text: `• .../${windowK}`, themeColor: "dim" };
+		return { text: `• .../${windowK}`, colorCode: resolveColor("dim") };
 	}
 
 	const currentK = formatTokens(tokens);
 	const entry = pickThreshold(tokens, thresholds);
 	return {
 		text: `• ${currentK}/${windowK}`,
-		themeColor: resolveColor(entry.color),
+		colorCode: resolveColor(entry.color),
 	};
 }
 
@@ -237,13 +237,14 @@ export default function contextStatusBar(pi: ExtensionAPI) {
 			lastContextWindow = contextWindow;
 		}
 
-		const { text, themeColor } = buildStatus(
+		const { text, colorCode } = buildStatus(
 			tokens,
 			lastContextWindow ?? contextWindow,
 			config.thresholds,
 		);
 
-		const themedText = ctx.ui.theme.fg(themeColor, text);
+		// Use raw ANSI escape — bypasses theme so green is actually green (#00c800)
+		const themedText = `${colorCode}${text}\x1b[39m`;
 		ctx.ui.setStatus(STATUS_KEY, themedText);
 	}
 }
