@@ -2,7 +2,7 @@
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
 tools: read, bash
-model: opencode-go/glm-5
+model: opencode-go/deepseek-v4-pro
 extensions: "caveman,crawl4ai,piignore,codebase-memory"
 ---
 
@@ -63,62 +63,30 @@ git fetch origin <branch-name>
 git diff main...origin/<branch-name>
 ```
 
-Also examine changed files directly with the `read` tool and use graph tools for structural analysis.
+Use `codebase_detect_changes` and `codebase_snippet` for structural analysis of changed code. Use `read` only for raw git diffs and non-code files not covered by graph tools.
 
-### 3. Execute Tests (Mandatory)
+### 3. Execute Tests
 
-Before evaluating, you MUST execute the test command from the test plan.
+Save the test plan to a file, then run:
 
-1. **Extract the test commands:** Read the test plan comment and find ALL fenced code blocks (```bash or ``` with no language tag). Extract the command(s) from each one.
-   - If no fenced code block is found → REJECT immediately with: "No runnable test command found in test plan"
-   - Do NOT guess or invent a test command — only use what the TestDesigner specified
-   - Run ALL extracted commands. If the test plan has multiple code blocks (for different test layers), execute each one in order.
-
-2. **Run the tests:** Execute the extracted command(s) inside the developer's worktree with a 60-second timeout:
-   ```
-   cd ../<branch> && <test command>
-   ```
-   Capture stdout and stderr separately.
-
-3. **Check the result:**
-   - **Exit code 0 (success):** Tests passed. Continue to step 4.
-   - **Exit code non-zero (failure):** REJECT with test failure details.
-   - **Timeout (>60s):** REJECT — treated as test failure.
-   - **Command error (file not found, syntax error):** REJECT with the error output.
-
-**Rejection Format — Test Failure:**
-
-```
-## Audit Rejected
-
-Tests failed. Fix before resubmitting.
-
-Failed tests:
-- [parsed test name 1]
-- [parsed test name 2]
-
-Stdout:
-[first 20 lines of stdout]
-...output truncated...
-
-Stderr:
-[first 20 lines of stderr]
-...output truncated...
+```bash
+bash .pi/scripts/audit-tests.sh run <branch-name> /tmp/test-plan.md
 ```
 
-- Parse failed test names from stdout/stderr (look for `✗`, `FAIL`, `not ok`, assertion errors). If parsing fails, omit the "Failed tests" section.
-- Truncate stdout/stderr to first 20 lines each. Append `...output truncated...` only when output exceeds 20 lines.
-- For non-test errors (file not found, syntax errors), include full error output but omit the "Failed tests" section.
+The script:
+- Extracts all fenced bash code blocks from the test plan
+- Executes each in `../<branch-name>` with 60s timeout
+- Captures stdout/stderr, truncates to 20 lines
+- Parses failed test names (✗, FAIL, not ok patterns)
+- Returns JSON with status and structured results
 
-**Rejection Format — Missing Command:**
+**Read the JSON output:**
+- `"status": "passed"` → all tests passed, continue to step 4
+- `"status": "failed"` → REJECT. Use `results[].failed_tests`, `results[].stdout`, `results[].stderr` from JSON to build rejection comment
+- `"status": "no_commands"` → REJECT with: "## Audit Rejected\n\nNo runnable test command found in test plan.\n\nPlease fix and resubmit."
+- `"status": "timeout"` or timed_out flag → REJECT — treated as test failure
 
-```
-## Audit Rejected
-
-No runnable test command found in test plan.
-
-Please fix and resubmit.
-```
+**Rejection format:** Follow the `message` field in the JSON output for exact rejection text. Build the comment from structured result fields.
 
 ### 4. Evaluate — Structured Review
 

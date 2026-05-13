@@ -28,7 +28,7 @@ node_modules/
 # --------------------------------------------------------------------
 # Pi agent sessions & internals (huge, irrelevant for coding)
 # --------------------------------------------------------------------
-.pi/sessions/
+# .pi/sessions/
 .pi/npm/
 .pi/chromium-deps/
 .pi/crawl4ai-venv/
