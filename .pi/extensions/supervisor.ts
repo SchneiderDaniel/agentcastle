@@ -14,7 +14,7 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import { readFileSync, existsSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
-import { Container, Spacer, Text, truncateToWidth } from "@mariozechner/pi-tui";
+import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -1452,14 +1452,14 @@ export default function supervisor(pi: ExtensionAPI) {
 			));
 			const thinkingLines = details.thinkingOutput.split("\n");
 			for (const line of thinkingLines) {
-				c.addChild(new Text(
-					fit(theme.fg("dim", line || " ")),
-					1, 0,
-				));
+				const styled = theme.fg("dim", line || " ");
+				for (const wrapped of wrapTextWithAnsi(styled, w)) {
+					c.addChild(new Text(wrapped, 1, 0));
+				}
 			}
 		}
 
-		// Text output (full, no truncation, color-coded by event type)
+		// Text output (word-wrapped, color-coded by event type)
 		if (details.textOutput) {
 			c.addChild(new Spacer(1));
 			const outputLines = details.textOutput.split("\n");
@@ -1478,10 +1478,9 @@ export default function supervisor(pi: ExtensionAPI) {
 				} else {
 					styledLine = line;
 				}
-				c.addChild(new Text(
-					fit(styledLine || " "),
-					1, 0,
-				));
+				for (const wrapped of wrapTextWithAnsi(styledLine || " ", w)) {
+					c.addChild(new Text(wrapped, 1, 0));
+				}
 			}
 		}
 
