@@ -19,6 +19,7 @@ credentials.*
 # Dependencies (massive, never needed)
 # --------------------------------------------------------------------
 node_modules/
+!node_modules/@mariozechner/
 
 # --------------------------------------------------------------------
 # Git internals
