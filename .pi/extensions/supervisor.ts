@@ -31,6 +31,7 @@ interface SupervisorConfig {
 	remote?: string;            // e.g. "origin" (default: "origin")
 	worktreeBase?: string;      // e.g. "../" (default: "../")
 	branchPrefix?: string;      // e.g. "worktree-git-issue-" (default: "worktree-git-issue-")
+	agentTimeoutsMin?: Record<string, number>; // per-agent timeout overrides in minutes
 }
 
 interface AgentFrontmatter {
@@ -185,6 +186,9 @@ function loadConfig(): SupervisorConfig {
 	} else {
 		submodules = parseGitmodules();
 	}
+	// Validate per-agent timeouts against known agents from statusMapping
+	const knownAgents = Object.values(cfg.statusMapping);
+	const agentTimeoutsMin = validateAgentTimeouts(cfg.agentTimeoutsMin, knownAgents);
 	return {
 		repo: cfg.repo,
 		projectNumber: cfg.projectNumber,
@@ -197,7 +201,90 @@ function loadConfig(): SupervisorConfig {
 		remote: cfg.remote || "origin",
 		worktreeBase: cfg.worktreeBase || "../",
 		branchPrefix: cfg.branchPrefix || "worktree-git-issue-",
+		agentTimeoutsMin,
 	};
+}
+
+// ─── Timeout configuration ────────────────────────────────────────────
+
+/** Default agent timeout in milliseconds (30 minutes). */
+export const DEFAULT_AGENT_TIMEOUT_MS = 1_800_000;
+
+/**
+ * Validate the raw agentTimeoutsMin config value.
+ * Returns a sanitized Record<string, number>.
+ * - undefined/null/empty → {}
+ * - Positive integers only
+ * - Unknown agent names: warn and strip
+ * - Non-integer / non-positive → throw
+ */
+export function validateAgentTimeouts(
+	raw: unknown,
+	knownAgents: string[],
+): Record<string, number> {
+	// Handle undefined/null
+	if (raw === undefined || raw === null) {
+		return {};
+	}
+
+	// Must be an object
+	if (typeof raw !== "object" || Array.isArray(raw) || raw === null) {
+		throw new Error(
+			`agentTimeoutsMin must be an object, got ${typeof raw}`,
+		);
+	}
+
+	const record = raw as Record<string, unknown>;
+	const result: Record<string, number> = {};
+
+	for (const [key, value] of Object.entries(record)) {
+		// Check if agent name is known
+		if (!knownAgents.includes(key)) {
+			console.warn(
+				`agentTimeoutsMin: unknown agent "${key}" — entry ignored`,
+			);
+			continue;
+		}
+
+		// Validate value: must be a positive integer
+		if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+			throw new Error(
+				`agentTimeoutsMin.${key} must be a positive integer, got ${JSON.stringify(value)}`,
+			);
+		}
+
+		result[key] = value;
+	}
+
+	return result;
+}
+
+/**
+ * Resolve the timeout in milliseconds for a given agent.
+ * - Looks up agentTimeoutsMin map by agent name (case-sensitive, exact match)
+ * - Returns minutes * 60_000 if found
+ * - Falls back to defaultMs if not found or map is empty/null
+ */
+export function resolveTimeoutMs(
+	agentName: string,
+	agentTimeoutsMin: Record<string, number> | undefined,
+	defaultMs: number = DEFAULT_AGENT_TIMEOUT_MS,
+): number {
+	if (!agentTimeoutsMin || typeof agentTimeoutsMin !== "object") {
+		return defaultMs;
+	}
+
+	const minutes = agentTimeoutsMin[agentName];
+	if (
+		minutes !== undefined &&
+		typeof minutes === "number" &&
+		Number.isInteger(minutes) &&
+		minutes > 0
+	) {
+		return minutes * 60_000;
+	}
+
+	return defaultMs;
 }
 
 function parseAgentFile(filePath: string): ParsedAgent {
@@ -923,6 +1010,7 @@ async function runAgent(
 	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,
+	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 ): Promise<AgentRunResult> {
 	const tools = agent.config.tools || "read,bash,write,edit";
 	const model = agent.config.model || "";
@@ -969,7 +1057,7 @@ async function runAgent(
 			cwd: process.cwd(),
 			env: { ...process.env, PI_NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
-			timeout: 1_800_000, // 30 minutes — developer may need 50+ turns
+			timeout: timeoutMs,
 		});
 
 		const MAX_RAW_STDOUT = 500_000; // prevent RangeError on huge output
@@ -1635,7 +1723,10 @@ export default function supervisor(pi: ExtensionAPI) {
 					);
 					ctx.ui.notify(`Dispatching ${agent.config.name}...`, "info");
 
-					let result = await runAgent(agent, task, ctx);
+					// Compute per-agent timeout
+					const timeoutMs = resolveTimeoutMs(agentName, config.agentTimeoutsMin);
+
+					let result = await runAgent(agent, task, ctx, timeoutMs);
 					let usedRetry = false;
 
 					if (!result.success) {
@@ -1643,7 +1734,7 @@ export default function supervisor(pi: ExtensionAPI) {
 							`Agent ${agent.config.name} failed. Retrying once...`,
 							"warning",
 						);
-						result = await runAgent(agent, task, ctx);
+						result = await runAgent(agent, task, ctx, timeoutMs);
 						usedRetry = true;
 					}
 
