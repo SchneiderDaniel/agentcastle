@@ -370,7 +370,6 @@ export async function auditFileGroup(
 
 	let child: ChildProcess | null = null;
 	let connection: any = null;
-	let childError: Error | null = null;
 
 	try {
 		// Quick pre-check: is the LSP binary available?
@@ -392,7 +391,7 @@ export async function auditFileGroup(
 		});
 
 		child.on("error", (err) => {
-			childError = err;
+			// child error tracked via errors[] array
 		});
 
 		// If spawn immediately failed (e.g. binary not found), handle early
@@ -413,7 +412,7 @@ export async function auditFileGroup(
 
 		// Capture connection-level errors (e.g. write to destroyed stream)
 		connection.onError((err: Error) => {
-			childError = childError || err;
+			// connection error tracked via errors[] array
 		});
 
 		// Collect diagnostics
@@ -605,7 +604,6 @@ export async function runPreAudit(
 
 	// 3. Group files by server
 	const { serverFiles, errors: groupingErrors } = groupFilesByServer(modifiedFiles, mappings);
-	const allErrors: string[] = [...groupingErrors];
 
 	// 4. Audit each server group
 	const results: AuditResult[] = [];

@@ -1879,6 +1879,7 @@ export default function supervisor(pi: ExtensionAPI) {
 							const runPreAuditFn = await getRunPreAudit();
 							let preAuditResult: any = null;
 							let hasModifiedFiles = true;
+							let retryCount = 0;
 
 							if (runPreAuditFn) {
 								const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
@@ -1895,6 +1896,16 @@ export default function supervisor(pi: ExtensionAPI) {
 									hasModifiedFiles = false;
 								}
 
+								// Count retries BEFORE runPreAudit so the count reflects
+								// state before this invocation records a new entry.
+								const entries = ctx.sessionManager.getEntries();
+								retryCount = 0;
+								for (const e of entries) {
+									if (e.type === "lsp-audit-retry" && (e.payload as any)?.issueNum === issueNum) {
+										retryCount++;
+									}
+								}
+
 								if (hasModifiedFiles) {
 									ctx.ui.setStatus("supervisor", "Running LSP pre-audit diagnostics...");
 									preAuditResult = await runPreAuditFn(
@@ -1902,14 +1913,6 @@ export default function supervisor(pi: ExtensionAPI) {
 										pi,
 										ctx,
 									);
-								}
-							}
-
-							const entries = ctx.sessionManager.getEntries();
-							let retryCount = 0;
-							for (const e of entries) {
-								if (e.type === "lsp-audit-retry" && (e.payload as any)?.issueNum === issueNum) {
-									retryCount++;
 								}
 							}
 
