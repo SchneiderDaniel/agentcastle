@@ -4,7 +4,7 @@
     "description": "---",
     "main": "index.js",
     "scripts": {
-        "test": "npx tsx --test test/supervisor-stream-activity.test.mts test/session-logger.test.mts test/session-query.test.mts test/context-info.test.mts test/supervisor-extensions.test.mts test/supervisor-process-context-info.test.mts"
+        "test": "node --experimental-strip-types --test test/session-logger.test.mts test/session-query.test.mts test/context-info.test.mts test/context-status-bar.test.mts test/supervisor-extensions.test.mts test/supervisor-process-context-info.test.mts test/supervisor-stream-activity.test.mts"
     },
     "keywords": [],
     "author": "",
