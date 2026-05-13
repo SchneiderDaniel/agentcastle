@@ -8,394 +8,42 @@
  * - Phase 4: message renderer thinking output (expanded/compact)
  * - Phase 5: edge cases (empty deltas, rapid bursts, non-JSON)
  *
- * Pure functions extracted from supervisor.ts for isolated unit testing.
+ * Imports pure functions from supervisor.ts for testing against production code.
+ * Uses createRequire because supervisor.ts is loaded as CJS (package.json type:
+ * commonjs) but depends on ESM packages via tsx transpilation.
  *
  * Run with:
- *   node --experimental-strip-types --test test/supervisor-stream-activity.test.mts
+ *   npx tsx --test test/supervisor-stream-activity.test.mts
  */
 
 import assert from "node:assert";
-import { describe, it, beforeEach } from "node:test";
+import { describe, it } from "node:test";
+import { createRequire } from "node:module";
 
-// ---------------------------------------------------------------------------
-// Replicated pure functions and types from supervisor.ts
-// (matches .pi/extensions/supervisor.ts implementation exactly)
-// ---------------------------------------------------------------------------
+// Use createRequire to import CJS module from ESM test context.
+// tsx transpiles supervisor.ts (CJS due to package.json type: commonjs)
+// and makes its exports available via require().
+const require = createRequire(import.meta.url);
+const {
+	formatTokens,
+	formatDuration,
+	MAX_FULL_LOG,
+	WIDGET_LINES,
+	MAX_LIVE_THINKING,
+	pushLog,
+	phasePriority,
+	getPhaseFromEvent,
+	processJsonLine,
+	buildWidgetLines,
+	getWorkingMessage,
+	extractTextFromContent,
+	// AgentRunState is a type-only import — extract from require result for destructuring
+} = require("../.pi/extensions/supervisor.ts");
 
-function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-	return String(n);
-}
+// Re-import type (not available via require)
+type AgentRunState = import("../.pi/extensions/supervisor.ts").AgentRunState;
 
-function formatDuration(ms: number): string {
-	if (ms < 1_000) return `${ms}ms`;
-	const sec = Math.round(ms / 1_000);
-	if (sec < 60) return `${sec}s`;
-	const min = Math.floor(sec / 60);
-	const remainSec = sec % 60;
-	return `${min}m ${remainSec}s`;
-}
-
-// ─── AgentRunState: mutable state during agent execution ────────────
-
-type AgentPhase = "idle" | "thinking" | "tool" | "text";
-
-interface AgentRunState {
-	currentTool?: string;
-	currentToolArgs?: string;
-	toolCount: number;
-	tokenCount: number;
-	fullLog: string[];
-	liveThinking: string;
-	liveText: string;
-	textOutputLines: string[];
-	thinkingOutputLines: string[];
-	lastToolName?: string;
-	phase: AgentPhase;
-	startedAt: number;
-	contextTokens?: number;
-	contextWindow?: number;
-	contextInfoReceived: boolean;
-}
-
-const MAX_FULL_LOG = 200;
-const WIDGET_LINES = 12;
-const MAX_LIVE_THINKING = 500;
-
-function pushLog(state: AgentRunState, entry: string): void {
-	state.fullLog.push(entry);
-	if (state.fullLog.length > MAX_FULL_LOG) state.fullLog.shift();
-}
-
-// ─── Phase priority ────────────────────────────────────────────────
-
-/** Numeric priority for phase ordering. Higher = more important. */
-function phasePriority(phase: AgentPhase): number {
-	switch (phase) {
-		case "tool": return 3;
-		case "thinking": return 2;
-		case "text": return 1;
-		case "idle": return 0;
-	}
-}
-
-// ─── Phase detection ────────────────────────────────────────────────
-
-/** Determine phase from a message_update event. Priority: tool > thinking > text > idle */
-function getPhaseFromUpdate(ev: any): AgentPhase {
-	if (!ev || !ev.type) return "idle";
-
-	if (ev.type === "tool_execution_start") return "tool";
-	if (ev.type === "tool_execution_end") return "idle";
-	if (ev.type === "message_update") {
-		const delta = ev.delta;
-		if (!delta) return "idle";
-		if (delta.type === "thinking_delta" && delta.thinking_delta) return "thinking";
-		if (delta.type === "thinking_start") return "thinking";
-		if (delta.type === "text_delta" && delta.text_delta) return "text";
-		if (delta.type === "text_start") return "text";
-		if (delta.type === "thinking_end") return "idle";
-		if (delta.type === "text_end") return "idle";
-	}
-	if (ev.type === "message_end") return "idle";
-
-	return "idle";
-}
-
-// ─── processJsonLine — pure state mutation ──────────────────────────
-
-interface ProcessResult {
-	/** true if widget should be flushed */
-	flush: boolean;
-	/** true if working message should be updated */
-	workingChange: boolean;
-}
-
-function processJsonLine(
-	line: string,
-	state: AgentRunState,
-): ProcessResult {
-	if (!line.trim()) return { flush: false, workingChange: false };
-	try {
-		const ev = JSON.parse(line);
-		switch (ev.type) {
-			// ── context_info ──────────────────────────────────
-			case "context_info": {
-				const tokens = ev.contextTokens;
-				const window = ev.contextWindow;
-				if (typeof tokens === "number" && typeof window === "number" && window > 0) {
-					state.contextTokens = tokens;
-					state.contextWindow = window;
-					state.contextInfoReceived = true;
-					pushLog(state, `📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
-					return { flush: true, workingChange: false };
-				}
-				return { flush: false, workingChange: false };
-			}
-
-			// ── tool_execution_start ─────────────────────────
-			case "tool_execution_start": {
-				const prevPhase = state.phase;
-				state.currentTool = ev.toolName || "tool";
-				state.currentToolArgs = ev.args
-					? JSON.stringify(ev.args).slice(0, 200)
-					: undefined;
-				state.lastToolName = ev.toolName;
-				state.phase = "tool";
-				const logArgs = ev.args
-					? JSON.stringify(ev.args).slice(0, 200)
-					: "";
-				pushLog(state, `🔧 ${ev.toolName}${logArgs ? ` ${logArgs}` : ""}`);
-				return {
-					flush: true,
-					workingChange: prevPhase !== "tool",
-				};
-			}
-
-			// ── tool_execution_end ───────────────────────────
-			case "tool_execution_end": {
-				state.toolCount++;
-				state.currentTool = undefined;
-				state.currentToolArgs = undefined;
-				state.phase = "idle";
-				pushLog(state, `${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
-				return { flush: true, workingChange: true };
-			}
-
-			// ── message_update (streaming events) ────────────
-			case "message_update": {
-				const delta = ev.delta;
-				if (!delta) return { flush: false, workingChange: false };
-
-				const prevPhase = state.phase;
-				const newPhase = getPhaseFromUpdate(ev);
-				// Never downgrade: tool > thinking > text
-				if (newPhase !== "idle" && phasePriority(newPhase) >= phasePriority(state.phase)) {
-					state.phase = newPhase;
-				}
-
-				switch (delta.type) {
-					case "thinking_delta": {
-						const td = delta.thinking_delta;
-						if (typeof td === "string" && td.length > 0) {
-							state.liveThinking += td;
-							// Prevent unbounded buffer growth
-							if (state.liveThinking.length > MAX_LIVE_THINKING * 2) {
-								state.liveThinking = state.liveThinking.slice(-MAX_LIVE_THINKING);
-							}
-							return {
-								flush: true,
-								workingChange: prevPhase !== "thinking",
-							};
-						}
-						return { flush: false, workingChange: false };
-					}
-
-					case "text_delta": {
-						const td = delta.text_delta;
-						if (typeof td === "string" && td.length > 0) {
-							state.liveText += td;
-							if (state.liveText.length > 10_000) {
-								state.liveText = state.liveText.slice(-8_000);
-							}
-							return {
-								flush: true,
-								workingChange: prevPhase !== "text",
-							};
-						}
-						return { flush: false, workingChange: false };
-					}
-
-					case "thinking_end": {
-						if (state.liveThinking.trim()) {
-							state.thinkingOutputLines.push(state.liveThinking.trim());
-							for (const t of state.liveThinking.split("\n")) {
-								const trimmed = t.trim();
-								if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 200)}`);
-							}
-						}
-						state.liveThinking = "";
-						state.phase = "idle";
-						return { flush: true, workingChange: true };
-					}
-
-					case "text_end": {
-						if (state.liveText.trim()) {
-							state.textOutputLines.push(state.liveText.trim());
-							for (const t of state.liveText.split("\n")) {
-								const trimmed = t.trim();
-								if (trimmed) pushLog(state, trimmed);
-							}
-						}
-						// Capture usage from text_end or parent message
-						if (ev.usage) {
-							state.tokenCount =
-								ev.usage.totalTokens || ev.usage.input + ev.usage.output || state.tokenCount;
-						}
-						state.liveText = "";
-						state.phase = "idle";
-						return { flush: true, workingChange: true };
-					}
-
-					default:
-						return { flush: false, workingChange: false };
-				}
-			}
-
-			// ── message_end ──────────────────────────────────
-			case "message_end": {
-				const msg = ev.message;
-				if (!msg) return { flush: false, workingChange: false };
-
-				if (msg.role === "assistant") {
-					if (Array.isArray(msg.content)) {
-						for (const block of msg.content) {
-							if (block.type === "thinking" && block.thinking) {
-								const thinkingText = typeof block.thinking === "string"
-									? block.thinking
-									: JSON.stringify(block.thinking).slice(0, 500);
-								for (const t of thinkingText.split("\n")) {
-									if (t.trim()) pushLog(state, `💭 ${t.slice(0, 200)}`);
-								}
-							}
-						}
-					}
-					const text = extractTextFromContent(msg.content);
-					if (text && text.trim()) {
-						state.textOutputLines.push(text.trim());
-						for (const t of text.split("\n")) {
-							if (t.trim()) pushLog(state, t);
-						}
-					}
-					if (msg.usage) {
-						state.tokenCount =
-							msg.usage.totalTokens || msg.usage.input + msg.usage.output;
-					}
-				} else if (msg.role === "toolResult") {
-					const resultText = extractTextFromContent(msg.content);
-					const label = msg.toolName || state.lastToolName || "tool";
-					if (resultText && resultText.trim()) {
-						const lines = resultText.split("\n");
-						pushLog(state, `📋 ${label}: ${lines[0]?.slice(0, 300) || "(no output)"}`);
-						for (let i = 1; i < Math.min(lines.length, 6); i++) {
-							if (lines[i].trim())
-								pushLog(state, `   ${lines[i].slice(0, 200)}`);
-						}
-					} else {
-						pushLog(state, `📋 ${label}: (no output)`);
-					}
-					state.lastToolName = undefined;
-				}
-				state.phase = "idle";
-				return { flush: true, workingChange: true };
-			}
-
-			default:
-				return { flush: false, workingChange: false };
-		}
-	} catch {
-		return { flush: false, workingChange: false };
-	}
-}
-
-// ─── buildWidgetLines — pure state → string[] ───────────────────────
-
-function buildWidgetLines(
-	state: AgentRunState,
-	agentName: string,
-): string[] {
-	const lines: string[] = [];
-	const now = Date.now();
-
-	// Header
-	lines.push(`⚙ ${agentName}`);
-
-	// Context line
-	if (state.contextInfoReceived && state.contextTokens !== undefined && state.contextWindow !== undefined) {
-		lines.push(`  Context: ${formatTokens(state.contextTokens)}/${formatTokens(state.contextWindow)}`);
-	} else {
-		lines.push("  Context: computing...");
-	}
-
-	// Live thinking (accent line, ... prefix while incomplete)
-	if (state.phase === "thinking" && state.liveThinking.trim()) {
-		const live = state.liveThinking.slice(-MAX_LIVE_THINKING);
-		const condensed = live.replace(/\s+/g, " ").trim().slice(-100);
-		if (condensed) lines.push(`  ... ${condensed}`);
-	}
-
-	// Live text (streaming output)
-	if (state.phase === "text" && state.liveText.trim()) {
-		const live = state.liveText.slice(-500);
-		const condensed = live.replace(/\s+/g, " ").trim().slice(-100);
-		if (condensed) lines.push(`  ${condensed}`);
-	}
-
-	// Current tool display
-	if (state.currentTool) {
-		const toolLabel = state.currentToolArgs
-			? `${state.currentTool}: ${state.currentToolArgs.slice(0, 80)}`
-			: state.currentTool;
-		lines.push(`  🔧 ${toolLabel}`);
-	}
-
-	// Recent fullLog entries (last N to fill remaining lines up to WIDGET_LINES)
-	const remaining = WIDGET_LINES - lines.length - 1; // -1 for stats footer
-	if (remaining > 0 && state.fullLog.length > 0) {
-		const recent = state.fullLog.slice(-remaining);
-		for (const entry of recent) {
-			// Strip emoji prefixes to avoid clutter (they're in fullLog format)
-			const display = entry.replace(/^[^\s]+\s/, "").slice(0, 90);
-			lines.push(`  ${display}`);
-		}
-	}
-
-	// Stats footer
-	const statsParts: string[] = [];
-	if (state.tokenCount > 0) statsParts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
-	if (state.toolCount > 0) statsParts.push(`🔧 ${state.toolCount} tools`);
-	const elapsed = formatDuration(now - state.startedAt);
-	statsParts.push(`⏱ ${elapsed}`);
-	if (statsParts.length > 0) {
-		lines.push(`  ${statsParts.join(" · ")}`);
-	}
-
-	// Enforce max lines
-	return lines.slice(0, WIDGET_LINES);
-}
-
-// ─── working message ────────────────────────────────────────────────
-
-function getWorkingMessage(state: AgentRunState, agentName: string): string | null {
-	// Priority: tool > thinking > text
-	switch (state.phase) {
-		case "tool":
-			if (state.currentTool) {
-				return `${agentName}: ${state.currentTool}`;
-			}
-			return `${agentName}: working...`;
-		case "thinking":
-			return `${agentName}: thinking...`;
-		case "text":
-			return `${agentName}: responding...`;
-		default:
-			return null; // clear
-	}
-}
-
-// ─── extractTextFromContent ─────────────────────────────────────────
-
-function extractTextFromContent(content: any): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.filter((b: any) => b.type === "text" && b.text)
-		.map((b: any) => b.text)
-		.join("\n");
-}
-
-// ─── createState helper ─────────────────────────────────────────────
+// ─── Test helper ─────────────────────────────────────────────────────
 
 function createState(overrides: Partial<AgentRunState> = {}): AgentRunState {
 	return {

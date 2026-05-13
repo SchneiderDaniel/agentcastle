@@ -9,22 +9,28 @@
  *   {"type":"context_info","contextTokens":<number>,"contextWindow":<number>}
  *
  * Design:
- * - Hooks session_start (reset), model_select (capture contextWindow),
- *   message_end (capture usage.input from first assistant response).
- * - Handles race condition: model_select may arrive before or after message_end.
- * - Suppresses emission when contextWindow is missing, undefined, or <= 0.
- * - Suppresses emission when usage.input is missing, <= 0, or role !== "assistant".
- * - Emits exactly once per session.
+ * - Hooks session_start (reset + capture contextWindow from ctx.model),
+ *   model_select (capture contextWindow on explicit model change),
+ *   message_end (capture context usage via ctx.getContextUsage()).
+ * - Uses ctx.getContextUsage() instead of raw API usage.input because
+ *   provider-reported input tokens often exclude cached/system prompt tokens
+ *   and don't match pi's cumulative context estimate.
+ * - model_select only fires on explicit model changes, not at startup.
+ *   So session_start also reads ctx.model.contextWindow for initial load.
+ * - Emits exactly once per session (console.log for supervisor).
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+} from "@mariozechner/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	let contextWindow: number | undefined;
 	let contextTokens: number | undefined;
 	let emitted = false;
 
-	function tryEmit() {
+	function tryEmit(ctx: ExtensionContext) {
 		if (emitted) return;
 		if (contextWindow === undefined || contextWindow <= 0) return;
 		if (contextTokens === undefined || contextTokens <= 0) return;
@@ -38,27 +44,37 @@ export default function (pi: ExtensionAPI) {
 		);
 	}
 
-	pi.on("session_start", async () => {
+	pi.on("session_start", async (_event, ctx) => {
 		contextWindow = undefined;
 		contextTokens = undefined;
 		emitted = false;
-	});
-
-	pi.on("model_select", async (event) => {
-		const cw = event.model?.contextWindow;
+		// model_select only fires on explicit model change, not at startup.
+		// Grab contextWindow from the already-loaded model.
+		const cw = ctx.model?.contextWindow;
 		if (typeof cw === "number" && cw > 0) {
 			contextWindow = cw;
-			tryEmit();
 		}
 	});
 
-	pi.on("message_end", async (event) => {
+	pi.on("model_select", async (event, ctx) => {
+		const cw = event.model?.contextWindow;
+		if (typeof cw === "number" && cw > 0) {
+			contextWindow = cw;
+			tryEmit(ctx);
+		}
+	});
+
+	pi.on("message_end", async (event, ctx) => {
 		const msg = event.message;
 		if (!msg || msg.role !== "assistant") return;
-		const input = msg.usage?.input;
-		if (typeof input === "number" && input > 0) {
-			contextTokens = input;
-			tryEmit();
+		// Prefer pi's own context calculation over raw API usage.input.
+		// API-reported input tokens often exclude cached/system prompt tokens
+		// and don't match pi's cumulative context estimate.
+		const usage = ctx.getContextUsage();
+		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
+			contextTokens = usage.tokens;
+			contextWindow = usage.contextWindow;
+			tryEmit(ctx);
 		}
 	});
 }

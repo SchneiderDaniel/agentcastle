@@ -91,9 +91,9 @@ interface AgentRunResult {
 
 // ─── AgentRunState: mutable state during agent execution ────────────
 
-type AgentPhase = "idle" | "thinking" | "tool" | "text";
+export type AgentPhase = "idle" | "thinking" | "tool" | "text";
 
-interface AgentRunState {
+export interface AgentRunState {
 	currentTool?: string;
 	currentToolArgs?: string;
 	toolCount: number;
@@ -517,13 +517,13 @@ async function checkBlockedByDependencies(
 
 // ─── Formatting helpers ──────────────────────────────────────────────
 
-function formatTokens(n: number): string {
+export function formatTokens(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
 	return String(n);
 }
 
-function formatDuration(ms: number): string {
+export function formatDuration(ms: number): string {
 	if (ms < 1_000) return `${ms}ms`;
 	const sec = Math.round(ms / 1_000);
 	if (sec < 60) return `${sec}s`;
@@ -598,14 +598,14 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 
 // ─── Constants ──────────────────────────────────────────────────────
 
-const MAX_FULL_LOG = 200;
-const WIDGET_LINES = 12;
-const MAX_LIVE_THINKING = 500;
+export const MAX_FULL_LOG = 200;
+export const WIDGET_LINES = 12;
+export const MAX_LIVE_THINKING = 500;
 
 // ─── Pure helpers (no framework imports) ────────────────────────────
 
 /** Numeric priority for phase ordering. Higher = more important. */
-function phasePriority(phase: AgentPhase): number {
+export function phasePriority(phase: AgentPhase): number {
 	switch (phase) {
 		case "tool": return 3;
 		case "thinking": return 2;
@@ -614,13 +614,13 @@ function phasePriority(phase: AgentPhase): number {
 	}
 }
 
-function pushLog(state: AgentRunState, entry: string): void {
+export function pushLog(state: AgentRunState, entry: string): void {
 	state.fullLog.push(entry);
 	if (state.fullLog.length > MAX_FULL_LOG) state.fullLog.shift();
 }
 
 /** Determine phase from a JSON event. Tool > thinking > text > idle. */
-function getPhaseFromEvent(ev: any): AgentPhase {
+export function getPhaseFromEvent(ev: any): AgentPhase {
 	if (!ev) return "idle";
 
 	if (ev.type === "tool_execution_start") return "tool";
@@ -631,9 +631,15 @@ function getPhaseFromEvent(ev: any): AgentPhase {
 		if (!delta) return "idle";
 		switch (delta.type) {
 			case "thinking_delta":
+				// Guard against empty delta — avoid spurious phase change on empty string
+				if (delta.thinking_delta) return "thinking";
+				break;
 			case "thinking_start":
 				return "thinking";
 			case "text_delta":
+				// Guard against empty delta — avoid spurious phase change on empty string
+				if (delta.text_delta) return "text";
+				break;
 			case "text_start":
 				return "text";
 			case "thinking_end":
@@ -650,7 +656,7 @@ function getPhaseFromEvent(ev: any): AgentPhase {
  * Process a single JSON line from pi's stdout.
  * Mutates state in place. Returns flush + workingChange flags.
  */
-function processJsonLine(
+export function processJsonLine(
 	line: string,
 	state: AgentRunState,
 ): { flush: boolean; workingChange: boolean } {
@@ -833,7 +839,7 @@ function processJsonLine(
  * Build widget lines from state. Pure function — no side effects.
  * Returns at most WIDGET_LINES (12) lines.
  */
-function buildWidgetLines(
+export function buildWidgetLines(
 	state: AgentRunState,
 	agentName: string,
 ): string[] {
@@ -897,7 +903,7 @@ function buildWidgetLines(
 }
 
 /** Build working message from phase. Priority: tool > thinking > text. */
-function getWorkingMessage(state: AgentRunState, agentName: string): string | null {
+export function getWorkingMessage(state: AgentRunState, agentName: string): string | null {
 	switch (state.phase) {
 		case "tool":
 			if (state.currentTool) return `${agentName}: ${state.currentTool}`;
@@ -1087,7 +1093,7 @@ async function runAgent(
 
 // ─── Output helpers ──────────────────────────────────────────────────
 
-function extractTextFromContent(content: any): string {
+export function extractTextFromContent(content: any): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content
