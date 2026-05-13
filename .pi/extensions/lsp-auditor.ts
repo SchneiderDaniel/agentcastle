@@ -355,7 +355,8 @@ function languageIdForExtension(ext: string): string {
  * Spawns the server, sends didOpen for each file, collects publishDiagnostics,
  * then shuts down.
  */
-async function auditFileGroup(
+/** Audit a group of files using a single LSP server instance. Exported for testing. */
+export async function auditFileGroup(
 	mapping: ServerMapping,
 	files: string[],
 	worktreePath: string,
@@ -369,8 +370,20 @@ async function auditFileGroup(
 
 	let child: ChildProcess | null = null;
 	let connection: any = null;
+	let childError: Error | null = null;
 
 	try {
+		// Quick pre-check: is the LSP binary available?
+		// This avoids vscode-jsonrpc internals emitting ERR_STREAM_DESTROYED
+		// when spawn fails with ENOENT.
+		try {
+			const { execFileSync } = await import("node:child_process");
+			execFileSync("which", [mapping.command], { stdio: "ignore", timeout: 5_000 });
+		} catch {
+			errors.push(`LSP server ${mapping.command} not found on PATH`);
+			return { diagnostics: [], errors, note: "" };
+		}
+
 		// Spawn LSP server
 		child = spawn(mapping.command, mapping.args, {
 			cwd: worktreePath,
@@ -378,19 +391,47 @@ async function auditFileGroup(
 			env: { ...process.env },
 		});
 
+		child.on("error", (err) => {
+			childError = err;
+		});
+
+		// If spawn immediately failed (e.g. binary not found), handle early
+		if (child.exitCode !== null && child.exitCode !== 0) {
+			errors.push(`LSP server ${mapping.command} failed to start (exit ${child.exitCode})`);
+			return { diagnostics: [], errors, note: "" };
+		}
+
+		// Handle destroyed streams from spawn failure
+		if (child.stdin?.destroyed || child.stdout?.destroyed) {
+			errors.push(`LSP server ${mapping.command} failed to start (streams destroyed)`);
+			return { diagnostics: [], errors, note: "" };
+		}
+
 		const reader = new StreamMessageReader(child.stdout!);
 		const writer = new StreamMessageWriter(child.stdin!);
 		connection = createMessageConnection(reader, writer);
 
+		// Capture connection-level errors (e.g. write to destroyed stream)
+		connection.onError((err: Error) => {
+			childError = childError || err;
+		});
+
 		// Collect diagnostics
 		const diagnosticsMap = new Map<string, LspDiagnostic[]>();
-		let initResultReceived = false;
+		const openedUris = new Set<string>();
+		const diagnosedUris = new Set<string>();
 
 		connection.onNotification((method: string, params: any) => {
 			if (method === "textDocument/publishDiagnostics") {
 				const uri: string = params?.uri || "";
+				let filePath: string;
+				try {
+					filePath = decodeURIComponent(uri.replace(/^file:\/\//, ""));
+				} catch {
+					filePath = uri.replace(/^file:\/\//, "");
+				}
+				diagnosedUris.add(uri);
 				const diags: any[] = params?.diagnostics || [];
-				const filePath = uri.replace(/^file:\/\//, "");
 				const mapped: LspDiagnostic[] = diags.map((d: any) => ({
 					file: filePath,
 					line: (d.range?.start?.line ?? 0) + 1, // LSP lines are 0-based
@@ -419,8 +460,6 @@ async function auditFileGroup(
 			return { diagnostics: [], errors, note: "" };
 		}
 
-		initResultReceived = true;
-
 		// Send initialized notification
 		connection.sendNotification("initialized", {});
 
@@ -435,6 +474,7 @@ async function auditFileGroup(
 			const content = readFileSync(fullPath, "utf-8");
 			const langId = languageIdForExtension(file.slice(file.lastIndexOf(".")).toLowerCase());
 			const uri = `file://${fullPath}`;
+			openedUris.add(uri);
 
 			connection.sendNotification("textDocument/didOpen", {
 				textDocument: {
@@ -446,21 +486,30 @@ async function auditFileGroup(
 			});
 		}
 
-		// Wait for diagnostics (give server time to process)
-		// We use a simple delay — servers send publishDiagnostics asynchronously
-		await sleep(2000);
+		// Wait for publishDiagnostics notifications for all opened files (30s total timeout)
+		const diagStartTime = Date.now();
+		const DIAG_WAIT_TIMEOUT_MS = 30_000;
+		while (Date.now() - diagStartTime < DIAG_WAIT_TIMEOUT_MS) {
+			if (openedUris.size === 0) break;
+			const allDiagnosed = [...openedUris].every(uri => diagnosedUris.has(uri));
+			if (allDiagnosed) break;
+			await sleep(200);
+		}
 
-		// Collect all diagnostics
+		// Collect all diagnostics and filter by severity threshold
 		for (const [, diags] of diagnosticsMap) {
 			allDiagnostics.push(...diags);
 		}
+
+		// Apply per-server severity threshold (R3 AC3)
+		const filtered = filterBySeverity(allDiagnostics, mapping.severityThreshold);
 
 		// Shutdown
 		await withTimeout(connection.sendRequest("shutdown", null), 10_000);
 		connection.sendNotification("exit", null);
 		connection.dispose();
 
-		return { diagnostics: allDiagnostics, errors, note: "" };
+		return { diagnostics: filtered, errors, note: "" };
 	} catch (err: any) {
 		// Server crash or protocol error
 		errors.push(`LSP server ${mapping.command} error: ${err.message || String(err)}`);
@@ -470,9 +519,16 @@ async function auditFileGroup(
 			if (connection) connection.dispose();
 		} catch { /* ignore */ }
 		try {
-			if (child && child.exitCode === null) {
-				child.kill("SIGTERM");
-				setTimeout(() => { try { child?.kill("SIGKILL"); } catch { /* ignore */ } }, 5000);
+			if (child) {
+				// Remove all error listeners to prevent async errors after cleanup
+				child.removeAllListeners("error");
+				child.stdin?.removeAllListeners?.("error");
+				child.stdout?.removeAllListeners?.("error");
+				child.stderr?.removeAllListeners?.("error");
+				if (child.exitCode === null) {
+					child.kill("SIGTERM");
+					setTimeout(() => { try { child?.kill("SIGKILL"); } catch { /* ignore */ } }, 5000);
+				}
 			}
 		} catch { /* ignore */ }
 	}
@@ -543,8 +599,8 @@ export async function runPreAudit(
 		return { proceed: true, note: "LSP audit skipped: no modified files in Developer session" };
 	}
 
-	// 2. Load server mappings from settings
-	const settings = readSettings();
+	// 2. Load server mappings from settings (resolved relative to worktree)
+	const settings = readSettings(resolvePath(worktreePath));
 	const mappings = buildServerMappings(settings?.lspAuditor);
 
 	// 3. Group files by server
@@ -577,11 +633,10 @@ export async function runPreAudit(
 		return { proceed: true, note };
 	}
 
-	// 5. Apply severity filters per server mapping
-	let filteredDiags: LspDiagnostic[] = [];
-	// Actually, we filter per-server during collection. But for the final result,
-	// we combine all diagnostic results.
-	filteredDiags = merged.diagnostics;
+	// 5. Diagnostics already filtered per-server by auditFileGroup (R3 AC3).
+	// Filter by severity threshold is applied inside auditFileGroup based on
+	// mapping.severityThreshold. Merged diagnostics here are already filtered.
+	const filteredDiags: LspDiagnostic[] = merged.diagnostics;
 
 	if (filteredDiags.length === 0) {
 		// AC4: Zero errors/warnings → proceed to Audit with success note
@@ -642,9 +697,9 @@ interface PiSettings {
 	lspAuditor?: LspAuditorSettings;
 }
 
-function readSettings(): PiSettings | null {
+function readSettings(worktreePath: string): PiSettings | null {
 	try {
-		const settingsPath = resolvePath(".pi/settings.json");
+		const settingsPath = resolvePath(worktreePath, ".pi/settings.json");
 		if (!existsSync(settingsPath)) return null;
 		return JSON.parse(readFileSync(settingsPath, "utf-8"));
 	} catch {
