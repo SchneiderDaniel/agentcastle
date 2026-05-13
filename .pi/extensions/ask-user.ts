@@ -17,8 +17,9 @@ export default function askUser(pi: ExtensionAPI) {
 		promptSnippet:
 			"Ask user a multiple-choice question with recommended option and free-text fallback",
 		promptGuidelines: [
-			"Use ask_user to ask the user structured questions instead of open-ended text questions. Always provide at least 3 options, mark one as recommended, and the 'Other' option is appended automatically — do not add it to the options array.",
+			"Use ask_user to ask the user structured questions instead of open-ended text questions. Always provide at least 3 options, mark one as recommended, and the 'Other' option is appended automatically unless disableOther is set to true. Do not add 'Other' to the options array yourself.",
 			"Call ask_user ONE question at a time. Do not batch multiple questions into one call.",
+			"For quizzes or multiple-choice tests where only predefined choices are accepted, set disableOther to true.",
 		],
 		parameters: Type.Object({
 			question: Type.String({
@@ -43,8 +44,14 @@ export default function askUser(pi: ExtensionAPI) {
 				}),
 				{
 					description:
-						"Answer options. Must have at least 3 options. One must have recommended=true. 'Other' is added automatically.",
+						"Answer options. Must have at least 3 options. One must have recommended=true. 'Other' is added automatically unless disableOther is true.",
 				},
+			),
+			disableOther: Type.Optional(
+				Type.Boolean({
+					description:
+						"Set to true to suppress the automatic 'Other' option. Use for quizzes or when only predefined choices are accepted.",
+				}),
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -63,8 +70,10 @@ export default function askUser(pi: ExtensionAPI) {
 				labels.push(label);
 			}
 
-			const otherLabel = `${labels.length + 1}. Other (type your answer)`;
-			labels.push(otherLabel);
+			if (!params.disableOther) {
+				const otherLabel = `${labels.length + 1}. Other (type your answer)`;
+				labels.push(otherLabel);
+			}
 
 			const selectedLabel = await ctx.ui.select(question, labels);
 
@@ -81,8 +90,8 @@ export default function askUser(pi: ExtensionAPI) {
 				};
 			}
 
-			// User picked "Other" — ask for custom text
-			if (selectedLabel === otherLabel) {
+			// User picked "Other" — ask for custom text (only when not disabled)
+			if (!params.disableOther && selectedLabel === otherLabel) {
 				const customAnswer = await ctx.ui.input("Type your answer:", "");
 				if (customAnswer === undefined || customAnswer.trim() === "") {
 					return {
