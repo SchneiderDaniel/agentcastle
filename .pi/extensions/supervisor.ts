@@ -1525,6 +1525,12 @@ export default function supervisor(pi: ExtensionAPI) {
 
 				const issueTitle: string = issueData?.title || `Issue #${issueNum}`;
 
+				// Print issue header so user knows what issue is being processed
+				pi.sendMessage({
+					content: `## GitHub Issue: [#${issueNum}] ${issueTitle}\n\n**Repository:** \`${config.repo}\``,
+					display: true,
+				});
+
 				// Code-level security: filter issue body + comments to trusted codeowners only
 				const filteredData = filterIssueData(issueData, config.codeowners);
 
