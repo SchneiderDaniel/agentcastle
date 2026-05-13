@@ -108,10 +108,13 @@ function buildStatus(
 
 // ─── Config loading ──────────────────────────────────────────────────
 
-/** Load and validate contextStatusBar config from .pi/settings.json. */
+/** Load and validate contextStatusBar config from .pi/settings.json.
+ *  Returns defaults when config key is absent or invalid.
+ *  Returns null only when enabled is explicitly false (feature disabled). */
 function loadConfig(): ContextStatusBarConfig | null {
+	const defaults = { enabled: true, thresholds: DEFAULT_THRESHOLDS };
 	const settingsPath = ".pi/settings.json";
-	if (!existsSync(settingsPath)) return null;
+	if (!existsSync(settingsPath)) return defaults;
 
 	let settings: Record<string, unknown>;
 	try {
@@ -119,20 +122,20 @@ function loadConfig(): ContextStatusBarConfig | null {
 		settings = JSON.parse(raw);
 	} catch {
 		console.warn("[context-status-bar] Failed to parse .pi/settings.json; using defaults");
-		return null;
+		return defaults;
 	}
 
 	const raw = settings["contextStatusBar"];
-	if (raw === undefined) return null;
+	if (raw === undefined) return defaults;
 
 	if (typeof raw !== "object" || raw === null) {
-		console.warn("[context-status-bar] contextStatusBar must be an object; falling back to defaults");
-		return null;
+		console.warn("[context-status-bar] contextStatusBar must be an object; using defaults");
+		return defaults;
 	}
 
 	const cfg = raw as Record<string, unknown>;
 
-	// enabled — optional, defaults to true
+	// enabled — optional, defaults to true; explicitly false disables the extension
 	let enabled = true;
 	if ("enabled" in cfg) {
 		if (typeof cfg.enabled === "boolean") {
@@ -141,6 +144,9 @@ function loadConfig(): ContextStatusBarConfig | null {
 			console.warn("[context-status-bar] contextStatusBar.enabled must be boolean; using true");
 		}
 	}
+
+	// When enabled is explicitly false, return null to fully disable the extension
+	if (enabled === false) return null;
 
 	// thresholds — required array; fall back to defaults if invalid
 	let thresholds: ThresholdEntry[];

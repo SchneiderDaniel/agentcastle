@@ -67,17 +67,19 @@ function loadConfig(
 	rawSettings: Record<string, unknown> | null,
 ): { config: ContextStatusBarConfig | null; warnings: string[] } {
 	const warnings: string[] = [];
+	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS };
+
 	if (!rawSettings || typeof rawSettings !== "object") {
-		return { config: null, warnings };
+		return { config: defaults, warnings };
 	}
 
 	const raw = (rawSettings as Record<string, unknown>)["contextStatusBar"];
 	if (raw === undefined) {
-		return { config: null, warnings };
+		return { config: defaults, warnings };
 	}
 	if (typeof raw !== "object" || raw === null) {
-		warnings.push("contextStatusBar must be an object; falling back to defaults");
-		return { config: { enabled: false, thresholds: DEFAULT_THRESHOLDS }, warnings };
+		warnings.push("contextStatusBar must be an object; using defaults");
+		return { config: defaults, warnings };
 	}
 
 	const cfg = raw as Record<string, unknown>;
@@ -91,6 +93,9 @@ function loadConfig(
 			warnings.push("contextStatusBar.enabled must be boolean; using true");
 		}
 	}
+
+	// Explicitly disabled — return null to fully disable the extension
+	if (enabled === false) return { config: null, warnings };
 
 	// thresholds
 	let thresholds: ThresholdEntry[];
@@ -312,19 +317,25 @@ describe("pickThreshold", () => {
 // ---------------------------------------------------------------------------
 
 describe("loadConfig", () => {
-	it("returns null when key is absent", () => {
+	it("returns defaults when key is absent", () => {
 		const result = loadConfig({ supervisor: {} });
-		assert.strictEqual(result.config, null);
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.enabled, true);
+		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
-	it("returns null when settings is null", () => {
+	it("returns defaults when settings is null", () => {
 		const result = loadConfig(null);
-		assert.strictEqual(result.config, null);
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.enabled, true);
+		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
-	it("returns null when settings is empty object", () => {
+	it("returns defaults when settings is empty object", () => {
 		const result = loadConfig({});
-		assert.strictEqual(result.config, null);
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.enabled, true);
+		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
 	it("loads valid config with thresholds", () => {
@@ -348,8 +359,7 @@ describe("loadConfig", () => {
 				thresholds: [{ maxTokens: null, color: "red" }],
 			},
 		});
-		assert.ok(result.config);
-		assert.strictEqual(result.config!.enabled, false);
+		assert.strictEqual(result.config, null);
 	});
 
 	it("falls back to defaults when thresholds missing", () => {
@@ -369,7 +379,8 @@ describe("loadConfig", () => {
 	it("falls back when contextStatusBar is not an object", () => {
 		const result = loadConfig({ contextStatusBar: "not-an-object" });
 		assert.ok(result.config);
-		assert.strictEqual(result.config!.enabled, false); // bad config → fallback
+		assert.strictEqual(result.config!.enabled, true);
+		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 		assert.ok(result.warnings.length > 0);
 	});
 
