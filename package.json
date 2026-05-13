@@ -4,7 +4,7 @@
     "description": "---",
     "main": "index.js",
     "scripts": {
-        "test": "node --experimental-strip-types --test test/session-logger.test.mts test/session-query.test.mts test/context-info.test.mts test/context-status-bar.test.mts test/supervisor-extensions.test.mts test/supervisor-process-context-info.test.mts test/supervisor-stream-activity.test.mts"
+        "test": "node --experimental-strip-types --test test/session-logger.test.mts test/session-query.test.mts test/context-info.test.mts test/context-status-bar.test.mts test/supervisor-extensions.test.mts test/supervisor-process-context-info.test.mts test/supervisor-stream-activity.test.mts test/lsp-auditor.test.mts test/lsp-auditor-settings.test.mts"
     },
     "keywords": [],
     "author": "",
@@ -14,6 +14,7 @@
         "@mariozechner/pi-coding-agent": "^0.73.1"
     },
     "dependencies": {
-        "@mariozechner/pi-tui": "^0.73.1"
+        "@mariozechner/pi-tui": "^0.73.1",
+        "vscode-jsonrpc": "^8.2.1"
     }
 }
