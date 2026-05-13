@@ -14,6 +14,7 @@ import type {
 } from "@mariozechner/pi-coding-agent";
 import { readFileSync, existsSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
+import { resolve as resolvePath } from "node:path";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 
 
@@ -1401,6 +1402,76 @@ function determineNextStatus(
 	}
 }
 
+// ─── LSP Pre-Audit Hook (pure helper for testability) ──────────────
+
+export interface LspPreAuditDecision {
+	/** New status to transition to — "Audit" if proceeding, "Implementation" if blocking */
+	nextStatus: string;
+	/** Note to include in notification */
+	note: string;
+	/** Whether LSP audit was actually triggered */
+	auditTriggered: boolean;
+}
+
+/**
+ * Decide the next transition status based on LSP pre-audit result.
+ * Pure function — does not call Pi API or spawn processes.
+ *
+ * @param intendedNext The status supervisor planned (e.g. "Audit")
+ * @param preAuditResult Result from runPreAudit (null if audit skipped)
+ * @param retryCount Number of LSP audit retries already used
+ * @param hasModifiedFiles Whether the developer session produced any file changes
+ */
+export function determineLspPreAuditDecision(
+	intendedNext: string,
+	preAuditResult: { proceed: boolean; note: string } | null,
+	retryCount: number,
+	hasModifiedFiles: boolean,
+): LspPreAuditDecision {
+	// Not an Implementation→Audit transition — pass through
+	if (intendedNext !== "Audit") {
+		return { nextStatus: intendedNext, note: "", auditTriggered: false };
+	}
+
+	// No modified files — skip audit, proceed normally
+	if (!hasModifiedFiles) {
+		return { nextStatus: "Audit", note: "LSP audit skipped: no modified files", auditTriggered: false };
+	}
+
+	// Audit was not run (null result) — proceed normally
+	if (!preAuditResult) {
+		return { nextStatus: "Audit", note: "", auditTriggered: false };
+	}
+
+	// Audit says proceed (clean or all-servers-failed)
+	if (preAuditResult.proceed) {
+		return { nextStatus: "Audit", note: preAuditResult.note, auditTriggered: true };
+	}
+
+	// Audit found errors — check retry limit
+	const n = typeof retryCount !== "number" || Number.isNaN(retryCount) || retryCount < 0 ? 0 : retryCount;
+	if (n >= 3) {
+		// Retries exhausted — force through to Audit with errors documented
+		return { nextStatus: "Audit", note: preAuditResult.note, auditTriggered: true };
+	}
+
+	// Retries remain — block transition, keep in Implementation
+	return { nextStatus: "Implementation", note: preAuditResult.note, auditTriggered: true };
+}
+
+// Dynamically import runPreAudit (lazy to avoid issues at load time)
+let _runPreAudit: any = null;
+async function getRunPreAudit(): Promise<any> {
+	if (_runPreAudit) return _runPreAudit;
+	try {
+		const mod = await import("./lsp-auditor.ts");
+		_runPreAudit = mod.runPreAudit;
+		return _runPreAudit;
+	} catch {
+		return null;
+	}
+}
+
 // ─── Extension ───────────────────────────────────────────────────────
 
 export default function supervisor(pi: ExtensionAPI) {
@@ -1801,14 +1872,71 @@ export default function supervisor(pi: ExtensionAPI) {
 						break;
 					}
 
+					// ── LSP Pre-Audit Hook (Implementation → Audit only) ──
+					let effectiveNextStatus = nextStatus;
+					if (nextStatus === "Audit") {
+						try {
+							const runPreAuditFn = await getRunPreAudit();
+							let preAuditResult: any = null;
+							let hasModifiedFiles = true;
+
+							if (runPreAuditFn) {
+								const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+								const wt = `${config.worktreeBase!}${branch}`;
+								try {
+									const diffOut = execFileSync("git", ["diff", config.defaultBranch!, "--name-only"], {
+										cwd: resolvePath(wt),
+										encoding: "utf-8",
+										stdio: ["pipe", "pipe", "pipe"],
+										timeout: 10_000,
+									}).trim();
+									hasModifiedFiles = diffOut.length > 0;
+								} catch {
+									hasModifiedFiles = false;
+								}
+
+								if (hasModifiedFiles) {
+									ctx.ui.setStatus("supervisor", "Running LSP pre-audit diagnostics...");
+									preAuditResult = await runPreAuditFn(
+										{ issueNum, worktreePath: wt, defaultBranch: config.defaultBranch!, repo: config.repo },
+										pi,
+										ctx,
+									);
+								}
+							}
+
+							const entries = ctx.sessionManager.getEntries();
+							let retryCount = 0;
+							for (const e of entries) {
+								if (e.type === "lsp-audit-retry" && (e.payload as any)?.issueNum === issueNum) {
+									retryCount++;
+								}
+							}
+
+							const decision = determineLspPreAuditDecision(
+								nextStatus,
+								preAuditResult,
+								retryCount,
+								hasModifiedFiles,
+							);
+
+							effectiveNextStatus = decision.nextStatus;
+							if (decision.note) {
+								ctx.ui.notify(decision.note, "info");
+							}
+						} catch (auditErr: any) {
+							ctx.ui.notify(`LSP pre-audit error: ${auditErr.message}`, "warning");
+						}
+					}
+
 					const nextOptId = findStatusOption(
 						fields,
 						statusField.id,
-						nextStatus,
+						effectiveNextStatus,
 					);
 					if (!nextOptId) {
 						ctx.ui.notify(
-							`Cannot find '${nextStatus}' option on board.`,
+							`Cannot find '${effectiveNextStatus}' option on board.`,
 							"warning",
 						);
 						break;
@@ -1817,7 +1945,7 @@ export default function supervisor(pi: ExtensionAPI) {
 					try {
 						setItemStatus(loopItem.id, projectId, statusField.id, nextOptId);
 						ctx.ui.notify(
-							`Issue #${issueNum} moved: ${loopStatus} → ${nextStatus}`,
+							`Issue #${issueNum} moved: ${loopStatus} → ${effectiveNextStatus}`,
 							"info",
 						);
 					} catch (err: any) {
@@ -1825,7 +1953,7 @@ export default function supervisor(pi: ExtensionAPI) {
 						break;
 					}
 
-					loopStatus = nextStatus;
+					loopStatus = effectiveNextStatus;
 				}
 
 				ctx.ui.setStatus("supervisor", "");
