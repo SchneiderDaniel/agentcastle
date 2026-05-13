@@ -366,8 +366,9 @@ export default function (pi: ExtensionAPI) {
 
 	function writeMetadata() {
 		if (!sessionDir) return;
+		const folderName = path.basename(sessionDir);
 		const meta = {
-			sessionId: path.basename(sessionDir),
+			sessionId: folderName,
 			messages: messageIdx,
 			tokens: {
 				input: totalInputTokens,
@@ -402,12 +403,27 @@ export default function (pi: ExtensionAPI) {
 
 		const sm = ctx.sessionManager;
 		const sessionId = sm.getSessionId();
+		const shortId = sessionId.slice(0, 8);
+		const now = new Date();
+		const ts =
+			now.getFullYear() +
+			"-" +
+			String(now.getMonth() + 1).padStart(2, "0") +
+			"-" +
+			String(now.getDate()).padStart(2, "0") +
+			"T" +
+			String(now.getHours()).padStart(2, "0") +
+			"-" +
+			String(now.getMinutes()).padStart(2, "0") +
+			"-" +
+			String(now.getSeconds()).padStart(2, "0");
+		const folderName = `${ts}_${shortId}`;
 		const sessionsDir = path.join(sm.getCwd(), ".pi", "sessions");
-		sessionDir = path.join(sessionsDir, sessionId);
+		sessionDir = path.join(sessionsDir, folderName);
 		fs.mkdirSync(sessionDir, { recursive: true });
 
 		// JSONL file per session
-		sessionFilePath = path.join(sessionsDir, `${sessionId}.jsonl`);
+		sessionFilePath = path.join(sessionsDir, `session.jsonl`);
 		isNewFile = !fs.existsSync(sessionFilePath);
 		systemPromptWritten = !isNewFile;
 
@@ -445,7 +461,7 @@ export default function (pi: ExtensionAPI) {
 				loop_step: 0,
 				payload: {
 					role: "session_start",
-					sessionId: sessionId.slice(0, 8),
+					sessionId: shortId,
 					cwd: sm.getCwd(),
 				},
 			});
