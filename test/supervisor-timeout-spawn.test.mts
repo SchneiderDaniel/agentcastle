@@ -1,8 +1,9 @@
 /**
  * Tests for runAgent() timeoutMs parameter passing to spawn().
  *
- * Uses mock.method to intercept child_process.spawn and verify
- * the timeout option is passed correctly.
+ * Mocks child_process.spawn, creates mock agent + context,
+ * calls runAgent() with different timeoutMs values,
+ * and asserts spawn received the correct timeout option.
  *
  * Run with:
  *   npx tsx --test test/supervisor-timeout-spawn.test.mts
@@ -17,10 +18,11 @@ import { EventEmitter } from "node:events";
 // Use createRequire to import CJS module from ESM test context.
 const require = createRequire(import.meta.url);
 const {
+	runAgent,
 	DEFAULT_AGENT_TIMEOUT_MS,
 } = require("../.pi/extensions/supervisor.ts");
 
-// ─── Mock spawn helper ──────────────────────────────────────────────
+// ─── Mock helpers ──────────────────────────────────────────────────
 
 /**
  * Creates a mock ChildProcess that emits 'close' immediately.
@@ -46,6 +48,35 @@ function createMockChild(): child_process.ChildProcess {
 	return emitter;
 }
 
+/**
+ * Creates a minimal mock agent for runAgent().
+ */
+function createMockAgent(name: string = "test-agent") {
+	return {
+		config: {
+			name,
+			tools: "read,bash",
+			model: "",
+			extensions: "",
+		},
+		systemPrompt: "You are a test agent.",
+	};
+}
+
+/**
+ * Creates a minimal mock ExtensionCommandContext for runAgent().
+ */
+function createMockContext() {
+	return {
+		ui: {
+			notify: () => {},
+			setStatus: () => {},
+			setWidget: () => {},
+			setWorkingMessage: () => {},
+		},
+	};
+}
+
 // ─── Test suite ─────────────────────────────────────────────────────
 
 describe("runAgent() spawn timeout parameter", () => {
@@ -57,7 +88,7 @@ describe("runAgent() spawn timeout parameter", () => {
 		assert.strictEqual(DEFAULT_AGENT_TIMEOUT_MS, 1_800_000);
 	});
 
-	it("mock spawn captures timeout 600_000", async () => {
+	it("runAgent with timeoutMs 600_000 → spawn called with timeout: 600_000", async () => {
 		let capturedOptions: any = null;
 
 		mock.method(child_process, "spawn", (cmd: string, args?: readonly string[], options?: any) => {
@@ -65,22 +96,16 @@ describe("runAgent() spawn timeout parameter", () => {
 			return createMockChild();
 		});
 
-		const mockChild = child_process.spawn("/usr/bin/pi", ["-p", "test"], {
-			cwd: process.cwd(),
-			env: { ...process.env },
-			stdio: ["ignore", "pipe", "pipe"],
-			timeout: 600_000,
-		});
+		const agent = createMockAgent("developer");
+		const ctx = createMockContext();
 
-		await new Promise<void>((resolve) => {
-			mockChild.on("close", () => resolve());
-		});
+		await runAgent(agent, "test task", ctx, 600_000);
 
-		assert.ok(capturedOptions !== null);
+		assert.ok(capturedOptions !== null, "spawn should have been called");
 		assert.strictEqual(capturedOptions.timeout, 600_000);
 	});
 
-	it("spawn with timeout 1_800_000 (default)", async () => {
+	it("runAgent without timeoutMs → spawn called with default 1_800_000", async () => {
 		let capturedOptions: any = null;
 
 		mock.method(child_process, "spawn", (cmd: string, args?: readonly string[], options?: any) => {
@@ -88,22 +113,16 @@ describe("runAgent() spawn timeout parameter", () => {
 			return createMockChild();
 		});
 
-		const mockChild = child_process.spawn("/usr/bin/pi", ["-p", "test"], {
-			cwd: process.cwd(),
-			env: { ...process.env },
-			stdio: ["ignore", "pipe", "pipe"],
-			timeout: DEFAULT_AGENT_TIMEOUT_MS,
-		});
+		const agent = createMockAgent("developer");
+		const ctx = createMockContext();
 
-		await new Promise<void>((resolve) => {
-			mockChild.on("close", () => resolve());
-		});
+		await runAgent(agent, "test task", ctx);
 
-		assert.ok(capturedOptions !== null);
-		assert.strictEqual(capturedOptions.timeout, 1_800_000);
+		assert.ok(capturedOptions !== null, "spawn should have been called");
+		assert.strictEqual(capturedOptions.timeout, DEFAULT_AGENT_TIMEOUT_MS);
 	});
 
-	it("spawn with timeout 0 (no timeout)", async () => {
+	it("runAgent with timeoutMs 0 → spawn called with timeout: 0", async () => {
 		let capturedOptions: any = null;
 
 		mock.method(child_process, "spawn", (cmd: string, args?: readonly string[], options?: any) => {
@@ -111,40 +130,33 @@ describe("runAgent() spawn timeout parameter", () => {
 			return createMockChild();
 		});
 
-		const mockChild = child_process.spawn("/usr/bin/pi", ["-p", "test"], {
-			cwd: process.cwd(),
-			env: { ...process.env },
-			stdio: ["ignore", "pipe", "pipe"],
-			timeout: 0,
-		});
+		const agent = createMockAgent("developer");
+		const ctx = createMockContext();
 
-		await new Promise<void>((resolve) => {
-			mockChild.on("close", () => resolve());
-		});
+		await runAgent(agent, "test task", ctx, 0);
 
-		assert.ok(capturedOptions !== null);
+		assert.ok(capturedOptions !== null, "spawn should have been called");
 		assert.strictEqual(capturedOptions.timeout, 0);
 	});
 
-	it("spawn without timeout option uses undefined (Node default)", async () => {
-		let capturedOptions: any = null;
+	it("runAgent spawn args include system prompt and tools", async () => {
+		let capturedArgs: readonly string[] | undefined;
 
-		mock.method(child_process, "spawn", (cmd: string, args?: readonly string[], options?: any) => {
-			capturedOptions = options;
+		mock.method(child_process, "spawn", (cmd: string, args?: readonly string[], _options?: any) => {
+			capturedArgs = args;
 			return createMockChild();
 		});
 
-		const mockChild = child_process.spawn("/usr/bin/pi", ["-p", "test"], {
-			cwd: process.cwd(),
-			env: { ...process.env },
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		const agent = createMockAgent("developer");
+		const ctx = createMockContext();
 
-		await new Promise<void>((resolve) => {
-			mockChild.on("close", () => resolve());
-		});
+		await runAgent(agent, "test task", ctx, 600_000);
 
-		assert.ok(capturedOptions !== null);
-		assert.strictEqual(capturedOptions.timeout, undefined);
+		assert.ok(capturedArgs !== undefined, "spawn args should be captured");
+		const argsStr = capturedArgs!.join(" ");
+		assert.ok(argsStr.includes("--system-prompt"), "should pass --system-prompt");
+		assert.ok(argsStr.includes("You are a test agent"), "should include system prompt text");
+		assert.ok(argsStr.includes("--tools"), "should pass --tools");
+		assert.ok(argsStr.includes("read,bash"), "should include tools string");
 	});
 });

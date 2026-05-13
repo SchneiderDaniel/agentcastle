@@ -1,115 +1,215 @@
 /**
  * Tests for loadConfig() agentTimeoutsMin integration.
  *
- * Uses real temp settings files. Imports supervisor functions via createRequire
- * (same pattern as supervisor-stream-activity.test.mts).
+ * Writes real temp settings files to .pi/settings.json,
+ * calls loadConfig(), and asserts on the returned SupervisorConfig.
  *
  * Run with:
  *   npx tsx --test test/supervisor-config-timeout.test.mts
  */
 
 import assert from "node:assert";
-import { describe, it, afterEach } from "node:test";
+import { describe, it, after, mock } from "node:test";
 import { createRequire } from "node:module";
-import { readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, renameSync, unlinkSync } from "node:fs";
 
 // Use createRequire to import CJS module from ESM test context.
 const require = createRequire(import.meta.url);
-const {
-	validateAgentTimeouts,
-} = require("../.pi/extensions/supervisor.ts");
+const { loadConfig } = require("../.pi/extensions/supervisor.ts");
 
 // ─── Test infrastructure ────────────────────────────────────────────
 
 const SETTINGS_PATH = ".pi/settings.json";
 const BACKUP_PATH = ".pi/settings.json.test-backup";
 
-function backupSettings(): void {
+/** Save original settings content in memory. */
+let originalSettingsContent: string | null = null;
+
+function saveOriginal(): void {
 	if (existsSync(SETTINGS_PATH)) {
-		renameSync(SETTINGS_PATH, BACKUP_PATH);
+		originalSettingsContent = readFileSync(SETTINGS_PATH, "utf-8");
 	}
-}
-
-function restoreSettings(): void {
-	if (existsSync(BACKUP_PATH)) {
-		renameSync(BACKUP_PATH, SETTINGS_PATH);
-	}
-}
-
-function loadFixture(fixtureName: string): string {
-	const fixturePath = `test/fixtures/${fixtureName}`;
-	return readFileSync(fixturePath, "utf-8");
 }
 
 function writeSettings(content: string): void {
 	writeFileSync(SETTINGS_PATH, content, "utf-8");
 }
 
+function restoreOriginal(): void {
+	// Clean up any leftover backup from interrupted runs
+	if (existsSync(BACKUP_PATH)) {
+		unlinkSync(BACKUP_PATH);
+	}
+	if (originalSettingsContent !== null) {
+		writeFileSync(SETTINGS_PATH, originalSettingsContent, "utf-8");
+	}
+}
+
 // ─── Test suite ─────────────────────────────────────────────────────
 
 describe("loadConfig() agentTimeoutsMin integration", () => {
-	// Backup real settings before tests
-	backupSettings();
+	// Save original settings before tests
+	saveOriginal();
 
-	afterEach(() => {
-		// Cleanup: restore real settings after each test
-		restoreSettings();
-		// Then immediately backup again for next test
-		if (existsSync(SETTINGS_PATH)) {
-			renameSync(SETTINGS_PATH, BACKUP_PATH);
-		}
+	// Restore after ALL tests done (not afterEach — avoids eating the file)
+	after(() => {
+		restoreOriginal();
 	});
 
-	it("settings with agentTimeoutsMin: {developer: 60} → validateAgentTimeouts returns {developer: 60}", () => {
-		// Use the pure function directly with known agents from the mapping
-		const knownAgents = ["architect", "researcher", "test-designer", "developer", "auditor"];
-		const result = validateAgentTimeouts({ developer: 60 }, knownAgents);
-		assert.deepStrictEqual(result, { developer: 60 });
+	it("settings with agentTimeoutsMin: {developer: 60} → config.agentTimeoutsMin equals {developer: 60}", () => {
+		writeSettings(JSON.stringify({
+			supervisor: {
+				repo: "test/test",
+				projectNumber: 1,
+				statusMapping: {
+					Architecture: "architect",
+					Implementation: "developer",
+					Audit: "auditor",
+					Research: "researcher",
+					TestDesign: "test-designer",
+				},
+				codeowners: ["testuser"],
+				agentTimeoutsMin: { developer: 60 },
+			},
+		}));
+
+		const config = loadConfig();
+		assert.deepStrictEqual(config.agentTimeoutsMin, { developer: 60 });
 	});
 
-	it("missing agentTimeoutsMin key → validateAgentTimeouts returns {}", () => {
-		const knownAgents = ["architect", "researcher", "test-designer", "developer", "auditor"];
-		const result = validateAgentTimeouts(undefined, knownAgents);
-		assert.deepStrictEqual(result, {});
+	it("missing agentTimeoutsMin key → config.agentTimeoutsMin is {}", () => {
+		writeSettings(JSON.stringify({
+			supervisor: {
+				repo: "test/test",
+				projectNumber: 1,
+				statusMapping: {
+					Architecture: "architect",
+					Implementation: "developer",
+					Audit: "auditor",
+					Research: "researcher",
+					TestDesign: "test-designer",
+				},
+				codeowners: ["testuser"],
+			},
+		}));
+
+		const config = loadConfig();
+		assert.deepStrictEqual(config.agentTimeoutsMin, {});
 	});
 
-	it("agentTimeoutsMin: {} → validateAgentTimeouts returns {}", () => {
-		const knownAgents = ["architect", "researcher", "test-designer", "developer", "auditor"];
-		const result = validateAgentTimeouts({}, knownAgents);
-		assert.deepStrictEqual(result, {});
+	it("agentTimeoutsMin: {} → config.agentTimeoutsMin is {}", () => {
+		writeSettings(JSON.stringify({
+			supervisor: {
+				repo: "test/test",
+				projectNumber: 1,
+				statusMapping: {
+					Architecture: "architect",
+					Implementation: "developer",
+					Audit: "auditor",
+					Research: "researcher",
+					TestDesign: "test-designer",
+				},
+				codeowners: ["testuser"],
+				agentTimeoutsMin: {},
+			},
+		}));
+
+		const config = loadConfig();
+		assert.deepStrictEqual(config.agentTimeoutsMin, {});
 	});
 
-	it("agentTimeoutsMin: {developer: 0} → throws", () => {
-		const knownAgents = ["architect", "researcher", "test-designer", "developer", "auditor"];
+	it("agentTimeoutsMin: {developer: 0} → loadConfig() throws", () => {
+		writeSettings(JSON.stringify({
+			supervisor: {
+				repo: "test/test",
+				projectNumber: 1,
+				statusMapping: {
+					Architecture: "architect",
+					Implementation: "developer",
+					Audit: "auditor",
+					Research: "researcher",
+					TestDesign: "test-designer",
+				},
+				codeowners: ["testuser"],
+				agentTimeoutsMin: { developer: 0 },
+			},
+		}));
+
 		assert.throws(
-			() => validateAgentTimeouts({ developer: 0 }, knownAgents),
-			/must be a positive integer/,
+			() => loadConfig(),
+			/agentTimeoutsMin\.developer must be a positive integer, got 0/,
 		);
 	});
 
-	it("agentTimeoutsMin: {developer: -5} → throws", () => {
-		const knownAgents = ["architect", "researcher", "test-designer", "developer", "auditor"];
+	it("agentTimeoutsMin: {developer: -5} → loadConfig() throws", () => {
+		writeSettings(JSON.stringify({
+			supervisor: {
+				repo: "test/test",
+				projectNumber: 1,
+				statusMapping: {
+					Architecture: "architect",
+					Implementation: "developer",
+					Audit: "auditor",
+					Research: "researcher",
+					TestDesign: "test-designer",
+				},
+				codeowners: ["testuser"],
+				agentTimeoutsMin: { developer: -5 },
+			},
+		}));
+
 		assert.throws(
-			() => validateAgentTimeouts({ developer: -5 }, knownAgents),
-			/must be a positive integer/,
+			() => loadConfig(),
+			/agentTimeoutsMin\.developer must be a positive integer, got -5/,
 		);
 	});
 
-	it("agentTimeoutsMin: {developer: 'sixty'} → throws", () => {
-		const knownAgents = ["architect", "researcher", "test-designer", "developer", "auditor"];
+	it("agentTimeoutsMin: {developer: 'sixty'} → loadConfig() throws", () => {
+		writeSettings(JSON.stringify({
+			supervisor: {
+				repo: "test/test",
+				projectNumber: 1,
+				statusMapping: {
+					Architecture: "architect",
+					Implementation: "developer",
+					Audit: "auditor",
+					Research: "researcher",
+					TestDesign: "test-designer",
+				},
+				codeowners: ["testuser"],
+				agentTimeoutsMin: { developer: "sixty" },
+			},
+		}));
+
 		assert.throws(
-			() => validateAgentTimeouts({ developer: "sixty" }, knownAgents),
-			/must be a positive integer/,
+			() => loadConfig(),
+			/agentTimeoutsMin\.developer must be a positive integer/,
 		);
 	});
 
-	it("agentTimeoutsMin: {develper: 10} → warning, empty result", () => {
-		const knownAgents = ["architect", "researcher", "test-designer", "developer", "auditor"];
-		const { mock } = require("node:test");
+	it("agentTimeoutsMin: {develper: 10} → warning logged, config.agentTimeoutsMin is {}", () => {
+		writeSettings(JSON.stringify({
+			supervisor: {
+				repo: "test/test",
+				projectNumber: 1,
+				statusMapping: {
+					Architecture: "architect",
+					Implementation: "developer",
+					Audit: "auditor",
+					Research: "researcher",
+					TestDesign: "test-designer",
+				},
+				codeowners: ["testuser"],
+				agentTimeoutsMin: { develper: 10 },
+			},
+		}));
+
 		const warnSpy = mock.method(console, "warn", () => {});
-		const result = validateAgentTimeouts({ develper: 10 }, knownAgents);
-		assert.deepStrictEqual(result, {});
-		assert.ok(warnSpy.mock.calls.length >= 1);
+		const config = loadConfig();
+		assert.deepStrictEqual(config.agentTimeoutsMin, {});
+		assert.ok(warnSpy.mock.calls.length >= 1, "Expected console.warn to be called");
+		const warnMsgs = warnSpy.mock.calls.map(c => c.arguments[0]).join(" ");
+		assert.ok(warnMsgs.includes("develper"), `Warning should mention 'develper', got: ${warnMsgs}`);
 		mock.reset();
 	});
 });

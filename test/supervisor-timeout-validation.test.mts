@@ -2,63 +2,22 @@
  * Tests for validateAgentTimeouts() — pure validation function
  * from .pi/extensions/supervisor.ts
  *
+ * Imports the real validateAgentTimeouts via createRequire (not a duplicate).
+ *
  * Run with:
- *   node --experimental-strip-types --test test/supervisor-timeout-validation.test.mts
+ *   npx tsx --test test/supervisor-timeout-validation.test.mts
  */
 
 import assert from "node:assert";
 import { describe, it, mock } from "node:test";
+import { createRequire } from "node:module";
 
-// ─── validateAgentTimeouts (duplicated from supervisor.ts for pure testing) ───
-
-/**
- * Validate the raw agentTimeoutsMin config value.
- * Returns a sanitized Record<string, number>.
- * - undefined/null/empty → {}
- * - Positive integers only
- * - Unknown agent names: warn and strip
- * - Non-integer / non-positive → throw
- */
-export function validateAgentTimeouts(
-	raw: unknown,
-	knownAgents: string[],
-): Record<string, number> {
-	// Handle undefined/null
-	if (raw === undefined || raw === null) {
-		return {};
-	}
-
-	// Must be an object
-	if (typeof raw !== "object" || Array.isArray(raw) || raw === null) {
-		throw new Error(
-			`agentTimeoutsMin must be an object, got ${typeof raw}`,
-		);
-	}
-
-	const record = raw as Record<string, unknown>;
-	const result: Record<string, number> = {};
-
-	for (const [key, value] of Object.entries(record)) {
-		// Check if agent name is known
-		if (!knownAgents.includes(key)) {
-			console.warn(
-				`agentTimeoutsMin: unknown agent "${key}" — entry ignored`,
-			);
-			continue;
-		}
-
-		// Validate value
-		if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-			throw new Error(
-				`agentTimeoutsMin.${key} must be a positive integer, got ${JSON.stringify(value)}`,
-			);
-		}
-
-		result[key] = value;
-	}
-
-	return result;
-}
+// Use createRequire to import CJS module from ESM test context.
+// tsx transpiles supervisor.ts and makes its exports available via require().
+const require = createRequire(import.meta.url);
+const {
+	validateAgentTimeouts,
+} = require("../.pi/extensions/supervisor.ts");
 
 // ─── Tests ──────────────────────────────────────────────────────────
 

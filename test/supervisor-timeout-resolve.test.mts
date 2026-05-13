@@ -2,39 +2,23 @@
  * Tests for resolveTimeoutMs() — pure timeout resolution function
  * from .pi/extensions/supervisor.ts
  *
+ * Imports the real resolveTimeoutMs via createRequire (not a duplicate).
+ *
  * Run with:
- *   node --experimental-strip-types --test test/supervisor-timeout-resolve.test.mts
+ *   npx tsx --test test/supervisor-timeout-resolve.test.mts
  */
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { createRequire } from "node:module";
 
-// ─── resolveTimeoutMs (duplicated from supervisor.ts for pure testing) ───
-
-const DEFAULT_TIMEOUT_MS = 1_800_000; // 30 minutes
-
-/**
- * Resolve the timeout in milliseconds for a given agent.
- * - Looks up agentTimeoutsMin map by agent name (case-sensitive, exact match)
- * - Returns minutes * 60_000 if found
- * - Falls back to defaultMs (default 1_800_000 = 30 min) if not found or map is empty
- */
-export function resolveTimeoutMs(
-	agentName: string,
-	agentTimeoutsMin: Record<string, number>,
-	defaultMs: number = DEFAULT_TIMEOUT_MS,
-): number {
-	if (!agentTimeoutsMin || typeof agentTimeoutsMin !== "object") {
-		return defaultMs;
-	}
-
-	const minutes = agentTimeoutsMin[agentName];
-	if (minutes !== undefined && typeof minutes === "number" && Number.isInteger(minutes) && minutes > 0) {
-		return minutes * 60_000;
-	}
-
-	return defaultMs;
-}
+// Use createRequire to import CJS module from ESM test context.
+// tsx transpiles supervisor.ts and makes its exports available via require().
+const require = createRequire(import.meta.url);
+const {
+	resolveTimeoutMs,
+	DEFAULT_AGENT_TIMEOUT_MS,
+} = require("../.pi/extensions/supervisor.ts");
 
 // ─── Tests ──────────────────────────────────────────────────────────
 
@@ -77,5 +61,9 @@ describe("resolveTimeoutMs", () => {
 	it("null map → default", () => {
 		const result = resolveTimeoutMs("developer", null as any);
 		assert.strictEqual(result, 1_800_000);
+	});
+
+	it("DEFAULT_AGENT_TIMEOUT_MS is 1_800_000 (30 minutes)", () => {
+		assert.strictEqual(DEFAULT_AGENT_TIMEOUT_MS, 1_800_000);
 	});
 });

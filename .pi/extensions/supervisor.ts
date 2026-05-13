@@ -161,7 +161,7 @@ function parseGitmodules(): Array<{path: string; repo: string}> {
 	return subs;
 }
 
-function loadConfig(): SupervisorConfig {
+export function loadConfig(): SupervisorConfig {
 	const settingsPath = ".pi/settings.json";
 	if (!existsSync(settingsPath)) {
 		throw new Error("No .pi/settings.json found. Add a 'supervisor' key.");
@@ -1006,7 +1006,7 @@ export function getWorkingMessage(state: AgentRunState, agentName: string): stri
 
 // ─── runAgent ────────────────────────────────────────────────────────
 
-async function runAgent(
+export async function runAgent(
 	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,
