@@ -3,10 +3,26 @@
  *
  * Registers a tool the AI can call to ask the user structured questions
  * with selectable options, a recommended pick, and an "Other" free-text option.
+ *
+ * Uses a scrollable custom dialog so long questions (with code blocks)
+ * don't push options off-screen. PgUp/PgDn scroll the question text
+ * independently from arrow-key option navigation.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import {
+	getKeybindings,
+	SelectList,
+	type SelectItem,
+	type SelectListTheme,
+	wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+
+/** Max visible lines for the question area before scrolling kicks in. */
+const MAX_QUESTION_LINES = 12;
+/** Number of lines to scroll per PgUp/PgDn press. */
+const QUESTION_SCROLL_STEP = 5;
 
 export default function askUser(pi: ExtensionAPI) {
 	pi.registerTool({
@@ -57,25 +73,154 @@ export default function askUser(pi: ExtensionAPI) {
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const { question, options } = params;
 
-			// Build flat string labels. Map labels back to values after selection.
+			// Build SelectItems. Map labels back to values after selection.
 			const labelToValue: Record<string, string> = {};
-			const labels: string[] = [];
+			const items: SelectItem[] = [];
 
 			for (let i = 0; i < options.length; i++) {
 				const opt = options[i]!;
-				const num = i + 1;
 				const suffix = opt.recommended ? " (Recommended)" : "";
-				const label = `${num}. ${opt.label}${suffix}`;
+				const label = `${i + 1}. ${opt.label}${suffix}`;
 				labelToValue[label] = opt.value;
-				labels.push(label);
+				items.push({ value: label, label });
 			}
 
+			let otherLabel = "";
 			if (!params.disableOther) {
-				const otherLabel = `${labels.length + 1}. Other (type your answer)`;
-				labels.push(otherLabel);
+				otherLabel = `${items.length + 1}. Other (type your answer)`;
+				items.push({ value: otherLabel, label: otherLabel });
 			}
 
-			const selectedLabel = await ctx.ui.select(question, labels);
+			// Use custom scrollable dialog instead of ctx.ui.select so
+			// long questions (with code blocks) can be scrolled independently
+			// from the option list. Arrow keys navigate options, PgUp/PgDn
+			// scroll the question text.
+			const selectedLabel = await ctx.ui.custom<string | undefined>(
+				(tui, theme, _keybindings, done) => {
+					let questionScrollOffset = 0;
+
+					const selectListTheme: SelectListTheme = {
+						selectedPrefix: (text) => theme.fg("accent", text),
+						selectedText: (text) => theme.fg("accent", text),
+						description: (text) => theme.fg("muted", text),
+						scrollInfo: (text) => theme.fg("muted", text),
+						noMatch: (text) => theme.fg("muted", text),
+					};
+
+					const selectList = new SelectList(
+						items,
+						Math.min(items.length, 10),
+						selectListTheme,
+					);
+					selectList.onSelect = (item) => done(item.value);
+					selectList.onCancel = () => done(undefined);
+
+					const borderColor = (s: string) => theme.fg("border", s);
+
+					return {
+						render(width: number): string[] {
+							const lines: string[] = [];
+
+							// Wrap question to current width (leave 4 cols for padding)
+							const qLines = wrapTextWithAnsi(question, Math.max(10, width - 4));
+
+							// Clamp scroll offset in case terminal was resized
+							const maxOffset = Math.max(
+								0,
+								qLines.length - MAX_QUESTION_LINES,
+							);
+							if (questionScrollOffset > maxOffset) {
+								questionScrollOffset = maxOffset;
+							}
+							if (questionScrollOffset < 0) {
+								questionScrollOffset = 0;
+							}
+
+							const visibleQLines = qLines.slice(
+								questionScrollOffset,
+								questionScrollOffset + MAX_QUESTION_LINES,
+							);
+
+							// Top border
+							lines.push(borderColor("─".repeat(Math.max(1, width))));
+							lines.push("");
+
+							// Scroll indicator at top
+							if (questionScrollOffset > 0) {
+								lines.push(
+									theme.fg("dim", "  ▲ more above (PgUp to scroll)"),
+								);
+							}
+
+							// Question lines
+							for (const line of visibleQLines) {
+								lines.push("  " + line);
+							}
+
+							// Scroll indicator at bottom of question area
+							if (
+								questionScrollOffset + MAX_QUESTION_LINES <
+								qLines.length
+							) {
+								lines.push(
+									theme.fg("dim", "  ▼ more below (PgDn to scroll)"),
+								);
+							}
+
+							lines.push("");
+
+							// Options via SelectList
+							const listLines = selectList.render(width);
+							for (const line of listLines) {
+								lines.push(line);
+							}
+
+							lines.push("");
+							lines.push(
+								theme.fg(
+									"dim",
+									"  ↑↓ navigate  enter select  esc cancel  PgUp/PgDn scroll question",
+								),
+							);
+							lines.push("");
+							lines.push(borderColor("─".repeat(Math.max(1, width))));
+
+							return lines;
+						},
+
+						invalidate() {
+							questionScrollOffset = 0;
+							selectList.invalidate();
+						},
+
+						handleInput(data: string) {
+							const kb = getKeybindings();
+
+							// PgUp — scroll question up
+							if (kb.matches(data, "tui.select.pageUp")) {
+								questionScrollOffset = Math.max(
+									0,
+									questionScrollOffset - QUESTION_SCROLL_STEP,
+								);
+								tui.requestRender();
+								return;
+							}
+
+							// PgDn — scroll question down
+							if (kb.matches(data, "tui.select.pageDown")) {
+								questionScrollOffset += QUESTION_SCROLL_STEP;
+								tui.requestRender();
+								return;
+							}
+
+							// Forward everything else to SelectList
+							// (arrows, enter, escape, etc.)
+							selectList.handleInput(data);
+							tui.requestRender();
+						},
+					};
+				},
+			);
 
 			// User cancelled (Esc)
 			if (selectedLabel === undefined) {
