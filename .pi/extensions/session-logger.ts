@@ -126,7 +126,7 @@ function assistantMessageToRecord(msg: any, step: number): LogRecord {
 		? {
 			input: msg.usage.input ?? 0,
 			output: msg.usage.output ?? 0,
-			total: msg.usage.totalTokens ?? msg.usage.input ?? 0 + msg.usage.output ?? 0,
+			total: msg.usage.totalTokens ?? (msg.usage.input ?? 0) + (msg.usage.output ?? 0),
 		}
 		: undefined;
 

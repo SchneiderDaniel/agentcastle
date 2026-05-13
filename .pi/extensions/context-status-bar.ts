@@ -18,7 +18,7 @@
  * Invalid/missing config falls back to defaults and logs a warning.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@mariozechner/pi-coding-agent";
 import { readFileSync, existsSync } from "node:fs";
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ function formatTokens(n: number): string {
 }
 
 /** Map user-facing color name to TUI theme key. */
-function resolveColor(name: string): string {
+function resolveColor(name: string): ThemeColor {
 	switch (name) {
 		case "green": return "success";
 		case "orange": return "warning";
@@ -88,7 +88,7 @@ function buildStatus(
 	tokens: number | null,
 	contextWindow: number | undefined,
 	thresholds: ThresholdEntry[],
-): { text: string; themeColor: string } {
+): { text: string; themeColor: ThemeColor } {
 	const windowK =
 		contextWindow !== undefined && contextWindow > 0
 			? formatTokens(contextWindow)
