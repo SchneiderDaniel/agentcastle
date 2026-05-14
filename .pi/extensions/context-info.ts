@@ -27,7 +27,7 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join as joinPath } from "node:path";
+import { join as joinPath, basename, dirname } from "node:path";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -137,6 +137,47 @@ function countFiles(dir: string, suffix: string): number {
 	}
 }
 
+/** List file names matching suffix in a directory (non-recursive) */
+function listFiles(dir: string, suffix: string): string[] {
+	try {
+		if (!existsSync(dir)) return [];
+		const entries = readdirSync(dir, { withFileTypes: true });
+		const names: string[] = [];
+		for (const entry of entries) {
+			if (entry.isFile() && entry.name.endsWith(suffix)) {
+				names.push(entry.name);
+			}
+			// Also include index.ts in subdirectories for extensions
+			if (entry.isDirectory() && suffix === ".ts") {
+				const idx = joinPath(dir, entry.name, "index.ts");
+				if (existsSync(idx)) names.push(entry.name + "/index.ts");
+			}
+		}
+		return names.sort();
+	} catch {
+		return [];
+	}
+}
+
+/** Find context files (AGENTS.md, CLAUDE.md) in cwd and parent dirs */
+function findContextFiles(cwd: string): string[] {
+	const names = ["AGENTS.md", "CLAUDE.md"];
+	const found: string[] = [];
+	let dir = cwd;
+	while (true) {
+		for (const name of names) {
+			const p = joinPath(dir, name);
+			if (existsSync(p) && !found.includes(name)) {
+				found.push(name);
+			}
+		}
+		const parent = dirname(dir);
+		if (parent === dir) break; // reached root
+		dir = parent;
+	}
+	return found;
+}
+
 /** Read a single value from pi's global settings.json */
 function readPiSetting(key: string): string | undefined {
 	try {
@@ -150,6 +191,17 @@ function readPiSetting(key: string): string | undefined {
 		return undefined;
 	} catch {
 		return undefined;
+	}
+}
+
+/** Read pi version from its package.json */
+function getPiVersion(): string {
+	try {
+		const pkgPath = "/usr/lib/node_modules/@earendil-works/pi-coding-agent/package.json";
+		const pkg = JSON.parse(readFileSync(pkgPath, "utf-8"));
+		return pkg.version || "?";
+	} catch {
+		return "?";
 	}
 }
 
@@ -244,7 +296,7 @@ export default function contextInfo(pi: ExtensionAPI) {
 	thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
 
 	// ── Startup widget state ───────────────────────────────────────
-	let startupWidgetActive = false;
+	let welcomeBannerActive = false;
 
 	// ── Hooks ──────────────────────────────────────────────────────
 
@@ -256,7 +308,6 @@ export default function contextInfo(pi: ExtensionAPI) {
 		if (config === null) {
 			ctx.ui.setFooter(undefined);
 			ctx.ui.setStatus("contextUsage", undefined);
-			ctx.ui.setWidget("agentcastle-welcome", undefined);
 			return;
 		}
 
@@ -285,9 +336,9 @@ export default function contextInfo(pi: ExtensionAPI) {
 
 	// Clear welcome banner on first user input
 	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
-		if (startupWidgetActive) {
-			ctx.ui.setWidget("agentcastle-welcome", undefined);
-			startupWidgetActive = false;
+		if (welcomeBannerActive) {
+			welcomeBannerActive = false;
+			ctx.ui.setWidget("welcome", undefined);
 		}
 	});
 
@@ -426,7 +477,7 @@ export default function contextInfo(pi: ExtensionAPI) {
 					// Calculate spacing
 					const totalContent = leftW + centerW + rightW;
 					const sepCount = 2;
-					const sepWidth = 3 + sepCount * 2; // " │ " per separator
+					const sepWidth = sepCount * 3; // " │ " = 3 visible chars each
 
 					if (totalContent + sepWidth <= width) {
 						// All fits — distribute remaining space
@@ -467,16 +518,136 @@ export default function contextInfo(pi: ExtensionAPI) {
 	function showWelcomeBanner(ctx: ExtensionContext) {
 		const theme = ctx.ui.theme;
 		const termWidth = process.stdout.columns || 80;
+		const W = Math.min(termWidth, 100);
+		const innerW = W - 2;
 
-		const lines: string[] = [];
+		const projectName = basename(cwd);
+		const branch = getGitBranch(cwd);
+		const modelName = ctx.model?.id ?? "?";
+		const tIcon = thinkingIcon(thinkingLevel);
+		const tColor = thinkingColor(thinkingLevel);
 
-		lines.push(
-			"  " + theme.fg("accent", theme.bold("🏰 Agent Castle"))
-		);
-		lines.push("  " + theme.fg("dim", "─".repeat(Math.max(0, termWidth - 4))));
-		lines.push("");
+		// ── Discover resources ─────────────────────────────────
+		const piDir = joinPath(cwd, ".pi");
+		const promptFiles = listFiles(joinPath(piDir, "prompts"), ".md");
+		const promptNames = promptFiles.map(f => f.replace(/\.md$/, ""));
+		const extFiles = listFiles(joinPath(piDir, "extensions"), ".ts");
+		const extNames = extFiles.map(f => f.replace(/\.ts$/, "").replace(/\/index\.ts$/, ""));
+		const themeFiles = listFiles(joinPath(piDir, "themes"), ".json");
+		const themeNames: string[] = [];
+		for (const f of themeFiles) {
+			try {
+				const data = JSON.parse(readFileSync(joinPath(piDir, "themes", f), "utf-8"));
+				if (data.name) themeNames.push(data.name);
+			} catch {}
+		}
+		const ctxFiles = findContextFiles(cwd);
 
-		ctx.ui.setWidget("agentcastle-welcome", lines, { placement: "aboveEditor" });
-		startupWidgetActive = true;
+		// ── Color helpers ──────────────────────────────────────
+		function Ac(s: string): string { return theme.fg("accent", s); }
+		function Mu(s: string): string { return theme.fg("muted", s); }
+		function Di(s: string): string { return theme.fg("dim", s); }
+		function Wa(s: string): string { return theme.fg("warning", s); }
+
+		// ── Build lines ────────────────────────────────────────
+		const L: string[] = [];
+		const hz = "─";
+
+		function h(n: number): string { return hz.repeat(Math.max(0, n)); }
+		function pad(s: string, w: number): string {
+			const vw = visibleWidth(s);
+			return vw >= w ? s : s + " ".repeat(w - vw);
+		}
+
+		// ── Title bar: icons + version right-aligned ─────────
+		const title = Ac("⚡ AGENT CASTLE");
+		const infoBits: string[] = [];
+		infoBits.push(Di("⚙") + " " + Wa(projectName));
+		if (branch) infoBits.push(Di("│") + " " + Ac("") + " " + Mu(branch));
+		infoBits.push(Di("│") + " " + Di("🧠") + " " + Ac(modelName));
+		if (thinkingLevel) infoBits.push(Di("│") + " " + theme.fg(tColor, tIcon) + " " + Mu(thinkingLevel));
+		const infoStr = infoBits.join(" ");
+		const titleBar = title + "  " + infoStr;
+		const ver = Di("pi v" + getPiVersion());
+
+		// Fit title + ver on one line: titleBar ... pad ... ver
+		const titleVW = visibleWidth(titleBar);
+		const verVW = visibleWidth(ver);
+		const availTitle = innerW - 4 - verVW;
+		let titleLine: string;
+		if (titleVW <= availTitle) {
+			titleLine = titleBar + " ".repeat(availTitle - titleVW) + "  " + ver;
+		} else {
+			// Truncate info to fit
+			const shortTitle = title + "  ";
+			const stW = visibleWidth(shortTitle);
+			const remain = availTitle - stW;
+			if (remain > 10) {
+				const shortInfo = truncateToWidth(infoStr, remain, "…");
+				titleLine = shortTitle + shortInfo + "  " + ver;
+			} else {
+				titleLine = pad(title, availTitle) + "  " + ver;
+			}
+		}
+		L.push(Di("┌─") + pad(titleLine, innerW - 2) + Di("─┐"));
+
+		// Spacer
+		L.push(Di("│") + " ".repeat(innerW) + Di("│"));
+
+		// ── Resource rows ─────────────────────────────────────
+		function resRow(icon: string, label: string, items: string[]): void {
+			if (items.length === 0) return;
+			const prefix = Ac(icon + " " + label) + "  ";
+			const prefixW = visibleWidth(prefix);
+			const maxW = innerW - 2 - prefixW;
+			const sep = Di(" · ");
+			const parts: string[] = [];
+			let cur = "";
+			for (const item of items) {
+				const cand = cur ? cur + sep + item : item;
+				if (visibleWidth(cand) > maxW) {
+					if (cur) { parts.push(Mu(cur)); cur = ""; }
+					if (visibleWidth(item) > maxW) {
+						parts.push(Mu(item.slice(0, Math.max(0, maxW - 2)) + "…"));
+					} else {
+						cur = item;
+					}
+				} else {
+					cur = cand;
+				}
+			}
+			if (cur) parts.push(Mu(cur));
+
+			if (parts.length === 0) {
+				L.push(Di("│ ") + pad(prefix, innerW - 2) + Di(" │"));
+			} else {
+				L.push(Di("│ ") + pad(prefix + parts[0]!, innerW - 2) + Di(" │"));
+				for (let i = 1; i < parts.length; i++) {
+					L.push(Di("│ ") + pad(" ".repeat(prefixW) + parts[i]!, innerW - 2) + Di(" │"));
+				}
+			}
+		}
+
+		if (ctxFiles.length > 0) resRow("📜", "system", ctxFiles);
+		if (promptNames.length > 0) resRow("⚡", "prompts", promptNames.map(p => "/" + p));
+		if (extNames.length > 0) resRow("🧩", "extensions", extNames);
+		if (themeNames.length > 0) resRow("🎨", "themes", themeNames);
+
+		// Spacer
+		L.push(Di("│") + " ".repeat(innerW) + Di("│"));
+
+		// Shortcuts
+		const shortcuts = "esc interrupt · ctrl+c/d exit · / commands · ! bash · ctrl+o help";
+		L.push(Di("│ ") + pad(Mu(shortcuts), innerW - 2) + Di(" │"));
+
+		// Bottom border
+		L.push(Di("└") + h(innerW) + Di("┘"));
+
+		// Show as above-editor widget so it sits above input without overlapping
+		ctx.ui.setWidget("welcome", () => ({
+			render: () => L,
+			invalidate: () => {},
+		}), { placement: "aboveEditor" });
+		welcomeBannerActive = true;
 	}
 }

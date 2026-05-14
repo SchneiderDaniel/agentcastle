@@ -1,4 +1,5 @@
 {
+    "quietStartup": true,
     "theme": "voidforge",
     "supervisor": {
         "repo": "SchneiderDaniel/agentcastle",
