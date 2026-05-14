@@ -750,7 +750,7 @@ function resolveTools(agentTools: string, extNamesRaw: string | undefined): stri
 		const extNames = extNamesRaw
 			.split(",")
 			.map((s) => s.trim())
-			.filter((s) => s.length > 0);
+			.filter((s) => s.length > 0 && s.toLowerCase() !== "supervisor");
 
 		for (const extName of extNames) {
 			const extTools = extToolsMap.get(extName);
