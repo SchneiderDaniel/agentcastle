@@ -15,8 +15,10 @@
  */
 
 import * as fs from "node:fs";
+import { writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { extractTextFromContent } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -59,14 +61,8 @@ function truncate(text: string, head: number, tail = 0): string {
 	return text.slice(0, head) + `\n\n[... ${cut} chars truncated ...]`;
 }
 
-function extractText(blocks: unknown): string {
-	if (typeof blocks === "string") return blocks;
-	if (!Array.isArray(blocks)) return "";
-	return blocks
-		.filter((b: any) => b.type === "text")
-		.map((b: any) => b.text)
-		.join("\n\n");
-}
+// Re-export from shared types — eliminates duplication with supervisor.ts
+const extractText = extractTextFromContent;
 
 // ---------------------------------------------------------------------------
 // JSONL Serializer
@@ -104,7 +100,7 @@ function userMessageToRecord(msg: any, step: number): LogRecord {
 		agent: "user",
 		tool: "message",
 		error: null,
-		loop_step: step,
+		loop_step: 0,
 		payload: { role: "user", content: text },
 	};
 }
@@ -138,7 +134,7 @@ function assistantMessageToRecord(msg: any, step: number): LogRecord {
 		tool: "message",
 		...(tokenUsage && { token_usage: tokenUsage }),
 		error: msg.stopReason && msg.stopReason !== "stop" ? `stop_reason: ${msg.stopReason}` : null,
-		loop_step: step,
+		loop_step: 0,
 		payload: {
 			role: "assistant",
 			texts,
@@ -161,7 +157,7 @@ function toolResultToRecord(msg: any, step: number): LogRecord {
 		agent: "tool",
 		tool: msg.toolName || "unknown",
 		error: msg.isError ? output : null,
-		loop_step: step,
+		loop_step: 0,
 		payload: { role: "toolResult", toolName: msg.toolName, output },
 	};
 }
@@ -176,7 +172,7 @@ function bashExecutionToRecord(msg: any, step: number): LogRecord {
 		agent: "bash",
 		tool: "bash",
 		error: errorMsg,
-		loop_step: step,
+		loop_step: 0,
 		payload: {
 			role: "bashExecution",
 			command: msg.command,
@@ -195,7 +191,7 @@ function customMessageToRecord(msg: any, step: number): LogRecord {
 		agent: msg.customType || "extension",
 		tool: msg.customType || "extension",
 		error: null,
-		loop_step: step,
+		loop_step: 0,
 		payload: { role: "custom", content: extractText(msg.content) },
 	};
 }
@@ -206,7 +202,7 @@ function branchSummaryToRecord(msg: any, step: number): LogRecord {
 		agent: "branch",
 		tool: "branch_summary",
 		error: null,
-		loop_step: step,
+		loop_step: 0,
 		payload: { role: "branchSummary", fromId: msg.fromId, summary: msg.summary },
 	};
 }
@@ -219,7 +215,7 @@ function compactionToRecord(msg: any, step: number): LogRecord {
 		agent: "compaction",
 		tool: "compaction",
 		error: null,
-		loop_step: step,
+		loop_step: 0,
 		payload: {
 			role: "compactionSummary",
 			tokensBefore: msg.tokensBefore,
@@ -236,7 +232,7 @@ function modelSelectToRecord(event: any, step: number): LogRecord {
 		agent: "model_select",
 		tool: "model_select",
 		error: null,
-		loop_step: step,
+		loop_step: 0,
 		payload: { provider: m.provider, modelId: m.id },
 	};
 }
@@ -247,7 +243,7 @@ function thinkingSelectToRecord(event: any, step: number): LogRecord {
 		agent: "thinking_select",
 		tool: "thinking_select",
 		error: null,
-		loop_step: step,
+		loop_step: 0,
 		payload: { level: event.level },
 	};
 }
@@ -256,7 +252,7 @@ function thinkingSelectToRecord(event: any, step: number): LogRecord {
 // Main extension
 // ---------------------------------------------------------------------------
 
-export default function (pi: ExtensionAPI) {
+export default function (pi: ExtensionAPI): void {
 	// ── toggle state ─────────────────────────────────────────────────────
 	let enabled = true;
 
@@ -303,7 +299,8 @@ export default function (pi: ExtensionAPI) {
 	 */
 	function writeRecord(record: LogRecord) {
 		if (writeStream) {
-			const line = serializeRecord(record);
+			messageIdx++;
+			const line = serializeRecord({ ...record, loop_step: messageIdx });
 			writeStream.write(line);
 		}
 	}
@@ -311,15 +308,13 @@ export default function (pi: ExtensionAPI) {
 	function writeMessage(msg: any) {
 		if (!writeStream) return;
 
-		messageIdx++;
-
 		switch (msg.role) {
 			case "user": {
-				writeRecord(userMessageToRecord(msg, messageIdx));
+				writeRecord(userMessageToRecord(msg));
 				break;
 			}
 			case "assistant": {
-				writeRecord(assistantMessageToRecord(msg, messageIdx));
+				writeRecord(assistantMessageToRecord(msg));
 				// Accumulate stats
 				if (msg.usage) {
 					totalInputTokens += msg.usage.input || 0;
@@ -331,23 +326,23 @@ export default function (pi: ExtensionAPI) {
 				break;
 			}
 			case "toolResult": {
-				writeRecord(toolResultToRecord(msg, messageIdx));
+				writeRecord(toolResultToRecord(msg));
 				break;
 			}
 			case "bashExecution": {
-				writeRecord(bashExecutionToRecord(msg, messageIdx));
+				writeRecord(bashExecutionToRecord(msg));
 				break;
 			}
 			case "custom": {
-				writeRecord(customMessageToRecord(msg, messageIdx));
+				writeRecord(customMessageToRecord(msg));
 				break;
 			}
 			case "branchSummary": {
-				writeRecord(branchSummaryToRecord(msg, messageIdx));
+				writeRecord(branchSummaryToRecord(msg));
 				break;
 			}
 			case "compactionSummary": {
-				writeRecord(compactionToRecord(msg, messageIdx));
+				writeRecord(compactionToRecord(msg));
 				break;
 			}
 			default: {
@@ -365,7 +360,7 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
-	function writeMetadata() {
+	async function writeMetadata() {
 		if (!sessionDir) return;
 		const folderName = path.basename(sessionDir);
 		const meta = {
@@ -387,7 +382,7 @@ export default function (pi: ExtensionAPI) {
 			modelChanges,
 			thinkingChanges,
 		};
-		fs.writeFileSync(
+		await writeFile(
 			path.join(sessionDir, "metadata.json"),
 			JSON.stringify(meta, null, 2),
 		);
@@ -472,8 +467,7 @@ export default function (pi: ExtensionAPI) {
 				if (entry.type === "message") {
 					writeMessage(entry.message);
 				} else if (entry.type === "compaction") {
-					messageIdx++;
-					writeRecord(compactionToRecord(entry, messageIdx));
+					writeRecord(compactionToRecord(entry));
 				} else if (entry.type === "model_change") {
 					const m = entry as any;
 					modelChanges.push({
@@ -485,7 +479,7 @@ export default function (pi: ExtensionAPI) {
 						agent: "model_change",
 						tool: "model_select",
 						error: null,
-						loop_step: ++messageIdx,
+						loop_step: 0,
 						payload: { provider: m.provider, modelId: m.modelId },
 					});
 				} else if (entry.type === "thinking_level_change") {
@@ -499,7 +493,7 @@ export default function (pi: ExtensionAPI) {
 						agent: "thinking_change",
 						tool: "thinking_select",
 						error: null,
-						loop_step: ++messageIdx,
+						loop_step: 0,
 						payload: { level: t.thinkingLevel },
 					});
 				}
@@ -537,8 +531,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_compact", async (event, _ctx) => {
 		if (!ensureStream()) return;
-		messageIdx++;
-		writeRecord(compactionToRecord(event.compactionEntry, messageIdx));
+		writeRecord(compactionToRecord(event.compactionEntry));
 	});
 
 	pi.on("model_select", async (event, _ctx) => {
@@ -546,15 +539,13 @@ export default function (pi: ExtensionAPI) {
 		const m = event.model;
 		const label = `${m.provider}/${m.id}`;
 		modelChanges.push({ time: new Date().toISOString(), model: label });
-		messageIdx++;
-		writeRecord(modelSelectToRecord(event, messageIdx));
+		writeRecord(modelSelectToRecord(event));
 	});
 
 	pi.on("thinking_level_select", async (event, _ctx) => {
 		if (!ensureStream()) return;
 		thinkingChanges.push({ time: new Date().toISOString(), level: event.level });
-		messageIdx++;
-		writeRecord(thinkingSelectToRecord(event, messageIdx));
+		writeRecord(thinkingSelectToRecord(event));
 	});
 
 	pi.on("session_shutdown", async (_event, _ctx) => {
@@ -562,6 +553,6 @@ export default function (pi: ExtensionAPI) {
 			writeStream.end();
 			writeStream = null;
 		}
-		writeMetadata();
+		await writeMetadata();
 	});
 }

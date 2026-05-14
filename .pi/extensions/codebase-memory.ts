@@ -2,21 +2,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { BorderedLoader } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 
-const BINARY = `${process.env.HOME}/.local/bin/codebase-memory-mcp`;
-
-/** Timeout for lightweight query ops (search, trace, schema, etc.) */
-const QUERY_TIMEOUT = 10_000;
-/** Timeout for heavy ops (indexing, architecture) */
-const HEAVY_TIMEOUT = 120_000;
-
-/** Lightweight tools — sub-10ms queries */
-const LIGHT_TOOLS = new Set([
-  "search_graph", "trace_call_path", "query_graph",
-  "get_graph_schema", "get_code_snippet", "search_code",
-  "list_projects", "delete_project", "index_status",
-  "manage_adr", "ingest_traces",
-]);
+const BINARY = `${homedir()}/.local/bin/codebase-memory-mcp`;
 
 /** Derive unique project name from absolute path: basename-<8-char-md5-hex> */
 function projectName(cwd: string): string {
@@ -73,7 +61,7 @@ async function cbmCli(
   args: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; data: unknown; error?: string }> {
-  const timeout = LIGHT_TOOLS.has(tool) ? QUERY_TIMEOUT : HEAVY_TIMEOUT;
+  const timeout = HEAVY_TOOLS.has(tool) ? HEAVY_TIMEOUT : QUERY_TIMEOUT;
   const result = await pi.exec(BINARY, ["cli", tool, JSON.stringify(args)], {
     signal,
     timeout,
@@ -136,8 +124,10 @@ function isVersionAtLeast(
   return patch >= minPatch;
 }
 
-export default async function (pi: ExtensionAPI) {
-  // ── Version check at init time (before tool registration) ──
+export default async function (pi: ExtensionAPI): Promise<void> {
+  import { HEAVY_TOOLS, QUERY_TIMEOUT, HEAVY_TIMEOUT } from "./codebase-types.js";
+
+// ── Version check at init time (before tool registration) ──
   let skipSemanticSearch = false;
   let versionNotificationShown = false;
 
@@ -238,7 +228,7 @@ export default async function (pi: ExtensionAPI) {
     async execute(_id, params, signal, _onUpdate, ctx) {
       const path = params.repo_path || ctx.cwd;
       const res = await cbmCli(pi, "index_repository", { repo_path: path }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       const d = res.data as any;
       return {
         content: [{ type: "text", text: `Indexed ${d.project}: ${d.nodes} nodes, ${d.edges} edges. Status: ${d.status}` }],
@@ -259,7 +249,7 @@ export default async function (pi: ExtensionAPI) {
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _onUpdate, _ctx) {
       const res = await cbmCli(pi, "list_projects", {}, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       const projects = (res.data as any)?.projects || [];
       const lines = projects.map((p: any) =>
         `  ${p.name}: ${p.nodes ?? "?"} nodes, ${p.edges ?? "?"} edges`
@@ -289,7 +279,7 @@ export default async function (pi: ExtensionAPI) {
     async execute(_id, params, signal, _onUpdate, ctx) {
       const proj = params.project || projectName(ctx.cwd);
       const res = await cbmCli(pi, "delete_project", { project: proj }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       return {
         content: [{ type: "text", text: `Deleted project: ${proj}` }],
         details: res.data,
@@ -314,7 +304,7 @@ export default async function (pi: ExtensionAPI) {
     async execute(_id, params, signal, _onUpdate, ctx) {
       const proj = params.project || projectName(ctx.cwd);
       const res = await cbmCli(pi, "index_status", { project: proj }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       return {
         content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         details: res.data,
@@ -362,7 +352,7 @@ export default async function (pi: ExtensionAPI) {
         limit: params.limit || 20,
         offset: params.offset || 0,
       }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       const data = res.data as any;
       const results = data.results || [];
       if (results.length === 0) {
@@ -413,7 +403,7 @@ export default async function (pi: ExtensionAPI) {
         direction: params.direction || "both",
         depth: params.depth || 3,
       }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       const data = res.data as any;
       const callers = data.callers || [];
       const callees = data.callees || [];
@@ -462,7 +452,7 @@ export default async function (pi: ExtensionAPI) {
         query: params.query,
         limit: params.limit || 10,
       }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       const data = res.data as any;
       const results = data.results || [];
       if (results.length === 0) {
@@ -497,7 +487,7 @@ export default async function (pi: ExtensionAPI) {
     async execute(_id, params, signal, _onUpdate, ctx) {
       const proj = params.project || projectName(ctx.cwd);
       const res = await cbmCli(pi, "detect_changes", { project: proj }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       return {
         content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         details: res.data,
@@ -531,7 +521,7 @@ export default async function (pi: ExtensionAPI) {
         project: proj,
         query: params.query,
       }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       const data = res.data as any;
       const rows = data.rows || data.results || [];
       return {
@@ -559,7 +549,7 @@ export default async function (pi: ExtensionAPI) {
     async execute(_id, params, signal, _onUpdate, ctx) {
       const proj = params.project || projectName(ctx.cwd);
       const res = await cbmCli(pi, "get_graph_schema", { project: proj }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       return {
         content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         details: res.data,
@@ -592,7 +582,7 @@ export default async function (pi: ExtensionAPI) {
         project: proj,
         qualified_name: params.qualified_name,
       }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       const data = res.data as any;
       const src = data.source || data.snippet || data.code || "";
       const header = data.signature ? `// ${data.signature}\n` : "";
@@ -661,12 +651,12 @@ export default async function (pi: ExtensionAPI) {
       if (result.code !== 0) {
         return {
           content: [{ type: "text", text: `Update failed: ${result.stderr || result.stdout}` }],
-          details: {},
+          details: {} as Record<string, unknown>,
         };
       }
       return {
         content: [{ type: "text", text: result.stdout || "Update completed." }],
-        details: {},
+        details: {} as Record<string, unknown>,
       };
     },
   });
@@ -702,7 +692,7 @@ export default async function (pi: ExtensionAPI) {
         project: proj,
         aspects: aspectsArr,
       }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       return {
         content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         details: res.data,
@@ -737,7 +727,7 @@ export default async function (pi: ExtensionAPI) {
         pattern: params.pattern,
         limit: params.limit || 50,
       }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       const data = res.data as any;
       const rawMatches = data.raw_matches || [];
       const graphResults = data.results || [];
@@ -801,7 +791,7 @@ export default async function (pi: ExtensionAPI) {
       if (params.title) args.title = params.title;
       if (params.content) args.content = params.content;
       const res = await cbmCli(pi, "manage_adr", args, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       return {
         content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         details: res.data,
@@ -831,13 +821,13 @@ export default async function (pi: ExtensionAPI) {
       const proj = params.project || projectName(ctx.cwd);
       let traces;
       try { traces = JSON.parse(params.traces); } catch {
-        return { content: [{ type: "text", text: "Error: traces must be valid JSON" }], details: {} };
+        return { content: [{ type: "text", text: "Error: traces must be valid JSON" }], details: {} as Record<string, unknown> };
       }
       const res = await cbmCli(pi, "ingest_traces", {
         project: proj,
         traces,
       }, signal);
-      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} };
+      if (!res.ok) return { content: [{ type: "text", text: `Error: ${res.error}` }], details: {} as Record<string, unknown> };
       return {
         content: [{ type: "text", text: JSON.stringify(res.data, null, 2) }],
         details: res.data,

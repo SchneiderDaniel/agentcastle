@@ -25,7 +25,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
-import { execSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join as joinPath } from "node:path";
 
@@ -102,17 +101,22 @@ function getWorktreeName(cwd: string): string | null {
 }
 
 /** Get current git branch via CLI (fallback for startup when footerData not available) */
-function getGitBranch(cwd: string): string | null {
+async function getGitBranch(cwd: string): Promise<string | null> {
 	try {
-		const result = execSync("git rev-parse --abbrev-ref HEAD", {
-			cwd,
-			encoding: "utf-8",
-			timeout: 2000,
-			stdio: ["pipe", "pipe", "ignore"],
+		const { execFile } = await import("node:child_process");
+		return new Promise((resolve) => {
+			execFile("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+				cwd,
+				timeout: 3000,
+			}, (err, stdout) => {
+				if (err) {
+					resolve(null);
+					return;
+				}
+				const branch = stdout.trim();
+				resolve(branch && branch !== "HEAD" ? branch : null);
+			});
 		});
-		const branch = result.trim();
-		if (branch && branch !== "HEAD") return branch;
-		return null;
 	} catch {
 		return null;
 	}
@@ -227,21 +231,13 @@ function thinkingColor(level: string | undefined): string {
 
 // ─── Extension ───────────────────────────────────────────────────────
 
-export default function contextInfo(pi: ExtensionAPI) {
-	// State
+export default function contextInfo(pi: ExtensionAPI): void {
+	// State — enclosed in closure, not module scope
 	let config: ContextStatusBarConfig | null = null;
 	let lastContextWindow: number | undefined;
 	let emitted = false;
 	let thinkingLevel = ""; // empty = unknown until first thinking_level_select
-	let cwd = process.cwd();
 	let worktreeName: string | null = null;
-
-	// ── Startup: detect worktree ───────────────────────────────────
-
-	worktreeName = getWorktreeName(cwd);
-
-	// Read thinking level from pi global settings
-	thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
 
 	// ── Startup widget state ───────────────────────────────────────
 	let startupWidgetActive = false;
@@ -252,6 +248,15 @@ export default function contextInfo(pi: ExtensionAPI) {
 		config = loadConfig();
 		lastContextWindow = undefined;
 		emitted = false;
+
+		// Deferred I/O — detect worktree on first session
+		if (worktreeName === null) {
+			worktreeName = getWorktreeName(ctx.cwd);
+		}
+		// Deferred I/O — read pi settings on first session
+		if (!thinkingLevel) {
+			thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
+		}
 
 		if (config === null) {
 			ctx.ui.setFooter(undefined);

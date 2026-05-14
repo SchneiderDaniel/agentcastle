@@ -16,6 +16,9 @@ import { readFileSync, existsSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { GhIssue, GhComment } from "./github-types.js";
+import { isGhIssue } from "./github-types.js";
+import { extractTextFromContent } from "./types.js";
 
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -313,24 +316,31 @@ function parseAgentFile(filePath: string): ParsedAgent {
 }
 
 /** Filter issue body and comments to only trusted codeowners.
- *  This is enforced in code — NOT via LLM prompt — to prevent prompt injection. */
-function filterIssueData(rawIssue: any, codeowners: string[]): FilteredIssueData {
-	const issueAuthor: string = rawIssue?.author?.login || "";
+ *  This is enforced in code — NOT via LLM prompt — to prevent prompt injection.
+ *  Uses type guards on unknown input to prevent malicious payload bypass. */
+function filterIssueData(rawIssue: unknown, codeowners: string[]): FilteredIssueData {
+	const issue = isGhIssue(rawIssue) ? rawIssue : null;
+	const issueAuthor: string = issue?.author?.login || "";
 	const isIssueAuthorTrusted = codeowners.includes(issueAuthor);
 
 	const body = isIssueAuthorTrusted
-		? (rawIssue?.body || "(no body)")
+		? (issue?.body || "(no body)")
 		: `[Issue body hidden — author @${issueAuthor} is not a trusted codeowner]`;
 
-	const rawComments: any[] = rawIssue?.comments || [];
+	const rawComments: unknown[] = Array.isArray((rawIssue as Record<string, unknown>)?.comments)
+		? (rawIssue as Record<string, unknown>).comments as unknown[]
+		: [];
 	const trustedComments = rawComments
-		.filter((c: any) => {
-			const commentAuthor: string = c?.author?.login || "";
-			return codeowners.includes(commentAuthor);
+		.filter((c: unknown): c is GhComment => {
+			if (typeof c !== "object" || c === null) return false;
+			const author = (c as Record<string, unknown>)?.author;
+			if (typeof author !== "object" || author === null) return false;
+			const login = (author as Record<string, unknown>)?.login;
+			return typeof login === "string" && codeowners.includes(login);
 		})
-		.map((c: any) => ({
-			author: c?.author?.login || "unknown",
-			body: c?.body || "",
+		.map((c: GhComment) => ({
+			author: c.author?.login || "unknown",
+			body: c.body || "",
 		}));
 
 	return { body, comments: trustedComments, filteringActive: true };
@@ -349,7 +359,7 @@ function gh(args: string[]): string {
 	}
 }
 
-function ghJson(args: string[]): any {
+function ghJson(args: string[]): unknown {
 	const output = gh(args);
 	if (!output) return null;
 	return JSON.parse(output);
@@ -1054,12 +1064,22 @@ export async function runAgent(
 	};
 
 	return new Promise((resolve) => {
+		const abortController = new AbortController();
 		const child = spawn("/usr/bin/pi", args, {
 			cwd: process.cwd(),
 			env: { ...process.env, PI_NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
-			timeout: timeoutMs,
+			signal: abortController.signal,
 		});
+
+		// Enforceable timeout via AbortController — spawn timeout option is
+		// Node >=14.18.0 but AbortController is more portable.
+		const timeoutTimer = setTimeout(() => {
+			abortController.abort();
+			child.kill("SIGTERM");
+			// Grace period then force kill
+			setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* ignore */ } }, 5_000);
+		}, timeoutMs);
 
 		const MAX_RAW_STDOUT = 500_000; // prevent RangeError on huge output
 		let rawStdout = "";
@@ -1122,6 +1142,7 @@ export async function runAgent(
 		});
 
 		child.on("close", (code, signal) => {
+			clearTimeout(timeoutTimer);
 			if (jsonBuffer.trim()) handleLine(jsonBuffer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
@@ -1165,6 +1186,7 @@ export async function runAgent(
 		});
 
 		child.on("error", (err) => {
+			clearTimeout(timeoutTimer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
@@ -1188,15 +1210,6 @@ export async function runAgent(
 }
 
 // ─── Output helpers ──────────────────────────────────────────────────
-
-export function extractTextFromContent(content: any): string {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.filter((b: any) => b.type === "text" && b.text)
-		.map((b: any) => b.text)
-		.join("\n");
-}
 
 /** Pull a one-line summary from the agent's text output */
 function extractSummaryLine(
@@ -1584,22 +1597,21 @@ export function determineLspPreAuditDecision(
 	return { nextStatus: "Implementation", note: preAuditResult.note, auditTriggered: true };
 }
 
-// Dynamically import runPreAudit (lazy to avoid issues at load time)
-let _runPreAudit: any = null;
-async function getRunPreAudit(): Promise<any> {
-	if (_runPreAudit) return _runPreAudit;
-	try {
-		const mod = await import("./lsp-auditor.ts");
-		_runPreAudit = mod.runPreAudit;
-		return _runPreAudit;
-	} catch {
-		return null;
-	}
-}
-
 // ─── Extension ───────────────────────────────────────────────────────
 
-export default function supervisor(pi: ExtensionAPI) {
+export default function supervisor(pi: ExtensionAPI): void {
+	// Dynamically import runPreAudit (lazy to avoid issues at load time)
+	let _runPreAudit: unknown = null;
+	async function getRunPreAudit(): Promise<unknown> {
+		if (_runPreAudit) return _runPreAudit;
+		try {
+			const mod = await import("./lsp-auditor.ts");
+			_runPreAudit = mod.runPreAudit;
+			return _runPreAudit;
+		} catch {
+			return null;
+		}
+	}
 	// ── Message renderer: styled supervisor result ──────────────────
 
 	pi.registerMessageRenderer<SupervisorMessageDetails>("supervisor", (message, _options, theme) => {

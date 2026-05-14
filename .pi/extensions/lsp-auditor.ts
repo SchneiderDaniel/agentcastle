@@ -16,8 +16,11 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
+import type { LspPublishDiagnosticsParams, LspDiagnosticData } from "./lsp-types.js";
+import { isLspPublishDiagnosticsParams, isLspDiagnosticData } from "./lsp-types.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -316,15 +319,15 @@ export function groupFilesByServer(
 /** Per-file timeout in milliseconds */
 const FILE_TIMEOUT_MS = 30_000;
 
-/** vscode-jsonrpc imports (lazy — only loaded when LSP client runs) */
-let StreamMessageReader: any;
-let StreamMessageWriter: any;
-let createMessageConnection: any;
+/** vscode-jsonrpc imports (lazy — dynamic import avoids sync require side effects) */
+let StreamMessageReader: unknown = null;
+let StreamMessageWriter: unknown = null;
+let createMessageConnection: unknown = null;
 
-function loadJsonRpc(): boolean {
+async function loadJsonRpc(): Promise<boolean> {
 	if (createMessageConnection) return true;
 	try {
-		const jsonrpc = require("vscode-jsonrpc");
+		const jsonrpc = await import("vscode-jsonrpc");
 		StreamMessageReader = jsonrpc.StreamMessageReader;
 		StreamMessageWriter = jsonrpc.StreamMessageWriter;
 		createMessageConnection = jsonrpc.createMessageConnection;
@@ -364,7 +367,7 @@ export async function auditFileGroup(
 	const errors: string[] = [];
 	const allDiagnostics: LspDiagnostic[] = [];
 
-	if (!loadJsonRpc()) {
+	if (!(await loadJsonRpc())) {
 		return { diagnostics: [], errors: [`vscode-jsonrpc not installed — cannot audit ${mapping.command}`], note: "" };
 	}
 
@@ -376,8 +379,13 @@ export async function auditFileGroup(
 		// This avoids vscode-jsonrpc internals emitting ERR_STREAM_DESTROYED
 		// when spawn fails with ENOENT.
 		try {
-			const { execFileSync } = await import("node:child_process");
-			execFileSync("which", [mapping.command], { stdio: "ignore", timeout: 5_000 });
+			const { execFile } = await import("node:child_process");
+			await new Promise<void>((resolve, reject) => {
+				execFile("which", [mapping.command], { timeout: 5_000 }, (err) => {
+					if (err) reject(err);
+					else resolve();
+				});
+			});
 		} catch {
 			errors.push(`LSP server ${mapping.command} not found on PATH`);
 			return { diagnostics: [], errors, note: "" };
@@ -391,7 +399,7 @@ export async function auditFileGroup(
 		});
 
 		child.on("error", (err) => {
-			// child error tracked via errors[] array
+			errors.push(`LSP server ${mapping.command} crashed: ${err instanceof Error ? err.message : String(err)}`);
 		});
 
 		// If spawn immediately failed (e.g. binary not found), handle early
@@ -412,7 +420,7 @@ export async function auditFileGroup(
 
 		// Capture connection-level errors (e.g. write to destroyed stream)
 		connection.onError((err: Error) => {
-			// connection error tracked via errors[] array
+			errors.push(`LSP connection error (${mapping.command}): ${err.message || String(err)}`);
 		});
 
 		// Collect diagnostics
@@ -420,9 +428,10 @@ export async function auditFileGroup(
 		const openedUris = new Set<string>();
 		const diagnosedUris = new Set<string>();
 
-		connection.onNotification((method: string, params: any) => {
+		connection.onNotification((method: string, params: unknown) => {
 			if (method === "textDocument/publishDiagnostics") {
-				const uri: string = params?.uri || "";
+				if (!isLspPublishDiagnosticsParams(params)) return;
+				const uri: string = params.uri;
 				let filePath: string;
 				try {
 					filePath = decodeURIComponent(uri.replace(/^file:\/\//, ""));
@@ -430,8 +439,8 @@ export async function auditFileGroup(
 					filePath = uri.replace(/^file:\/\//, "");
 				}
 				diagnosedUris.add(uri);
-				const diags: any[] = params?.diagnostics || [];
-				const mapped: LspDiagnostic[] = diags.map((d: any) => ({
+				const diags: LspDiagnosticData[] = params.diagnostics.filter(isLspDiagnosticData);
+				const mapped: LspDiagnostic[] = diags.map((d) => ({
 					file: filePath,
 					line: (d.range?.start?.line ?? 0) + 1, // LSP lines are 0-based
 					column: (d.range?.start?.character ?? 0) + 1,
@@ -470,7 +479,7 @@ export async function auditFileGroup(
 				continue;
 			}
 
-			const content = readFileSync(fullPath, "utf-8");
+			const content = await readFile(fullPath, "utf-8");
 			const langId = languageIdForExtension(file.slice(file.lastIndexOf(".")).toLowerCase());
 			const uri = `file://${fullPath}`;
 			openedUris.add(uri);
@@ -521,12 +530,18 @@ export async function auditFileGroup(
 			if (child) {
 				// Remove all error listeners to prevent async errors after cleanup
 				child.removeAllListeners("error");
-				child.stdin?.removeAllListeners?.("error");
-				child.stdout?.removeAllListeners?.("error");
-				child.stderr?.removeAllListeners?.("error");
+				if (child.stdin) child.stdin.removeAllListeners("error");
+				if (child.stdout) child.stdout.removeAllListeners("error");
+				if (child.stderr) child.stderr.removeAllListeners("error");
 				if (child.exitCode === null) {
 					child.kill("SIGTERM");
-					setTimeout(() => { try { child?.kill("SIGKILL"); } catch { /* ignore */ } }, 5000);
+					// Use local reference to avoid race on re-assignment
+					const childRef = child;
+					const killTimer = setTimeout(() => {
+						try { childRef.kill("SIGKILL"); } catch { /* ignore */ }
+					}, 5000);
+					// Allow timer to be garbage-collected if not needed (unref for clean exit)
+					killTimer.unref();
 				}
 			}
 		} catch { /* ignore */ }
@@ -577,16 +592,20 @@ export async function runPreAudit(
 	// 1. Get modified files via git diff
 	let gitOutput: string;
 	try {
-		const { execFileSync } = await import("node:child_process");
+		const { execFile } = await import("node:child_process");
 		const worktreeAbs = resolvePath(worktreePath);
-		gitOutput = execFileSync("git", ["diff", defaultBranch, "--name-only"], {
-			cwd: worktreeAbs,
-			encoding: "utf-8",
-			stdio: ["pipe", "pipe", "pipe"],
-			timeout: 10_000,
-		}).trim();
-	} catch (err: any) {
-		const msg = err.stderr?.toString() || err.message || String(err);
+		gitOutput = await new Promise<string>((resolve, reject) => {
+			execFile("git", ["diff", defaultBranch, "--name-only"], {
+				cwd: worktreeAbs,
+				encoding: "utf-8",
+				timeout: 10_000,
+			}, (err, stdout) => {
+				if (err) reject(err);
+				else resolve(stdout.trim());
+			});
+		});
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? (err as NodeJS.ErrnoException).stderr?.toString() || err.message : String(err);
 		pi.sendUserMessage?.(`LSP audit skipped: git diff failed (${msg})`, { deliverAs: "followUp" });
 		return { proceed: true, note: `LSP audit skipped: git diff failed` };
 	}
@@ -709,7 +728,7 @@ function readSettings(worktreePath: string): PiSettings | null {
 // Extension entry point
 // ═══════════════════════════════════════════════════════════════════════
 
-export default function lspAuditor(pi: ExtensionAPI) {
+export default function lspAuditor(pi: ExtensionAPI): void {
 	// The extension is passive — it's called by supervisor directly via runPreAudit().
 	// No lifecycle hooks needed at this time.
 	// Register a command for manual triggering if desired:
@@ -718,9 +737,19 @@ export default function lspAuditor(pi: ExtensionAPI) {
 		handler: async (_args, ctx) => {
 			const sm = ctx.sessionManager;
 			const cwd = sm.getCwd();
-			// Extract issue number from branch name or use default
+			// Read defaultBranch from supervisor config if available
+			let defaultBranch = "main";
+			try {
+				const settings = readSettings(cwd);
+				if (settings?.supervisor && typeof settings.supervisor === "object") {
+					const supCfg = settings.supervisor as Record<string, unknown>;
+					if (typeof supCfg.defaultBranch === "string") {
+						defaultBranch = supCfg.defaultBranch;
+					}
+				}
+			} catch { /* use default */ }
 			const result = await runPreAudit(
-				{ issueNum: 0, worktreePath: cwd, defaultBranch: "main", repo: "" },
+				{ issueNum: 0, worktreePath: cwd, defaultBranch, repo: "" },
 				pi,
 				ctx,
 			);
