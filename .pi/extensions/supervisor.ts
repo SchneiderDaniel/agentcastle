@@ -12,7 +12,7 @@ import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
@@ -684,6 +684,85 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 	return result;
 }
 
+// ─── Extension tool discovery ─────────────────────────────────────
+
+/**
+ * Scan all .pi/extensions/*.ts files and extract tool names from
+ * pi.registerTool({ name: "..." }) calls. Returns a map of
+ * extension basename (without .ts) → tool names array.
+ * Cached at module level — only runs once.
+ */
+let _extToolsCache: Map<string, string[]> | null = null;
+
+function discoverExtensionTools(): Map<string, string[]> {
+	if (_extToolsCache) return _extToolsCache;
+
+	const map = new Map<string, string[]>();
+	const extDir = resolvePath(process.cwd(), ".pi/extensions");
+
+	let files: string[];
+	try {
+		files = readdirSync(extDir);
+	} catch {
+		_extToolsCache = map;
+		return map;
+	}
+
+	for (const file of files) {
+		if (!file.endsWith(".ts")) continue;
+		const basename = file.replace(/\.ts$/, "");
+		const filePath = resolvePath(extDir, file);
+
+		let content: string;
+		try {
+			content = readFileSync(filePath, "utf-8");
+		} catch {
+			continue;
+		}
+
+		// Match pi.registerTool({ ... name: "tool_name" ... })
+		const toolRe = /\.registerTool\(\s*\{[^}]*?\bname:\s*["']([^"']+)["']/gs;
+		const tools: string[] = [];
+		let m: RegExpExecArray | null;
+		while ((m = toolRe.exec(content)) !== null) {
+			tools.push(m[1]!);
+		}
+		if (tools.length > 0) {
+			map.set(basename, tools);
+		}
+	}
+
+	_extToolsCache = map;
+	return map;
+}
+
+/**
+ * Merge agent-declared tools with tools from agent's extensions.
+ * Returns a comma-separated string for --tools flag.
+ */
+function resolveTools(agentTools: string, extNamesRaw: string | undefined): string {
+	const toolSet = new Set(
+		agentTools.split(",").map((s) => s.trim()).filter(Boolean),
+	);
+
+	if (extNamesRaw && extNamesRaw.trim()) {
+		const extToolsMap = discoverExtensionTools();
+		const extNames = extNamesRaw
+			.split(",")
+			.map((s) => s.trim())
+			.filter((s) => s.length > 0);
+
+		for (const extName of extNames) {
+			const extTools = extToolsMap.get(extName);
+			if (extTools) {
+				for (const t of extTools) toolSet.add(t);
+			}
+		}
+	}
+
+	return [...toolSet].join(",");
+}
+
 // ─── Constants ──────────────────────────────────────────────────────
 
 export const MAX_FULL_LOG = 200;
@@ -1013,7 +1092,8 @@ export async function runAgent(
 	ctx: ExtensionCommandContext,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 ): Promise<AgentRunResult> {
-	const tools = agent.config.tools || "read,bash,write,edit";
+	const rawTools = agent.config.tools || "read,bash,write,edit";
+	const tools = resolveTools(rawTools, agent.config.extensions);
 	const model = agent.config.model || "";
 	const extFlags = resolveExtensions(agent.config.extensions);
 
