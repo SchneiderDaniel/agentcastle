@@ -355,35 +355,108 @@ function ghJson(args: string[]): any {
 	return JSON.parse(output);
 }
 
-function getProjectFields(
-	projectNumber: number,
-	owner: string,
-): ProjectField[] {
-	const result = ghJson([
-		"project",
-		"field-list",
-		String(projectNumber),
-		"--owner",
-		owner,
-		"--format",
-		"json",
-	]);
-	return result?.fields || result || [];
+/** Call gh api graphql with a query string. Returns parsed JSON data. */
+function ghGraphQL(query: string): any {
+	const result = ghApi(["graphql", "--raw-field", `query=${query}`]);
+	if (result.errors?.length) {
+		throw new Error(result.errors[0].message);
+	}
+	return result.data;
 }
 
-function getProjectItems(projectNumber: number, owner: string): ProjectItem[] {
-	const result = ghJson([
-		"project",
-		"item-list",
-		String(projectNumber),
-		"--owner",
-		owner,
-		"-L",
-		"100",
-		"--format",
-		"json",
-	]);
-	return result?.items || result || [];
+/** Call gh api with arguments, return parsed JSON. */
+function ghApi(args: string[]): any {
+	const text = gh(["api", ...args]);
+	if (!text) return {};
+	try {
+		return JSON.parse(text);
+	} catch {
+		return {};
+	}
+}
+
+function getProjectFields(
+	projectNumber: number,
+	_owner: string,
+): ProjectField[] {
+	const data = ghGraphQL(`{
+		viewer {
+			projectV2(number: ${projectNumber}) {
+				fields(first: 10) {
+					nodes {
+						... on ProjectV2Field { id name dataType }
+						... on ProjectV2SingleSelectField { id name dataType options { id name } }
+						... on ProjectV2IterationField { id name dataType }
+					}
+				}
+			}
+		}
+	}`);
+	const nodes = data?.viewer?.projectV2?.fields?.nodes || [];
+	return nodes.map((n: any) => ({
+		id: n.id,
+		name: n.name,
+		type: n.dataType || "UNKNOWN",
+		options: n.options || undefined,
+	}));
+}
+
+function getProjectItems(projectNumber: number, _owner: string): ProjectItem[] {
+	const data = ghGraphQL(`{
+		viewer {
+			projectV2(number: ${projectNumber}) {
+				items(first: 100) {
+					nodes {
+						id
+						content {
+							... on Issue { number url }
+							... on PullRequest { number url }
+						}
+						fieldValues(first: 20) {
+							nodes {
+								... on ProjectV2ItemFieldSingleSelectValue {
+									name
+									field { ... on ProjectV2FieldCommon { id name } }
+								}
+								... on ProjectV2ItemFieldTextValue {
+									text
+									field { ... on ProjectV2FieldCommon { id name } }
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}`);
+	const nodes = data?.viewer?.projectV2?.items?.nodes || [];
+	return nodes.map((n: any) => {
+		const fieldNodes: any[] = n.fieldValues?.nodes || [];
+		// Extract status from single-select field named "Status"
+		let status: string | undefined;
+		const fv: Array<{ fieldId: string; value: string; optionId?: string }> = [];
+		for (const f of fieldNodes) {
+			if (f.name && f.field?.name?.toLowerCase() === "status") {
+				status = f.name;
+			}
+			if (f.field?.id) {
+				fv.push({
+					fieldId: f.field.id,
+					value: f.name || f.text || "",
+					optionId: undefined,
+				});
+			}
+		}
+		return {
+			id: n.id,
+			status,
+			content: n.content ? {
+				url: n.content.url,
+				number: n.content.number,
+			} : undefined,
+			fieldValues: fv.length > 0 ? fv : undefined,
+		};
+	});
 }
 
 function findIssueItem(
@@ -439,17 +512,15 @@ function setItemStatus(
 	]);
 }
 
-function getProjectId(projectNumber: number, owner: string): string {
-	const result = ghJson([
-		"project",
-		"view",
-		String(projectNumber),
-		"--owner",
-		owner,
-		"--format",
-		"json",
-	]);
-	return result?.id || "";
+function getProjectId(projectNumber: number, _owner: string): string {
+	const data = ghGraphQL(`{
+		viewer {
+			projectV2(number: ${projectNumber}) {
+				id
+			}
+		}
+	}`);
+	return data?.viewer?.projectV2?.id || "";
 }
 
 // ─── Dependency gate ("blocked by" links) ─────────────────────────
@@ -1829,10 +1900,7 @@ export default function supervisor(pi: ExtensionAPI) {
 					projectId = getProjectId(config.projectNumber, owner);
 				} catch (err: any) {
 					const msg = err.message || String(err);
-					if (
-						msg.includes("missing required scopes") ||
-						msg.includes("project")
-					) {
+					if (msg.includes("missing required scopes")) {
 						ctx.ui.notify(
 							"GitHub token missing 'project' scope. Run: gh auth refresh -s project",
 							"error",
