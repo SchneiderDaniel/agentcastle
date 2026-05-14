@@ -14,7 +14,7 @@
  * - Session entries ("lsp-audit-retry") track retry count across sessions.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";

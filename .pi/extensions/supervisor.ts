@@ -11,11 +11,11 @@
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { readFileSync, existsSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
-import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 
 // ─── Types ───────────────────────────────────────────────────────────

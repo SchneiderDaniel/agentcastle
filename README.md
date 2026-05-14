@@ -58,7 +58,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 | Node.js ≥22 + npm               | Pi runtime                            |
 | Python 3.10+ + venv + pip       | crawl4ai local web crawler            |
 | GitHub CLI (gh)                 | Git operations from Pi                |
-| `@mariozechner/pi-coding-agent` | The agent itself (global npm install) |
+| `@earendil-works/pi-coding-agent` | The agent itself (global npm install) |
 | `codebase-memory-mcp` binary    | Code intelligence engine              |
 | `~/.agent_env` file             | API keys (Apify token, etc.)          |
 | `~/.bashrc` auto-start block    | Docker + env loading on WSL boot      |
@@ -87,7 +87,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 # 1. Install prerequisites (one-time, Ubuntu 24.04 LTS)
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs python3 python3-pip python3-venv jq unzip
-sudo npm install -g @mariozechner/pi-coding-agent
+sudo npm install -g @earendil-works/pi-coding-agent
 curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --skip-config
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
@@ -149,7 +149,7 @@ sudo npm install -g npm@latest
 ### Pi Agent
 
 ```bash
-sudo npm install -g @mariozechner/pi-coding-agent
+sudo npm install -g @earendil-works/pi-coding-agent
 ```
 
 ---
@@ -583,11 +583,11 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | Component                                  | Version  | License      | Type       | Supplier/URL                                                                                             |
 | ------------------------------------------ | -------- | ------------ | ---------- | -------------------------------------------------------------------------------------------------------- |
 | **Runtime & Core**                         |          |              |            |                                                                                                          |
-| @mariozechner/pi-coding-agent              | ^0.74.0  | MIT          | dev        | [pi.dev](https://pi.dev)                                                                                 |
-| @mariozechner/pi-agent-core                | 0.74.0   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
-| @mariozechner/pi-ai                        | 0.74.0   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
-| @mariozechner/clipboard                    | 0.3.5    | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
-| @mariozechner/jiti                         | 2.6.5    | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @earendil-works/pi-coding-agent              | ^0.74.0  | MIT          | dev        | [pi.dev](https://pi.dev)                                                                                 |
+| @earendil-works/pi-agent-core                | 0.74.0   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @earendil-works/pi-ai                        | 0.74.0   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @silvia-odwyer/photon-node                    | 0.3.4    | MIT          | transitive | [github.com/silvia-odwyer/photon-node](https://github.com/silvia-odwyer/photon-node)                     |
+| jiti                                         | 2.7.0    | MIT          | transitive | [github.com/unjs/jiti](https://github.com/unjs/jiti)                                                     |
 | **AI Providers**                           |          |              |            |                                                                                                          |
 | @anthropic-ai/sdk                          | 0.91.1   | MIT          | transitive | [anthropic.com](https://www.anthropic.com)                                                               |
 | openai                                     | 6.26.0   | Apache-2.0   | transitive | [openai.com](https://openai.com)                                                                         |
@@ -631,7 +631,7 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 ### `pi: command not found`
 
 ```bash
-sudo npm install -g @mariozechner/pi-coding-agent
+sudo npm install -g @earendil-works/pi-coding-agent
 # If still missing, check: echo $PATH | grep npm
 ```
 

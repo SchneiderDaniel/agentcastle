@@ -20,7 +20,7 @@
  *   }
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync, existsSync } from "node:fs";
 
 // ─── Types ───────────────────────────────────────────────────────────
