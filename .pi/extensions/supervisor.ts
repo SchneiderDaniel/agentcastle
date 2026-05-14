@@ -355,31 +355,11 @@ function ghJson(args: string[]): any {
 	return JSON.parse(output);
 }
 
-/** Call gh api graphql with a query string. Returns parsed JSON data. */
-function ghGraphQL(query: string): any {
-	const result = ghApi(["graphql", "--raw-field", `query=${query}`]);
-	if (result.errors?.length) {
-		throw new Error(result.errors[0].message);
-	}
-	return result.data;
-}
-
-/** Call gh api with arguments, return parsed JSON. */
-function ghApi(args: string[]): any {
-	const text = gh(["api", ...args]);
-	if (!text) return {};
-	try {
-		return JSON.parse(text);
-	} catch {
-		return {};
-	}
-}
-
 function getProjectFields(
 	projectNumber: number,
 	_owner: string,
 ): ProjectField[] {
-	const data = ghGraphQL(`{
+	const resp = ghGraphQL(`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
 				fields(first: 10) {
@@ -392,7 +372,7 @@ function getProjectFields(
 			}
 		}
 	}`);
-	const nodes = data?.viewer?.projectV2?.fields?.nodes || [];
+	const nodes = resp?.data?.viewer?.projectV2?.fields?.nodes || [];
 	return nodes.map((n: any) => ({
 		id: n.id,
 		name: n.name,
@@ -402,7 +382,7 @@ function getProjectFields(
 }
 
 function getProjectItems(projectNumber: number, _owner: string): ProjectItem[] {
-	const data = ghGraphQL(`{
+	const resp = ghGraphQL(`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
 				items(first: 100) {
@@ -429,7 +409,7 @@ function getProjectItems(projectNumber: number, _owner: string): ProjectItem[] {
 			}
 		}
 	}`);
-	const nodes = data?.viewer?.projectV2?.items?.nodes || [];
+	const nodes = resp?.data?.viewer?.projectV2?.items?.nodes || [];
 	return nodes.map((n: any) => {
 		const fieldNodes: any[] = n.fieldValues?.nodes || [];
 		// Extract status from single-select field named "Status"
@@ -513,14 +493,14 @@ function setItemStatus(
 }
 
 function getProjectId(projectNumber: number, _owner: string): string {
-	const data = ghGraphQL(`{
+	const resp = ghGraphQL(`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
 				id
 			}
 		}
 	}`);
-	return data?.viewer?.projectV2?.id || "";
+	return resp?.data?.viewer?.projectV2?.id || "";
 }
 
 // ─── Dependency gate ("blocked by" links) ─────────────────────────
