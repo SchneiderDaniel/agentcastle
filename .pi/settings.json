@@ -1,4 +1,5 @@
 {
+    "theme": "agentcastle",
     "supervisor": {
         "repo": "SchneiderDaniel/agentcastle",
         "projectNumber": 3,

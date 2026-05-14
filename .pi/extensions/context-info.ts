@@ -1,15 +1,17 @@
 /**
- * context-info — Unified context telemetry + status bar indicator
+ * context-info — Agent Castle Terminal Revamp
  *
- * 1. Status bar: colored dot with current/contextWindow token count in footer.
- *    Color thresholds: green → orange → red (hardcoded ANSI, not theme).
- * 2. Telemetry: emits one JSON event on stdout with initial context usage
- *    for supervisor / JSON-mode clients.
+ * Replaces pi's default footer with a rich Neovim/lain-inspired status bar.
  *
- * Event format:
- *   {"type":"context_info","contextTokens":<number>,"contextWindow":<number>}
+ * Status bar shows (L → R):
+ *    branch [worktree]  │  🧠 model · reasoning  │  ◉ 12.5K/200K [6%]
  *
- * Config (optional, .pi/settings.json):
+ * Also emits telemetry JSON on first assistant response.
+ *
+ * Theme: requires "agentcastle" theme for best visuals, but works with any theme.
+ * Install: pi install --theme .pi/themes/agentcastle.json
+ *
+ * Config (.pi/settings.json, optional):
  *   "contextStatusBar": {
  *     "enabled": true,
  *     "thresholds": [
@@ -21,7 +23,11 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readFileSync, existsSync } from "node:fs";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join as joinPath } from "node:path";
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -31,7 +37,7 @@ interface ThresholdEntry {
 }
 
 interface ContextStatusBarConfig {
-	enabled?: boolean;
+	enabled: boolean;
 	thresholds: ThresholdEntry[];
 }
 
@@ -43,35 +49,27 @@ const DEFAULT_THRESHOLDS: ThresholdEntry[] = [
 	{ maxTokens: null, color: "red" },
 ];
 
-const STATUS_KEY = "contextUsage";
-
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-/** Format a token count with K/M suffix. */
+/** Format token count: 1200 → "1.2K", 1200000 → "1.2M" */
 function formatTokens(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
 	return String(n);
 }
 
-/** Map user-facing color name to a raw ANSI truecolor escape (bypasses theme). */
+/** Map threshold color name to theme color token */
 function resolveColor(name: string): string {
 	switch (name) {
-		case "green":  return "\x1b[38;2;0;200;0m";
-		case "orange": return "\x1b[38;2;255;165;0m";
-		case "red":    return "\x1b[38;2;220;50;50m";
-		default:        return "\x1b[39m";
+		case "green":  return "success";
+		case "orange": return "warning";
+		case "red":    return "error";
+		default:       return "dim";
 	}
 }
 
-/**
- * Pick the first matching threshold for the given token count.
- * Thresholds are sorted by maxTokens ascending; null means catch-all.
- */
-function pickThreshold(
-	tokens: number,
-	thresholds: ThresholdEntry[],
-): ThresholdEntry {
+/** Pick threshold for given token count */
+function pickThreshold(tokens: number, thresholds: ThresholdEntry[]): ThresholdEntry {
 	const sorted = [...thresholds].sort((a, b) => {
 		if (a.maxTokens === null) return 1;
 		if (b.maxTokens === null) return -1;
@@ -84,102 +82,169 @@ function pickThreshold(
 	return sorted[sorted.length - 1]!;
 }
 
-/** Build the status bar text and its ANSI color code. */
-function buildStatus(
-	tokens: number | null,
-	contextWindow: number | undefined,
-	thresholds: ThresholdEntry[],
-): { text: string; colorCode: string } {
-	const windowK =
-		contextWindow !== undefined && contextWindow > 0
-			? formatTokens(contextWindow)
-			: "?";
+// ─── Git helpers ─────────────────────────────────────────────────────
 
-	if (tokens === null || tokens === undefined) {
-		return { text: `• .../${windowK}`, colorCode: resolveColor("dim") };
+/** Detect if we're in a git worktree and return its name */
+function getWorktreeName(cwd: string): string | null {
+	try {
+		const gitFile = `${cwd}/.git`;
+		if (!existsSync(gitFile)) return null;
+		const content = readFileSync(gitFile, "utf-8");
+		const match = content.match(/^gitdir:\s*(.+)$/m);
+		if (!match) return null; // regular repo, not a worktree
+		const gitDir = match[1]!.trim();
+		// Parse worktree name from path: .../.git/worktrees/<name>
+		const wtMatch = gitDir.match(/worktrees\/(.+?)(\/|$)/);
+		return wtMatch ? wtMatch[1]! : "worktree";
+	} catch {
+		return null;
 	}
+}
 
-	const currentK = formatTokens(tokens);
-	const entry = pickThreshold(tokens, thresholds);
-	return {
-		text: `• ${currentK}/${windowK}`,
-		colorCode: resolveColor(entry.color),
-	};
+/** Get current git branch via CLI (fallback for startup when footerData not available) */
+function getGitBranch(cwd: string): string | null {
+	try {
+		const result = execSync("git rev-parse --abbrev-ref HEAD", {
+			cwd,
+			encoding: "utf-8",
+			timeout: 2000,
+			stdio: ["pipe", "pipe", "ignore"],
+		});
+		const branch = result.trim();
+		if (branch && branch !== "HEAD") return branch;
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+/** Count files matching suffix in a directory (non-recursive) */
+function countFiles(dir: string, suffix: string): number {
+	try {
+		if (!existsSync(dir)) return 0;
+		const entries = readdirSync(dir, { withFileTypes: true });
+		let count = 0;
+		for (const entry of entries) {
+			if (entry.isFile() && entry.name.endsWith(suffix)) count++;
+			// Also count index.ts in subdirectories for extensions
+			if (entry.isDirectory() && suffix === ".ts") {
+				if (existsSync(joinPath(dir, entry.name, "index.ts"))) count++;
+			}
+		}
+		return count;
+	} catch {
+		return 0;
+	}
+}
+
+/** Read a single value from pi's global settings.json */
+function readPiSetting(key: string): string | undefined {
+	try {
+		const settingsPath = joinPath(homedir(), ".pi/agent/settings.json");
+		if (!existsSync(settingsPath)) return undefined;
+		const raw = JSON.parse(readFileSync(settingsPath, "utf-8"));
+		if (typeof raw === "object" && raw !== null && key in raw) {
+			const val = (raw as Record<string, unknown>)[key];
+			return typeof val === "string" ? val : undefined;
+		}
+		return undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 // ─── Config loading ──────────────────────────────────────────────────
 
 function loadConfig(): ContextStatusBarConfig | null {
-	const defaults = { enabled: true, thresholds: DEFAULT_THRESHOLDS };
+	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS };
 	const settingsPath = ".pi/settings.json";
 	if (!existsSync(settingsPath)) return defaults;
 
 	let settings: Record<string, unknown>;
 	try {
-		const raw = readFileSync(settingsPath, "utf-8");
-		settings = JSON.parse(raw);
+		settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
 	} catch {
-		console.warn("[context-info] Failed to parse .pi/settings.json; using defaults");
 		return defaults;
 	}
 
 	const raw = settings["contextStatusBar"];
 	if (raw === undefined) return defaults;
-
-	if (typeof raw !== "object" || raw === null) {
-		console.warn("[context-info] contextStatusBar must be an object; using defaults");
-		return defaults;
-	}
+	if (typeof raw !== "object" || raw === null) return defaults;
 
 	const cfg = raw as Record<string, unknown>;
 
 	let enabled = true;
-	if ("enabled" in cfg) {
-		if (typeof cfg.enabled === "boolean") {
-			enabled = cfg.enabled;
-		} else {
-			console.warn("[context-info] contextStatusBar.enabled must be boolean; using true");
-		}
+	if ("enabled" in cfg && typeof cfg.enabled === "boolean") {
+		enabled = cfg.enabled;
 	}
-
-	if (enabled === false) return null;
+	if (!enabled) return null;
 
 	let thresholds: ThresholdEntry[];
 	if (!Array.isArray(cfg.thresholds) || cfg.thresholds.length === 0) {
-		console.warn("[context-info] contextStatusBar.thresholds missing or empty; falling back to defaults");
 		thresholds = DEFAULT_THRESHOLDS;
 	} else {
 		const parsed: ThresholdEntry[] = [];
 		for (const entry of cfg.thresholds) {
 			if (typeof entry !== "object" || entry === null) continue;
 			const e = entry as Record<string, unknown>;
-			const maxTokens =
-				e.maxTokens === null || e.maxTokens === undefined
-					? null
-					: Number(e.maxTokens);
+			const maxTokens = e.maxTokens === null || e.maxTokens === undefined ? null : Number(e.maxTokens);
 			const color = typeof e.color === "string" ? e.color : "";
 			if (maxTokens !== null && !Number.isFinite(maxTokens)) continue;
 			if (!color) continue;
 			parsed.push({ maxTokens: maxTokens as number | null, color });
 		}
-		if (parsed.length === 0) {
-			console.warn("[context-info] contextStatusBar.thresholds has no valid entries; falling back to defaults");
-			thresholds = DEFAULT_THRESHOLDS;
-		} else {
-			thresholds = parsed;
-		}
+		thresholds = parsed.length > 0 ? parsed : DEFAULT_THRESHOLDS;
 	}
 
 	return { enabled, thresholds };
 }
 
+// ─── Thinking level → icon ───────────────────────────────────────────
+
+function thinkingIcon(level: string | undefined): string {
+	switch (level) {
+		case "off":     return "○";
+		case "minimal": return "◐";
+		case "low":     return "◑";
+		case "medium":  return "◒";
+		case "high":    return "◓";
+		case "xhigh":   return "●";
+		default:        return "·";
+	}
+}
+
+function thinkingColor(level: string | undefined): string {
+	switch (level) {
+		case "off":     return "dim";
+		case "minimal": return "dim";
+		case "low":     return "muted";
+		case "medium":  return "accent";
+		case "high":    return "warning";
+		case "xhigh":   return "error";
+		default:        return "dim";
+	}
+}
+
 // ─── Extension ───────────────────────────────────────────────────────
 
 export default function contextInfo(pi: ExtensionAPI) {
-	// State — shared between status bar and telemetry
+	// State
 	let config: ContextStatusBarConfig | null = null;
 	let lastContextWindow: number | undefined;
 	let emitted = false;
+	let thinkingLevel = ""; // empty = unknown until first thinking_level_select
+	let cwd = process.cwd();
+	let worktreeName: string | null = null;
+
+	// ── Startup: detect worktree ───────────────────────────────────
+
+	worktreeName = getWorktreeName(cwd);
+
+	// Read thinking level from pi global settings
+	thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
+
+	// ── Startup widget state ───────────────────────────────────────
+	let startupWidgetActive = false;
 
 	// ── Hooks ──────────────────────────────────────────────────────
 
@@ -189,7 +254,9 @@ export default function contextInfo(pi: ExtensionAPI) {
 		emitted = false;
 
 		if (config === null) {
-			ctx.ui.setStatus(STATUS_KEY, undefined);
+			ctx.ui.setFooter(undefined);
+			ctx.ui.setStatus("contextUsage", undefined);
+			ctx.ui.setWidget("agentcastle-welcome", undefined);
 			return;
 		}
 
@@ -197,6 +264,36 @@ export default function contextInfo(pi: ExtensionAPI) {
 		if (typeof cw === "number" && cw > 0) {
 			lastContextWindow = cw;
 		}
+
+		// Install custom footer
+		installFooter(ctx);
+
+		// Custom working indicator — subtle dot pulse
+		ctx.ui.setWorkingIndicator({
+			frames: [
+				ctx.ui.theme.fg("dim", "·"),
+				ctx.ui.theme.fg("muted", "•"),
+				ctx.ui.theme.fg("accent", "●"),
+				ctx.ui.theme.fg("muted", "•"),
+			],
+			intervalMs: 150,
+		});
+
+		// ── Startup welcome banner ──────────────────────────────
+		showWelcomeBanner(ctx);
+	});
+
+	// Clear welcome banner on first user input
+	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
+		if (startupWidgetActive) {
+			ctx.ui.setWidget("agentcastle-welcome", undefined);
+			startupWidgetActive = false;
+		}
+	});
+
+	pi.on("thinking_level_select", async (event, ctx: ExtensionContext) => {
+		thinkingLevel = event.level;
+		if (config) installFooter(ctx);
 	});
 
 	pi.on("model_select", async (event, ctx: ExtensionContext) => {
@@ -204,33 +301,30 @@ export default function contextInfo(pi: ExtensionAPI) {
 		if (typeof cw === "number" && cw > 0) {
 			lastContextWindow = cw;
 		}
-		updateStatus(ctx);
+		if (config) installFooter(ctx);
 		tryEmit(ctx);
 	});
 
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
-		updateStatus(ctx);
+		if (config) installFooter(ctx);
 	});
 
 	pi.on("message_end", async (event, ctx: ExtensionContext) => {
 		const msg = event.message;
 		if (!msg || msg.role !== "assistant") return;
-
 		const usage = ctx.getContextUsage();
 		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
 			tryEmit(ctx);
 		}
 	});
 
-	// ── Internal functions ─────────────────────────────────────────
+	// ── Telemetry emit ─────────────────────────────────────────────
 
 	function tryEmit(ctx: ExtensionContext) {
 		if (emitted) return;
 		if (!lastContextWindow || lastContextWindow <= 0) return;
-
 		const usage = ctx.getContextUsage();
 		if (!usage || typeof usage.tokens !== "number" || usage.tokens <= 0) return;
-
 		emitted = true;
 		console.log(
 			JSON.stringify({
@@ -241,32 +335,148 @@ export default function contextInfo(pi: ExtensionAPI) {
 		);
 	}
 
-	function updateStatus(ctx: ExtensionContext) {
+	// ── Footer installation ────────────────────────────────────────
+
+	function installFooter(ctx: ExtensionContext) {
 		if (!config || config.enabled === false) {
-			ctx.ui.setStatus(STATUS_KEY, undefined);
+			ctx.ui.setFooter(undefined);
 			return;
 		}
 
-		const usage = ctx.getContextUsage();
-		let tokens: number | null = null;
-		let contextWindow: number | undefined;
+		ctx.ui.setFooter((tui, theme, footerData) => {
+			const unsubBranch = footerData.onBranchChange(() => tui.requestRender());
 
-		if (usage) {
-			tokens = usage.tokens;
-			contextWindow = usage.contextWindow;
-		}
+			return {
+				dispose: unsubBranch,
+				invalidate() {},
+				render(width: number): string[] {
+					// ── Compute token usage ───────────────────────
+					const usage = ctx.getContextUsage();
+					const tokens = usage?.tokens ?? null;
+					const cw = usage?.contextWindow ?? lastContextWindow;
+					if (cw && cw > 0) lastContextWindow = cw;
 
-		if (contextWindow !== undefined && contextWindow > 0) {
-			lastContextWindow = contextWindow;
-		}
+					// ── LEFT: Git info ───────────────────────────
+					const branch = footerData.getGitBranch();
+					let leftStr = "";
+					if (branch) {
+						leftStr = theme.fg("accent", " ") + theme.fg("muted", branch);
+						if (worktreeName) {
+							leftStr += " " + theme.fg("dim", `[${worktreeName}]`);
+						}
+					} else {
+						leftStr = theme.fg("dim", "⋄ no git");
+					}
 
-		const { text, colorCode } = buildStatus(
-			tokens,
-			lastContextWindow ?? contextWindow,
-			config.thresholds,
+					// ── Extension statuses (caveman, etc.) ───────
+					const extStatuses = footerData.getExtensionStatuses();
+					let extStr = "";
+					if (extStatuses.size > 0) {
+						const parts: string[] = [];
+						for (const [, text] of extStatuses) {
+							if (text) parts.push(text);
+						}
+						if (parts.length > 0) extStr = parts.join(" ");
+					}
+
+					// ── CENTER: Model + reasoning ────────────────
+					const modelId = ctx.model?.id ?? "?";
+					let centerStr = theme.fg("dim", "🧠 ") + theme.fg("accent", modelId);
+					if (thinkingLevel) {
+						const tIcon = thinkingIcon(thinkingLevel);
+						const tColor = thinkingColor(thinkingLevel);
+						const reasoningStr = theme.fg(tColor, `${tIcon} ${thinkingLevel}`);
+						centerStr += " " + theme.fg("dim", "·") + " " + reasoningStr;
+					}
+
+					// ── RIGHT: Token usage + percentage ──────────
+					let rightStr = "";
+					if (tokens !== null && tokens !== undefined) {
+						const currentFmt = formatTokens(tokens);
+						const maxFmt = lastContextWindow ? formatTokens(lastContextWindow) : "?";
+						const pct = lastContextWindow && lastContextWindow > 0
+							? Math.round((tokens / lastContextWindow) * 100)
+							: null;
+
+						const entry = pickThreshold(tokens, config.thresholds);
+						const usageColor = resolveColor(entry.color);
+
+						const tokenText = `${currentFmt}/${maxFmt}`;
+						rightStr = theme.fg("dim", "◉ ") + theme.fg(usageColor, tokenText);
+
+						if (pct !== null) {
+							const pctColor = pct >= 90 ? "error" : pct >= 70 ? "warning" : "dim";
+							rightStr += " " + theme.fg(pctColor, `[${pct}%]`);
+						}
+					} else {
+						rightStr = theme.fg("dim", `◉ .../${lastContextWindow ? formatTokens(lastContextWindow) : "?"}`);
+					}
+
+					// ── Separator character ──────────────────────
+					const sep = theme.fg("dim", "│");
+
+					// ── Combine left + extension statuses ───────
+					const fullLeft = extStr ? `${leftStr} ${extStr}` : leftStr;
+
+					// ── Layout: left+ext | center | right ───────
+					const leftW = visibleWidth(fullLeft);
+					const centerW = visibleWidth(centerStr);
+					const rightW = visibleWidth(rightStr);
+
+					// Calculate spacing
+					const totalContent = leftW + centerW + rightW;
+					const sepCount = 2;
+					const sepWidth = 3 + sepCount * 2; // " │ " per separator
+
+					if (totalContent + sepWidth <= width) {
+						// All fits — distribute remaining space
+						const remaining = width - totalContent - sepWidth;
+						const padLeft = Math.floor(remaining / 2);
+						const padRight = remaining - padLeft;
+
+						const line =
+							fullLeft +
+							" ".repeat(padLeft + 1) + sep + " ".repeat(1) +
+							centerStr +
+							" ".repeat(padRight + 1) + sep + " ".repeat(1) +
+							rightStr;
+
+						return [truncateToWidth(line, width)];
+					}
+
+					// Narrow terminal — compact mode: left+ext | right (drop center)
+					if (leftW + rightW + sepWidth <= width) {
+						const remaining = width - leftW - rightW - sepWidth;
+						const line = fullLeft + " ".repeat(remaining + 2) + sep + " ".repeat(1) + rightStr;
+						return [truncateToWidth(line, width)];
+					}
+
+					// Very narrow — just right-aligned tokens
+					const line = " ".repeat(Math.max(0, width - rightW)) + rightStr;
+					return [truncateToWidth(line, width)];
+				},
+			};
+		});
+
+		// Also keep the status key clear (footer replaces it)
+		ctx.ui.setStatus("contextUsage", undefined);
+	}
+
+	// ── Welcome banner ───────────────────────────────────────────
+
+	function showWelcomeBanner(ctx: ExtensionContext) {
+		const theme = ctx.ui.theme;
+		const termWidth = process.stdout.columns || 80;
+
+		const lines: string[] = [];
+
+		lines.push(
+			"  " + theme.fg("accent", theme.bold("🏰 Agent Castle"))
 		);
+		lines.push("  " + theme.fg("dim", "─".repeat(Math.max(0, termWidth - 4))));
+		lines.push("");
 
-		const themedText = `${colorCode}${text}\x1b[39m`;
-		ctx.ui.setStatus(STATUS_KEY, themedText);
+		ctx.ui.setWidget("agentcastle-welcome", lines, { placement: "aboveEditor" });
+		startupWidgetActive = true;
 	}
 }

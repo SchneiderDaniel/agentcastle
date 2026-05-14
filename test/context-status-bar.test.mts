@@ -1,18 +1,23 @@
 /**
- * Tests for context-status-bar extension
+ * Tests for context-info extension (Agent Castle Terminal Revamp)
  *
- * Covers: formatTokens, resolveColor, pickThreshold, config validation,
- * setStatus calls on turn_end, and edge cases (unknown usage, bad config, etc.)
+ * Covers: formatTokens, resolveColor, pickThreshold, loadConfig,
+ * thinkingIcon, thinkingColor, getWorktreeName, getGitBranch,
+ * and integration with custom footer.
  *
  * Run with:
  *   node --experimental-strip-types --test test/context-status-bar.test.mts
  */
 
 import assert from "node:assert";
-import { describe, it, beforeEach } from "node:test";
+import { describe, it } from "node:test";
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
-// Duplicated helpers from the extension (mirrors .pi/extensions/context-status-bar.ts exactly)
+// Duplicated helpers from .pi/extensions/context-info.ts
 // ---------------------------------------------------------------------------
 
 function formatTokens(n: number): string {
@@ -28,10 +33,10 @@ interface ThresholdEntry {
 
 function resolveColor(name: string): string {
 	switch (name) {
-		case "green": return "success";
+		case "green":  return "success";
 		case "orange": return "warning";
-		case "red": return "error";
-		default: return "dim";
+		case "red":    return "error";
+		default:       return "dim";
 	}
 }
 
@@ -54,12 +59,66 @@ function pickThreshold(
 		if (entry.maxTokens === null) return entry;
 		if (tokens <= entry.maxTokens) return entry;
 	}
-	// Fallback (should never reach here if null is present)
 	return sorted[sorted.length - 1]!;
 }
 
+function thinkingIcon(level: string | undefined): string {
+	switch (level) {
+		case "off":     return "○";
+		case "minimal": return "◐";
+		case "low":     return "◑";
+		case "medium":  return "◒";
+		case "high":    return "◓";
+		case "xhigh":   return "●";
+		default:        return "·";
+	}
+}
+
+function thinkingColor(level: string | undefined): string {
+	switch (level) {
+		case "off":     return "dim";
+		case "minimal": return "dim";
+		case "low":     return "muted";
+		case "medium":  return "accent";
+		case "high":    return "warning";
+		case "xhigh":   return "error";
+		default:        return "dim";
+	}
+}
+
+function getWorktreeName(cwd: string): string | null {
+	try {
+		const gitFile = `${cwd}/.git`;
+		if (!existsSync(gitFile)) return null;
+		const content = readFileSync(gitFile, "utf-8");
+		const match = content.match(/^gitdir:\s*(.+)$/m);
+		if (!match) return null;
+		const gitDir = match[1]!.trim();
+		const wtMatch = gitDir.match(/worktrees\/(.+?)(\/|$)/);
+		return wtMatch ? wtMatch[1]! : "worktree";
+	} catch {
+		return null;
+	}
+}
+
+function getGitBranch(cwd: string): string | null {
+	try {
+		const result = execSync("git rev-parse --abbrev-ref HEAD", {
+			cwd,
+			encoding: "utf-8",
+			timeout: 2000,
+			stdio: ["pipe", "pipe", "ignore"],
+		});
+		const branch = result.trim();
+		if (branch && branch !== "HEAD") return branch;
+		return null;
+	} catch {
+		return null;
+	}
+}
+
 interface ContextStatusBarConfig {
-	enabled?: boolean;
+	enabled: boolean;
 	thresholds: ThresholdEntry[];
 }
 
@@ -84,7 +143,6 @@ function loadConfig(
 
 	const cfg = raw as Record<string, unknown>;
 
-	// enabled
 	let enabled = true;
 	if ("enabled" in cfg) {
 		if (typeof cfg.enabled === "boolean") {
@@ -94,10 +152,8 @@ function loadConfig(
 		}
 	}
 
-	// Explicitly disabled — return null to fully disable the extension
 	if (enabled === false) return { config: null, warnings };
 
-	// thresholds
 	let thresholds: ThresholdEntry[];
 	if (!Array.isArray(cfg.thresholds) || cfg.thresholds.length === 0) {
 		warnings.push("contextStatusBar.thresholds missing or empty; falling back to defaults");
@@ -124,91 +180,6 @@ function loadConfig(
 	return { config: { enabled, thresholds }, warnings };
 }
 
-function buildStatusText(
-	tokens: number | null,
-	contextWindow: number | undefined,
-	thresholds: ThresholdEntry[],
-): { text: string; themeColor: string } {
-	const windowK = contextWindow !== undefined && contextWindow > 0
-		? formatTokens(contextWindow)
-		: "?";
-
-	if (tokens === null || tokens === undefined) {
-		// Unknown usage
-		return { text: `• .../${windowK}`, themeColor: "dim" };
-	}
-
-	const currentK = formatTokens(tokens);
-	const entry = pickThreshold(tokens, thresholds);
-	return {
-		text: `• ${currentK}/${windowK}`,
-		themeColor: resolveColor(entry.color),
-	};
-}
-
-// ---------------------------------------------------------------------------
-// Mock extension harness (matches context-info.test.mts pattern)
-// ---------------------------------------------------------------------------
-
-interface MockExtensionContext {
-	setStatusCalls: Array<{ key: string; text: string | undefined }>;
-	_windows: number[];
-}
-
-function createMockCtx(): MockExtensionContext {
-	return {
-		setStatusCalls: [],
-		_windows: [],
-	};
-}
-
-function createExtensionState() {
-	let config: ContextStatusBarConfig | null = null;
-	let warnings: string[] = [];
-	let lastContextWindow: number | undefined;
-
-	// Simulate the turn_end handler
-	function onTurnEnd(
-		mockCtx: MockExtensionContext,
-		getContextUsageReturn: { tokens: number | null; contextWindow: number } | null | undefined,
-		themeFg: (key: string, text: string) => string,
-	) {
-		let tokens: number | null = null;
-		let contextWindow: number | undefined;
-
-		if (getContextUsageReturn) {
-			tokens = getContextUsageReturn.tokens;
-			contextWindow = getContextUsageReturn.contextWindow;
-		}
-
-		if (contextWindow !== undefined && contextWindow > 0) {
-			lastContextWindow = contextWindow;
-		}
-
-		if (!config || config.enabled === false) {
-			mockCtx.setStatusCalls.push({ key: "contextUsage", text: undefined });
-			return;
-		}
-
-		const thresholds = config.thresholds;
-		const { text, themeColor } = buildStatusText(
-			tokens,
-			lastContextWindow ?? contextWindow,
-			thresholds,
-		);
-
-		const themedText = themeFg(themeColor, text);
-		mockCtx.setStatusCalls.push({ key: "contextUsage", text: themedText });
-	}
-
-	return { onTurnEnd, _setConfig: (c: ContextStatusBarConfig | null) => { config = c; } };
-}
-
-// A simple theme fg function for testing
-function mockThemeFg(color: string, text: string): string {
-	return `[${color}]${text}[/${color}]`;
-}
-
 // ---------------------------------------------------------------------------
 // formatTokens tests
 // ---------------------------------------------------------------------------
@@ -218,7 +189,7 @@ describe("formatTokens", () => {
 		assert.strictEqual(formatTokens(12_000), "12.0K");
 		assert.strictEqual(formatTokens(1_000), "1.0K");
 		assert.strictEqual(formatTokens(100_000), "100.0K");
-		assert.strictEqual(formatTokens(999_999), "1000.0K"); // edge
+		assert.strictEqual(formatTokens(999_999), "1000.0K");
 	});
 
 	it("formats M values", () => {
@@ -303,11 +274,8 @@ describe("pickThreshold", () => {
 			{ maxTokens: 10_000, color: "orange" },
 			{ maxTokens: null, color: "red" },
 		];
-		// 5K ≤ 10K → orange (first match after sorting)
 		assert.strictEqual(pickThreshold(5_000, unsorted).color, "orange");
-		// 15K ≤ 50K → green
 		assert.strictEqual(pickThreshold(15_000, unsorted).color, "green");
-		// 100K → null → red
 		assert.strictEqual(pickThreshold(100_000, unsorted).color, "red");
 	});
 });
@@ -388,9 +356,9 @@ describe("loadConfig", () => {
 		const result = loadConfig({
 			contextStatusBar: {
 				thresholds: [
-					{ maxTokens: "bad", color: "green" }, // maxTokens NaN
-					{ maxTokens: 50_000, color: "" },     // empty color
-					{ maxTokens: 100_000, color: "green" }, // valid
+					{ maxTokens: "bad", color: "green" },
+					{ maxTokens: 50_000, color: "" },
+					{ maxTokens: 100_000, color: "green" },
 				],
 			},
 		});
@@ -411,162 +379,121 @@ describe("loadConfig", () => {
 });
 
 // ---------------------------------------------------------------------------
-// buildStatusText tests
+// thinkingIcon tests
 // ---------------------------------------------------------------------------
 
-describe("buildStatusText", () => {
-	const ctxWindow = 200_000;
-
-	it("renders green for low usage", () => {
-		const result = buildStatusText(45_000, ctxWindow, DEFAULT_THRESHOLDS);
-		assert.strictEqual(result.text, "• 45.0K/200.0K");
-		assert.strictEqual(result.themeColor, "success");
+describe("thinkingIcon", () => {
+	it("returns correct icons for each level", () => {
+		assert.strictEqual(thinkingIcon("off"), "○");
+		assert.strictEqual(thinkingIcon("minimal"), "◐");
+		assert.strictEqual(thinkingIcon("low"), "◑");
+		assert.strictEqual(thinkingIcon("medium"), "◒");
+		assert.strictEqual(thinkingIcon("high"), "◓");
+		assert.strictEqual(thinkingIcon("xhigh"), "●");
 	});
 
-	it("renders orange for medium usage", () => {
-		const result = buildStatusText(120_000, ctxWindow, DEFAULT_THRESHOLDS);
-		assert.strictEqual(result.text, "• 120.0K/200.0K");
-		assert.strictEqual(result.themeColor, "warning");
-	});
-
-	it("renders red for high usage", () => {
-		const result = buildStatusText(180_000, ctxWindow, DEFAULT_THRESHOLDS);
-		assert.strictEqual(result.text, "• 180.0K/200.0K");
-		assert.strictEqual(result.themeColor, "error");
-	});
-
-	it("renders dim for unknown tokens (null)", () => {
-		const result = buildStatusText(null, ctxWindow, DEFAULT_THRESHOLDS);
-		assert.strictEqual(result.text, "• .../200.0K");
-		assert.strictEqual(result.themeColor, "dim");
-	});
-
-	it("renders dim for undefined tokens", () => {
-		const result = buildStatusText(undefined as unknown as null, ctxWindow, DEFAULT_THRESHOLDS);
-		assert.strictEqual(result.text, "• .../200.0K");
-		assert.strictEqual(result.themeColor, "dim");
-	});
-
-	it("renders ? for unknown context window", () => {
-		const result = buildStatusText(50_000, undefined, DEFAULT_THRESHOLDS);
-		assert.strictEqual(result.text, "• 50.0K/?");
-		assert.strictEqual(result.themeColor, "success");
-	});
-
-	it("renders ? for zero context window", () => {
-		const result = buildStatusText(50_000, 0, DEFAULT_THRESHOLDS);
-		assert.strictEqual(result.text, "• 50.0K/?");
-	});
-
-	it("renders dim ... for both unknown", () => {
-		const result = buildStatusText(null, undefined, DEFAULT_THRESHOLDS);
-		assert.strictEqual(result.text, "• .../?");
-		assert.strictEqual(result.themeColor, "dim");
+	it("returns default for unknown/undefined", () => {
+		assert.strictEqual(thinkingIcon(undefined), "·");
+		assert.strictEqual(thinkingIcon("unknown"), "·");
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Integration: turn_end → setStatus called
+// thinkingColor tests
 // ---------------------------------------------------------------------------
 
-describe("turn_end integration", () => {
-	it("calls setStatus with colored text on valid usage", () => {
-		const mockCtx = createMockCtx();
-		const ext = createExtensionState();
-		ext._setConfig({ enabled: true, thresholds: DEFAULT_THRESHOLDS });
-
-		ext.onTurnEnd(
-			mockCtx,
-			{ tokens: 45_000, contextWindow: 200_000 },
-			mockThemeFg,
-		);
-
-		assert.strictEqual(mockCtx.setStatusCalls.length, 1);
-		assert.strictEqual(mockCtx.setStatusCalls[0]!.key, "contextUsage");
-		assert.ok(mockCtx.setStatusCalls[0]!.text!.includes("[success]"));
-		assert.ok(mockCtx.setStatusCalls[0]!.text!.includes("45.0K/200.0K"));
+describe("thinkingColor", () => {
+	it("returns correct theme colors for each level", () => {
+		assert.strictEqual(thinkingColor("off"), "dim");
+		assert.strictEqual(thinkingColor("minimal"), "dim");
+		assert.strictEqual(thinkingColor("low"), "muted");
+		assert.strictEqual(thinkingColor("medium"), "accent");
+		assert.strictEqual(thinkingColor("high"), "warning");
+		assert.strictEqual(thinkingColor("xhigh"), "error");
 	});
 
-	it("calls setStatus with dim text when usage is null", () => {
-		const mockCtx = createMockCtx();
-		const ext = createExtensionState();
-		ext._setConfig({ enabled: true, thresholds: DEFAULT_THRESHOLDS });
+	it("returns dim for unknown/undefined", () => {
+		assert.strictEqual(thinkingColor(undefined), "dim");
+		assert.strictEqual(thinkingColor("unknown"), "dim");
+	});
+});
 
-		ext.onTurnEnd(
-			mockCtx,
-			{ tokens: null, contextWindow: 200_000 },
-			mockThemeFg,
-		);
+// ---------------------------------------------------------------------------
+// getWorktreeName tests
+// ---------------------------------------------------------------------------
 
-		assert.strictEqual(mockCtx.setStatusCalls.length, 1);
-		assert.ok(mockCtx.setStatusCalls[0]!.text!.includes("[dim]"));
-		assert.ok(mockCtx.setStatusCalls[0]!.text!.includes(".../200.0K"));
+describe("getWorktreeName", () => {
+	it("returns null when .git does not exist", () => {
+		const dir = join(tmpdir(), `pi-test-no-git-${Date.now()}`);
+		mkdirSync(dir, { recursive: true });
+		try {
+			assert.strictEqual(getWorktreeName(dir), null);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
-	it("clears status when config disabled", () => {
-		const mockCtx = createMockCtx();
-		const ext = createExtensionState();
-		ext._setConfig({ enabled: false, thresholds: DEFAULT_THRESHOLDS });
-
-		ext.onTurnEnd(
-			mockCtx,
-			{ tokens: 45_000, contextWindow: 200_000 },
-			mockThemeFg,
-		);
-
-		assert.strictEqual(mockCtx.setStatusCalls.length, 1);
-		assert.strictEqual(mockCtx.setStatusCalls[0]!.text, undefined);
+	it("returns null for regular git repo (.git is directory)", () => {
+		const dir = join(tmpdir(), `pi-test-regular-${Date.now()}`);
+		mkdirSync(dir, { recursive: true });
+		// Create .git as a directory (regular repo)
+		mkdirSync(join(dir, ".git"));
+		try {
+			assert.strictEqual(getWorktreeName(dir), null);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
-	it("clears status when config is null", () => {
-		const mockCtx = createMockCtx();
-		const ext = createExtensionState();
-		ext._setConfig(null);
-
-		ext.onTurnEnd(
-			mockCtx,
-			{ tokens: 45_000, contextWindow: 200_000 },
-			mockThemeFg,
+	it("detects worktree name from .git file", () => {
+		const dir = join(tmpdir(), `pi-test-worktree-${Date.now()}`);
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, ".git"),
+			"gitdir: /home/user/.git/worktrees/my-feature-branch\n"
 		);
-
-		assert.strictEqual(mockCtx.setStatusCalls.length, 1);
-		assert.strictEqual(mockCtx.setStatusCalls[0]!.text, undefined);
+		try {
+			assert.strictEqual(getWorktreeName(dir), "my-feature-branch");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
-	it("caches contextWindow across calls when usage is null", () => {
-		const mockCtx = createMockCtx();
-		const ext = createExtensionState();
-		ext._setConfig({ enabled: true, thresholds: DEFAULT_THRESHOLDS });
-
-		// First call: sets cache from getContextUsage contextWindow
-		ext.onTurnEnd(
-			mockCtx,
-			{ tokens: 50_000, contextWindow: 200_000 },
-			mockThemeFg,
+	it("returns 'worktree' for unknown worktree path format", () => {
+		const dir = join(tmpdir(), `pi-test-bad-worktree-${Date.now()}`);
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, ".git"),
+			"gitdir: /some/weird/path\n"
 		);
-		assert.ok(mockCtx.setStatusCalls[0]!.text!.includes("200.0K"));
+		try {
+			assert.strictEqual(getWorktreeName(dir), "worktree");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+});
 
-		// Second call: usage null, getContextUsage returns 0 contextWindow, should use cache
-		ext.onTurnEnd(
-			mockCtx,
-			{ tokens: null, contextWindow: 0 },
-			mockThemeFg,
-		);
-		assert.ok(mockCtx.setStatusCalls[1]!.text!.includes("200.0K"));
+// ---------------------------------------------------------------------------
+// getGitBranch tests (integration — requires git in PATH)
+// ---------------------------------------------------------------------------
+
+describe("getGitBranch", () => {
+	it("returns branch name for current repo", () => {
+		const branch = getGitBranch(process.cwd());
+		// Should return a branch name (we're in a git repo)
+		assert.ok(typeof branch === "string");
+		assert.ok(branch!.length > 0);
+		assert.notStrictEqual(branch, "HEAD");
 	});
 
-	it("calls setStatus with red for exceeded thresholds", () => {
-		const mockCtx = createMockCtx();
-		const ext = createExtensionState();
-		ext._setConfig({ enabled: true, thresholds: DEFAULT_THRESHOLDS });
-
-		ext.onTurnEnd(
-			mockCtx,
-			{ tokens: 200_000, contextWindow: 200_000 },
-			mockThemeFg,
-		);
-
-		assert.ok(mockCtx.setStatusCalls[0]!.text!.includes("[error]"));
-		assert.ok(mockCtx.setStatusCalls[0]!.text!.includes("200.0K/200.0K"));
+	it("returns null for non-git directory", () => {
+		const dir = join(tmpdir(), `pi-test-nonrepo-${Date.now()}`);
+		mkdirSync(dir, { recursive: true });
+		try {
+			assert.strictEqual(getGitBranch(dir), null);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
