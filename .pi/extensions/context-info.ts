@@ -560,7 +560,7 @@ export default function contextInfo(pi: ExtensionAPI) {
 		}
 
 		// ── Title bar: icons + version right-aligned ─────────
-		const title = Ac("⚡ AGENT CASTLE");
+		const title = Ac("🏰 AGENT CASTLE");
 		const infoBits: string[] = [];
 		infoBits.push(Di("⚙") + " " + Wa(projectName));
 		if (branch) infoBits.push(Di("│") + " " + Ac("") + " " + Mu(branch));
