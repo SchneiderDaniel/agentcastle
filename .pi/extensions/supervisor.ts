@@ -353,9 +353,9 @@ function gh(args: string[]): string {
 			stdio: ["pipe", "pipe", "pipe"],
 			timeout: 30_000,
 		}).trim();
-	} catch (err: any) {
-		const stderr = err.stderr?.toString() || err.message;
-		throw new Error(`gh ${args[0]} failed: ${stderr}`);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		throw new Error(`gh ${args[0]} failed: ${message}`);
 	}
 }
 
@@ -501,7 +501,7 @@ interface GhTimelineResponse {
 	errors?: Array<{ message: string }>;
 }
 
-function ghGraphQL(query: string): any {
+function ghGraphQL(query: string): unknown {
 	const result = gh([
 		"api",
 		"graphql",
@@ -606,8 +606,8 @@ async function checkBlockedByDependencies(
 	let response: GhTimelineResponse;
 	try {
 		response = ghGraphQL(query) as GhTimelineResponse;
-	} catch (err: any) {
-		throw new Error(`Failed to query GitHub for dependencies: ${err.message}`);
+	} catch (err) {
+		throw new Error(`Failed to query GitHub for dependencies: ${err instanceof Error ? err.message : String(err)}`);
 	}
 
 	return parseTimelineResponse(response);
@@ -1466,8 +1466,9 @@ function tryAutoMerge(
 			conflictFiles: [],
 			message: "Merge succeeded with no conflicts.",
 		};
-	} catch (err: any) {
-		const stderr = err.stderr?.toString() || err.message || "";
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		const stderr = (err instanceof Error && "stderr" in err) ? (err as NodeJS.ErrnoException).stderr?.toString() || message : message;
 
 		// Check for conflicted files
 		let conflictFiles: string[] = [];
@@ -1759,8 +1760,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 					fields = getProjectFields(config.projectNumber, owner);
 					items = getProjectItems(config.projectNumber, owner);
 					projectId = getProjectId(config.projectNumber, owner);
-				} catch (err: any) {
-					const msg = err.message || String(err);
+				} catch (err) {
+					const msg = err instanceof Error ? err.message : String(err);
 					if (
 						msg.includes("missing required scopes") ||
 						msg.includes("project")
@@ -1817,9 +1818,9 @@ export default function supervisor(pi: ExtensionAPI): void {
 						ctx.ui.setStatus("supervisor", "");
 						return;
 					}
-				} catch (err: any) {
+				} catch (err) {
 					ctx.ui.notify(
-						`Dependency check failed: ${err.message}`,
+						`Dependency check failed: ${err instanceof Error ? err.message : String(err)}`,
 						"error",
 					);
 					ctx.ui.setStatus("supervisor", "");
@@ -1922,8 +1923,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 					let agent: ParsedAgent;
 					try {
 						agent = parseAgentFile(agentPath);
-					} catch (err: any) {
-						ctx.ui.notify(`Failed to parse agent: ${err.message}`, "error");
+					} catch (err) {
+						ctx.ui.notify(`Failed to parse agent: ${err instanceof Error ? err.message : String(err)}`, "error");
 						break;
 					}
 
@@ -2064,8 +2065,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 							if (decision.note) {
 								ctx.ui.notify(decision.note, "info");
 							}
-						} catch (auditErr: any) {
-							ctx.ui.notify(`LSP pre-audit error: ${auditErr.message}`, "warning");
+						} catch (auditErr) {
+							ctx.ui.notify(`LSP pre-audit error: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`, "warning");
 						}
 					}
 
@@ -2088,8 +2089,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 							`Issue #${issueNum} moved: ${loopStatus} → ${effectiveNextStatus}`,
 							"info",
 						);
-					} catch (err: any) {
-						ctx.ui.notify(`Failed to update status: ${err.message}`, "error");
+					} catch (err) {
+						ctx.ui.notify(`Failed to update status: ${err instanceof Error ? err.message : String(err)}`, "error");
 						break;
 					}
 
@@ -2146,9 +2147,9 @@ export default function supervisor(pi: ExtensionAPI): void {
 										content: `## ✅ Merge Conflicts Resolved\n\nPR #${conflictInfo.number} conflicts were resolved automatically and pushed.`,
 										display: true,
 									});
-								} catch (pushErr: any) {
+								} catch (pushErr) {
 									ctx.ui.notify(
-										`Merge succeeded but push failed: ${pushErr.message}`,
+										`Merge succeeded but push failed: ${pushErr instanceof Error ? pushErr.message : String(pushErr)}`,
 										"error",
 									);
 								}
@@ -2225,9 +2226,9 @@ export default function supervisor(pi: ExtensionAPI): void {
 												"error",
 											);
 										}
-									} catch (devErr: any) {
+									} catch (devErr) {
 										ctx.ui.notify(
-											`Failed to dispatch developer: ${devErr.message}`,
+											`Failed to dispatch developer: ${devErr instanceof Error ? devErr.message : String(devErr)}`,
 											"error",
 										);
 									}
@@ -2253,8 +2254,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 				}
 
 				ctx.ui.setStatus("supervisor", "");
-			} catch (err: any) {
-				ctx.ui.notify(`Supervisor error: ${err.message}`, "error");
+			} catch (err) {
+				ctx.ui.notify(`Supervisor error: ${err instanceof Error ? err.message : String(err)}`, "error");
 				ctx.ui.setStatus("supervisor", "");
 			}
 		},

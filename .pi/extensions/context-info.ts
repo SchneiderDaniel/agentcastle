@@ -100,28 +100,6 @@ function getWorktreeName(cwd: string): string | null {
 	}
 }
 
-/** Get current git branch via CLI (fallback for startup when footerData not available) */
-async function getGitBranch(cwd: string): Promise<string | null> {
-	try {
-		const { execFile } = await import("node:child_process");
-		return new Promise((resolve) => {
-			execFile("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-				cwd,
-				timeout: 3000,
-			}, (err, stdout) => {
-				if (err) {
-					resolve(null);
-					return;
-				}
-				const branch = stdout.trim();
-				resolve(branch && branch !== "HEAD" ? branch : null);
-			});
-		});
-	} catch {
-		return null;
-	}
-}
-
 /** Count files matching suffix in a directory (non-recursive) */
 function countFiles(dir: string, suffix: string): number {
 	try {

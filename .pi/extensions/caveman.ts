@@ -412,6 +412,9 @@ export default function caveman(pi: ExtensionAPI): void {
 			);
 
 			const cycleSelectedValue = (direction: -1 | 1) => {
+				// NOTE: SettingsList doesn't expose selectedIndex publicly.
+				// This cast bypasses the private field — fragile if TUI lib changes.
+				// TODO: ask pi SDK team to expose selectedIndex on SettingsList API.
 				const selectedIndex = (
 					settingsList as unknown as { selectedIndex: number }
 				).selectedIndex;

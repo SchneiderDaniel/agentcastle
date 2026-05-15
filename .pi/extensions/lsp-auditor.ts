@@ -16,7 +16,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import type { LspPublishDiagnosticsParams, LspDiagnosticData } from "./lsp-types.js";
@@ -319,18 +319,19 @@ export function groupFilesByServer(
 /** Per-file timeout in milliseconds */
 const FILE_TIMEOUT_MS = 30_000;
 
-/** vscode-jsonrpc imports (lazy — dynamic import avoids sync require side effects) */
-let StreamMessageReader: unknown = null;
-let StreamMessageWriter: unknown = null;
-let createMessageConnection: unknown = null;
+/** vscode-jsonrpc module shape (lazy — dynamic import avoids sync require side effects) */
+interface JsonRpcModule {
+	StreamMessageReader: new (stream: NodeJS.ReadableStream) => unknown;
+	StreamMessageWriter: new (stream: NodeJS.WritableStream) => unknown;
+	createMessageConnection: (reader: unknown, writer: unknown) => unknown;
+}
+
+let jsonRpcModule: JsonRpcModule | null = null;
 
 async function loadJsonRpc(): Promise<boolean> {
-	if (createMessageConnection) return true;
+	if (jsonRpcModule) return true;
 	try {
-		const jsonrpc = await import("vscode-jsonrpc");
-		StreamMessageReader = jsonrpc.StreamMessageReader;
-		StreamMessageWriter = jsonrpc.StreamMessageWriter;
-		createMessageConnection = jsonrpc.createMessageConnection;
+		jsonRpcModule = await import("vscode-jsonrpc") as JsonRpcModule;
 		return true;
 	} catch {
 		return false;
@@ -414,9 +415,9 @@ export async function auditFileGroup(
 			return { diagnostics: [], errors, note: "" };
 		}
 
-		const reader = new StreamMessageReader(child.stdout!);
-		const writer = new StreamMessageWriter(child.stdin!);
-		connection = createMessageConnection(reader, writer);
+		const reader = new jsonRpcModule!.StreamMessageReader(child.stdout!);
+		const writer = new jsonRpcModule!.StreamMessageWriter(child.stdin!);
+		connection = jsonRpcModule!.createMessageConnection(reader, writer);
 
 		// Capture connection-level errors (e.g. write to destroyed stream)
 		connection.onError((err: Error) => {
@@ -518,9 +519,9 @@ export async function auditFileGroup(
 		connection.dispose();
 
 		return { diagnostics: filtered, errors, note: "" };
-	} catch (err: any) {
+	} catch (err) {
 		// Server crash or protocol error
-		errors.push(`LSP server ${mapping.command} error: ${err.message || String(err)}`);
+		errors.push(`LSP server ${mapping.command} error: ${err instanceof Error ? err.message : String(err)}`);
 		return { diagnostics: allDiagnostics, errors, note: "" };
 	} finally {
 		try {

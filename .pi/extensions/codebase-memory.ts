@@ -3,6 +3,7 @@ import { BorderedLoader } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
+import { HEAVY_TOOLS, QUERY_TIMEOUT, HEAVY_TIMEOUT } from "./codebase-types.js";
 
 const BINARY = `${homedir()}/.local/bin/codebase-memory-mcp`;
 
@@ -125,7 +126,6 @@ function isVersionAtLeast(
 }
 
 export default async function (pi: ExtensionAPI): Promise<void> {
-  import { HEAVY_TOOLS, QUERY_TIMEOUT, HEAVY_TIMEOUT } from "./codebase-types.js";
 
 // ── Version check at init time (before tool registration) ──
   let skipSemanticSearch = false;
