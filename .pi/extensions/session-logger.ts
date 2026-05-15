@@ -52,11 +52,7 @@ function truncate(text: string, head: number, tail = 0): string {
 	if (text.length <= head + tail) return text;
 	const cut = text.length - head - tail;
 	if (tail > 0) {
-		return (
-			text.slice(0, head) +
-			`\n\n[... ${cut} chars truncated ...]\n\n` +
-			text.slice(-tail)
-		);
+		return text.slice(0, head) + `\n\n[... ${cut} chars truncated ...]\n\n` + text.slice(-tail);
 	}
 	return text.slice(0, head) + `\n\n[... ${cut} chars truncated ...]`;
 }
@@ -94,9 +90,8 @@ function serializeRecord(record: LogRecord): string {
 function userMessageToRecord(msg: any, step: number): LogRecord {
 	const text = extractText(msg.content);
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: "user",
 		tool: "message",
 		error: null,
@@ -120,16 +115,15 @@ function assistantMessageToRecord(msg: any, step: number): LogRecord {
 
 	const tokenUsage: TokenUsage | undefined = msg.usage
 		? {
-			input: msg.usage.input ?? 0,
-			output: msg.usage.output ?? 0,
-			total: msg.usage.totalTokens ?? (msg.usage.input ?? 0) + (msg.usage.output ?? 0),
-		}
+				input: msg.usage.input ?? 0,
+				output: msg.usage.output ?? 0,
+				total: msg.usage.totalTokens ?? (msg.usage.input ?? 0) + (msg.usage.output ?? 0),
+			}
 		: undefined;
 
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: "assistant",
 		tool: "message",
 		...(tokenUsage && { token_usage: tokenUsage }),
@@ -145,15 +139,10 @@ function assistantMessageToRecord(msg: any, step: number): LogRecord {
 }
 
 function toolResultToRecord(msg: any, step: number): LogRecord {
-	const output = truncate(
-		extractText(msg.content),
-		MAX_TOOL_OUTPUT,
-		MAX_TOOL_OUTPUT_TAIL,
-	);
+	const output = truncate(extractText(msg.content), MAX_TOOL_OUTPUT, MAX_TOOL_OUTPUT_TAIL);
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: "tool",
 		tool: msg.toolName || "unknown",
 		error: msg.isError ? output : null,
@@ -166,9 +155,8 @@ function bashExecutionToRecord(msg: any, step: number): LogRecord {
 	const output = truncate(msg.output || "", MAX_TOOL_OUTPUT, MAX_TOOL_OUTPUT_TAIL);
 	const errorMsg = msg.exitCode !== 0 ? output : null;
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: "bash",
 		tool: "bash",
 		error: errorMsg,
@@ -185,9 +173,8 @@ function bashExecutionToRecord(msg: any, step: number): LogRecord {
 
 function customMessageToRecord(msg: any, step: number): LogRecord {
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: msg.customType || "extension",
 		tool: msg.customType || "extension",
 		error: null,
@@ -209,9 +196,7 @@ function branchSummaryToRecord(msg: any, step: number): LogRecord {
 
 function compactionToRecord(msg: any, step: number): LogRecord {
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date().toISOString(),
+		timestamp: typeof msg.timestamp === "string" ? msg.timestamp : new Date().toISOString(),
 		agent: "compaction",
 		tool: "compaction",
 		error: null,
@@ -262,10 +247,7 @@ export default function (pi: ExtensionAPI): void {
 			if (args === "on") enabled = true;
 			else if (args === "off") enabled = false;
 			else enabled = !enabled;
-			ctx.ui.notify(
-				`Session logger: ${enabled ? "ON" : "OFF"} (applies to next session)`,
-				"info",
-			);
+			ctx.ui.notify(`Session logger: ${enabled ? "ON" : "OFF"} (applies to next session)`, "info");
 		},
 	});
 
@@ -347,9 +329,10 @@ export default function (pi: ExtensionAPI): void {
 			}
 			default: {
 				writeRecord({
-					timestamp: typeof msg.timestamp === "string"
-						? msg.timestamp
-						: new Date(msg.timestamp).toISOString(),
+					timestamp:
+						typeof msg.timestamp === "string"
+							? msg.timestamp
+							: new Date(msg.timestamp).toISOString(),
 					agent: msg.role ?? "unknown",
 					tool: "unknown",
 					error: null,
@@ -371,21 +354,14 @@ export default function (pi: ExtensionAPI): void {
 				output: totalOutputTokens,
 				cacheRead: totalCacheRead,
 				cacheWrite: totalCacheWrite,
-				total:
-					totalInputTokens +
-					totalOutputTokens +
-					totalCacheRead +
-					totalCacheWrite,
+				total: totalInputTokens + totalOutputTokens + totalCacheRead + totalCacheWrite,
 			},
 			cost: totalCost,
 			compactions: compactionCount,
 			modelChanges,
 			thinkingChanges,
 		};
-		await writeFile(
-			path.join(sessionDir, "metadata.json"),
-			JSON.stringify(meta, null, 2),
-		);
+		await writeFile(path.join(sessionDir, "metadata.json"), JSON.stringify(meta, null, 2));
 	}
 
 	// ── event handlers ───────────────────────────────────────────────────

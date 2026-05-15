@@ -52,19 +52,9 @@ export interface LspInitializeResult {
 import { isObject } from "./types.js";
 
 export function isLspDiagnosticData(obj: unknown): obj is LspDiagnosticData {
-	return (
-		isObject(obj) &&
-		isObject(obj.range) &&
-		typeof obj.message === "string"
-	);
+	return isObject(obj) && isObject(obj.range) && typeof obj.message === "string";
 }
 
-export function isLspPublishDiagnosticsParams(
-	obj: unknown,
-): obj is LspPublishDiagnosticsParams {
-	return (
-		isObject(obj) &&
-		typeof obj.uri === "string" &&
-		Array.isArray(obj.diagnostics)
-	);
+export function isLspPublishDiagnosticsParams(obj: unknown): obj is LspPublishDiagnosticsParams {
+	return isObject(obj) && typeof obj.uri === "string" && Array.isArray(obj.diagnostics);
 }

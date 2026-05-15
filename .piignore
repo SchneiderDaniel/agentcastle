@@ -18,8 +18,8 @@ credentials.*
 # --------------------------------------------------------------------
 # Dependencies (massive, rarely needed)
 # --------------------------------------------------------------------
-node_modules/
-!node_modules/@earendil-works/pi-coding-agent/
+# node_modules/
+# !node_modules/@earendil-works/pi-coding-agent/
 
 # --------------------------------------------------------------------
 # Pi agent sessions & internals (huge, irrelevant for coding)

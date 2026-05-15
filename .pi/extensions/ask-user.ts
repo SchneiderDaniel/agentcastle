@@ -53,8 +53,7 @@ export default function askUser(pi: ExtensionAPI): void {
 					}),
 					recommended: Type.Optional(
 						Type.Boolean({
-							description:
-								"Set to true for exactly ONE option to mark it as 'Recommended'",
+							description: "Set to true for exactly ONE option to mark it as 'Recommended'",
 						}),
 					),
 				}),
@@ -107,11 +106,7 @@ export default function askUser(pi: ExtensionAPI): void {
 						noMatch: (text) => theme.fg("muted", text),
 					};
 
-					const selectList = new SelectList(
-						items,
-						Math.min(items.length, 10),
-						selectListTheme,
-					);
+					const selectList = new SelectList(items, Math.min(items.length, 10), selectListTheme);
 					selectList.onSelect = (item) => done(item.value);
 					selectList.onCancel = () => done(undefined);
 
@@ -125,10 +120,7 @@ export default function askUser(pi: ExtensionAPI): void {
 							const qLines = wrapTextWithAnsi(question, Math.max(10, width - 4));
 
 							// Clamp scroll offset in case terminal was resized
-							const maxOffset = Math.max(
-								0,
-								qLines.length - MAX_QUESTION_LINES,
-							);
+							const maxOffset = Math.max(0, qLines.length - MAX_QUESTION_LINES);
 							if (questionScrollOffset > maxOffset) {
 								questionScrollOffset = maxOffset;
 							}
@@ -147,9 +139,7 @@ export default function askUser(pi: ExtensionAPI): void {
 
 							// Scroll indicator at top
 							if (questionScrollOffset > 0) {
-								lines.push(
-									theme.fg("dim", "  ▲ more above (PgUp to scroll)"),
-								);
+								lines.push(theme.fg("dim", "  ▲ more above (PgUp to scroll)"));
 							}
 
 							// Question lines
@@ -158,13 +148,8 @@ export default function askUser(pi: ExtensionAPI): void {
 							}
 
 							// Scroll indicator at bottom of question area
-							if (
-								questionScrollOffset + MAX_QUESTION_LINES <
-								qLines.length
-							) {
-								lines.push(
-									theme.fg("dim", "  ▼ more below (PgDn to scroll)"),
-								);
+							if (questionScrollOffset + MAX_QUESTION_LINES < qLines.length) {
+								lines.push(theme.fg("dim", "  ▼ more below (PgDn to scroll)"));
 							}
 
 							lines.push("");
@@ -198,10 +183,7 @@ export default function askUser(pi: ExtensionAPI): void {
 
 							// PgUp — scroll question up
 							if (kb.matches(data, "tui.select.pageUp")) {
-								questionScrollOffset = Math.max(
-									0,
-									questionScrollOffset - QUESTION_SCROLL_STEP,
-								);
+								questionScrollOffset = Math.max(0, questionScrollOffset - QUESTION_SCROLL_STEP);
 								tui.requestRender();
 								return;
 							}
@@ -261,7 +243,8 @@ export default function askUser(pi: ExtensionAPI): void {
 			}
 
 			// User picked a predefined option
-			const selectedValue = labelToValue.find((e) => e.label === selectedLabel)?.value ?? selectedLabel;
+			const selectedValue =
+				labelToValue.find((e) => e.label === selectedLabel)?.value ?? selectedLabel;
 			return {
 				content: [
 					{

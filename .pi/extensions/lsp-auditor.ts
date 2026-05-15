@@ -66,21 +66,32 @@ export interface PreAuditResult {
 /** Severity name → LSP diagnostic severity number (1=Error, 2=Warning, 3=Information, 4=Hint) */
 export function severityValue(severity: string): number {
 	switch (severity.toLowerCase()) {
-		case "error": return 1;
-		case "warning": return 2;
-		case "information": case "info": return 3;
-		case "hint": return 4;
-		default: return 99;
+		case "error":
+			return 1;
+		case "warning":
+			return 2;
+		case "information":
+		case "info":
+			return 3;
+		case "hint":
+			return 4;
+		default:
+			return 99;
 	}
 }
 
 /** Threshold string → max severity value to include */
 export function thresholdValue(threshold: string): number {
 	switch (threshold.toLowerCase()) {
-		case "error": return 1;
-		case "warning": return 2;
-		case "info": case "information": return 4; // "info" = show all including hints
-		default: return 2; // default to error+warning
+		case "error":
+			return 1;
+		case "warning":
+			return 2;
+		case "info":
+		case "information":
+			return 4; // "info" = show all including hints
+		default:
+			return 2; // default to error+warning
 	}
 }
 
@@ -102,7 +113,7 @@ export function formatDiagnostics(diagnostics: LspDiagnostic[]): string {
 	const files = [...byFile.keys()].sort();
 	for (const file of files) {
 		const diags = byFile.get(file)!;
-		diags.sort((a, b) => a.line !== b.line ? a.line - b.line : a.column - b.column);
+		diags.sort((a, b) => (a.line !== b.line ? a.line - b.line : a.column - b.column));
 
 		const lines: string[] = [];
 		for (const d of diags) {
@@ -121,10 +132,7 @@ export function formatDiagnostics(diagnostics: LspDiagnostic[]): string {
  * Filter diagnostics by severity threshold string.
  * "error" → only errors, "warning" → errors+warnings, "info" → all.
  */
-export function filterBySeverity(
-	diagnostics: LspDiagnostic[],
-	threshold: string,
-): LspDiagnostic[] {
+export function filterBySeverity(diagnostics: LspDiagnostic[], threshold: string): LspDiagnostic[] {
 	if (!diagnostics || !Array.isArray(diagnostics)) return [];
 	const maxVal = thresholdValue(threshold || "warning");
 	return diagnostics.filter((d) => severityValue(d.severity) <= maxVal);
@@ -159,8 +167,18 @@ export function mergeResults(results: AuditResult[]): AuditResult {
  *  NOT raw `tsserver` (which speaks a custom protocol, not LSP).
  */
 export const DEFAULT_SERVER_MAPPINGS: ServerMapping[] = [
-	{ extensions: [".ts", ".tsx", ".js", ".jsx"], command: "typescript-language-server", args: ["--stdio"], severityThreshold: "warning" },
-	{ extensions: [".py"], command: "pyright-langserver", args: ["--stdio"], severityThreshold: "warning" },
+	{
+		extensions: [".ts", ".tsx", ".js", ".jsx"],
+		command: "typescript-language-server",
+		args: ["--stdio"],
+		severityThreshold: "warning",
+	},
+	{
+		extensions: [".py"],
+		command: "pyright-langserver",
+		args: ["--stdio"],
+		severityThreshold: "warning",
+	},
 	{ extensions: [".rs"], command: "rust-analyzer", args: [], severityThreshold: "warning" },
 	{ extensions: [".go"], command: "gopls", args: [], severityThreshold: "warning" },
 ];
@@ -172,8 +190,16 @@ export const DEFAULT_SERVER_MAPPINGS: ServerMapping[] = [
 export function buildServerMappings(configRaw: unknown): ServerMapping[] {
 	if (!configRaw || typeof configRaw !== "object") return [...DEFAULT_SERVER_MAPPINGS];
 
-	const config = configRaw as { servers?: Array<{ extensions: string[]; command: string; args?: string[]; severityThreshold?: string }> };
-	if (!config.servers || !Array.isArray(config.servers) || config.servers.length === 0) return [...DEFAULT_SERVER_MAPPINGS];
+	const config = configRaw as {
+		servers?: Array<{
+			extensions: string[];
+			command: string;
+			args?: string[];
+			severityThreshold?: string;
+		}>;
+	};
+	if (!config.servers || !Array.isArray(config.servers) || config.servers.length === 0)
+		return [...DEFAULT_SERVER_MAPPINGS];
 
 	const merged = [...DEFAULT_SERVER_MAPPINGS];
 
@@ -181,7 +207,7 @@ export function buildServerMappings(configRaw: unknown): ServerMapping[] {
 		if (!srv.extensions || !Array.isArray(srv.extensions) || srv.extensions.length === 0) continue;
 		if (!srv.command || typeof srv.command !== "string" || !srv.command.trim()) continue;
 
-		const exts = [...new Set(srv.extensions.map(e => e.toLowerCase()))];
+		const exts = [...new Set(srv.extensions.map((e) => e.toLowerCase()))];
 
 		let threshold: "error" | "warning" | "info" = "warning";
 		if (srv.severityThreshold) {
@@ -199,7 +225,7 @@ export function buildServerMappings(configRaw: unknown): ServerMapping[] {
 		// Remove overlapping defaults
 		const overlapExts = new Set(exts);
 		for (let i = merged.length - 1; i >= 0; i--) {
-			if (merged[i]!.extensions.some(e => overlapExts.has(e.toLowerCase()))) {
+			if (merged[i]!.extensions.some((e) => overlapExts.has(e.toLowerCase()))) {
 				merged.splice(i, 1);
 			}
 		}
@@ -221,7 +247,10 @@ export function buildServerMappings(configRaw: unknown): ServerMapping[] {
 export function extractModifiedFiles(gitDiffOutput: string, worktreePath: string): string[] {
 	if (!gitDiffOutput || !gitDiffOutput.trim()) return [];
 
-	const lines = gitDiffOutput.trim().split("\n").filter(l => l.trim());
+	const lines = gitDiffOutput
+		.trim()
+		.split("\n")
+		.filter((l) => l.trim());
 	const files: string[] = [];
 
 	for (const line of lines) {
@@ -331,7 +360,7 @@ let jsonRpcModule: JsonRpcModule | null = null;
 async function loadJsonRpc(): Promise<boolean> {
 	if (jsonRpcModule) return true;
 	try {
-		jsonRpcModule = await import("vscode-jsonrpc") as JsonRpcModule;
+		jsonRpcModule = (await import("vscode-jsonrpc")) as JsonRpcModule;
 		return true;
 	} catch {
 		return false;
@@ -343,14 +372,22 @@ async function loadJsonRpc(): Promise<boolean> {
  */
 function languageIdForExtension(ext: string): string {
 	switch (ext) {
-		case ".ts": return "typescript";
-		case ".tsx": return "typescriptreact";
-		case ".js": return "javascript";
-		case ".jsx": return "javascriptreact";
-		case ".py": return "python";
-		case ".rs": return "rust";
-		case ".go": return "go";
-		default: return ext.slice(1);
+		case ".ts":
+			return "typescript";
+		case ".tsx":
+			return "typescriptreact";
+		case ".js":
+			return "javascript";
+		case ".jsx":
+			return "javascriptreact";
+		case ".py":
+			return "python";
+		case ".rs":
+			return "rust";
+		case ".go":
+			return "go";
+		default:
+			return ext.slice(1);
 	}
 }
 
@@ -369,7 +406,11 @@ export async function auditFileGroup(
 	const allDiagnostics: LspDiagnostic[] = [];
 
 	if (!(await loadJsonRpc())) {
-		return { diagnostics: [], errors: [`vscode-jsonrpc not installed — cannot audit ${mapping.command}`], note: "" };
+		return {
+			diagnostics: [],
+			errors: [`vscode-jsonrpc not installed — cannot audit ${mapping.command}`],
+			note: "",
+		};
 	}
 
 	let child: ChildProcess | null = null;
@@ -400,7 +441,9 @@ export async function auditFileGroup(
 		});
 
 		child.on("error", (err) => {
-			errors.push(`LSP server ${mapping.command} crashed: ${err instanceof Error ? err.message : String(err)}`);
+			errors.push(
+				`LSP server ${mapping.command} crashed: ${err instanceof Error ? err.message : String(err)}`,
+			);
 		});
 
 		// If spawn immediately failed (e.g. binary not found), handle early
@@ -500,7 +543,7 @@ export async function auditFileGroup(
 		const DIAG_WAIT_TIMEOUT_MS = 30_000;
 		while (Date.now() - diagStartTime < DIAG_WAIT_TIMEOUT_MS) {
 			if (openedUris.size === 0) break;
-			const allDiagnosed = [...openedUris].every(uri => diagnosedUris.has(uri));
+			const allDiagnosed = [...openedUris].every((uri) => diagnosedUris.has(uri));
 			if (allDiagnosed) break;
 			await sleep(200);
 		}
@@ -521,12 +564,16 @@ export async function auditFileGroup(
 		return { diagnostics: filtered, errors, note: "" };
 	} catch (err) {
 		// Server crash or protocol error
-		errors.push(`LSP server ${mapping.command} error: ${err instanceof Error ? err.message : String(err)}`);
+		errors.push(
+			`LSP server ${mapping.command} error: ${err instanceof Error ? err.message : String(err)}`,
+		);
 		return { diagnostics: allDiagnostics, errors, note: "" };
 	} finally {
 		try {
 			if (connection) connection.dispose();
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 		try {
 			if (child) {
 				// Remove all error listeners to prevent async errors after cleanup
@@ -539,24 +586,35 @@ export async function auditFileGroup(
 					// Use local reference to avoid race on re-assignment
 					const childRef = child;
 					const killTimer = setTimeout(() => {
-						try { childRef.kill("SIGKILL"); } catch { /* ignore */ }
+						try {
+							childRef.kill("SIGKILL");
+						} catch {
+							/* ignore */
+						}
 					}, 5000);
 					// Allow timer to be garbage-collected if not needed (unref for clean exit)
 					killTimer.unref();
 				}
 			}
-		} catch { /* ignore */ }
+		} catch {
+			/* ignore */
+		}
 	}
 }
 
 /** Map LSP diagnostic severity number to label string */
 function lspSeverityToLabel(severity: number): "Error" | "Warning" | "Information" | "Hint" {
 	switch (severity) {
-		case 1: return "Error";
-		case 2: return "Warning";
-		case 3: return "Information";
-		case 4: return "Hint";
-		default: return "Information";
+		case 1:
+			return "Error";
+		case 2:
+			return "Warning";
+		case 3:
+			return "Information";
+		case 4:
+			return "Hint";
+		default:
+			return "Information";
 	}
 }
 
@@ -596,17 +654,25 @@ export async function runPreAudit(
 		const { execFile } = await import("node:child_process");
 		const worktreeAbs = resolvePath(worktreePath);
 		gitOutput = await new Promise<string>((resolve, reject) => {
-			execFile("git", ["diff", defaultBranch, "--name-only"], {
-				cwd: worktreeAbs,
-				encoding: "utf-8",
-				timeout: 10_000,
-			}, (err, stdout) => {
-				if (err) reject(err);
-				else resolve(stdout.trim());
-			});
+			execFile(
+				"git",
+				["diff", defaultBranch, "--name-only"],
+				{
+					cwd: worktreeAbs,
+					encoding: "utf-8",
+					timeout: 10_000,
+				},
+				(err, stdout) => {
+					if (err) reject(err);
+					else resolve(stdout.trim());
+				},
+			);
 		});
 	} catch (err: unknown) {
-		const msg = err instanceof Error ? (err as NodeJS.ErrnoException).stderr?.toString() || err.message : String(err);
+		const msg =
+			err instanceof Error
+				? (err as NodeJS.ErrnoException).stderr?.toString() || err.message
+				: String(err);
 		pi.sendUserMessage?.(`LSP audit skipped: git diff failed (${msg})`, { deliverAs: "followUp" });
 		return { proceed: true, note: `LSP audit skipped: git diff failed` };
 	}
@@ -686,15 +752,22 @@ export async function runPreAudit(
 		`The following diagnostics were detected in your changes. Please fix them before the human Auditor reviews.`,
 		``,
 		formatted,
-		(merged.errors.length > 0 ? `\nServer notes: ${merged.errors.join("; ")}` : ""),
+		merged.errors.length > 0 ? `\nServer notes: ${merged.errors.join("; ")}` : "",
 	].join("\n");
 
 	pi.sendUserMessage?.(followUpMsg, { deliverAs: "followUp" });
 
 	// Record retry attempt
-	pi.appendEntry?.(RETRY_ENTRY_TYPE, { issueNum, attempt: attemptNum, timestamp: new Date().toISOString() });
+	pi.appendEntry?.(RETRY_ENTRY_TYPE, {
+		issueNum,
+		attempt: attemptNum,
+		timestamp: new Date().toISOString(),
+	});
 
-	return { proceed: false, note: `LSP audit: ${filteredDiags.length} issue(s) found — retry ${attemptNum}/${MAX_RETRIES}` };
+	return {
+		proceed: false,
+		note: `LSP audit: ${filteredDiags.length} issue(s) found — retry ${attemptNum}/${MAX_RETRIES}`,
+	};
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -748,7 +821,9 @@ export default function lspAuditor(pi: ExtensionAPI): void {
 						defaultBranch = supCfg.defaultBranch;
 					}
 				}
-			} catch { /* use default */ }
+			} catch {
+				/* use default */
+			}
 			const result = await runPreAudit(
 				{ issueNum: 0, worktreePath: cwd, defaultBranch, repo: "" },
 				pi,

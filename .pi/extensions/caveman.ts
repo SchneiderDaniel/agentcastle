@@ -19,17 +19,9 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import {
-	Container,
-	type SettingItem,
-	SettingsList,
-	Text,
-} from "@earendil-works/pi-tui";
+import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 
 // ---------------------------------------------------------------------------
 // Levels
@@ -76,9 +68,7 @@ async function loadConfig(): Promise<CavemanConfig> {
 				? parsed.defaultLevel
 				: DEFAULT_CONFIG.defaultLevel,
 			showStatus:
-				typeof parsed.showStatus === "boolean"
-					? parsed.showStatus
-					: DEFAULT_CONFIG.showStatus,
+				typeof parsed.showStatus === "boolean" ? parsed.showStatus : DEFAULT_CONFIG.showStatus,
 		};
 	} catch {
 		return { ...DEFAULT_CONFIG };
@@ -228,10 +218,7 @@ export default function caveman(pi: ExtensionAPI): void {
 		const setFrame = (frame: string) => {
 			ctx.ui.setStatus(
 				"caveman",
-				frame +
-					" " +
-					theme.fg("muted", "caveman: ") +
-					theme.fg("text", anim.label),
+				frame + " " + theme.fg("muted", "caveman: ") + theme.fg("text", anim.label),
 			);
 		};
 
@@ -262,9 +249,13 @@ export default function caveman(pi: ExtensionAPI): void {
 		let sessionLevel: Level | null = null;
 		/** Type guard: check if stored data has a valid caveman level */
 		function isCavemanLevelData(data: unknown): data is { level: Level } {
-			return typeof data === "object" && data !== null &&
-				"level" in data && typeof (data as Record<string, unknown>).level === "string" &&
-				LEVELS.includes((data as Record<string, unknown>).level as Level);
+			return (
+				typeof data === "object" &&
+				data !== null &&
+				"level" in data &&
+				typeof (data as Record<string, unknown>).level === "string" &&
+				LEVELS.includes((data as Record<string, unknown>).level as Level)
+			);
 		}
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (entry.type === "custom" && entry.customType === "caveman-level") {
@@ -308,9 +299,7 @@ export default function caveman(pi: ExtensionAPI): void {
 			"Toggle caveman mode, set level, use off/stop/quit to disable, or 'config' to open settings",
 		getArgumentCompletions: (prefix: string) => {
 			const normalized = prefix.trim().toLowerCase();
-			const items = CAVEMAN_COMMAND_OPTIONS.filter((item) =>
-				item.value.startsWith(normalized),
-			);
+			const items = CAVEMAN_COMMAND_OPTIONS.filter((item) => item.value.startsWith(normalized));
 			return items.length > 0 ? items : null;
 		},
 		handler: async (args, ctx) => {
@@ -369,18 +358,10 @@ export default function caveman(pi: ExtensionAPI): void {
 			];
 
 			const container = new Container();
+			container.addChild(new Text(theme.fg("accent", theme.bold(" Caveman Config")), 0, 0));
+			container.addChild(new Text(theme.fg("dim", " Saved to ~/.pi/agent/caveman.json"), 0, 0));
 			container.addChild(
-				new Text(theme.fg("accent", theme.bold(" Caveman Config")), 0, 0),
-			);
-			container.addChild(
-				new Text(theme.fg("dim", " Saved to ~/.pi/agent/caveman.json"), 0, 0),
-			);
-			container.addChild(
-				new Text(
-					theme.fg("dim", " Default level applies to future sessions."),
-					0,
-					0,
-				),
+				new Text(theme.fg("dim", " Default level applies to future sessions."), 0, 0),
 			);
 			container.addChild(new Text("", 0, 0));
 
@@ -404,26 +385,19 @@ export default function caveman(pi: ExtensionAPI): void {
 
 			container.addChild(settingsList);
 			container.addChild(
-				new Text(
-					theme.fg("dim", " ←→/hl/tab change • ↑↓/jk move • esc close"),
-					0,
-					0,
-				),
+				new Text(theme.fg("dim", " ←→/hl/tab change • ↑↓/jk move • esc close"), 0, 0),
 			);
 
 			const cycleSelectedValue = (direction: -1 | 1) => {
 				// NOTE: SettingsList doesn't expose selectedIndex publicly.
 				// This cast bypasses the private field — fragile if TUI lib changes.
 				// TODO: ask pi SDK team to expose selectedIndex on SettingsList API.
-				const selectedIndex = (
-					settingsList as unknown as { selectedIndex: number }
-				).selectedIndex;
+				const selectedIndex = (settingsList as unknown as { selectedIndex: number }).selectedIndex;
 				const item = items[selectedIndex];
 				if (!item?.values?.length) return;
 
 				const currentIndex = item.values.indexOf(item.currentValue);
-				const nextIndex =
-					(currentIndex + direction + item.values.length) % item.values.length;
+				const nextIndex = (currentIndex + direction + item.values.length) % item.values.length;
 				const newValue = item.values[nextIndex]!;
 				item.currentValue = newValue;
 				settingsList.updateValue(item.id, newValue);

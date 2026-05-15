@@ -25,9 +25,7 @@ export interface ToolResult {
 // ─── Callback types ──────────────────────────────────────────────────
 
 /** Update callback signature for extensions */
-export type OnUpdateCallback = (
-	update: { content: ContentBlock[]; details: unknown },
-) => void;
+export type OnUpdateCallback = (update: { content: ContentBlock[]; details: unknown }) => void;
 
 // ─── Extension init ──────────────────────────────────────────────────
 
@@ -43,11 +41,7 @@ export function isObject(value: unknown): value is Record<string, unknown> {
 
 /** Check if value is a text content block */
 export function isTextBlock(value: unknown): value is ContentBlock {
-	return (
-		isObject(value) &&
-		value.type === "text" &&
-		typeof value.text === "string"
-	);
+	return isObject(value) && value.type === "text" && typeof value.text === "string";
 }
 
 /** Extract text from content blocks or string */

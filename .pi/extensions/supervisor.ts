@@ -8,15 +8,11 @@
  * Agents are defined as .pi/agents/*.md files with YAML frontmatter.
  */
 
-import type {
-	ExtensionAPI,
-	ExtensionCommandContext,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-
 
 // ─── Types ───────────────────────────────────────────────────────────
 
@@ -27,11 +23,11 @@ interface SupervisorConfig {
 	statusMapping: Record<string, string>;
 	maxRejections?: number;
 	codeowners: string[];
-	submodules?: Array<{path: string; repo: string}>;
-	defaultBranch?: string;     // e.g. "main" (default: "main")
-	remote?: string;            // e.g. "origin" (default: "origin")
-	worktreeBase?: string;      // e.g. "../" (default: "../")
-	branchPrefix?: string;      // e.g. "worktree-git-issue-" (default: "worktree-git-issue-")
+	submodules?: Array<{ path: string; repo: string }>;
+	defaultBranch?: string; // e.g. "main" (default: "main")
+	remote?: string; // e.g. "origin" (default: "origin")
+	worktreeBase?: string; // e.g. "../" (default: "../")
+	branchPrefix?: string; // e.g. "worktree-git-issue-" (default: "worktree-git-issue-")
 	agentTimeoutsMin?: Record<string, number>; // per-agent timeout overrides in minutes
 }
 
@@ -87,6 +83,8 @@ interface AgentRunResult {
 	summaryLine: string;
 	/** Raw stderr if any */
 	errorOutput: string;
+	/** Text-only output for marker detection (no tool/thinking noise) */
+	textOnly: string;
 	/** Thinking output from sub-agent (for expanded message renderer view) */
 	thinkingOutput?: string;
 }
@@ -111,6 +109,10 @@ export interface AgentRunState {
 	contextTokens?: number;
 	contextWindow?: number;
 	contextInfoReceived: boolean;
+	/** Whether thinking was already pushed via streaming (dedup message_end) */
+	thinkingPushedThisTurn: boolean;
+	/** Whether text was already pushed via streaming (dedup message_end) */
+	textPushedThisTurn: boolean;
 }
 
 // ─── Message renderer details type ───────────────────────────────────
@@ -133,11 +135,11 @@ interface SupervisorMessageDetails {
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 /** Parse .gitmodules into submodule entries. Only returns entries with GitHub URLs. */
-function parseGitmodules(): Array<{path: string; repo: string}> {
+function parseGitmodules(): Array<{ path: string; repo: string }> {
 	const gitmodulesPath = ".gitmodules";
 	if (!existsSync(gitmodulesPath)) return [];
 	const content = readFileSync(gitmodulesPath, "utf-8");
-	const subs: Array<{path: string; repo: string}> = [];
+	const subs: Array<{ path: string; repo: string }> = [];
 	const sectionRe = /\[submodule\s+"(.+?)"\]/g;
 	let match: RegExpExecArray | null;
 	while ((match = sectionRe.exec(content)) !== null) {
@@ -145,9 +147,8 @@ function parseGitmodules(): Array<{path: string; repo: string}> {
 		// Extract the section body between this [submodule] and the next one (or EOF)
 		const sectionStart = match.index + match[0].length;
 		const nextSection = content.indexOf("[", sectionStart);
-		const sectionBody = nextSection === -1
-			? content.slice(sectionStart)
-			: content.slice(sectionStart, nextSection);
+		const sectionBody =
+			nextSection === -1 ? content.slice(sectionStart) : content.slice(sectionStart, nextSection);
 		const pathMatch = sectionBody.match(/^\s*path\s*=\s*(.+)$/m);
 		const urlMatch = sectionBody.match(/^\s*url\s*=\s*(.+)$/m);
 		if (!pathMatch || !urlMatch) continue;
@@ -171,8 +172,7 @@ export function loadConfig(): SupervisorConfig {
 	const cfg = settings.supervisor;
 	if (!cfg) throw new Error("No 'supervisor' key in .pi/settings.json.");
 	if (!cfg.repo) throw new Error("supervisor.repo is required.");
-	if (!cfg.projectNumber)
-		throw new Error("supervisor.projectNumber is required.");
+	if (!cfg.projectNumber) throw new Error("supervisor.projectNumber is required.");
 	if (!cfg.statusMapping || Object.keys(cfg.statusMapping).length === 0) {
 		throw new Error("supervisor.statusMapping is required.");
 	}
@@ -181,7 +181,7 @@ export function loadConfig(): SupervisorConfig {
 		throw new Error("supervisor.codeowners must be a non-empty list of trusted GitHub usernames.");
 	}
 	// Submodules: explicit config takes precedence, otherwise auto-detect from .gitmodules
-	let submodules: Array<{path: string; repo: string}>;
+	let submodules: Array<{ path: string; repo: string }>;
 	if (Array.isArray(cfg.submodules) && cfg.submodules.length > 0) {
 		submodules = cfg.submodules;
 	} else {
@@ -219,10 +219,7 @@ export const DEFAULT_AGENT_TIMEOUT_MS = 1_800_000;
  * - Unknown agent names: warn and strip
  * - Non-integer / non-positive → throw
  */
-export function validateAgentTimeouts(
-	raw: unknown,
-	knownAgents: string[],
-): Record<string, number> {
+export function validateAgentTimeouts(raw: unknown, knownAgents: string[]): Record<string, number> {
 	// Handle undefined/null
 	if (raw === undefined || raw === null) {
 		return {};
@@ -230,9 +227,7 @@ export function validateAgentTimeouts(
 
 	// Must be an object
 	if (typeof raw !== "object" || Array.isArray(raw) || raw === null) {
-		throw new Error(
-			`agentTimeoutsMin must be an object, got ${typeof raw}`,
-		);
+		throw new Error(`agentTimeoutsMin must be an object, got ${typeof raw}`);
 	}
 
 	const record = raw as Record<string, unknown>;
@@ -241,9 +236,7 @@ export function validateAgentTimeouts(
 	for (const [key, value] of Object.entries(record)) {
 		// Check if agent name is known
 		if (!knownAgents.includes(key)) {
-			console.warn(
-				`agentTimeoutsMin: unknown agent "${key}" — entry ignored`,
-			);
+			console.warn(`agentTimeoutsMin: unknown agent "${key}" — entry ignored`);
 			continue;
 		}
 
@@ -319,7 +312,7 @@ function filterIssueData(rawIssue: any, codeowners: string[]): FilteredIssueData
 	const isIssueAuthorTrusted = codeowners.includes(issueAuthor);
 
 	const body = isIssueAuthorTrusted
-		? (rawIssue?.body || "(no body)")
+		? rawIssue?.body || "(no body)"
 		: `[Issue body hidden — author @${issueAuthor} is not a trusted codeowner]`;
 
 	const rawComments: any[] = rawIssue?.comments || [];
@@ -355,10 +348,7 @@ function ghJson(args: string[]): any {
 	return JSON.parse(output);
 }
 
-function getProjectFields(
-	projectNumber: number,
-	_owner: string,
-): ProjectField[] {
+function getProjectFields(projectNumber: number, _owner: string): ProjectField[] {
 	const resp = ghGraphQL(`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
@@ -430,27 +420,22 @@ function getProjectItems(projectNumber: number, _owner: string): ProjectItem[] {
 		return {
 			id: n.id,
 			status,
-			content: n.content ? {
-				url: n.content.url,
-				number: n.content.number,
-			} : undefined,
+			content: n.content
+				? {
+						url: n.content.url,
+						number: n.content.number,
+					}
+				: undefined,
 			fieldValues: fv.length > 0 ? fv : undefined,
 		};
 	});
 }
 
-function findIssueItem(
-	items: ProjectItem[],
-	issueNumber: number,
-): ProjectItem | null {
+function findIssueItem(items: ProjectItem[], issueNumber: number): ProjectItem | null {
 	for (const item of items) {
 		if (item.content?.number === issueNumber) return item;
 		const url = item.content?.url || "";
-		if (
-			url.includes(`/issues/${issueNumber}`) ||
-			url.includes(`/pull/${issueNumber}`)
-		)
-			return item;
+		if (url.includes(`/issues/${issueNumber}`) || url.includes(`/pull/${issueNumber}`)) return item;
 	}
 	return null;
 }
@@ -466,18 +451,11 @@ function findStatusOption(
 ): string | null {
 	const field = fields.find((f) => f.id === statusFieldId);
 	if (!field?.options) return null;
-	const option = field.options.find(
-		(o) => o.name.toLowerCase() === statusName.toLowerCase(),
-	);
+	const option = field.options.find((o) => o.name.toLowerCase() === statusName.toLowerCase());
 	return option?.id || null;
 }
 
-function setItemStatus(
-	itemId: string,
-	projectId: string,
-	fieldId: string,
-	optionId: string,
-): void {
+function setItemStatus(itemId: string, projectId: string, fieldId: string, optionId: string): void {
 	gh([
 		"project",
 		"item-edit",
@@ -555,9 +533,7 @@ function ghGraphQL(query: string): any {
 	return JSON.parse(result);
 }
 
-function parseTimelineResponse(
-	response: GhTimelineResponse | null,
-): DepsResult {
+function parseTimelineResponse(response: GhTimelineResponse | null): DepsResult {
 	if (response?.errors && response.errors.length > 0) {
 		const msgs = response.errors.map((e) => e.message).join("; ");
 		throw new Error(`GitHub GraphQL error: ${msgs}`);
@@ -606,10 +582,7 @@ function parseTimelineResponse(
 	};
 }
 
-async function checkBlockedByDependencies(
-	issueNumber: number,
-	repo: string,
-): Promise<DepsResult> {
+async function checkBlockedByDependencies(issueNumber: number, repo: string): Promise<DepsResult> {
 	const [owner, name] = repo.split("/");
 	if (!owner || !name) {
 		throw new Error(`Invalid repo format: ${repo} (expected owner/name)`);
@@ -793,7 +766,10 @@ function discoverExtensionTools(): Map<string, string[]> {
  */
 function resolveTools(agentTools: string, extNamesRaw: string | undefined): string {
 	const toolSet = new Set(
-		agentTools.split(",").map((s) => s.trim()).filter(Boolean),
+		agentTools
+			.split(",")
+			.map((s) => s.trim())
+			.filter(Boolean),
 	);
 
 	if (extNamesRaw && extNamesRaw.trim()) {
@@ -816,7 +792,7 @@ function resolveTools(agentTools: string, extNamesRaw: string | undefined): stri
 
 // ─── Constants ──────────────────────────────────────────────────────
 
-export const MAX_FULL_LOG = 200;
+export const MAX_FULL_LOG = 500;
 export const WIDGET_LINES = 12;
 export const MAX_LIVE_THINKING = 500;
 
@@ -825,10 +801,14 @@ export const MAX_LIVE_THINKING = 500;
 /** Numeric priority for phase ordering. Higher = more important. */
 export function phasePriority(phase: AgentPhase): number {
 	switch (phase) {
-		case "tool": return 3;
-		case "thinking": return 2;
-		case "text": return 1;
-		case "idle": return 0;
+		case "tool":
+			return 3;
+		case "thinking":
+			return 2;
+		case "text":
+			return 1;
+		case "idle":
+			return 0;
 	}
 }
 
@@ -901,14 +881,10 @@ export function processJsonLine(
 			case "tool_execution_start": {
 				const prevPhase = state.phase;
 				state.currentTool = ev.toolName || "tool";
-				state.currentToolArgs = ev.args
-					? JSON.stringify(ev.args).slice(0, 200)
-					: undefined;
+				state.currentToolArgs = ev.args ? JSON.stringify(ev.args).slice(0, 200) : undefined;
 				state.lastToolName = ev.toolName;
 				state.phase = "tool";
-				const logArgs = ev.args
-					? JSON.stringify(ev.args).slice(0, 200)
-					: "";
+				const logArgs = ev.args ? JSON.stringify(ev.args).slice(0, 200) : "";
 				pushLog(state, `🔧 ${ev.toolName}${logArgs ? ` ${logArgs}` : ""}`);
 				return { flush: true, workingChange: prevPhase !== "tool" };
 			}
@@ -926,6 +902,10 @@ export function processJsonLine(
 			case "message_update": {
 				const delta = ev.delta;
 				if (!delta) break;
+
+				// Reset turn-level dedup flags for this update batch
+				state.thinkingPushedThisTurn = false;
+				state.textPushedThisTurn = false;
 
 				const prevPhase = state.phase;
 				const eventPhase = getPhaseFromEvent(ev);
@@ -967,6 +947,7 @@ export function processJsonLine(
 								const trimmed = t.trim();
 								if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 200)}`);
 							}
+							state.thinkingPushedThisTurn = true;
 						}
 						state.liveThinking = "";
 						state.phase = "idle";
@@ -980,6 +961,7 @@ export function processJsonLine(
 								const trimmed = t.trim();
 								if (trimmed) pushLog(state, trimmed);
 							}
+							state.textPushedThisTurn = true;
 						}
 						// Capture usage from text_end or parent message
 						if (ev.usage) {
@@ -1000,29 +982,31 @@ export function processJsonLine(
 				if (!msg) break;
 
 				if (msg.role === "assistant") {
-					// Capture thinking from content blocks
-					if (Array.isArray(msg.content)) {
+					// Only capture content not already pushed via streaming events
+					if (!state.thinkingPushedThisTurn && Array.isArray(msg.content)) {
 						for (const block of msg.content) {
 							if (block.type === "thinking" && block.thinking) {
-								const thinkingText = typeof block.thinking === "string"
-									? block.thinking
-									: JSON.stringify(block.thinking).slice(0, 500);
+								const thinkingText =
+									typeof block.thinking === "string"
+										? block.thinking
+										: JSON.stringify(block.thinking).slice(0, 500);
 								for (const t of thinkingText.split("\n")) {
 									if (t.trim()) pushLog(state, `💭 ${t.slice(0, 200)}`);
 								}
 							}
 						}
 					}
-					const text = extractTextFromContent(msg.content);
-					if (text && text.trim()) {
-						state.textOutputLines.push(text.trim());
-						for (const t of text.split("\n")) {
-							if (t.trim()) pushLog(state, t);
+					if (!state.textPushedThisTurn) {
+						const text = extractTextFromContent(msg.content);
+						if (text && text.trim()) {
+							state.textOutputLines.push(text.trim());
+							for (const t of text.split("\n")) {
+								if (t.trim()) pushLog(state, t);
+							}
 						}
 					}
 					if (msg.usage) {
-						state.tokenCount =
-							msg.usage.totalTokens || msg.usage.input + msg.usage.output;
+						state.tokenCount = msg.usage.totalTokens || msg.usage.input + msg.usage.output;
 					}
 				} else if (msg.role === "toolResult") {
 					const resultText = extractTextFromContent(msg.content);
@@ -1031,8 +1015,7 @@ export function processJsonLine(
 						const resultLines = resultText.split("\n");
 						pushLog(state, `📋 ${label}: ${resultLines[0]?.slice(0, 300) || "(no output)"}`);
 						for (let i = 1; i < Math.min(resultLines.length, 6); i++) {
-							if (resultLines[i].trim())
-								pushLog(state, `   ${resultLines[i].slice(0, 200)}`);
+							if (resultLines[i].trim()) pushLog(state, `   ${resultLines[i].slice(0, 200)}`);
 						}
 					} else {
 						pushLog(state, `📋 ${label}: (no output)`);
@@ -1047,8 +1030,14 @@ export function processJsonLine(
 			case "turn_end":
 				break;
 		}
-	} catch {
-		// non-JSON stdout lines
+	} catch (parseErr: unknown) {
+		// Non-JSON stdout lines — extensions may write to stdout, corrupting event stream.
+		const preview = line.length > 200 ? line.slice(0, 200) + "…" : line;
+		if (line.trim()) {
+			console.error(
+				`[supervisor] JSON parse error: ${String(parseErr).slice(0, 200)} | line: ${preview}`,
+			);
+		}
 	}
 	return { flush: false, workingChange: false };
 }
@@ -1057,10 +1046,7 @@ export function processJsonLine(
  * Build widget lines from state. Pure function — no side effects.
  * Returns at most WIDGET_LINES (12) lines.
  */
-export function buildWidgetLines(
-	state: AgentRunState,
-	agentName: string,
-): string[] {
+export function buildWidgetLines(state: AgentRunState, agentName: string): string[] {
 	const lines: string[] = [];
 	const now = Date.now();
 
@@ -1068,8 +1054,14 @@ export function buildWidgetLines(
 	lines.push(`⚙ ${agentName}`);
 
 	// Context line
-	if (state.contextInfoReceived && state.contextTokens !== undefined && state.contextWindow !== undefined) {
-		lines.push(`  Context: ${formatTokens(state.contextTokens)}/${formatTokens(state.contextWindow)}`);
+	if (
+		state.contextInfoReceived &&
+		state.contextTokens !== undefined &&
+		state.contextWindow !== undefined
+	) {
+		lines.push(
+			`  Context: ${formatTokens(state.contextTokens)}/${formatTokens(state.contextWindow)}`,
+		);
 	} else {
 		lines.push("  Context: computing...");
 	}
@@ -1182,6 +1174,8 @@ export async function runAgent(
 		phase: "idle",
 		startedAt,
 		contextInfoReceived: false,
+		thinkingPushedThisTurn: false,
+		textPushedThisTurn: false,
 	};
 
 	return new Promise((resolve) => {
@@ -1261,17 +1255,20 @@ export async function runAgent(
 
 			const durationMs = Date.now() - startedAt;
 			const textOutput = state.fullLog.join("\n").trim();
+			const textOnly = state.textOutputLines.join("\n").trim();
 			const rawOutput = rawStdout + (stderr ? "\n[STDERR]\n" + stderr : "");
 			const killed = signal !== null;
 			const success = code === 0 && !killed;
 			if (killed) {
-				pushLog(state, `[Timeout: ${agentName} killed by ${signal} after ${formatDuration(durationMs)}]`);
+				pushLog(
+					state,
+					`[Timeout: ${agentName} killed by ${signal} after ${formatDuration(durationMs)}]`,
+				);
 			}
 
 			// Build thinking output from accumulated lines
-			const thinkingOutput = state.thinkingOutputLines.length > 0
-				? state.thinkingOutputLines.join("\n\n")
-				: undefined;
+			const thinkingOutput =
+				state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined;
 
 			// Extract a one-line summary from the text output
 			const summaryLine = extractSummaryLine(textOutput, success, agentName);
@@ -1289,6 +1286,7 @@ export async function runAgent(
 				tokenCount: state.tokenCount,
 				durationMs,
 				textOutput,
+				textOnly,
 				summaryLine,
 				errorOutput: stderr,
 				thinkingOutput,
@@ -1311,6 +1309,7 @@ export async function runAgent(
 				tokenCount: 0,
 				durationMs: Date.now() - startedAt,
 				textOutput: "",
+				textOnly: "",
 				summaryLine: `Failed to start: ${err.message}`,
 				errorOutput: err.message,
 			});
@@ -1330,11 +1329,7 @@ export function extractTextFromContent(content: any): string {
 }
 
 /** Pull a one-line summary from the agent's text output */
-function extractSummaryLine(
-	textOutput: string,
-	success: boolean,
-	agentName: string,
-): string {
+function extractSummaryLine(textOutput: string, success: boolean, agentName: string): string {
 	if (!textOutput) return success ? `${agentName} completed` : `${agentName} failed`;
 
 	// Find the LAST completion marker (avoids matching echoed task instructions
@@ -1357,13 +1352,16 @@ function extractSummaryLine(
 		}
 	}
 	if (lastMarker) {
-		return lastMarker.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+		return lastMarker
+			.replace(/_/g, " ")
+			.toLowerCase()
+			.replace(/\b\w/g, (c) => c.toUpperCase());
 	}
 
 	// Use first non-empty, non-tool line
-	const firstLine = textOutput.split("\n").find(
-		(l) => l.trim() && !l.startsWith("🔧") && !l.startsWith("📋") && !l.startsWith("💭"),
-	);
+	const firstLine = textOutput
+		.split("\n")
+		.find((l) => l.trim() && !l.startsWith("🔧") && !l.startsWith("📋") && !l.startsWith("💭"));
 	if (firstLine) {
 		return firstLine.trim().slice(0, 120);
 	}
@@ -1393,7 +1391,7 @@ function buildAgentTask(
 	repo: string,
 	title: string,
 	filteredData: FilteredIssueData,
-	submodules: Array<{path: string; repo: string}>,
+	submodules: Array<{ path: string; repo: string }>,
 	defaultBranch: string,
 	remote: string,
 	worktreeBase: string,
@@ -1449,24 +1447,24 @@ function buildAgentTask(
 					// Only create PR if submodule has actual changes (uncommitted or unpushed)
 					subBlocks.push(
 						`cd ${sub.path}\n` +
-						`CHANGES=$(git status --porcelain 2>/dev/null)\n` +
-						`COMMITS=$(git rev-list --count ${remote}/${defaultBranch}..${branch} 2>/dev/null || echo 0)\n` +
-						`if [ -n "$CHANGES" ] || [ "$COMMITS" != "0" ]; then\n` +
-						`  if [ -z "$CHANGES" ]; then\n` +
-						`    gh pr create --repo ${sub.repo} --base ${defaultBranch} --head ${branch} \\\n` +
-						`      --title "feat(#${issueNum}): ${title}" \\\n` +
-						`      --body "Companion PR for ${repo}#${issueNum}"\n` +
-						`  else\n` +
-						`    git checkout -b ${branch} 2>/dev/null || git checkout ${branch}\n` +
-						`    git add -A\n` +
-						`    git commit -m "feat(#${issueNum}): ${title}"\n` +
-						`    git push ${remote} ${branch}\n` +
-						`    gh pr create --repo ${sub.repo} --base ${defaultBranch} --head ${branch} \\\n` +
-						`      --title "feat(#${issueNum}): ${title}" \\\n` +
-						`      --body "Companion PR for ${repo}#${issueNum}"\n` +
-						`  fi\n` +
-						`fi\n` +
-						`cd ${worktreeBase}`
+							`CHANGES=$(git status --porcelain 2>/dev/null)\n` +
+							`COMMITS=$(git rev-list --count ${remote}/${defaultBranch}..${branch} 2>/dev/null || echo 0)\n` +
+							`if [ -n "$CHANGES" ] || [ "$COMMITS" != "0" ]; then\n` +
+							`  if [ -z "$CHANGES" ]; then\n` +
+							`    gh pr create --repo ${sub.repo} --base ${defaultBranch} --head ${branch} \\\n` +
+							`      --title "feat(#${issueNum}): ${title}" \\\n` +
+							`      --body "Companion PR for ${repo}#${issueNum}"\n` +
+							`  else\n` +
+							`    git checkout -b ${branch} 2>/dev/null || git checkout ${branch}\n` +
+							`    git add -A\n` +
+							`    git commit -m "feat(#${issueNum}): ${title}"\n` +
+							`    git push ${remote} ${branch}\n` +
+							`    gh pr create --repo ${sub.repo} --base ${defaultBranch} --head ${branch} \\\n` +
+							`      --title "feat(#${issueNum}): ${title}" \\\n` +
+							`      --body "Companion PR for ${repo}#${issueNum}"\n` +
+							`  fi\n` +
+							`fi\n` +
+							`cd ${worktreeBase}`,
 					);
 					subListItems.push(`${sub.repo}: \`${branch}\``);
 				}
@@ -1474,7 +1472,7 @@ function buildAgentTask(
 					`**Step 1 — Create submodule PRs first (critical order):**\n` +
 					`Check each submodule for changes. Only create a PR if there are actual changes (uncommitted files or unpushed commits):\n\n` +
 					`\`\`\`\n${subBlocks.join("\n\n")}\n\`\`\`\n\n`;
-				submodulePrList = subListItems.map(s => `- ${s}`).join("\n");
+				submodulePrList = subListItems.map((s) => `- ${s}`).join("\n");
 			}
 
 			const stepLabel = submodules.length > 0 ? "Step 2 — " : "";
@@ -1493,7 +1491,11 @@ function buildAgentTask(
 	}
 }
 
-function generateBranchName(issueNum: number, title: string, prefix: string = "worktree-git-issue-"): string {
+function generateBranchName(
+	issueNum: number,
+	title: string,
+	prefix: string = "worktree-git-issue-",
+): string {
 	const slug = title
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
@@ -1514,10 +1516,7 @@ interface PrConflictInfo {
 	baseRefName: string;
 }
 
-async function checkPrConflicts(
-	branch: string,
-	repo: string,
-): Promise<PrConflictInfo | null> {
+async function checkPrConflicts(branch: string, repo: string): Promise<PrConflictInfo | null> {
 	try {
 		const result = ghJson([
 			"pr",
@@ -1535,9 +1534,7 @@ async function checkPrConflicts(
 		const pr = result[0];
 		return {
 			number: pr.number,
-			hasConflict:
-				pr.mergeable === "CONFLICTING" ||
-				pr.mergeStateStatus === "DIRTY",
+			hasConflict: pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY",
 			mergeable: pr.mergeable || "UNKNOWN",
 			mergeStateStatus: pr.mergeStateStatus || "UNKNOWN",
 			headRefName: pr.headRefName,
@@ -1573,11 +1570,10 @@ function tryAutoMerge(
 		});
 
 		// Try merge
-		execFileSync(
-			"git",
-			["merge", `${remote}/${defaultBranch}`, "--no-edit"],
-			{ cwd: worktreePath, ...execOpts },
-		);
+		execFileSync("git", ["merge", `${remote}/${defaultBranch}`, "--no-edit"], {
+			cwd: worktreePath,
+			...execOpts,
+		});
 
 		return {
 			success: true,
@@ -1590,11 +1586,11 @@ function tryAutoMerge(
 		// Check for conflicted files
 		let conflictFiles: string[] = [];
 		try {
-			const status = execFileSync(
-				"git",
-				["diff", "--name-only", "--diff-filter=U"],
-				{ cwd: worktreePath, encoding: "utf-8", timeout: 10_000 },
-			).trim();
+			const status = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], {
+				cwd: worktreePath,
+				encoding: "utf-8",
+				timeout: 10_000,
+			}).trim();
 			if (status) {
 				conflictFiles = status.split("\n").filter(Boolean);
 			}
@@ -1691,7 +1687,11 @@ export function determineLspPreAuditDecision(
 
 	// No modified files — skip audit, proceed normally
 	if (!hasModifiedFiles) {
-		return { nextStatus: "Audit", note: "LSP audit skipped: no modified files", auditTriggered: false };
+		return {
+			nextStatus: "Audit",
+			note: "LSP audit skipped: no modified files",
+			auditTriggered: false,
+		};
 	}
 
 	// Audit was not run (null result) — proceed normally
@@ -1705,7 +1705,8 @@ export function determineLspPreAuditDecision(
 	}
 
 	// Audit found errors — check retry limit
-	const n = typeof retryCount !== "number" || Number.isNaN(retryCount) || retryCount < 0 ? 0 : retryCount;
+	const n =
+		typeof retryCount !== "number" || Number.isNaN(retryCount) || retryCount < 0 ? 0 : retryCount;
 	if (n >= 3) {
 		// Retries exhausted — force through to Audit with errors documented
 		return { nextStatus: "Audit", note: preAuditResult.note, auditTriggered: true };
@@ -1750,40 +1751,37 @@ export default function supervisor(pi: ExtensionAPI) {
 		const statusText = details.success ? "SUCCESS" : "FAILED";
 
 		// Header: status icon + agent name + status
-		c.addChild(new Text(
-			fit(`${theme.fg(statusColor, statusIcon)} ${theme.fg("toolTitle", boldText(theme, details.agentName))} — ${theme.fg(statusColor, statusText)}`),
-			1, 0,
-		));
+		c.addChild(
+			new Text(
+				fit(
+					`${theme.fg(statusColor, statusIcon)} ${theme.fg("toolTitle", boldText(theme, details.agentName))} — ${theme.fg(statusColor, statusText)}`,
+				),
+				1,
+				0,
+			),
+		);
 
 		// Stats line: tools, tokens, duration
 		const statsParts: string[] = [];
-		if (details.toolCount > 0) statsParts.push(`${details.toolCount} tool${details.toolCount === 1 ? "" : "s"}`);
+		if (details.toolCount > 0)
+			statsParts.push(`${details.toolCount} tool${details.toolCount === 1 ? "" : "s"}`);
 		if (details.tokenCount > 0) statsParts.push(`${formatTokens(details.tokenCount)} tokens`);
 		if (details.durationMs > 0) statsParts.push(formatDuration(details.durationMs));
 		if (statsParts.length > 0) {
 			c.addChild(new Spacer(1));
-			c.addChild(new Text(
-				fit(theme.fg("dim", statsParts.join(" · "))),
-				1, 0,
-			));
+			c.addChild(new Text(fit(theme.fg("dim", statsParts.join(" · "))), 1, 0));
 		}
 
 		// Summary line
 		if (details.summaryLine) {
 			c.addChild(new Spacer(1));
-			c.addChild(new Text(
-				fit(theme.fg("dim", details.summaryLine)),
-				1, 0,
-			));
+			c.addChild(new Text(fit(theme.fg("dim", details.summaryLine)), 1, 0));
 		}
 
 		// Thinking output (expanded view, color-coded as dim)
 		if (details.hasThinking && details.thinkingOutput) {
 			c.addChild(new Spacer(1));
-			c.addChild(new Text(
-				fit(theme.fg("dim", "── Thinking ──")),
-				1, 0,
-			));
+			c.addChild(new Text(fit(theme.fg("dim", "── Thinking ──")), 1, 0));
 			const thinkingLines = details.thinkingOutput.split("\n");
 			for (const line of thinkingLines) {
 				const styled = theme.fg("dim", line || " ");
@@ -1850,10 +1848,7 @@ export default function supervisor(pi: ExtensionAPI) {
 						"number,title,body,author,comments",
 					]);
 				} catch {
-					ctx.ui.notify(
-						`Issue #${issueNum} not found in ${config.repo}`,
-						"error",
-					);
+					ctx.ui.notify(`Issue #${issueNum} not found in ${config.repo}`, "error");
 					return;
 				}
 
@@ -1917,10 +1912,7 @@ export default function supervisor(pi: ExtensionAPI) {
 				// ── Dependency gate: check "blocked by" links ──────
 				ctx.ui.setStatus("supervisor", "Checking dependencies...");
 				try {
-					const depsResult = await checkBlockedByDependencies(
-						issueNum,
-						config.repo,
-					);
+					const depsResult = await checkBlockedByDependencies(issueNum, config.repo);
 					if (depsResult.blocked) {
 						const lines = depsResult.blockers.map((b) => {
 							const prefix = b.type === "pullrequest" ? "!" : "#";
@@ -1934,10 +1926,7 @@ export default function supervisor(pi: ExtensionAPI) {
 						return;
 					}
 				} catch (err: any) {
-					ctx.ui.notify(
-						`Dependency check failed: ${err.message}`,
-						"error",
-					);
+					ctx.ui.notify(`Dependency check failed: ${err.message}`, "error");
 					ctx.ui.setStatus("supervisor", "");
 					return;
 				}
@@ -1947,40 +1936,24 @@ export default function supervisor(pi: ExtensionAPI) {
 				const MAX_LOOPS = 20;
 
 				for (let i = 0; i < MAX_LOOPS; i++) {
-					ctx.ui.notify(
-						`Issue #${issueNum}: "${issueTitle}" — Status: ${loopStatus}`,
-						"info",
-					);
+					ctx.ui.notify(`Issue #${issueNum}: "${issueTitle}" — Status: ${loopStatus}`, "info");
 
 					// BACKLOG → advance to Architecture
 					if (loopStatus.toLowerCase() === "backlog") {
-						const optId = findStatusOption(
-							fields,
-							statusField.id,
-							"Architecture",
-						);
+						const optId = findStatusOption(fields, statusField.id, "Architecture");
 						if (!optId) {
-							ctx.ui.notify(
-								"Cannot find 'Architecture' status option",
-								"error",
-							);
+							ctx.ui.notify("Cannot find 'Architecture' status option", "error");
 							break;
 						}
 						setItemStatus(loopItem.id, projectId, statusField.id, optId);
-						ctx.ui.notify(
-							`Issue #${issueNum} moved: Backlog → Architecture`,
-							"info",
-						);
+						ctx.ui.notify(`Issue #${issueNum} moved: Backlog → Architecture`, "info");
 						loopStatus = "Architecture";
 						continue;
 					}
 
 					// DONE → complete
 					if (loopStatus.toLowerCase() === "done") {
-						ctx.ui.notify(
-							`Issue #${issueNum} is Done. Pipeline complete.`,
-							"info",
-						);
+						ctx.ui.notify(`Issue #${issueNum} is Done. Pipeline complete.`, "info");
 						break;
 					}
 
@@ -1988,10 +1961,7 @@ export default function supervisor(pi: ExtensionAPI) {
 					const agentName = config.statusMapping[loopStatus];
 					if (!agentName) {
 						const mapped = Object.keys(config.statusMapping).join(", ");
-						ctx.ui.notify(
-							`No agent for status '${loopStatus}'. Mapped: ${mapped}`,
-							"error",
-						);
+						ctx.ui.notify(`No agent for status '${loopStatus}'. Mapped: ${mapped}`, "error");
 						break;
 					}
 
@@ -2066,10 +2036,7 @@ export default function supervisor(pi: ExtensionAPI) {
 					let usedRetry = false;
 
 					if (!result.success) {
-						ctx.ui.notify(
-							`Agent ${agent.config.name} failed. Retrying once...`,
-							"warning",
-						);
+						ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
 						result = await runAgent(agent, task, ctx, timeoutMs);
 						usedRetry = true;
 					}
@@ -2100,12 +2067,7 @@ export default function supervisor(pi: ExtensionAPI) {
 					});
 
 					// Determine and apply next status
-					const nextStatus = determineNextStatus(
-						agentName,
-						result.textOutput,
-						loopStatus,
-						config,
-					);
+					const nextStatus = determineNextStatus(agentName, result.textOnly, loopStatus, config);
 
 					// Break on failure only if the next agent depends on this one's output.
 					// Auditor should still review a "failed" developer run (code exists
@@ -2118,10 +2080,10 @@ export default function supervisor(pi: ExtensionAPI) {
 						break;
 					}
 					if (!nextStatus) {
-						ctx.ui.notify(
-							`Agent ${agent.config.name} output unclear. Pipeline stopped.`,
-							"warning",
-						);
+						const unclearNote = result.errorOutput
+							? `Agent ${agent.config.name} output unclear (stderr: ${result.errorOutput.slice(0, 200)}). Pipeline stopped.`
+							: `Agent ${agent.config.name} output unclear. Pipeline stopped.`;
+						ctx.ui.notify(unclearNote, "warning");
 						break;
 					}
 
@@ -2138,12 +2100,16 @@ export default function supervisor(pi: ExtensionAPI) {
 								const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 								const wt = `${config.worktreeBase!}${branch}`;
 								try {
-									const diffOut = execFileSync("git", ["diff", config.defaultBranch!, "--name-only"], {
-										cwd: resolvePath(wt),
-										encoding: "utf-8",
-										stdio: ["pipe", "pipe", "pipe"],
-										timeout: 10_000,
-									}).trim();
+									const diffOut = execFileSync(
+										"git",
+										["diff", config.defaultBranch!, "--name-only"],
+										{
+											cwd: resolvePath(wt),
+											encoding: "utf-8",
+											stdio: ["pipe", "pipe", "pipe"],
+											timeout: 10_000,
+										},
+									).trim();
 									hasModifiedFiles = diffOut.length > 0;
 								} catch {
 									hasModifiedFiles = false;
@@ -2162,7 +2128,12 @@ export default function supervisor(pi: ExtensionAPI) {
 								if (hasModifiedFiles) {
 									ctx.ui.setStatus("supervisor", "Running LSP pre-audit diagnostics...");
 									preAuditResult = await runPreAuditFn(
-										{ issueNum, worktreePath: wt, defaultBranch: config.defaultBranch!, repo: config.repo },
+										{
+											issueNum,
+											worktreePath: wt,
+											defaultBranch: config.defaultBranch!,
+											repo: config.repo,
+										},
 										pi,
 										ctx,
 									);
@@ -2185,16 +2156,9 @@ export default function supervisor(pi: ExtensionAPI) {
 						}
 					}
 
-					const nextOptId = findStatusOption(
-						fields,
-						statusField.id,
-						effectiveNextStatus,
-					);
+					const nextOptId = findStatusOption(fields, statusField.id, effectiveNextStatus);
 					if (!nextOptId) {
-						ctx.ui.notify(
-							`Cannot find '${effectiveNextStatus}' option on board.`,
-							"warning",
-						);
+						ctx.ui.notify(`Cannot find '${effectiveNextStatus}' option on board.`, "warning");
 						break;
 					}
 
@@ -2214,11 +2178,7 @@ export default function supervisor(pi: ExtensionAPI) {
 
 				// ── Post-pipeline: check for PR merge conflicts ──────
 				if (loopStatus.toLowerCase() === "done") {
-					const branch = generateBranchName(
-						issueNum,
-						issueTitle,
-						config.branchPrefix!,
-					);
+					const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 
 					ctx.ui.setStatus("supervisor", "Checking PR for merge conflicts...");
 					const conflictInfo = await checkPrConflicts(branch, config.repo);
@@ -2239,12 +2199,7 @@ export default function supervisor(pi: ExtensionAPI) {
 
 							// Step 1: Try auto-merge
 							ctx.ui.setStatus("supervisor", "Attempting auto-merge...");
-							const mergeResult = tryAutoMerge(
-								wt,
-								branch,
-								config.defaultBranch!,
-								config.remote!,
-							);
+							const mergeResult = tryAutoMerge(wt, branch, config.defaultBranch!, config.remote!);
 
 							if (mergeResult.success) {
 								// Push the resolved merge
@@ -2254,19 +2209,13 @@ export default function supervisor(pi: ExtensionAPI) {
 										encoding: "utf-8",
 										timeout: 30_000,
 									});
-									ctx.ui.notify(
-										"Merge conflicts resolved and pushed!",
-										"success",
-									);
+									ctx.ui.notify("Merge conflicts resolved and pushed!", "success");
 									pi.sendMessage({
 										content: `## ✅ Merge Conflicts Resolved\n\nPR #${conflictInfo.number} conflicts were resolved automatically and pushed.`,
 										display: true,
 									});
 								} catch (pushErr: any) {
-									ctx.ui.notify(
-										`Merge succeeded but push failed: ${pushErr.message}`,
-										"error",
-									);
+									ctx.ui.notify(`Merge succeeded but push failed: ${pushErr.message}`, "error");
 								}
 							} else {
 								// Step 2: Auto-merge failed → dispatch developer agent
@@ -2299,16 +2248,8 @@ export default function supervisor(pi: ExtensionAPI) {
 											`When done, output CONFLICTS_RESOLVED on its own line.`,
 										].join("\n");
 
-										const devTimeoutMs = resolveTimeoutMs(
-											"developer",
-											config.agentTimeoutsMin,
-										);
-										const devResult = await runAgent(
-											devAgent,
-											devTask,
-											ctx,
-											devTimeoutMs,
-										);
+										const devTimeoutMs = resolveTimeoutMs("developer", config.agentTimeoutsMin);
+										const devResult = await runAgent(devAgent, devTask, ctx, devTimeoutMs);
 
 										pi.sendMessage({
 											customType: "supervisor",
@@ -2317,9 +2258,7 @@ export default function supervisor(pi: ExtensionAPI) {
 											details: {
 												agentName: devResult.agentName,
 												success: devResult.success,
-												statusLabel: devResult.success
-													? "SUCCESS"
-													: "FAILED",
+												statusLabel: devResult.success ? "SUCCESS" : "FAILED",
 												toolCount: devResult.toolCount,
 												tokenCount: devResult.tokenCount,
 												durationMs: devResult.durationMs,
@@ -2331,10 +2270,7 @@ export default function supervisor(pi: ExtensionAPI) {
 										});
 
 										if (devResult.success) {
-											ctx.ui.notify(
-												"Developer resolved merge conflicts successfully!",
-												"success",
-											);
+											ctx.ui.notify("Developer resolved merge conflicts successfully!", "success");
 										} else {
 											ctx.ui.notify(
 												"Developer failed to resolve conflicts. Manual intervention required.",
@@ -2342,10 +2278,7 @@ export default function supervisor(pi: ExtensionAPI) {
 											);
 										}
 									} catch (devErr: any) {
-										ctx.ui.notify(
-											`Failed to dispatch developer: ${devErr.message}`,
-											"error",
-										);
+										ctx.ui.notify(`Failed to dispatch developer: ${devErr.message}`, "error");
 									}
 								} else {
 									ctx.ui.notify(
@@ -2361,10 +2294,7 @@ export default function supervisor(pi: ExtensionAPI) {
 							"info",
 						);
 					} else {
-						ctx.ui.notify(
-							"No PR found for this branch — skipping conflict check.",
-							"info",
-						);
+						ctx.ui.notify("No PR found for this branch — skipping conflict check.", "info");
 					}
 				}
 

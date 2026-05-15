@@ -60,10 +60,14 @@ function formatTokens(n: number): string {
 /** Map threshold color name to theme color token */
 function resolveColor(name: string): string {
 	switch (name) {
-		case "green":  return "success";
-		case "orange": return "warning";
-		case "red":    return "error";
-		default:       return "dim";
+		case "green":
+			return "success";
+		case "orange":
+			return "warning";
+		case "red":
+			return "error";
+		default:
+			return "dim";
 	}
 }
 
@@ -169,7 +173,8 @@ function loadConfig(): ContextStatusBarConfig | null {
 		for (const entry of cfg.thresholds) {
 			if (typeof entry !== "object" || entry === null) continue;
 			const e = entry as Record<string, unknown>;
-			const maxTokens = e.maxTokens === null || e.maxTokens === undefined ? null : Number(e.maxTokens);
+			const maxTokens =
+				e.maxTokens === null || e.maxTokens === undefined ? null : Number(e.maxTokens);
 			const color = typeof e.color === "string" ? e.color : "";
 			if (maxTokens !== null && !Number.isFinite(maxTokens)) continue;
 			if (!color) continue;
@@ -185,25 +190,39 @@ function loadConfig(): ContextStatusBarConfig | null {
 
 function thinkingIcon(level: string | undefined): string {
 	switch (level) {
-		case "off":     return "○";
-		case "minimal": return "◐";
-		case "low":     return "◑";
-		case "medium":  return "◒";
-		case "high":    return "◓";
-		case "xhigh":   return "●";
-		default:        return "·";
+		case "off":
+			return "○";
+		case "minimal":
+			return "◐";
+		case "low":
+			return "◑";
+		case "medium":
+			return "◒";
+		case "high":
+			return "◓";
+		case "xhigh":
+			return "●";
+		default:
+			return "·";
 	}
 }
 
 function thinkingColor(level: string | undefined): string {
 	switch (level) {
-		case "off":     return "dim";
-		case "minimal": return "dim";
-		case "low":     return "muted";
-		case "medium":  return "accent";
-		case "high":    return "warning";
-		case "xhigh":   return "error";
-		default:        return "dim";
+		case "off":
+			return "dim";
+		case "minimal":
+			return "dim";
+		case "low":
+			return "muted";
+		case "medium":
+			return "accent";
+		case "high":
+			return "warning";
+		case "xhigh":
+			return "error";
+		default:
+			return "dim";
 	}
 }
 
@@ -377,9 +396,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					if (tokens !== null && tokens !== undefined) {
 						const currentFmt = formatTokens(tokens);
 						const maxFmt = lastContextWindow ? formatTokens(lastContextWindow) : "?";
-						const pct = lastContextWindow && lastContextWindow > 0
-							? Math.round((tokens / lastContextWindow) * 100)
-							: null;
+						const pct =
+							lastContextWindow && lastContextWindow > 0
+								? Math.round((tokens / lastContextWindow) * 100)
+								: null;
 
 						const entry = pickThreshold(tokens, config.thresholds);
 						const usageColor = resolveColor(entry.color);
@@ -392,7 +412,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 							rightStr += " " + theme.fg(pctColor, `[${pct}%]`);
 						}
 					} else {
-						rightStr = theme.fg("dim", `◉ .../${lastContextWindow ? formatTokens(lastContextWindow) : "?"}`);
+						rightStr = theme.fg(
+							"dim",
+							`◉ .../${lastContextWindow ? formatTokens(lastContextWindow) : "?"}`,
+						);
 					}
 
 					// ── Separator character ──────────────────────
@@ -419,9 +442,13 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 						const line =
 							fullLeft +
-							" ".repeat(padLeft + 1) + sep + " ".repeat(1) +
+							" ".repeat(padLeft + 1) +
+							sep +
+							" ".repeat(1) +
 							centerStr +
-							" ".repeat(padRight + 1) + sep + " ".repeat(1) +
+							" ".repeat(padRight + 1) +
+							sep +
+							" ".repeat(1) +
 							rightStr;
 
 						return [truncateToWidth(line, width)];
@@ -451,10 +478,12 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		try {
 			if (!existsSync(dir)) return [];
 			return readdirSync(dir, { withFileTypes: true })
-				.filter(e => e.isFile() && e.name.endsWith(suffix))
-				.map(e => e.name.replace(new RegExp(`${suffix.replace(".", "\\.")}$`), ""))
+				.filter((e) => e.isFile() && e.name.endsWith(suffix))
+				.map((e) => e.name.replace(new RegExp(`${suffix.replace(".", "\\.")}$`), ""))
 				.sort();
-		} catch { return []; }
+		} catch {
+			return [];
+		}
 	}
 
 	function showWelcomeBanner(ctx: ExtensionContext) {
@@ -536,9 +565,9 @@ export default function contextInfo(pi: ExtensionAPI): void {
 						pf + mid,
 						pf + row(muted(`🧠 Model:      ${modelId}`)),
 						pf + row(muted(`📊 Context:    ${cwStr} tokens`)),
-						...listRows("🧩 Extensions: ", extNames).map(l => pf + l),
-						...listRows("📝 Prompts:    ", promptNames).map(l => pf + l),
-						...listRows("🎨 Themes:     ", themeNames).map(l => pf + l),
+						...listRows("🧩 Extensions: ", extNames).map((l) => pf + l),
+						...listRows("📝 Prompts:    ", promptNames).map((l) => pf + l),
+						...listRows("🎨 Themes:     ", themeNames).map((l) => pf + l),
 						pf + bot,
 					];
 

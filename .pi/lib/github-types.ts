@@ -70,7 +70,12 @@ export function isGhIssue(obj: unknown): obj is GhIssue {
 }
 
 export function isGhComment(obj: unknown): obj is GhComment {
-	return isObject(obj) && typeof obj.id === "number" && isObject(obj.author) && typeof obj.author.login === "string";
+	return (
+		isObject(obj) &&
+		typeof obj.id === "number" &&
+		isObject(obj.author) &&
+		typeof obj.author.login === "string"
+	);
 }
 
 export function isGhProjectField(obj: unknown): obj is GhProjectField {

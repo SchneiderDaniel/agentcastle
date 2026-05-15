@@ -33,6 +33,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 | `.pi/extensions/crawl4ai.ts`             | Three-tier web crawler                    |
 | `.pi/extensions/session-logger.ts`       | Session logging to markdown               |
 | `.pi/extensions/ask-user.ts`             | Interactive multiple-choice questions     |
+| `.pi/extensions/format-on-save.ts`       | Auto-format TypeScript/JS with Prettier   |
 | `.pi/extensions/supervisor.ts`           | Kanban-driven multi-agent orchestration   |
 | `.pi/agents/architect.md`               | Architect agent system prompt             |
 | `.pi/agents/developer.md`               | Developer agent system prompt             |
@@ -382,6 +383,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in your **project root**. No
 | **Session Logger**   | `session-logger.ts`  | Logs sessions to `.pi/sessions/<id>/session.md` + `metadata.json`. Toggle with `/session-logger`.              |
 | **Caveman Protocol** | `caveman.ts`         | Token-efficient communication style. Active via `AGENTS.md`.                                                   |
 | **Ask User**         | `ask-user.ts`        | Interactive multiple-choice picker for AI-to-user questions. Uses `ctx.ui.select()` with arrow-key navigation. |
+| **Format on Save**   | `format-on-save.ts`  | Auto-formats TypeScript/JavaScript files with Prettier after write/edit operations. Keeps code style consistent without manual indentation fixes. |
 
 ### Agent Definitions
 
@@ -535,6 +537,8 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | **Schema & Validation**                    |          |              |            |                                                                                                          |
 | typebox                                    | 1.1.37   | MIT          | transitive | [github.com/typebox/typebox](https://github.com/typebox/typebox)                                         |
 | zod                                        | 4.4.2    | MIT          | transitive | [zod.dev](https://zod.dev)                                                                               |
+| **Formatter**                              |          |              |            |                                                                                                          |
+| prettier                                    | ^3.8.3   | MIT          | dev        | [prettier.io](https://prettier.io)                                                                       |
 | **Utilities**                              |          |              |            |                                                                                                          |
 | fast-xml-parser                            | 5.7.2    | MIT          | transitive | [github.com/NaturalIntelligence/fast-xml-parser](https://github.com/NaturalIntelligence/fast-xml-parser) |
 | tslib                                      | 2.8.1    | 0BSD         | transitive | [github.com/microsoft/tslib](https://github.com/microsoft/tslib)                                         |
@@ -555,6 +559,7 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | session-logger.ts                          | —        | MIT          | project    | This repository                                                                                          |
 | ask-user.ts                                | —        | MIT          | project    | This repository                                                                                          |
 | supervisor.ts                              | —        | MIT          | project    | This repository                                                                                          |
+| format-on-save.ts                          | —        | MIT          | project    | This repository                                                                                          |
 
 > **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
 
