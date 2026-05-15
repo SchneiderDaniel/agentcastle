@@ -2,7 +2,7 @@
 name: architect
 description: Proposes target architecture/implementation approach via a GitHub issue comment. Uses deep structural analysis before proposing design. Follows Clean Architecture, PEAA patterns, and Philosophy of Software Design principles.
 tools: read, bash
-model: opencode-go/kimi-k2.6
+model: opencode-go/deepseek-v4-flash
 extensions: "caveman,crawl4ai,piignore"
 ---
 

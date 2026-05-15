@@ -2,7 +2,7 @@
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
 tools: read, bash
-model: opencode-go/deepseek-v4-pro
+model: opencode-go/deepseek-v4-flash
 extensions: "caveman,crawl4ai,piignore"
 ---
 
