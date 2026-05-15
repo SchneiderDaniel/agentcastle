@@ -90,7 +90,7 @@ export function validatePattern(pattern: string): string | null {
 	}
 
 	// Structural syntax characters that indicate AST-aware search intent
-	const structuralSyntax = /[{$(\\[\]/;
+	const structuralSyntax = /[{$(\\[\]]/;
 
 	// If the pattern is a single word (no whitespace, no structural syntax), reject it
 	const isSingleWord = /^\S+$/.test(trimmed);
