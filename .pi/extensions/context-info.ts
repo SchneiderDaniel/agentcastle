@@ -447,19 +447,104 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 	// ── Welcome banner ───────────────────────────────────────────
 
+	function listNames(dir: string, suffix: string): string[] {
+		try {
+			if (!existsSync(dir)) return [];
+			return readdirSync(dir, { withFileTypes: true })
+				.filter(e => e.isFile() && e.name.endsWith(suffix))
+				.map(e => e.name.replace(new RegExp(`${suffix.replace(".", "\\.")}$`), ""))
+				.sort();
+		} catch { return []; }
+	}
+
 	function showWelcomeBanner(ctx: ExtensionContext) {
-		const theme = ctx.ui.theme;
-		const termWidth = process.stdout.columns || 80;
+		// Collect info once at startup
+		const extNames = listNames(".pi/extensions", ".ts");
+		const promptNames = listNames(".pi/prompts", ".md");
+		const themeNames = listNames(".pi/themes", ".json");
+		const modelId = ctx.model?.id ?? "?";
+		const cw = ctx.model?.contextWindow;
+		const cwStr = typeof cw === "number" && cw > 0 ? formatTokens(cw) : "?";
 
-		const lines: string[] = [];
+		ctx.ui.setWidget("agentcastle-welcome", (_tui, theme) => {
+			let cachedWidth = -1;
+			let cachedLines: string[] = [];
 
-		lines.push(
-			"  " + theme.fg("accent", theme.bold("🏰 Agent Castle"))
-		);
-		lines.push("  " + theme.fg("dim", "─".repeat(Math.max(0, termWidth - 4))));
-		lines.push("");
+			const BOX_W = 48; // fixed internal box width
 
-		ctx.ui.setWidget("agentcastle-welcome", lines, { placement: "aboveEditor" });
+			return {
+				dispose() {},
+				invalidate() {
+					cachedWidth = -1;
+					cachedLines = [];
+				},
+				render(width: number): string[] {
+					if (cachedLines.length > 0 && cachedWidth === width) {
+						return cachedLines;
+					}
+
+					const dim = (s: string) => theme.fg("dim", s);
+					const accent = (s: string) => theme.fg("accent", s);
+					const muted = (s: string) => theme.fg("muted", s);
+
+					const top = dim("╭" + "─".repeat(BOX_W - 2) + "╮");
+					const mid = dim("├" + "─".repeat(BOX_W - 2) + "┤");
+					const bot = dim("╰" + "─".repeat(BOX_W - 2) + "╯");
+
+					function row(content: string): string {
+						const innerW = BOX_W - 4; // space inside borders minus 2 padding spaces
+						const visW = visibleWidth(content);
+						const padNeeded = Math.max(0, innerW - visW);
+						return dim("│") + " " + content + " ".repeat(padNeeded) + " " + dim("│");
+					}
+
+					// Wrap comma-separated list into multiple rows
+					function listRows(prefix: string, names: string[]): string[] {
+						const innerW = BOX_W - 4;
+						const out: string[] = [];
+						if (names.length === 0) {
+							out.push(row(muted(`${prefix}(none)`)));
+							return out;
+						}
+						let line = prefix;
+						let isFirst = true;
+						for (const name of names) {
+							const sep = isFirst ? "" : ", ";
+							const candidate = line + sep + name;
+							if (visibleWidth(candidate) <= innerW) {
+								line = candidate;
+								isFirst = false;
+							} else {
+								out.push(row(muted(line)));
+								line = `  ${name}`;
+								isFirst = false;
+							}
+						}
+						if (line) out.push(row(muted(line)));
+						return out;
+					}
+
+					const pad = Math.max(0, Math.floor((width - BOX_W) / 2));
+					const pf = " ".repeat(pad);
+
+					const lines = [
+						pf + top,
+						pf + row(accent(theme.bold("🏰 Agent Castle"))),
+						pf + mid,
+						pf + row(muted(`🧠 Model:      ${modelId}`)),
+						pf + row(muted(`📊 Context:    ${cwStr} tokens`)),
+						...listRows("🧩 Extensions: ", extNames).map(l => pf + l),
+						...listRows("📝 Prompts:    ", promptNames).map(l => pf + l),
+						...listRows("🎨 Themes:     ", themeNames).map(l => pf + l),
+						pf + bot,
+					];
+
+					cachedWidth = width;
+					cachedLines = lines;
+					return lines;
+				},
+			};
+		});
 		startupWidgetActive = true;
 	}
 }
