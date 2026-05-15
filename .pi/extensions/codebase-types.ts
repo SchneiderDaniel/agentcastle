@@ -96,9 +96,9 @@ export function isProjectInfo(obj: unknown): obj is ProjectInfo {
 
 /** Heavy tools that need longer timeouts */
 export const HEAVY_TOOLS = new Set([
-	"index_project", "architecture_overview",
-	"import_traces", "manage_adr",
-	"ingest_traces",
+	"index_repository", "get_architecture",
+	"detect_changes", "semantic_query",
+	"manage_adr", "ingest_traces",
 ]);
 
 /** Light timeout (most ops) */

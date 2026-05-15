@@ -114,8 +114,9 @@ function htmlToMarkdown(html: string): string {
 
 export default function (pi: ExtensionAPI): void {
   // Paths computed lazily at call time — process.cwd() at module load may be stale
-  let venvReady: boolean | null = null;
-  let depsReady: boolean | null = null;
+  // Key caches by cwd to avoid stale readiness across working directory changes
+  const venvReady = new Map<string, boolean>();
+  const depsReady = new Map<string, boolean>();
 
   function lazyPaths(cwd: string) {
     return {
@@ -128,20 +129,20 @@ export default function (pi: ExtensionAPI): void {
 
   async function ensurePythonVenv(cwd: string, onUpdate?: (u: { content: Array<{ type: "text"; text: string }>; details: unknown }) => void): Promise<string | null> {
     const { VENV_PYTHON, VENV_DIR } = lazyPaths(cwd);
-    if (venvReady !== null) return venvReady ? VENV_PYTHON : null;
+    if (venvReady.has(cwd)) return venvReady.get(cwd)! ? VENV_PYTHON : null;
 
     // Check system python3 exists
     const pyCheck = await pi.exec("python3", ["--version"]);
     if (pyCheck.code !== 0) {
       console.error("crawl4ai: python3 not found");
-      venvReady = false;
+      venvReady.set(cwd, false);
       return null;
     }
 
     // Check if venv already set up with crawl4ai
     const alreadyOk = await pi.exec(VENV_PYTHON, ["-c", "import crawl4ai; print('ok')"]);
     if (alreadyOk.code === 0 && alreadyOk.stdout.includes("ok")) {
-      venvReady = true;
+      venvReady.set(cwd, true);
       return VENV_PYTHON;
     }
 
@@ -154,7 +155,7 @@ export default function (pi: ExtensionAPI): void {
       const create = await pi.exec("python3", ["-m", "venv", "--clear", VENV_DIR]);
       if (create.code !== 0) {
         console.error("crawl4ai: failed to create venv");
-        venvReady = false;
+        venvReady.set(cwd, false);
         return null;
       }
     }
@@ -164,7 +165,7 @@ export default function (pi: ExtensionAPI): void {
     const install = await pi.exec(VENV_PYTHON, ["-m", "pip", "install", "crawl4ai"], { timeout: 180_000 });
     if (install.code !== 0) {
       console.error("crawl4ai: pip install failed:", install.stderr.slice(0, 500));
-      venvReady = false;
+      venvReady.set(cwd, false);
       return null;
     }
 
@@ -174,19 +175,20 @@ export default function (pi: ExtensionAPI): void {
 
     // Verify
     const verify = await pi.exec(VENV_PYTHON, ["-c", "import crawl4ai; print('ok')"]);
-    venvReady = verify.code === 0 && verify.stdout.includes("ok");
-    return venvReady ? VENV_PYTHON : null;
+    const ready = verify.code === 0 && verify.stdout.includes("ok");
+    venvReady.set(cwd, ready);
+    return ready ? VENV_PYTHON : null;
   }
 
   async function ensureChromiumDeps(cwd: string, onUpdate?: (u: { content: Array<{ type: "text"; text: string }>; details: unknown }) => void): Promise<string | null> {
     const { DEPS_DIR, DEPS_LIB_DIR } = lazyPaths(cwd);
-    if (depsReady !== null) return depsReady ? DEPS_LIB_DIR : null;
+    if (depsReady.has(cwd)) return depsReady.get(cwd)! ? DEPS_LIB_DIR : null;
 
     // Check if deps already extracted and working
     const testLib = `${DEPS_LIB_DIR}/libnspr4.so`;
     const libCheck = await pi.exec("bash", ["-c", `test -f ${testLib}`]);
     if (libCheck.code === 0) {
-      depsReady = true;
+      depsReady.set(cwd, true);
       return DEPS_LIB_DIR;
     }
 
@@ -215,11 +217,11 @@ export default function (pi: ExtensionAPI): void {
     const verify = await pi.exec("bash", ["-c", `test -f ${testLib}`]);
     if (verify.code !== 0) {
       console.error("crawl4ai: failed to set up Chromium system libraries");
-      depsReady = false;
+      depsReady.set(cwd, false);
       return null;
     }
 
-    depsReady = true;
+    depsReady.set(cwd, true);
     return DEPS_LIB_DIR;
   }
 
@@ -329,18 +331,6 @@ export default function (pi: ExtensionAPI): void {
     }
 
     return results.join("\n\n") || "Crawl completed but no content was extracted.";
-  }
-
-  // Compute paths lazily at call time (ctx.cwd may differ from process.cwd at module load)
-  function getPaths(ctxCwd: string) {
-    const cwd = ctxCwd;
-    return {
-      CWD: cwd,
-      VENV_DIR: `${cwd}/.pi/crawl4ai-venv`,
-      VENV_PYTHON: `${cwd}/.pi/crawl4ai-venv/bin/python3`,
-      DEPS_DIR: `${cwd}/.pi/chromium-deps`,
-      DEPS_LIB_DIR: `${cwd}/.pi/chromium-deps/usr/lib/x86_64-linux-gnu`,
-    };
   }
 
   pi.registerTool({

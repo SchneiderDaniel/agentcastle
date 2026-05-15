@@ -513,7 +513,7 @@ export default function (pi: ExtensionAPI): void {
 			agent: "system",
 			tool: "system_prompt",
 			error: null,
-			loop_step: ++messageIdx,
+			loop_step: 0,
 			payload: {
 				role: "system_prompt",
 				prompt: truncate(prompt, MAX_SYSTEM_PROMPT, 0),

@@ -1024,6 +1024,11 @@ export async function runAgent(
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 ): Promise<AgentRunResult> {
 	const tools = agent.config.tools || "read,bash,write,edit";
+	// NOTE: Extension-declared tools (e.g. codebase search from codebase-memory.ts)
+	// are NOT automatically added to the --tools flag. Agent configs that specify
+	// extensions: must also explicitly list extension tool names in their tools: field.
+	// This is a known limitation — previous resolveTools/discoverExtensionTools
+	// functions that auto-resolved extension tools were removed during cleanup.
 	const model = agent.config.model || "";
 	const extFlags = resolveExtensions(agent.config.extensions);
 
