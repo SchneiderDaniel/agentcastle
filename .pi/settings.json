@@ -1,6 +1,7 @@
 {
 	"quietStartup": true,
 	"theme": "agentcastle",
+	"sessionDir": ".pi/sessions",
 	"supervisor": {
 		"repo": "SchneiderDaniel/agentcastle",
 		"projectNumber": 3,
