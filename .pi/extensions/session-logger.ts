@@ -18,7 +18,7 @@ import * as fs from "node:fs";
 import { writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { extractTextFromContent } from "./types.js";
+import { extractTextFromContent } from "../lib/types.js";
 
 // ---------------------------------------------------------------------------
 // Types

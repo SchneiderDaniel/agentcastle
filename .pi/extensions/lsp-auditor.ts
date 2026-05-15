@@ -19,8 +19,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
-import type { LspPublishDiagnosticsParams, LspDiagnosticData } from "./lsp-types.js";
-import { isLspPublishDiagnosticsParams, isLspDiagnosticData } from "./lsp-types.js";
+import type { LspPublishDiagnosticsParams, LspDiagnosticData } from "../lib/lsp-types.js";
+import { isLspPublishDiagnosticsParams, isLspDiagnosticData } from "../lib/lsp-types.js";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
