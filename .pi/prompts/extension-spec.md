@@ -1,41 +1,31 @@
 ---
-description: Design a new pi extension or refactor an existing one through one-question-at-a-time interview, research best practices from pi docs and defined extension best practices, then produce a detailed PRD with implementation spec.
+description: Design a new pi extension or refactor an existing one through automatic analysis, research best practices from pi docs and defined extension best practices, then produce a detailed PRD with implementation spec.
 argument-hint: "[new-extension-idea|refactor:<extension-name>]"
 ---
 
 # Extension Spec — New & Existing Extension Design PRD
 
-⚠️ **YOU ARE A SYSTEMS DESIGNER. NOT A CODE WRITER.** You interview the user one question at a time via the `ask_user` tool. You research best practices from pi extension docs, the TypeScript best practices audit defined below, and external references. You produce a detailed PRD with implementation spec. Only then do you offer to implement or file a GitHub issue.
+⚠️ **YOU ARE A SYSTEMS DESIGNER. NOT A CODE WRITER.** You research best practices from pi extension docs, the TypeScript best practices audit defined below, and external references. You analyze the request and produce a detailed PRD with implementation spec. Only then do you offer to implement or file a GitHub issue.
 
 ## Mode Detection
 
-Determine the mode before asking questions:
+Determine the mode:
 
 | Input | Mode | Action |
 |-------|------|--------|
-| `refactor:<name>` or `update:<name>` or `fix:<name>` | **Refactor** | Read the existing extension file(s), audit against best practices, then ask what to change |
-| `$@` mentions a file path in `.pi/extensions/` | **Refactor** | Same as above — read, audit, ask |
-| Any other `$@` or no argument | **New** | Ask what to build, then design from scratch |
+| `refactor:<name>` or `update:<name>` or `fix:<name>` | **Refactor** | Read the existing extension file(s), audit against best practices, then produce PRD with migration plan |
+| `$@` mentions a file path in `.pi/extensions/` | **Refactor** | Same as above — read, audit, produce PRD |
+| Any other `$@` or no argument | **New** | Analyze the description, research, then design from scratch |
 
-In **refactor mode**, you MUST read the existing extension before asking any question. Run:
+In **refactor mode**, you MUST read the existing extension before designing. Run:
 ```bash
 ls -la .pi/extensions/<name>.ts .pi/extensions/<name>/index.ts 2>/dev/null
 ```
-Read the file(s), compute line count, and note anti-patterns. Start the interview with a brief audit summary, then ask what changes are wanted.
+Read the file(s), compute line count, and note anti-patterns. Produce a brief audit summary and proceed to PRD with migration plan.
 
 ---
 
 ## Core Principles
-
-### One Question at a Time
-
-You are an interviewer. Ask ONE question. Listen. Probe until concrete. Then move to the next topic. Never present a list of questions.
-
-### Use `ask_user` for Every Question
-
-Call the `ask_user` tool with:
-- **question**: the question with enough context
-- **options**: at least 3 options, one marked `recommended: true`
 
 ### Research Against Ground Truth
 
@@ -178,23 +168,24 @@ Before finalizing any design, verify against this checklist:
 
 ## PHASES
 
-### PHASE 0 — UNDERSTAND THE SCOPE
+### PHASE 0 — ANALYZE SCOPE
 
 #### New extension mode
-1. Ask what the extension should do. Get concrete: what problem does it solve? Who uses it?
-2. Ask about scope: single tool? tool + commands? lifecycle hooks? UI components?
-3. Ask about dependencies: npm packages needed? external services? system binaries?
-4. Ask about persistence: state across sessions? disk files? session entries?
-5. Ask about the happy path: walk through a user interaction from start to finish.
+Analyze the request automatically. Determine from context:
+1. **Problem & users**: What problem does it solve? Who uses it? (Infer from extension name/description or `$@` argument.)
+2. **Scope**: Single tool? Tool + commands? Lifecycle hooks? UI components? (Analyze based on what problem the extension solves — choose appropriate APIs.)
+3. **Dependencies**: npm packages needed? External services? System binaries? (Research based on the extension's domain.)
+4. **Persistence**: State across sessions? Disk files? Session entries? (Decide based on extension purpose.)
+5. **Happy path**: Derive the typical user interaction flow from the extension's purpose.
 
 #### Refactor mode
-1. Present the audit summary: line count, file count, anti-patterns found, current structure.
-2. Ask what should change: full rewrite? targeted fixes? module split? rename? new features?
-3. Ask about backward compatibility: can the config format change? must CLI flags stay the same? are message renderer types consumed by other extensions?
-4. Ask about scope creep: is adding new tools/commands in scope, or only restructuring existing code?
-5. Ask about the happy path after refactor: what should work the same, what should be better?
+1. Read the existing extension thoroughly. Produce an audit summary: line count, file count, anti-patterns found, current structure.
+2. Determine what needs to change based on audit findings: extract modules, fix anti-patterns, improve types, split monolith.
+3. Check backward compatibility: identify config keys, CLI flags, message types, session entries, file formats the extension uses. Preserve unless breaking change is justified.
+4. Define scope of refactor: full restructure? targeted fixes? module split? rename? new features alongside restructuring?
+5. Derive the happy path after refactor — what should work the same, what will be better.
 
-**Research during this phase:** Read relevant pi extension examples that are similar in scope. Note patterns and APIs used. In refactor mode, also read sibling extensions in `.pi/extensions/` to understand shared patterns.
+**Research during this phase:** Read relevant pi extension examples similar in scope. Note patterns and APIs used. In refactor mode, also read sibling extensions in `.pi/extensions/` to understand shared patterns.
 
 ### PHASE 1 — RESEARCH & FEASIBILITY
 
@@ -374,17 +365,12 @@ One paragraph: what it does, who it's for, why it's needed.
 - If extraction breaks functionality, revert by restoring old file and deleting new directory
 ```
 
-### PHASE 4 — DELIVERY DECISION
+### PHASE 4 — DELIVERY
 
-After the PRD is displayed, ask the user with `ask_user`:
+After the PRD is complete, produce the output:
 
-**"The PRD is complete. What should happen next?"**
-
-Options:
-- **"Start implementation"** — the agent writes the extension code immediately (recommended)
-- **"Create a refined GitHub issue"** — create a GitHub issue in `supervisor.repo` with the PRD content and the `refined` label
-- **"Save PRD to file"** — write the PRD to a markdown file in the project for later review
-- **"Revise the design"** — go back to a specific phase and iterate
+- **If `$@` included `--implement` flag or the extension is trivially small**: write the extension code immediately after the PRD.
+- **Otherwise**: Display the complete PRD. Then offer to implement or create a GitHub issue. Default action is to write the PRD to `.pi/specs/<extension-name>-prd.md` for review.
 
 ---
 
@@ -392,7 +378,6 @@ Options:
 
 - `.pi/settings.json` must contain `supervisor.repo` set to `owner/repo` (for GitHub issue creation).
 - `gh` installed and authenticated (for GitHub issue creation).
-- `ask_user` tool available (provided by `.pi/extensions/ask-user.ts`).
 
 ---
 
@@ -439,29 +424,19 @@ Consult these for API accuracy:
 
 ---
 
-## Step 3 — Begin Interview (PHASE 0)
+## Step 3 — Run PHASE 0 (Analyze Scope)
 
-### New extension mode
-If `$@` was provided, use it as the opening context:
+Proceed through all phases automatically. Never skip phases.
 
-> "I understand you want to build an extension for: $@. Let me ask a few questions to nail down the design."
+For **new extension mode**: Use the `$@` argument as the extension idea. Analyze the name and description to infer purpose, scope, dependencies, and happy path. If `$@` is empty, analyze the user's input context.
 
-If no argument, start with:
-
-> "What kind of pi extension do you want to build? Describe the problem it solves and who would use it."
-
-### Refactor mode
-Start with a brief audit summary, then ask:
-
-> "I've audited `<extension-name>`. Current: <N> files, <M> lines. Found <K> anti-patterns. What changes do you want — full restructure, targeted fixes, new features, rename, or a combination?"
-
-Then proceed through all phases. Never skip phases. Never ask multiple questions at once.
+For **refactor mode**: Read the existing extension files, audit against best practices, and derive the refactoring plan from the audit findings.
 
 ---
 
 ## Important Rules
 
-1. **Never write code until PHASE 4 "Start implementation" is selected.** The PRD is a design document, not code.
+1. **The PRD is a design document, not code.** Write code only after the PRD is complete. If `--implement` flag is passed, write code immediately after the PRD.
 2. **Always consult the best practices audit before making a design decision.** If a design would introduce an anti-pattern, flag it immediately.
 3. **The PRD must be self-contained.** Someone reading it should understand the full design without scrolling through the conversation.
 4. **Be specific about TypeScript types.** Vague "params: any" is unacceptable. Every tool parameter must have a TypeBox schema.
