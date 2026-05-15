@@ -506,6 +506,9 @@ export default function contextInfo(pi: ExtensionAPI): void {
 							out.push(row(muted(`${prefix}(none)`)));
 							return out;
 						}
+						// Continuation indent = visible width of prefix (so names align vertically)
+						const prefixW = visibleWidth(prefix);
+						const contIndent = " ".repeat(prefixW);
 						let line = prefix;
 						let isFirst = true;
 						for (const name of names) {
@@ -516,7 +519,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 								isFirst = false;
 							} else {
 								out.push(row(muted(line)));
-								line = `  ${name}`;
+								line = contIndent + name;
 								isFirst = false;
 							}
 						}
