@@ -1,19 +1,19 @@
 {
-    "quietStartup": true,
-    "theme": "voidforge",
-    "supervisor": {
-        "repo": "SchneiderDaniel/agentcastle",
-        "projectNumber": 3,
-        "statusField": "Status",
-        "statusMapping": {
-            "Research": "researcher",
-            "Architecture": "architect",
-            "TestDesign": "test-designer",
-            "Implementation": "developer",
-            "Audit": "auditor"
-        },
-        "maxRejections": 5,
-        "codeowners": ["SchneiderDaniel"],
-        "agentTimeoutsMin": {}
-    }
+	"quietStartup": true,
+	"theme": "agentcastle",
+	"supervisor": {
+		"repo": "SchneiderDaniel/agentcastle",
+		"projectNumber": 3,
+		"statusField": "Status",
+		"statusMapping": {
+			"Research": "researcher",
+			"Architecture": "architect",
+			"TestDesign": "test-designer",
+			"Implementation": "developer",
+			"Audit": "auditor"
+		},
+		"maxRejections": 5,
+		"codeowners": ["SchneiderDaniel"],
+		"agentTimeoutsMin": {}
+	}
 }

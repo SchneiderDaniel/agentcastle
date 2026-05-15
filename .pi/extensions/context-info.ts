@@ -15,11 +15,13 @@
  *   "contextStatusBar": {
  *     "enabled": true,
  *     "thresholds": [
- *       { "maxTokens": 100000, "color": "green" },
- *       { "maxTokens": 150000, "color": "orange" },
- *       { "maxTokens": null, "color": "red" }
+ *       { "maxTokens": 100000 },
+ *       { "maxTokens": 150000 },
+ *       { "maxTokens": null }
  *     ]
  *   }
+ *
+ * Colors are hardcoded hex values (not theme tokens) for reliable rendering.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -32,7 +34,6 @@ import { join as joinPath } from "node:path";
 
 interface ThresholdEntry {
 	maxTokens: number | null;
-	color: string;
 }
 
 interface ContextStatusBarConfig {
@@ -43,9 +44,16 @@ interface ContextStatusBarConfig {
 // ─── Constants ───────────────────────────────────────────────────────
 
 const DEFAULT_THRESHOLDS: ThresholdEntry[] = [
-	{ maxTokens: 100_000, color: "green" },
-	{ maxTokens: 150_000, color: "orange" },
-	{ maxTokens: null, color: "red" },
+	{ maxTokens: 100_000 },
+	{ maxTokens: 150_000 },
+	{ maxTokens: null },
+];
+
+/** Hex colors for threshold levels (index-matched to thresholds array) */
+const THRESHOLD_HEX_COLORS = [
+	"#50fa7b", // green (neonMint)
+	"#ff6d00", // orange (safetyOrange)
+	"#ff5252", // red (coral)
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -57,32 +65,31 @@ function formatTokens(n: number): string {
 	return String(n);
 }
 
-/** Map threshold color name to theme color token */
-function resolveColor(name: string): string {
-	switch (name) {
-		case "green":
-			return "success";
-		case "orange":
-			return "warning";
-		case "red":
-			return "error";
-		default:
-			return "dim";
-	}
+/** Apply hex foreground color via ANSI truecolor */
+function fgHex(hex: string, text: string): string {
+	const cleaned = hex.replace("#", "");
+	if (cleaned.length !== 6) return text;
+	const r = parseInt(cleaned.substring(0, 2), 16);
+	const g = parseInt(cleaned.substring(2, 4), 16);
+	const b = parseInt(cleaned.substring(4, 6), 16);
+	if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return text;
+	return `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
 }
 
-/** Pick threshold for given token count */
-function pickThreshold(tokens: number, thresholds: ThresholdEntry[]): ThresholdEntry {
+/** Pick threshold for given token count and return hex color */
+function pickThresholdHex(tokens: number, thresholds: ThresholdEntry[]): string {
 	const sorted = [...thresholds].sort((a, b) => {
 		if (a.maxTokens === null) return 1;
 		if (b.maxTokens === null) return -1;
 		return a.maxTokens - b.maxTokens;
 	});
-	for (const entry of sorted) {
-		if (entry.maxTokens === null) return entry;
-		if (tokens <= entry.maxTokens) return entry;
+	const colors = THRESHOLD_HEX_COLORS;
+	for (let i = 0; i < sorted.length; i++) {
+		const entry = sorted[i];
+		if (entry.maxTokens === null) return colors[Math.min(i, colors.length - 1)] ?? "#ff5252";
+		if (tokens <= entry.maxTokens) return colors[Math.min(i, colors.length - 1)] ?? "#ff5252";
 	}
-	return sorted[sorted.length - 1]!;
+	return colors[colors.length - 1] ?? "#ff5252";
 }
 
 // ─── Git helpers ─────────────────────────────────────────────────────
@@ -175,10 +182,8 @@ function loadConfig(): ContextStatusBarConfig | null {
 			const e = entry as Record<string, unknown>;
 			const maxTokens =
 				e.maxTokens === null || e.maxTokens === undefined ? null : Number(e.maxTokens);
-			const color = typeof e.color === "string" ? e.color : "";
 			if (maxTokens !== null && !Number.isFinite(maxTokens)) continue;
-			if (!color) continue;
-			parsed.push({ maxTokens: maxTokens as number | null, color });
+			parsed.push({ maxTokens: maxTokens as number | null });
 		}
 		thresholds = parsed.length > 0 ? parsed : DEFAULT_THRESHOLDS;
 	}
@@ -413,11 +418,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 								? Math.round((tokens / lastContextWindow) * 100)
 								: null;
 
-						const entry = pickThreshold(tokens, config.thresholds);
-						const usageColor = resolveColor(entry.color);
+						const usageHex = pickThresholdHex(tokens, config.thresholds);
 
 						const tokenText = `${currentFmt}/${maxFmt}`;
-						rightStr = theme.fg("dim", "◉ ") + theme.fg(usageColor, tokenText);
+						rightStr = theme.fg("dim", "◉ ") + fgHex(usageHex, tokenText);
 
 						if (pct !== null) {
 							const pctColor = pct >= 90 ? "error" : pct >= 70 ? "warning" : "dim";
