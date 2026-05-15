@@ -1,11 +1,15 @@
 /**
  * format-on-save — Auto-formats TypeScript/JavaScript files with Prettier
+ *                  then runs ESLint --fix for lint+styling (advisory, non-blocking)
  *
  * Hooks into write/edit tool results. After a TypeScript/JavaScript/TSX/JSX/JSON
  * file is written or edited, runs Prettier to reformat it.
  *
+ * Tier 1 diagnostics: After Prettier, runs ESLint on the saved file and reports
+ * errors/warnings as a follow-up message to the Developer (non-blocking).
+ *
  * Uses project-local prettier from .pi/extensions/../node_modules or falls back
- * to npx prettier.
+ * to npx prettier. ESLint uses npx eslint.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -29,6 +33,9 @@ const FORMAT_EXTENSIONS = [
 	".jsonc",
 	".json5",
 ];
+
+/** File extensions that should be linted by ESLint (subset of FORMAT_EXTENSIONS) */
+const LINT_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"];
 
 /** Maximum file size for formatting (1MB) to avoid perf issues */
 const MAX_FILE_SIZE_BYTES = 1_048_576;
@@ -105,6 +112,142 @@ function formatFile(filePath: string, configDir: string): boolean {
 	}
 }
 
+// ─── ESLint Helpers (Tier 1 diagnostics) ────────────────────────────
+
+/** Parse ESLint JSON output into diagnostics array. */
+export function parseEslintOutput(jsonOutput: string): Array<{
+	file: string;
+	line: number;
+	column: number;
+	severity: "Error" | "Warning";
+	message: string;
+	ruleId: string | null;
+}> {
+	try {
+		const data = JSON.parse(jsonOutput);
+		if (!Array.isArray(data)) return [];
+
+		const diagnostics: Array<{
+			file: string;
+			line: number;
+			column: number;
+			severity: "Error" | "Warning";
+			message: string;
+			ruleId: string | null;
+		}> = [];
+
+		for (const fileResult of data) {
+			if (!fileResult || !Array.isArray(fileResult.messages)) continue;
+
+			const filePath = fileResult.filePath || "unknown";
+
+			for (const msg of fileResult.messages) {
+				const severity: "Error" | "Warning" = msg.severity === 2 ? "Error" : "Warning";
+				diagnostics.push({
+					file: filePath,
+					line: msg.line || 0,
+					column: msg.column || 0,
+					severity,
+					message: msg.message || "",
+					ruleId: msg.ruleId || null,
+				});
+			}
+		}
+
+		return diagnostics;
+	} catch {
+		return [];
+	}
+}
+
+/** Format ESLint diagnostics into developer-readable follow-up message. */
+export function formatEslintDiagnostics(
+	diagnostics: Array<{
+		file: string;
+		line: number;
+		column: number;
+		severity: "Error" | "Warning";
+		message: string;
+		ruleId: string | null;
+	}>,
+): string {
+	if (!diagnostics || diagnostics.length === 0) return "";
+
+	const byFile = new Map<string, typeof diagnostics>();
+	for (const d of diagnostics) {
+		const list = byFile.get(d.file) || [];
+		list.push(d);
+		byFile.set(d.file, list);
+	}
+
+	const blocks: string[] = [];
+	const files = [...byFile.keys()].sort();
+	for (const file of files) {
+		const diags = byFile.get(file)!;
+		// Sort: errors first, then by line
+		diags.sort((a, b) => {
+			if (a.severity !== b.severity) return a.severity === "Error" ? -1 : 1;
+			if (a.line !== b.line) return a.line - b.line;
+			return a.column - b.column;
+		});
+
+		const lines: string[] = [];
+		for (const d of diags) {
+			let msg = d.message;
+			if (msg.length > 500) msg = msg.slice(0, 497) + "...";
+			const rulePart = d.ruleId ? ` (${d.ruleId})` : "";
+			lines.push(`${file}, Line ${d.line}: [${d.severity}] ${msg}${rulePart}`);
+		}
+		if (blocks.length > 0) blocks.push("");
+		blocks.push(lines.join("\n"));
+	}
+
+	return blocks.join("\n");
+}
+
+/**
+ * Determine if a file extension should be linted by ESLint.
+ */
+function shouldLint(path: string): boolean {
+	const lower = path.toLowerCase();
+	return LINT_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+/**
+ * Run ESLint on a single file and return formatted diagnostics message.
+ * Returns empty string if no issues found or ESLint is unavailable.
+ *
+ * ESLint exits code 0 = no errors, 1 = lint errors found, 2 = config error.
+ * For code 1, stdout still contains valid JSON array. execSync throws on
+ * non-zero exit, so we catch and extract stdout from the error object.
+ */
+function runEslintOnFile(filePath: string, cwd: string): string {
+	try {
+		const command = `npx eslint --no-error-on-unmatched-pattern --format json --fix "${filePath}"`;
+		const stdout = execSync(command, {
+			cwd,
+			encoding: "utf-8",
+			timeout: 15_000,
+			maxBuffer: 5 * 1024 * 1024,
+		}) as string;
+
+		// No errors: parse and return (empty messages = empty result)
+		const diags = parseEslintOutput(stdout);
+		if (diags.length === 0) return "";
+		return formatEslintDiagnostics(diags);
+	} catch (err: unknown) {
+		// ESLint exits code 1 when lint errors found — stdout still has JSON
+		// Only try to parse if the error object has stdout property
+		const execErr = err as { stdout?: string; stderr?: string; status?: number };
+		if (execErr.stdout) {
+			const diags = parseEslintOutput(execErr.stdout);
+			if (diags.length > 0) return formatEslintDiagnostics(diags);
+		}
+		// Exit code 2 or real crash — skip silently
+		return "";
+	}
+}
+
 // ─── Extension ───────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
@@ -136,10 +279,29 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		// Format the file in-place with --write
+		// Step 1: Format the file in-place with --write
 		const ok = formatFile(absolutePath, ctx.cwd);
 		if (ok && ctx.hasUI) {
 			ctx.ui.notify(`Formatted: ${filePath}`, "info");
+		}
+
+		// Step 2: ESLint on saved file (Tier 1 diagnostics, advisory only)
+		if (shouldLint(absolutePath)) {
+			const lintMsg = runEslintOnFile(absolutePath, ctx.cwd);
+			if (lintMsg && ctx.hasUI) {
+				ctx.ui.notify(`ESLint ran: ${filePath}`, "info");
+			}
+			if (lintMsg) {
+				// Non-blocking — deliver as followUp, Developer can proceed
+				const followUp = [
+					`## Lint Diagnostics — ${filePath}`,
+					``,
+					`ESLint found the following issues (advisory — not blocking):`,
+					``,
+					lintMsg,
+				].join("\n");
+				pi.sendUserMessage?.(followUp, { deliverAs: "followUp" });
+			}
 		}
 	});
 }

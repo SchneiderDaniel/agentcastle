@@ -32,6 +32,7 @@ import { runAgent } from "./agent-runner";
 import { determineNextStatus } from "./status-transitions";
 import { tryAutoMerge } from "./merge";
 import { determineLspPreAuditDecision, getRunPreAudit } from "./lsp-decisions";
+import { determineTscCheckpointDecision, getRunTscCheckpoint } from "./tsc-decisions";
 import { countRejections } from "./formatting";
 
 export function registerSupervisorCommand(pi: ExtensionAPI): void {
@@ -295,73 +296,161 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						break;
 					}
 
-					// ── LSP Pre-Audit Hook (Implementation → Audit only) ──
+					// ── TSC Checkpoint + LSP Pre-Audit (Implementation → Audit only) ──
 					let effectiveNextStatus = nextStatus;
 					if (nextStatus === "Audit") {
 						try {
-							const runPreAuditFn = await getRunPreAudit();
-							let preAuditResult: any = null;
-							let hasModifiedFiles = true;
-							let retryCount = 0;
-
-							if (runPreAuditFn) {
+							// Step 1: TSC checkpoint (Tier 2) — blocks if errors found
+							const runTscCheckpointFn = await getRunTscCheckpoint();
+							if (runTscCheckpointFn) {
 								const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 								const wt = `${config.worktreeBase!}${branch}`;
-								try {
-									const diffOut = execFileSync(
-										"git",
-										["diff", config.defaultBranch!, "--name-only"],
-										{
-											cwd: resolvePath(wt),
-											encoding: "utf-8",
-											timeout: 10_000,
-										},
-									).trim();
-									hasModifiedFiles = diffOut.length > 0;
-								} catch {
-									hasModifiedFiles = false;
-								}
 
-								const entries = ctx.sessionManager.getEntries();
-								retryCount = 0;
-								for (const e of entries) {
-									if (
-										e.type === "custom" &&
-										e.customType === "lsp-audit-retry" &&
-										(e.data as any)?.issueNum === issueNum
-									) {
-										retryCount++;
+								ctx.ui.setStatus("supervisor", "Running TSC checkpoint...");
+								const tscResult = runTscCheckpointFn(wt);
+								const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
+
+								if (tscDecision.nextStatus !== "Audit") {
+									// TSC has errors — stay in Implementation, send followUp, skip LSP
+									effectiveNextStatus = tscDecision.nextStatus;
+									if (tscDecision.note) {
+										ctx.ui.notify(tscDecision.note, "warning");
+										pi.sendUserMessage?.(tscDecision.note, { deliverAs: "followUp" });
+									}
+									// Skip LSP audit — pointless if tsc has errors
+								} else {
+									// TSC clean — proceed to LSP pre-audit
+									if (tscDecision.note) {
+										ctx.ui.notify(tscDecision.note, "info");
+									}
+
+									// Step 2: LSP pre-audit (Tier 3 — existing)
+									const runPreAuditFn = await getRunPreAudit();
+									let preAuditResult: any = null;
+									let hasModifiedFiles = true;
+									let retryCount = 0;
+
+									if (runPreAuditFn) {
+										try {
+											const diffOut = execFileSync(
+												"git",
+												["diff", config.defaultBranch!, "--name-only"],
+												{
+													cwd: resolvePath(wt),
+													encoding: "utf-8",
+													timeout: 10_000,
+												},
+											).trim();
+											hasModifiedFiles = diffOut.length > 0;
+										} catch {
+											hasModifiedFiles = false;
+										}
+
+										const entries = ctx.sessionManager.getEntries();
+										retryCount = 0;
+										for (const e of entries) {
+											if (
+												e.type === "custom" &&
+												e.customType === "lsp-audit-retry" &&
+												(e.data as any)?.issueNum === issueNum
+											) {
+												retryCount++;
+											}
+										}
+
+										if (hasModifiedFiles) {
+											ctx.ui.setStatus("supervisor", "Running LSP pre-audit diagnostics...");
+											preAuditResult = await runPreAuditFn(
+												{
+													issueNum,
+													worktreePath: wt,
+													defaultBranch: config.defaultBranch!,
+													repo: config.repo,
+												},
+												pi,
+												ctx,
+											);
+										}
+									}
+
+									const decision = determineLspPreAuditDecision(
+										nextStatus,
+										preAuditResult,
+										retryCount,
+										hasModifiedFiles,
+									);
+
+									effectiveNextStatus = decision.nextStatus;
+									if (decision.note) {
+										ctx.ui.notify(decision.note, "info");
+									}
+								}
+							} else {
+								// TSC checkpoint not available — skip to LSP pre-audit
+								const runPreAuditFn = await getRunPreAudit();
+								let preAuditResult: any = null;
+								let hasModifiedFiles = true;
+								let retryCount = 0;
+
+								if (runPreAuditFn) {
+									const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+									const wt = `${config.worktreeBase!}${branch}`;
+									try {
+										const diffOut = execFileSync(
+											"git",
+											["diff", config.defaultBranch!, "--name-only"],
+											{
+												cwd: resolvePath(wt),
+												encoding: "utf-8",
+												timeout: 10_000,
+											},
+										).trim();
+										hasModifiedFiles = diffOut.length > 0;
+									} catch {
+										hasModifiedFiles = false;
+									}
+
+									const entries = ctx.sessionManager.getEntries();
+									retryCount = 0;
+									for (const e of entries) {
+										if (
+											e.type === "custom" &&
+											e.customType === "lsp-audit-retry" &&
+											(e.data as any)?.issueNum === issueNum
+										) {
+											retryCount++;
+										}
+									}
+
+									if (hasModifiedFiles) {
+										ctx.ui.setStatus("supervisor", "Running LSP pre-audit diagnostics...");
+										preAuditResult = await runPreAuditFn(
+											{
+												issueNum,
+												worktreePath: wt,
+												defaultBranch: config.defaultBranch!,
+												repo: config.repo,
+											},
+											pi,
+											ctx,
+										);
 									}
 								}
 
-								if (hasModifiedFiles) {
-									ctx.ui.setStatus("supervisor", "Running LSP pre-audit diagnostics...");
-									preAuditResult = await runPreAuditFn(
-										{
-											issueNum,
-											worktreePath: wt,
-											defaultBranch: config.defaultBranch!,
-											repo: config.repo,
-										},
-										pi,
-										ctx,
-									);
+								const decision = determineLspPreAuditDecision(
+									nextStatus,
+									preAuditResult,
+									retryCount,
+									hasModifiedFiles,
+								);
+
+								effectiveNextStatus = decision.nextStatus;
+								if (decision.note) {
+									ctx.ui.notify(decision.note, "info");
 								}
 							}
-
-							const decision = determineLspPreAuditDecision(
-								nextStatus,
-								preAuditResult,
-								retryCount,
-								hasModifiedFiles,
-							);
-
-							effectiveNextStatus = decision.nextStatus;
-							if (decision.note) {
-								ctx.ui.notify(decision.note, "info");
-							}
 						} catch (auditErr: any) {
-							ctx.ui.notify(`LSP pre-audit error: ${auditErr.message}`, "warning");
+							ctx.ui.notify(`TSC/LSP pre-audit error: ${auditErr.message}`, "warning");
 						}
 					}
 

@@ -3,7 +3,7 @@ name: developer
 description: Implements a GitHub issue in an isolated git worktree based on architecture and test plan
 tools: read, bash, write, edit
 model: opencode-go/deepseek-v4-flash
-extensions: "caveman,crawl4ai,piignore"
+extensions: "caveman,crawl4ai,piignore,tsc-checkpoint"
 ---
 
 You are the **Developer** agent in a Kanban-driven software pipeline.
@@ -86,6 +86,10 @@ Commits and pushes submodules with changes first, then main repo. Uses `feat(#<N
 ```bash
 bash .pi/scripts/dev-workflow.sh cleanup <original-repo-path>
 ```
+
+## Commands
+
+- `/check` — Run `tsc --noEmit` type-check on current worktree. Use this to verify type correctness before marking a task complete.
 
 ## Rules
 
