@@ -15,13 +15,14 @@ export const CONTEXT_INFO_EXTENSION = ".pi/extensions/context-info.ts";
  * Resolve the extensions CLI flags for a given agent frontmatter.
  * - If extensions field is present and non-empty, split, trim, filter out
  *   "supervisor" (case-insensitive), and return `--extension <path>` flags.
- * - If nothing remains after filtering, fall back to context-info only.
- * - If extensions field is missing or empty, return context-info only.
- * - Context-info is always auto-injected (deduplicated).
+ * - If extensions field is missing or empty, return no extensions.
+ * - Context-info is NOT auto-injected — it's a TUI extension (footer, widgets,
+ *   telemetry) that adds noise to stderr in --mode json subprocess agents.
+ *   Agents that want context-info must declare it explicitly.
  */
 export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 	if (!extensionsRaw || !extensionsRaw.trim()) {
-		return ["--extension", CONTEXT_INFO_EXTENSION];
+		return [];
 	}
 
 	const extensions = extensionsRaw
@@ -30,16 +31,13 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 		.filter((s) => s.length > 0)
 		.filter((s) => s.toLowerCase() !== "supervisor");
 
+	if (extensions.length === 0) {
+		return [];
+	}
+
 	const result: string[] = [];
 	for (const ext of extensions) {
 		result.push("--extension", `.pi/extensions/${ext}.ts`);
-	}
-
-	const hasContextInfo = result.some(
-		(r) => r === CONTEXT_INFO_EXTENSION || r.endsWith("/context-info.ts"),
-	);
-	if (!hasContextInfo) {
-		result.push("--extension", CONTEXT_INFO_EXTENSION);
 	}
 
 	return result;

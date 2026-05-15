@@ -322,12 +322,24 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 	// ── Telemetry emit ─────────────────────────────────────────────
 
+	function isJsonMode(): boolean {
+		const idx = process.argv.indexOf("--mode");
+		if (idx !== -1 && idx + 1 < process.argv.length) {
+			return process.argv[idx + 1] === "json";
+		}
+		return false;
+	}
+
 	function tryEmit(ctx: ExtensionContext) {
 		if (emitted) return;
 		if (!lastContextWindow || lastContextWindow <= 0) return;
 		const usage = ctx.getContextUsage();
 		if (!usage || typeof usage.tokens !== "number" || usage.tokens <= 0) return;
 		emitted = true;
+		// In JSON mode pi redirects extension console.log to stderr.
+		// This pollutes stderr and confuses the supervisor pipeline.
+		// The supervisor already gets token/context data from JSON protocol events.
+		if (isJsonMode()) return;
 		console.log(
 			JSON.stringify({
 				type: "context_info",

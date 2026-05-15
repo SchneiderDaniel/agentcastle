@@ -289,7 +289,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					}
 					if (!nextStatus) {
 						const unclearNote = result.errorOutput
-							? `Agent ${agent.config.name} output unclear (stderr: ${result.errorOutput.slice(0, 200)}). Pipeline stopped.`
+							? `Agent ${agent.config.name} output unclear. Stderr: ${result.errorOutput.slice(0, 200)}. Pipeline stopped.`
 							: `Agent ${agent.config.name} output unclear. Pipeline stopped.`;
 						ctx.ui.notify(unclearNote, "warning");
 						break;

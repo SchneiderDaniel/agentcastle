@@ -25,6 +25,25 @@ export const MAX_LIVE_THINKING = 500;
 
 // ─── Pure helpers ───────────────────────────────────────────────────
 
+/**
+ * Filter known non-error patterns from stderr output.
+ * Prevents telemetry noise from polluting error detection.
+ */
+export function filterStderr(raw: string): string {
+	return raw
+		.split("\n")
+		.filter((line) => {
+			const trimmed = line.trim();
+			// Skip JSON telemetry events
+			if (trimmed.startsWith('{"type":"context_info"')) return false;
+			// Skip empty lines
+			if (!trimmed) return false;
+			return true;
+		})
+		.join("\n")
+		.trim();
+}
+
 /** Numeric priority for phase ordering. Higher = more important. */
 export function phasePriority(phase: AgentPhase): number {
 	switch (phase) {
@@ -498,6 +517,7 @@ export async function runAgent(
 				state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined;
 
 			const summaryLine = extractSummaryLine(textOutput, success, agentName);
+			const filteredStderr = filterStderr(stderr);
 
 			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setWorkingMessage(undefined);
@@ -513,7 +533,7 @@ export async function runAgent(
 				textOutput,
 				textOnly,
 				summaryLine,
-				errorOutput: stderr,
+				errorOutput: filteredStderr,
 				thinkingOutput,
 			});
 		});

@@ -87,7 +87,7 @@ function serializeRecord(record: LogRecord): string {
 // Event → Record Mappers
 // ---------------------------------------------------------------------------
 
-function userMessageToRecord(msg: any, step: number): LogRecord {
+function userMessageToRecord(msg: any): LogRecord {
 	const text = extractText(msg.content);
 	return {
 		timestamp:
@@ -100,7 +100,7 @@ function userMessageToRecord(msg: any, step: number): LogRecord {
 	};
 }
 
-function assistantMessageToRecord(msg: any, step: number): LogRecord {
+function assistantMessageToRecord(msg: any): LogRecord {
 	const texts: string[] = [];
 	const thinking: string[] = [];
 	const toolCalls: Array<{ name: string; arguments: unknown }> = [];
@@ -138,7 +138,7 @@ function assistantMessageToRecord(msg: any, step: number): LogRecord {
 	};
 }
 
-function toolResultToRecord(msg: any, step: number): LogRecord {
+function toolResultToRecord(msg: any): LogRecord {
 	const output = truncate(extractText(msg.content), MAX_TOOL_OUTPUT, MAX_TOOL_OUTPUT_TAIL);
 	return {
 		timestamp:
@@ -151,7 +151,7 @@ function toolResultToRecord(msg: any, step: number): LogRecord {
 	};
 }
 
-function bashExecutionToRecord(msg: any, step: number): LogRecord {
+function bashExecutionToRecord(msg: any): LogRecord {
 	const output = truncate(msg.output || "", MAX_TOOL_OUTPUT, MAX_TOOL_OUTPUT_TAIL);
 	const errorMsg = msg.exitCode !== 0 ? output : null;
 	return {
@@ -171,7 +171,7 @@ function bashExecutionToRecord(msg: any, step: number): LogRecord {
 	};
 }
 
-function customMessageToRecord(msg: any, step: number): LogRecord {
+function customMessageToRecord(msg: any): LogRecord {
 	return {
 		timestamp:
 			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
@@ -183,7 +183,7 @@ function customMessageToRecord(msg: any, step: number): LogRecord {
 	};
 }
 
-function branchSummaryToRecord(msg: any, step: number): LogRecord {
+function branchSummaryToRecord(msg: any): LogRecord {
 	return {
 		timestamp: new Date().toISOString(),
 		agent: "branch",
@@ -194,7 +194,7 @@ function branchSummaryToRecord(msg: any, step: number): LogRecord {
 	};
 }
 
-function compactionToRecord(msg: any, step: number): LogRecord {
+function compactionToRecord(msg: any): LogRecord {
 	return {
 		timestamp: typeof msg.timestamp === "string" ? msg.timestamp : new Date().toISOString(),
 		agent: "compaction",
@@ -210,7 +210,7 @@ function compactionToRecord(msg: any, step: number): LogRecord {
 	};
 }
 
-function modelSelectToRecord(event: any, step: number): LogRecord {
+function modelSelectToRecord(event: any): LogRecord {
 	const m = event.model;
 	return {
 		timestamp: new Date().toISOString(),
@@ -222,7 +222,7 @@ function modelSelectToRecord(event: any, step: number): LogRecord {
 	};
 }
 
-function thinkingSelectToRecord(event: any, step: number): LogRecord {
+function thinkingSelectToRecord(event: any): LogRecord {
 	return {
 		timestamp: new Date().toISOString(),
 		agent: "thinking_select",
