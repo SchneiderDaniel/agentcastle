@@ -111,8 +111,97 @@ function invoke(ctx: TestCtx, event: string, ...args: any[]) {
 }
 
 // ---------------------------------------------------------------------------
+// Duplicated helpers from .pi/extensions/context-info.ts (session timer)
+// ---------------------------------------------------------------------------
+
+/** Format elapsed ms → "⏱ Xh Ym Zs" */
+function formatSessionTimer(ms: number): string {
+	const totalSeconds = Math.floor(ms / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+
+	if (hours > 0) return `\u23f1 ${hours}h ${minutes}m ${seconds}s`;
+	if (minutes > 0) return `\u23f1 ${minutes}m ${seconds}s`;
+	return `\u23f1 ${seconds}s`;
+}
+
+/** Build right section string: timer · tokens, or just timer, or just tokens */
+function buildRightSection(
+	showTimer: boolean,
+	timerMs: number,
+	tokenDisplay: string | null,
+): string {
+	const timerStr = showTimer ? formatSessionTimer(timerMs) : null;
+	if (timerStr && tokenDisplay) return `${timerStr} \u00b7 ${tokenDisplay}`;
+	if (timerStr) return timerStr;
+	return tokenDisplay ?? "";
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// formatSessionTimer tests
+// ---------------------------------------------------------------------------
+
+describe("formatSessionTimer", () => {
+	it("0ms → ⏱ 0s", () => {
+		assert.strictEqual(formatSessionTimer(0), "\u23f1 0s");
+	});
+
+	it("sub-minute: 30s → ⏱ 30s", () => {
+		assert.strictEqual(formatSessionTimer(30_000), "\u23f1 30s");
+	});
+
+	it("multi-minute: 5m 30s → ⏱ 5m 30s", () => {
+		assert.strictEqual(formatSessionTimer(330_000), "\u23f1 5m 30s");
+	});
+
+	it("multi-hour: 1h 23m 45s → ⏱ 1h 23m 45s", () => {
+		assert.strictEqual(formatSessionTimer(5_025_000), "\u23f1 1h 23m 45s");
+	});
+
+	it(">24h: 26h 15m → ⏱ 26h 15m 0s", () => {
+		// 26h 15m = 94,500,000ms
+		assert.strictEqual(formatSessionTimer(94_500_000), "\u23f1 26h 15m 0s");
+	});
+
+	it("exact hour: 1h → ⏱ 1h 0m 0s", () => {
+		assert.strictEqual(formatSessionTimer(3_600_000), "\u23f1 1h 0m 0s");
+	});
+
+	it("exact minute: 1m → ⏱ 1m 0s", () => {
+		assert.strictEqual(formatSessionTimer(60_000), "\u23f1 1m 0s");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Footer right section integration tests
+// ---------------------------------------------------------------------------
+
+describe("footer right section — session timer", () => {
+	it("timer with token display → ⏱ ... · ◉ ...", () => {
+		const result = buildRightSection(true, 330_000, "\u25c9 12.5K/200K [6%]");
+		assert.strictEqual(result, "\u23f1 5m 30s \u00b7 \u25c9 12.5K/200K [6%]");
+	});
+
+	it("timer hidden (showTimer=false) → only token display", () => {
+		const result = buildRightSection(false, 330_000, "\u25c9 12.5K/200K [6%]");
+		assert.strictEqual(result, "\u25c9 12.5K/200K [6%]");
+	});
+
+	it("timer visible, no token data → timer alone", () => {
+		const result = buildRightSection(true, 60_000, null);
+		assert.strictEqual(result, "\u23f1 1m 0s");
+	});
+
+	it("timer hidden, no token data → empty string", () => {
+		const result = buildRightSection(false, 0, null);
+		assert.strictEqual(result, "");
+	});
+});
 
 describe("context-info extension — happy path", () => {
 	let ctx: TestCtx;

@@ -39,6 +39,7 @@ interface ThresholdEntry {
 interface ContextStatusBarConfig {
 	enabled: boolean;
 	thresholds: ThresholdEntry[];
+	showTimer: boolean;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────
@@ -57,6 +58,21 @@ const THRESHOLD_HEX_COLORS = [
 ];
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+/** Module-scope process start time — captures true pi process launch time */
+const processStartTime = Date.now();
+
+/** Format elapsed ms → "⏱ Xh Ym Zs" */
+function formatSessionTimer(ms: number): string {
+	const totalSeconds = Math.floor(ms / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+
+	if (hours > 0) return `\u23f1 ${hours}h ${minutes}m ${seconds}s`;
+	if (minutes > 0) return `\u23f1 ${minutes}m ${seconds}s`;
+	return `\u23f1 ${seconds}s`;
+}
 
 /** Format token count: 1200 → "1.2K", 1200000 → "1.2M" */
 function formatTokens(n: number): string {
@@ -149,7 +165,7 @@ function readPiSetting(key: string): string | undefined {
 // ─── Config loading ──────────────────────────────────────────────────
 
 function loadConfig(): ContextStatusBarConfig | null {
-	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS };
+	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS, showTimer: true };
 	const settingsPath = ".pi/settings.json";
 	if (!existsSync(settingsPath)) return defaults;
 
@@ -188,7 +204,13 @@ function loadConfig(): ContextStatusBarConfig | null {
 		thresholds = parsed.length > 0 ? parsed : DEFAULT_THRESHOLDS;
 	}
 
-	return { enabled, thresholds };
+	// Parse showTimer
+	let showTimer = true;
+	if ("showTimer" in cfg && typeof cfg.showTimer === "boolean") {
+		showTimer = cfg.showTimer;
+	}
+
+	return { enabled, thresholds, showTimer };
 }
 
 // ─── Thinking level → icon ───────────────────────────────────────────
@@ -240,9 +262,30 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	let emitted = false;
 	let thinkingLevel = ""; // empty = unknown until first thinking_level_select
 	let worktreeName: string | null = null;
+	let timerInterval: ReturnType<typeof setInterval> | null = null;
 
 	// ── Startup widget state ───────────────────────────────────────
 	let startupWidgetActive = false;
+
+	// ── Timer helpers ──────────────────────────────────────────────
+
+	function startTimer(ctx: ExtensionContext) {
+		stopTimer();
+		timerInterval = setInterval(() => {
+			// Request footer re-render to update timer display
+			// No direct requestRender access — installFooter's render will re-run
+			// on each tick because getContextUsage etc. return fresh data
+			// We call installFooter again to trigger re-render with new elapsed time
+			if (config) installFooter(ctx);
+		}, 1000);
+	}
+
+	function stopTimer() {
+		if (timerInterval !== null) {
+			clearInterval(timerInterval);
+			timerInterval = null;
+		}
+	}
 
 	// ── Hooks ──────────────────────────────────────────────────────
 
@@ -264,6 +307,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			ctx.ui.setFooter(undefined);
 			ctx.ui.setStatus("contextUsage", undefined);
 			ctx.ui.setWidget("agentcastle-welcome", undefined);
+			stopTimer();
 			return;
 		}
 
@@ -274,6 +318,9 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 		// Install custom footer
 		installFooter(ctx);
+
+		// Start live timer
+		startTimer(ctx);
 
 		// Custom working indicator — subtle dot pulse
 		ctx.ui.setWorkingIndicator({
@@ -325,6 +372,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 	});
 
+	pi.on("session_shutdown", async () => {
+		stopTimer();
+	});
+
 	// ── Telemetry emit ─────────────────────────────────────────────
 
 	function isJsonMode(): boolean {
@@ -361,6 +412,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			ctx.ui.setFooter(undefined);
 			return;
 		}
+
+		const showTimer = config.showTimer;
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			const unsubBranch = footerData.onBranchChange(() => tui.requestRender());
@@ -408,8 +461,19 @@ export default function contextInfo(pi: ExtensionAPI): void {
 						centerStr += " " + theme.fg("dim", "·") + " " + reasoningStr;
 					}
 
-					// ── RIGHT: Token usage + percentage ──────────
+					// ── RIGHT: Session timer + token usage + percentage ──
 					let rightStr = "";
+
+					// Compute timer string
+					let timerStr = "";
+					if (showTimer) {
+						const elapsed = Date.now() - processStartTime;
+						const rawTimer = formatSessionTimer(elapsed);
+						timerStr = theme.fg("dim", rawTimer);
+					}
+
+					// Compute token display string
+					let tokenDisplay = "";
 					if (tokens !== null && tokens !== undefined) {
 						const currentFmt = formatTokens(tokens);
 						const maxFmt = lastContextWindow ? formatTokens(lastContextWindow) : "?";
@@ -421,17 +485,28 @@ export default function contextInfo(pi: ExtensionAPI): void {
 						const usageHex = pickThresholdHex(tokens, config.thresholds);
 
 						const tokenText = `${currentFmt}/${maxFmt}`;
-						rightStr = theme.fg("dim", "◉ ") + fgHex(usageHex, tokenText);
+						tokenDisplay = theme.fg("dim", "◉ ") + fgHex(usageHex, tokenText);
 
 						if (pct !== null) {
 							const pctColor = pct >= 90 ? "error" : pct >= 70 ? "warning" : "dim";
-							rightStr += " " + theme.fg(pctColor, `[${pct}%]`);
+							tokenDisplay += " " + theme.fg(pctColor, `[${pct}%]`);
 						}
-					} else {
-						rightStr = theme.fg(
+					} else if (lastContextWindow) {
+						tokenDisplay = theme.fg(
 							"dim",
-							`◉ .../${lastContextWindow ? formatTokens(lastContextWindow) : "?"}`,
+							`◉ .../${formatTokens(lastContextWindow)}`,
 						);
+					} else {
+						tokenDisplay = theme.fg("dim", "◉ .../?");
+					}
+
+					// Combine timer and token display
+					if (timerStr && tokenDisplay) {
+						rightStr = `${timerStr} \u00b7 ${tokenDisplay}`;
+					} else if (timerStr) {
+						rightStr = timerStr;
+					} else {
+						rightStr = tokenDisplay;
 					}
 
 					// ── Separator character ──────────────────────
