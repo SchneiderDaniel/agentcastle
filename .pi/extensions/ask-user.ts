@@ -1,12 +1,16 @@
 /**
- * ask-user — interactive multiple-choice questions for the AI
+ * ask-user — interactive questions for the AI (choice + free-text)
  *
  * Registers a tool the AI can call to ask the user structured questions
- * with selectable options, a recommended pick, and an "Other" free-text option.
+ * with selectable options (and optional "Other" free-text fallback), or
+ * open-ended free-text questions.
  *
- * Uses a scrollable custom dialog so long questions (with code blocks)
- * don't push options off-screen. PgUp/PgDn scroll the question text
- * independently from arrow-key option navigation.
+ * All completed interactions are logged to .pi/context/qna.csv in RFC 4180
+ * format for auditability.
+ *
+ * For choice mode: Uses a scrollable custom dialog so long questions (with
+ * code blocks) don't push options off-screen. PgUp/PgDn scroll the question
+ * text independently from arrow-key option navigation.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -17,6 +21,8 @@ import {
 	type SelectListTheme,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { Type } from "typebox";
 
 /** Max visible lines for the question area before scrolling kicks in. */
@@ -24,43 +30,114 @@ const MAX_QUESTION_LINES = 12;
 /** Number of lines to scroll per PgUp/PgDn press. */
 const QUESTION_SCROLL_STEP = 5;
 
+// ---------------------------------------------------------------------------
+// CSV helpers (RFC 4180)
+// ---------------------------------------------------------------------------
+
+/**
+ * Escape a single CSV field per RFC 4180 section 2.
+ * Fields containing commas, double quotes, or CRLF are enclosed in double
+ * quotes; internal double quotes are doubled ("").
+ */
+function escapeCsvField(s: string): string {
+	if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+		return `"${s.replace(/"/g, '""')}"`;
+	}
+	return s;
+}
+
+/**
+ * Build a single CSV row for a Q&A entry.
+ * Columns: timestamp, question, answer. Terminated with \n.
+ */
+function toCsvRow(timestamp: string, question: string, answer: string): string {
+	return `${escapeCsvField(timestamp)},${escapeCsvField(question)},${escapeCsvField(answer)}\n`;
+}
+
+/**
+ * Append one Q&A entry to .pi/context/qna.csv.
+ * Creates the directory and file if missing. Errors are silently swallowed
+ * (best-effort per R3).
+ */
+async function appendQnaEntry(
+	projectDir: string,
+	timestamp: string,
+	question: string,
+	answer: string,
+): Promise<void> {
+	const csvDir = path.join(projectDir, ".pi", "context");
+	const csvPath = path.join(csvDir, "qna.csv");
+	try {
+		await fs.mkdir(csvDir, { recursive: true });
+		await fs.appendFile(csvPath, toCsvRow(timestamp, question, answer), "utf-8");
+	} catch {
+		// Best-effort: silently ignore write failures (R3)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Extension
+// ---------------------------------------------------------------------------
+
 export default function askUser(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "ask_user",
 		label: "Ask User",
 		description:
-			"Ask the user a multiple-choice question. Call this whenever you need user input during interviews, clarifications, or decision points. Present at least 3 options, mark one as recommended, and the 'Other' option is added automatically by the tool — do not include it yourself.",
+			"Ask the user a question. Supports multiple-choice (default) and free-text modes. Use choice mode when you need the user to pick from predefined options. Use freetext mode for open-ended questions like 'Tell me about yourself' or 'What do you think?'. All Q&A is logged to .pi/context/qna.csv.",
 		promptSnippet:
-			"Ask user a multiple-choice question with recommended option and free-text fallback",
+			"Ask user a question (choice or free-text mode)",
 		promptGuidelines: [
-			"Use ask_user to ask the user structured questions instead of open-ended text questions. Always provide at least 3 options, mark one as recommended, and the 'Other' option is appended automatically unless disableOther is set to true. Do not add 'Other' to the options array yourself.",
+			"Use ask_user with mode:'choice' (default) for structured multiple-choice questions. Always provide at least 3 options, mark one as recommended, and the 'Other' option is appended automatically unless disableOther is set to true. Do not add 'Other' to the options array yourself.",
+			"Use ask_user with mode:'freetext' for open-ended questions where predefined options would be constraining. Examples: asking for a description, opinion, or freeform input. In freetext mode, options are ignored.",
 			"Call ask_user ONE question at a time. Do not batch multiple questions into one call.",
 			"For quizzes or multiple-choice tests where only predefined choices are accepted, set disableOther to true.",
 		],
 		parameters: Type.Object({
+			mode: Type.Optional(
+				Type.Union(
+					[
+						Type.Literal("choice", {
+							description:
+								"Multiple-choice mode — user picks from a list of options (default)",
+						}),
+						Type.Literal("freetext", {
+							description:
+								"Free-text mode — user types an open-ended answer without options",
+						}),
+					],
+					{
+						default: "choice",
+						description:
+							"Question mode: 'choice' for multiple-choice, 'freetext' for open-ended input",
+					},
+				),
+			),
 			question: Type.String({
 				description:
 					"The question to display to the user. Include enough context that the user can answer without scrolling up.",
 			}),
-			options: Type.Array(
-				Type.Object({
-					label: Type.String({
-						description: "The option text shown to the user",
-					}),
-					value: Type.String({
-						description:
-							"Short value returned when this option is selected (e.g. 'yes_noop', 'keep_as_is')",
-					}),
-					recommended: Type.Optional(
-						Type.Boolean({
-							description: "Set to true for exactly ONE option to mark it as 'Recommended'",
+			options: Type.Optional(
+				Type.Array(
+					Type.Object({
+						label: Type.String({
+							description: "The option text shown to the user",
 						}),
-					),
-				}),
-				{
-					description:
-						"Answer options. Must have at least 3 options. One must have recommended=true. 'Other' is added automatically unless disableOther is true.",
-				},
+						value: Type.String({
+							description:
+								"Short value returned when this option is selected (e.g. 'yes_noop', 'keep_as_is')",
+						}),
+						recommended: Type.Optional(
+							Type.Boolean({
+								description: "Set to true for exactly ONE option to mark it as 'Recommended'",
+							}),
+						),
+					}),
+					{
+						description:
+							"Answer options (required for choice mode, ignored in freetext mode). Must have at least 3 options. One must have recommended=true. 'Other' is added automatically unless disableOther is true.",
+					},
+				),
 			),
 			disableOther: Type.Optional(
 				Type.Boolean({
@@ -69,8 +146,53 @@ export default function askUser(pi: ExtensionAPI): void {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const { question, options } = params;
+		async execute(
+			_toolCallId,
+			params,
+			_signal,
+			_onUpdate,
+			ctx,
+		): Promise<{
+			content: Array<{ type: "text"; text: string }>;
+			details: Record<string, unknown>;
+		}> {
+			const { question, mode = "choice" } = params;
+
+			// ── Freetext mode ──────────────────────────────────────────
+			if (mode === "freetext") {
+				const answer = await ctx.ui.input(question, "");
+				if (answer === undefined || answer.trim() === "") {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "User cancelled the question. Ask if they want to skip this topic and move on.",
+							},
+						],
+						details: {} as Record<string, unknown>,
+					};
+				}
+
+				const trimmedAnswer = answer.trim();
+				const timestamp = new Date().toISOString();
+
+				// Best-effort CSV logging
+				const sm = ctx.sessionManager;
+				await appendQnaEntry(sm.getCwd(), timestamp, question, trimmedAnswer);
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `User answered: "${trimmedAnswer}"`,
+						},
+					],
+					details: { answer: trimmedAnswer },
+				};
+			}
+
+			// ── Choice mode (default) ──────────────────────────────────
+			const options = params.options ?? [];
 
 			// Build SelectItems. Map labels back to values after selection.
 			const labelToValue: Array<{ label: string; value: string }> = [];
@@ -204,6 +326,9 @@ export default function askUser(pi: ExtensionAPI): void {
 				},
 			);
 
+			const timestamp = new Date().toISOString();
+			const sm = ctx.sessionManager;
+
 			// User cancelled (Esc)
 			if (selectedLabel === undefined) {
 				return {
@@ -231,20 +356,29 @@ export default function askUser(pi: ExtensionAPI): void {
 						details: {} as Record<string, unknown>,
 					};
 				}
+
+				const trimmedCustom = customAnswer.trim();
+
+				// Log custom text (not "__other__") per AC8
+				await appendQnaEntry(sm.getCwd(), timestamp, question, trimmedCustom);
+
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: `User chose "Other" and answered: "${customAnswer}"`,
+							text: `User chose "Other" and answered: "${trimmedCustom}"`,
 						},
 					],
-					details: { selected: "__other__", customAnswer },
+					details: { selected: "__other__", customAnswer: trimmedCustom },
 				};
 			}
 
 			// User picked a predefined option
 			const selectedValue =
 				labelToValue.find((e) => e.label === selectedLabel)?.value ?? selectedLabel;
+
+			await appendQnaEntry(sm.getCwd(), timestamp, question, selectedValue);
+
 			return {
 				content: [
 					{
