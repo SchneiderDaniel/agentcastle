@@ -1,0 +1,13 @@
+2026-05-15T21:01:56.396Z,Which approach should I implement? Option A (full in-process SDK refactor) gives cleanest result but is more work. Option B (forward raw output) is quick patch. Option C (hybrid) is middle ground.,option_a
+2026-05-15T21:02:45.752Z,"I've completed the analysis. Here's a preview of the GitHub issue I'll create. Shall I proceed?
+
+## Summary
+The supervisor extension uses subprocess spawn (`/usr/bin/pi --mode json`) for each pipeline agent. Not all subprocess output reaches the main process — raw stdout/stderr is lost, log entries are truncated, and the session-logger only sees what the main process forwards. The goal is to refactor agent execution to run in-process via pi's SDK `createAgentSession()`, so all output flows through the main pi event system and is fully captured by the session-logger.
+
+## Key Changes
+1. New `agent-session-runner.ts` using SDK in-process session
+2. Keep subprocess fallback in `agent-runner.ts`
+3. Forward complete raw output in `pipeline.ts`
+4. Extend `SupervisorMessageDetails` with `rawOutput`
+
+Proceed?",proceed
