@@ -8,25 +8,9 @@ const PROMPT = fs.readFileSync(
   'utf-8'
 );
 
-// ── Test 1: Index check before search ────────────────────────────────────────
-test('prompt contains codebase_index call', () => {
-  assert.ok(PROMPT.includes('codebase_index'), 'Prompt must contain codebase_index call');
-});
-
-test('prompt instructs to wait for indexing completion', () => {
-  assert.ok(
-    PROMPT.includes('Wait for indexing to complete') ||
-    PROMPT.includes('wait until the command finishes'),
-    'Prompt must instruct to wait for indexing completion'
-  );
-});
-
-test('index call happens before search steps', () => {
-  const idxPos = PROMPT.indexOf('codebase_index');
-  const searchPos = PROMPT.indexOf('codebase_search');
-  assert.ok(idxPos > -1, 'codebase_index must be present');
-  assert.ok(searchPos > -1, 'codebase_search must be present');
-  assert.ok(idxPos < searchPos, 'codebase_index must appear before codebase_search');
+// ── Test 1: No codebase_index (removed) ──────────────────────────────────────
+test('prompt does NOT contain codebase_index call', () => {
+  assert.ok(!PROMPT.includes('codebase_index'), 'Prompt must NOT contain codebase_index — removed');
 });
 
 // ── Test 2: Keyword extraction instructions ──────────────────────────────────
@@ -72,25 +56,20 @@ test('prompt has fallback for 0 keywords — skip to greenfield', () => {
   );
 });
 
-// ── Test 3: Codebase search + read + trace ────────────────────────────────────
-test('prompt contains codebase_search with name_pattern per keyword', () => {
-  assert.ok(PROMPT.includes('codebase_search'), 'Prompt must contain codebase_search');
-  assert.ok(PROMPT.includes('name_pattern'), 'Prompt must mention name_pattern');
+// ── Test 3: Codebase search replaced with bash grep ─────────────────────────
+test('prompt uses bash grep for codebase search', () => {
+  assert.ok(PROMPT.includes('grep -rli'), 'Prompt must use grep -rli for search');
 });
 
-test('prompt contains codebase_snippet for each result', () => {
-  assert.ok(PROMPT.includes('codebase_snippet'), 'Prompt must contain codebase_snippet');
+test('prompt uses read tool for examining code', () => {
+  assert.ok(PROMPT.includes('use `read`'), 'Prompt must use read tool');
+  assert.ok(PROMPT.includes('## 2.3'), 'Must have read step');
 });
 
-test('prompt contains codebase_trace with direction=outbound and depth=1', () => {
-  assert.ok(PROMPT.includes('codebase_trace'), 'Prompt must contain codebase_trace');
+test('prompt uses bash grep for dependency tracing', () => {
   assert.ok(
-    PROMPT.includes('outbound') || PROMPT.includes('direction outbound'),
-    'Must specify direction outbound'
-  );
-  assert.ok(
-    PROMPT.includes('depth 1') || PROMPT.includes('depth=1'),
-    'Must specify depth 1'
+    PROMPT.includes('grep -rn') && PROMPT.includes('symbol_name'),
+    'Prompt must use grep -rn for dependency tracing'
   );
 });
 
@@ -125,16 +104,6 @@ test('prompt instructs fallback to text-only cutting when no results', () => {
   );
 });
 
-test('prompt triggers fallback when 0 keywords extracted', () => {
-  const zeroKwSection = PROMPT.substring(
-    PROMPT.indexOf('0 keywords') > -1 ? PROMPT.indexOf('0 keywords') : PROMPT.indexOf('greenfield')
-  );
-  assert.ok(
-    zeroKwSection.includes('greenfield') || PROMPT.includes('skip to the Greenfield'),
-    'Must trigger greenfield on 0 keywords'
-  );
-});
-
 // ── Test 5: Sub-issue "Files Touched" section ───────────────────────────────
 test('sub-issue body template contains Files Touched section', () => {
   assert.ok(
@@ -166,17 +135,6 @@ test('template handles mixed case — existing files + new paths', () => {
 });
 
 // ── Test 6: Edge cases in prompt ─────────────────────────────────────────────
-test('0 keywords → skip to greenfield fallback immediately', () => {
-  const kwExtractSection = PROMPT.substring(
-    PROMPT.indexOf('2.1') > -1 ? PROMPT.indexOf('2.1') : PROMPT.indexOf('Extract Keywords')
-  );
-  assert.ok(
-    (kwExtractSection.includes('0 keywords') || PROMPT.includes('0 keywords')) &&
-    (PROMPT.includes('skip') || PROMPT.includes('Skip')),
-    'Must have immediate skip to greenfield for 0 keywords'
-  );
-});
-
 test('>50 results per keyword → take top 3 only', () => {
   assert.ok(
     PROMPT.includes('50') && PROMPT.includes('top 3') ||
@@ -196,15 +154,8 @@ test('referenced files not found → note as "referenced but not found", do not 
   );
 });
 
-test('no indexing timeout → wait until completion', () => {
-  assert.ok(
-    PROMPT.includes('no timeout') || PROMPT.includes('No timeout') || PROMPT.includes('wait until'),
-    'Must state no timeout and wait until completion'
-  );
-});
-
 // ── Test 7: Data flow integrity ──────────────────────────────────────────────
-test('discovery map built from file path, symbol, outbound dependencies', () => {
+test('discovery map built from file path, symbol, dependencies', () => {
   assert.ok(PROMPT.includes('file:'), 'Discovery map must include file paths');
   assert.ok(PROMPT.includes('symbol:'), 'Discovery map must include symbols');
   assert.ok(PROMPT.includes('deps:'), 'Discovery map must include dependencies');

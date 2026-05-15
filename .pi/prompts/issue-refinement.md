@@ -95,7 +95,7 @@ gh issue view $1 --repo "$REPO" --json title,body,comments,labels,state
 find . -maxdepth 4 -not -path './.pi/*' -not -path './node_modules/*' -not -path './.git/*' -iname '*<keyword>*' | head -60
 ```
 
-Use `codebase_search` for symbols mentioned. Read `CONTEXT.md` / `docs/adr/` if they exist. Trace relevant code paths.
+Use `bash grep` to search for symbols mentioned. Read `CONTEXT.md` / `docs/adr/` if they exist. Trace relevant code paths with `bash grep`.
 
 ### 0.3 — Cross-Reference with Code
 

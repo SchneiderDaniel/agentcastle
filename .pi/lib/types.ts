@@ -24,7 +24,7 @@ export interface ToolResult {
 
 // ─── Callback types ──────────────────────────────────────────────────
 
-/** Update callback signature shared by codebase-memory and crawl4ai */
+/** Update callback signature for extensions */
 export type OnUpdateCallback = (
 	update: { content: ContentBlock[]; details: unknown },
 ) => void;

@@ -74,19 +74,7 @@ Do **not** proceed past this gate if the `refined` label is absent.
 
 ⚠️ **MANDATORY**: Explore the relevant codebase area before decomposing. Cutting issues without knowing current state leads to incorrect sub-issues.
 
-Follow these steps in order. Record all findings in a **discovery map** — a structured list of `(file path, symbol, outbound dependencies)` for every symbol found. This map will be injected into each sub-issue under "Files Touched" (Step 4).
-
----
-
-#### 2.0 — Ensure Codebase Index
-
-Before searching, the codebase must be indexed. Run `codebase_index` to ensure the index exists and is current:
-
-```bash
-codebase_index
-```
-
-Wait for indexing to complete before proceeding. There is no timeout — wait until the command finishes.
+Follow these steps in order. Record all findings in a **discovery map** — a structured list of `(file path, symbol, dependencies)` for every symbol found. This map will be injected into each sub-issue under "Files Touched" (Step 4).
 
 ---
 
@@ -110,34 +98,34 @@ cat tmp/epic.json | jq '{title, body}'
 
 #### 2.2 — Search the Codebase
 
-For each keyword, run `codebase_search` with `name_pattern` matching:
+For each keyword, use `bash grep` to find matching files:
 
 ```bash
-codebase_search --name_pattern "<keyword>"
+grep -rli "<keyword>" --include="*.py" --include="*.ts" --include="*.js" --include="*.java" --include="*.go" 2>/dev/null | head -20
 ```
 
-**Cap results at the top 3 per keyword.** If a keyword returns more than 50 results, take only the first 3. Record each result's file path and symbol name.
+**Cap results at the top 3 per keyword.** Record each result's file path.
 
 ---
 
 #### 2.3 — Read Matching Code
 
-For each result from 2.2, run `codebase_snippet` to read the actual code:
+For each result from 2.2, use `read` to examine the file and find relevant symbols:
 
 ```bash
-codebase_snippet --file "<file_path>" --symbol "<symbol_name>"
+# Read the file to find symbols matching the keyword
 ```
 
-This gives you the source content to understand what the code does before you cut it into sub-issues.
+Record the file path and any matching symbols found.
 
 ---
 
 #### 2.4 — Trace Dependencies
 
-For each symbol discovered in 2.2–2.3, trace what it calls (outbound dependencies) to understand the blast radius of changes:
+For each symbol discovered in 2.2–2.3, use `bash grep` to trace what it calls and what calls it:
 
 ```bash
-codebase_trace --direction outbound --depth 1 --symbol "<symbol_name>"
+grep -rn "<symbol_name>" --include="*.py" --include="*.ts" 2>/dev/null | head -20
 ```
 
 Record the discovered dependencies alongside each symbol in the discovery map. Format:
@@ -153,7 +141,7 @@ Discovery Map:
 
 #### 2.5 — Greenfield Fallback
 
-If no results were found across all keywords (no `codebase_search` hits), record:
+If no results were found across all keywords (no `grep` hits), record:
 
 ```
 No existing code found — greenfield
@@ -168,7 +156,6 @@ Proceed to text-only cutting. The "Files Touched" section in each sub-issue will
 - **Referenced file not found by search**: Note it in the discovery map as `referenced but not found` and continue. Do not block cutting.
 - **0 keywords extracted**: Skip directly to greenfield fallback (2.5).
 - **>50 results per keyword**: Take top 3 only; ignore the rest.
-- **No indexing timeout**: Wait until `codebase_index` completes.
 
 ---
 

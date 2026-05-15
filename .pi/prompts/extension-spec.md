@@ -46,7 +46,7 @@ This is the full content of issue #46 from SchneiderDaniel/agentcastle. These ru
 |---|------|-------------|
 | **C1** | **Never use `any`** | `any` disables all type checking. Use `unknown` with type guards. Every API response, CLI output, session entry, event payload — all must have typed interfaces. |
 | **C2** | **`details: {}` is wrong** | `{}` means "any non-nullish value" in TypeScript, not "empty object." Use `details: {} as Record<string, unknown>` or define a shared `ToolResultDetails` type. |
-| **C3** | **Create shared type modules** | Extract duplicated types into `.pi/extensions/types.ts`. Create domain-specific type files for GitHub API, LSP protocol, codebase bridge, etc. |
+| **C3** | **Create shared type modules** | Extract duplicated types into `.pi/extensions/types.ts`. Create domain-specific type files for GitHub API, LSP protocol, etc. |
 | **C4** | **Encapsulate mutable state in closure** | Module-level mutable state (timers, streams, flags, caches) leaks on hot-reload or double-load. Put all state inside the exported function's closure or a class instance. |
 | **C5** | **Add explicit return type annotations** | `export default function (pi: ExtensionAPI)` needs `: void` or `: Promise<void>`. Saves compiler work, prevents accidental type drift. |
 | **C6** | **No sync I/O at module init** | `fs.existsSync`, `fs.readFileSync`, `process.cwd()` at module load blocks the event loop. Defer to first tool call, use `fs.promises`, or compute paths lazily. |

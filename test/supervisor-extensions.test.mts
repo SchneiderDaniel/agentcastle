@@ -215,10 +215,10 @@ function parseAgentFileExtensions(filePath: string): string | undefined {
 
 describe("production agent files — extensions field", () => {
 	const agents = [
-		{ name: "architect", expected: "caveman,crawl4ai,piignore,codebase-memory" },
-		{ name: "test-designer", expected: "caveman,crawl4ai,piignore,codebase-memory" },
-		{ name: "developer", expected: "caveman,crawl4ai,piignore,codebase-memory" },
-		{ name: "auditor", expected: "caveman,crawl4ai,piignore,codebase-memory" },
+		{ name: "architect", expected: "caveman,crawl4ai,piignore" },
+		{ name: "test-designer", expected: "caveman,crawl4ai,piignore" },
+		{ name: "developer", expected: "caveman,crawl4ai,piignore" },
+		{ name: "auditor", expected: "caveman,crawl4ai,piignore" },
 	];
 
 	for (const agent of agents) {

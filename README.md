@@ -5,7 +5,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 **Secure, local-first AI development environment.**
-WSL (Ubuntu) + Zed + Git Worktrees + Pi AI — sandboxed execution, codebase intelligence, real-time feedback.
+WSL (Ubuntu) + Zed + Git Worktrees + Pi AI — sandboxed execution, real-time feedback.
 
 ---
 
@@ -13,7 +13,6 @@ WSL (Ubuntu) + Zed + Git Worktrees + Pi AI — sandboxed execution, codebase int
 
 Agentcastle is a pre-configured AI coding harness that gives the [Pi coding agent](https://pi.dev) a full toolchain:
 
-- **Codebase knowledge graph** — Persistent index of your entire codebase (66 languages, 14 query tools)
 - **Web crawling** — Three-tier fallback: local Chromium → Apify cloud → HTTP
 - **Session logging** — Every session saved as LLM-optimized markdown for later analysis
 - **Extensions-based** — Secure pi extensions, no MCP servers
@@ -31,7 +30,6 @@ This repository contains the **configuration and extensions**. You clone it and 
 | File/Path                           | What it is                              |
 | ----------------------------------- | --------------------------------------- |
 | `.pi/extensions/caveman.ts`              | Token-efficient communication protocol    |
-| `.pi/extensions/codebase-memory.ts`      | Codebase knowledge graph (14 tools) + auto-index + tool-use guidance |
 | `.pi/extensions/crawl4ai.ts`             | Three-tier web crawler                    |
 | `.pi/extensions/session-logger.ts`       | Session logging to markdown               |
 | `.pi/extensions/ask-user.ts`             | Interactive multiple-choice questions     |
@@ -45,7 +43,6 @@ This repository contains the **configuration and extensions**. You clone it and 
 | `.pi/prompts/issue-cutter.md`            | Epic → sub-issues with layer labels       |
 | `.pi/prompts/issue-refinement.md`        | Socratic interview + MC refinement        |
 | `AGENTS.md`                              | Caveman protocol (active every session)   |
-| `.cbmignore`                             | Codebase index exclusions                 |
 | `package.json`                           | Project metadata + test script            |
 | `test/session-logger.test.mts`           | Session logger test                       |
 | `test/supervisor-extensions.test.mts`    | Supervisor extension resolution tests     |
@@ -59,7 +56,6 @@ This repository contains the **configuration and extensions**. You clone it and 
 | Python 3.10+ + venv + pip       | crawl4ai local web crawler            |
 | GitHub CLI (gh)                 | Git operations from Pi                |
 | `@earendil-works/pi-coding-agent` | The agent itself (global npm install) |
-| `codebase-memory-mcp` binary    | Code intelligence engine              |
 | `~/.agent_env` file             | API keys (Apify token, etc.)          |
 | `~/.bashrc` auto-start block    | Docker + env loading on WSL boot      |
 
@@ -71,7 +67,6 @@ This repository contains the **configuration and extensions**. You clone it and 
 
 | Category            | Capability                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 🧠 **Code Intel**   | 14 tools: search, trace, query, overview, schema, snippet, grep, change detection, ADR management, trace ingestion |
 | 🕷️ **Web Crawl**    | `web_crawl` tool: local crawl4ai (real Chromium) → Apify cloud actor → direct HTTP + regex extraction              |
 | 📝 **Session Log**  | Full conversation + thinking blocks + tool calls saved as markdown + metadata JSON                                 |
 | 🦴 **Caveman Mode** | Token-efficient communication via `AGENTS.md` — active in every session                                            |
@@ -88,8 +83,6 @@ This repository contains the **configuration and extensions**. You clone it and 
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs python3 python3-pip python3-venv jq unzip
 sudo npm install -g @earendil-works/pi-coding-agent
-curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --skip-config
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 
 # 2. Set your AI provider (one-time)
 pi --provider opencode-go --api-key "your-key-here"
@@ -108,7 +101,6 @@ pi
 - [🔧 Prerequisites](#prerequisites)
 - [🔧 Installation & Setup](#installation--setup)
   - [GitHub CLI](#github-cli)
-  - [Codebase Memory](#codebase-memory)
   - [Security & Environment](#security--environment)
   - [AI Provider Setup](#ai-provider-setup)
   - [Workspace & Git](#workspace--git)
@@ -118,7 +110,6 @@ pi
   - [Why extensions instead of MCP?](#why-extensions-instead-of-mcp)
   - [Extensions](#extensions)
   - [Agent Definitions](#agent-definitions)
-  - [Codebase Intelligence](#codebase-intelligence)
 - [📦 Daily Usage](#daily-usage)
   - [Project Setup (one-time)](#project-setup-one-time)
   - [Running the Supervisor](#running-the-supervisor)
@@ -186,13 +177,6 @@ gh auth status   # verify: should show "Logged in to github.com"
 ```
 
 > `gh` stores an OAuth token for API operations (issues, PRs, repo management). Your SSH key in `~/.ssh/id_ed25519` handles `git push/pull` — separate, already working.
-
-### Codebase Memory
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --skip-config
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-```
 
 ### Security & Environment
 
@@ -350,17 +334,17 @@ Pi lives in Zed's integrated terminal (`Ctrl + ~`). Set the terminal profile to 
 │  └─────┼────────────────────────────────────┘  │
 └────────┼───────────────────────────────────────┘
          │
-    ┌────┴────────────┐
+    ┌────▼────────────┐
     │                 │
-┌───▼──────────┐  ┌───▼──────────┐
-│Codebase      │  │crawl4ai      │
-│Memory MCP    │  │Python venv   │
-│(host index)  │  │(host browser)│
-│              │  │              │
-└──────────────┘  └──────────────┘
+┌───▼──────────┐
+│crawl4ai      │
+│Python venv   │
+│(host browser)│
+│              │
+└──────────────┘
 ```
 
-**Key principle:** Codebase intelligence and web crawling run on the host (read-only for code, network-only for crawl).
+**Key principle:** Web crawling runs on the host (network-only for crawl).
 
 ### Why extensions instead of MCP?
 
@@ -380,12 +364,12 @@ MCP servers expose tool descriptions via JSON-RPC introspection. Every tool's fu
 
 Pi extensions use **prompt snippets** — concise one-line descriptions that replace full JSON Schema in the system prompt. The agent only sees the full schema when it actually calls the tool. This saves thousands of tokens per turn.
 
-| Approach                        | Tokens per tool (system prompt) | 14 tools      |
-| ------------------------------- | ------------------------------- | ------------- |
-| MCP JSON-RPC (full JSON Schema) | ~300-800                        | ~4,200-11,200 |
-| Pi extension (prompt snippet)   | ~50-120                         | ~700-1,680    |
+| Approach                        | Tokens per tool (system prompt) |
+| ------------------------------- | ------------------------------- |
+| MCP JSON-RPC (full JSON Schema) | ~300-800                        |
+| Pi extension (prompt snippet)   | ~50-120                         |
 
-> Combined with the codebase graph (99.2% token savings vs file-by-file grep), the extension approach keeps the agent focused on your problem, not on parsing tool schemas.
+> Combined with concise prompt snippets, the extension approach keeps the agent focused on your problem, not on parsing tool schemas.
 
 ### Extensions
 
@@ -395,7 +379,6 @@ Pi auto-discovers extensions from `.pi/extensions/` in your **project root**. No
 | -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
 | **Supervisor**       | `supervisor.ts`      | Kanban-driven multi-agent pipeline. Reads issue from GitHub project board, dispatches Architect → TestDesigner → Developer → Auditor in loop until Done. Registers `/supervisor <issue-number>` slash command. |
 | **Web Crawler**      | `crawl4ai.ts`        | Three-tier web crawling: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps.     |
-| **Codebase Memory**  | `codebase-memory.ts` | Wraps codebase-memory-mcp CLI. Auto-indexes on session start. 14 tools exposed. Injects codebase exploration guidance into every agent turn. |
 | **Session Logger**   | `session-logger.ts`  | Logs sessions to `.pi/sessions/<id>/session.md` + `metadata.json`. Toggle with `/session-logger`.              |
 | **Caveman Protocol** | `caveman.ts`         | Token-efficient communication style. Active via `AGENTS.md`.                                                   |
 | **Ask User**         | `ask-user.ts`        | Interactive multiple-choice picker for AI-to-user questions. Uses `ctx.ui.select()` with arrow-key navigation. |
@@ -448,39 +431,6 @@ Output:
 └── metadata.json   # Token totals, cost, model/thinking changes, compaction count
 ```
 
-### Codebase Intelligence
-
-Uses [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — single static binary, zero runtime dependencies, 66 languages. The extension wraps the CLI via `pi.exec()`. The graph is a host-level index shared across sessions.
-
-**Token savings:** Five structural queries consume ~3,400 tokens via the graph vs ~412,000 tokens via file-by-file grep — a **99.2% reduction**.
-
-#### Tools Exposed
-
-| Tool                      | Description                                                   |
-| ------------------------- | ------------------------------------------------------------- |
-| `codebase_search`         | Search graph by name pattern, label, file, degree             |
-| `codebase_trace`          | BFS call-path traversal (inbound/outbound/both)               |
-| `codebase_query`          | Cypher-like graph queries (MATCH...RETURN...)                 |
-| `codebase_overview`       | Architecture: languages, packages, routes, hotspots, clusters |
-| `codebase_get_schema`     | Graph schema: node labels, edge types, properties             |
-| `codebase_snippet`        | Read source code by qualified name                            |
-| `codebase_grep`           | Full-text search within indexed files                         |
-| `codebase_detect_changes` | Git diff → affected symbols + risk classification             |
-| `codebase_adr`            | CRUD for Architecture Decision Records                        |
-| `codebase_index`          | Explicit re-index trigger                                     |
-| `codebase_list_projects`  | List all indexed projects                                     |
-| `codebase_index_status`   | Per-project indexing status                                   |
-| `codebase_delete_project` | Remove project from graph                                     |
-| `codebase_ingest_traces`  | Ingest runtime traces for HTTP edge validation                |
-
-#### Tool-Use Guidance
-
-The `codebase-memory.ts` extension injects a **Codebase Exploration Strategy** section into every agent's system prompt via a `before_agent_start` hook. This instructs all agents (Architect, Developer, Auditor, TestDesigner) to use graph tools before falling back to file reads or grep. Graph queries use ~120× fewer tokens than file-by-file exploration — documented in the [codebase-memory-mcp arXiv paper](https://arxiv.org/abs/2603.27277) (83% answer quality, 10× fewer tokens, 2.1× fewer tool calls vs. file-by-file).
-
-#### File Ignoring
-
-`.cbmignore` in the project root excludes `.pi/chromium-deps/`, `.pi/crawl4ai-venv/`, `node_modules/`, `.env`, `.agent_env`, `npm/`, and `tmp/` from indexing. Add patterns in gitignore syntax for vendored code, generated files, or large assets.
-
 ---
 
 ## 📦 Daily Usage
@@ -526,7 +476,6 @@ See `.pi/settings.json` → `supervisor.statusMapping` for the status-to-agent m
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | **Start session**      | `pi`                                                                                                                       |
 | **Run supervisor**     | `/supervisor <issue-number>`                                                                                               |
-| **Reindex codebase**   | Use `codebase_index` tool inside pi, or `~/.local/bin/codebase-memory-mcp cli index_repository '{"repo_path":"'$(pwd)'"}'` |
 | **View session logs**  | `ls .pi/sessions/`                                                                                                         |
 
 ### Context & Templates
@@ -558,17 +507,7 @@ echo $APIFY_TOKEN            # Should print your token
 pi "Respond with exactly one word: 'Operational'."
 ```
 
-### 3. Codebase Memory
-
-```bash
-~/.local/bin/codebase-memory-mcp --version
-~/.local/bin/codebase-memory-mcp cli index_repository "{\"repo_path\": \"$PWD\"}"
-~/.local/bin/codebase-memory-mcp cli search_graph "{\"project\": \"$(echo $PWD | sed 's|^/||; s|/|-|g')\", \"name_pattern\": \".*\", \"label\": \"Function\", \"limit\": 5}"
-```
-
-_Expected:_ Index reports `"status":"indexed"` with node/edge counts. Search returns function names.
-
-### 4. Execution Routing (Acid Test)
+### 3. Execution Routing (Acid Test)
 
 ```bash
 pi -p "Create a file named '.pi/test-file.txt' with the content 'host works', then tell me the absolute path where it was created."
@@ -607,14 +546,11 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | npm                                        | latest   | Artistic-2.0 | system     | [npmjs.com](https://npmjs.com)                                                                           |
 | **Infrastructure Tools**                   |          |              |            |                                                                                                          |
 | GitHub CLI (gh)                            | latest   | MIT          | system     | [cli.github.com](https://cli.github.com)                                                                 |
-| **Code Intelligence**                      |          |              |            |                                                                                                          |
-| codebase-memory-mcp                        | 0.6.0    | Apache-2.0   | CLI tool   | [github.com/DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)               |
 | **Web Crawling (Python venv)**             |          |              |            |                                                                                                          |
 | crawl4ai                                   | latest   | Apache-2.0   | venv       | [github.com/unclecode/crawl4ai](https://github.com/unclecode/crawl4ai)                                   |
 | Playwright Chromium                        | latest   | Apache-2.0   | venv       | [playwright.dev](https://playwright.dev)                                                                 |
 | **Project Extensions (`.pi/extensions/`)** |          |              |            |                                                                                                          |
 | caveman.ts                                 | —        | MIT          | project    | This repository                                                                                          |
-| codebase-memory.ts                         | —        | MIT          | project    | This repository                                                                                          |
 | crawl4ai.ts                                | —        | MIT          | project    | This repository                                                                                          |
 | session-logger.ts                          | —        | MIT          | project    | This repository                                                                                          |
 | ask-user.ts                                | —        | MIT          | project    | This repository                                                                                          |
@@ -649,14 +585,6 @@ ls .pi/chromium-deps/usr/lib/x86_64-linux-gnu/
 # Manual reinstall
 rm -rf .pi/crawl4ai-venv .pi/chromium-deps
 # Next web_crawl invocation will auto-recreate both
-```
-
-### Codebase index is stale
-
-The extension auto-indexes on session start. For manual reindex:
-
-```bash
-~/.local/bin/codebase-memory-mcp cli index_repository "{\"repo_path\": \"$PWD\"}"
 ```
 
 ### WSL networking issues (can't reach API)
@@ -715,7 +643,6 @@ Built on top of these excellent projects:
 
 ### Runtime & Tools
 - [Pi Coding Agent](https://pi.dev) — The agent runtime
-- [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) — Code intelligence engine
 - [crawl4ai](https://github.com/unclecode/crawl4ai) — LLM-friendly web crawler
 - [Zed](https://zed.dev) — The editor
 

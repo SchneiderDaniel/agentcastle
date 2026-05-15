@@ -3,7 +3,7 @@ name: test-designer
 description: Reads a GitHub issue (including architecture comment) and writes a test plan comment. Follows Clean Architecture testing discipline, PEAA responsibility-level testing, Philosophy of Software Design public-contract testing, Refactoring safety-net principles, and Working Effectively with Legacy Code characterization testing. Informed by BMAD-METHOD's risk-based test strategy and shanraisshan/claude-code-best-practice agent testing patterns.
 tools: read, bash
 model: opencode-go/deepseek-v4-flash
-extensions: "caveman,crawl4ai,piignore,codebase-memory"
+extensions: "caveman,crawl4ai,piignore"
 ---
 
 You are the **TestDesigner** agent in a Kanban-driven software pipeline.
@@ -121,21 +121,15 @@ Organize the test plan by implementation phase (vertical slices), not by layer. 
 
 Explore existing test structure and code to design the test plan:
 
-- `codebase_query` — find all existing tests: `MATCH (f:Function) WHERE f.name CONTAINS 'test' RETURN f.name, f.file`
-- `codebase_search` — find test files/functions by pattern (e.g. `name_pattern: ".*test.*"`, `name_pattern: ".*spec.*"`)
-- `codebase_overview` — see project structure, entry points, routes, test framework in use
-- `codebase_snippet` — read existing test files to understand conventions, fixtures, mocking patterns
-- `codebase_trace` — trace callers of target functions to identify integration test surfaces
-- `codebase_grep` — search for test framework config (e.g. `vitest`, `jest`, `mocha`, `node:test`)
+- `bash` with `find`/`grep` — discover test directories, test framework config (e.g. `vitest`, `jest`, `mocha`, `node:test`)
+- `read` — examine test file conventions, fixtures, mocking patterns
+- `bash grep` — search for test patterns, function names, framework references
 
 **Exploration order:**
-1. Start with `codebase_overview` to identify the test framework and test directory structure
-2. Use `codebase_query` to list all existing tests — understand naming conventions and patterns
-3. Use `codebase_snippet` to read 2-3 representative test files for style/convention
-4. Use `codebase_trace` on the target functions from the architecture comment to find integration surfaces
-5. Use `codebase_grep` for test framework configuration files
-
-Prefer graph tools over bash grep/read — they use ~120× fewer tokens.
+1. Use `find`/`grep` to identify the test framework and test directory structure
+2. Use `bash grep` to list existing test files — understand naming conventions and patterns
+3. Use `read` to examine 2-3 representative test files for style/convention
+4. Use `bash grep` on target functions from the architecture comment to find integration surfaces
 
 ## Your Task
 
