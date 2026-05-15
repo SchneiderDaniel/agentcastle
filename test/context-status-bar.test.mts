@@ -105,6 +105,7 @@ function getWorktreeName(cwd: string): string | null {
 interface ContextStatusBarConfig {
 	enabled: boolean;
 	thresholds: ThresholdEntry[];
+	showTimer: boolean;
 }
 
 function loadConfig(rawSettings: Record<string, unknown> | null): {
@@ -112,7 +113,7 @@ function loadConfig(rawSettings: Record<string, unknown> | null): {
 	warnings: string[];
 } {
 	const warnings: string[] = [];
-	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS };
+	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS, showTimer: true };
 
 	if (!rawSettings || typeof rawSettings !== "object") {
 		return { config: defaults, warnings };
@@ -164,7 +165,17 @@ function loadConfig(rawSettings: Record<string, unknown> | null): {
 		}
 	}
 
-	return { config: { enabled, thresholds }, warnings };
+	// Parse showTimer
+	let showTimer = true;
+	if ("showTimer" in cfg) {
+		if (typeof cfg.showTimer === "boolean") {
+			showTimer = cfg.showTimer;
+		} else {
+			warnings.push("contextStatusBar.showTimer must be boolean; using true");
+		}
+	}
+
+	return { config: { enabled, thresholds, showTimer }, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +263,7 @@ describe("loadConfig", () => {
 		const result = loadConfig({ supervisor: {} });
 		assert.ok(result.config);
 		assert.strictEqual(result.config!.enabled, true);
+		assert.strictEqual(result.config!.showTimer, true);
 		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
@@ -259,6 +271,7 @@ describe("loadConfig", () => {
 		const result = loadConfig(null);
 		assert.ok(result.config);
 		assert.strictEqual(result.config!.enabled, true);
+		assert.strictEqual(result.config!.showTimer, true);
 		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
@@ -266,6 +279,7 @@ describe("loadConfig", () => {
 		const result = loadConfig({});
 		assert.ok(result.config);
 		assert.strictEqual(result.config!.enabled, true);
+		assert.strictEqual(result.config!.showTimer, true);
 		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
@@ -280,6 +294,7 @@ describe("loadConfig", () => {
 		});
 		assert.ok(result.config);
 		assert.strictEqual(result.config!.enabled, true);
+		assert.strictEqual(result.config!.showTimer, true);
 		assert.strictEqual(result.config!.thresholds.length, 2);
 	});
 
@@ -291,6 +306,43 @@ describe("loadConfig", () => {
 			},
 		});
 		assert.strictEqual(result.config, null);
+	});
+
+	// ── showTimer config tests ─────────────────────────────────
+
+	it("showTimer defaults to true when key absent", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showTimer, true);
+	});
+
+	it("showTimer: true → showTimer true", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showTimer: true,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showTimer, true);
+	});
+
+	it("showTimer: false → showTimer false", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showTimer: false,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showTimer, false);
 	});
 
 	it("falls back to defaults when thresholds missing", () => {
