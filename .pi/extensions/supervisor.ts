@@ -12,13 +12,10 @@ import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import type { GhIssue, GhComment } from "./github-types.js";
-import { isGhIssue } from "./github-types.js";
-import { extractTextFromContent } from "./types.js";
 
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -316,31 +313,24 @@ function parseAgentFile(filePath: string): ParsedAgent {
 }
 
 /** Filter issue body and comments to only trusted codeowners.
- *  This is enforced in code — NOT via LLM prompt — to prevent prompt injection.
- *  Uses type guards on unknown input to prevent malicious payload bypass. */
-function filterIssueData(rawIssue: unknown, codeowners: string[]): FilteredIssueData {
-	const issue = isGhIssue(rawIssue) ? rawIssue : null;
-	const issueAuthor: string = issue?.author?.login || "";
+ *  This is enforced in code — NOT via LLM prompt — to prevent prompt injection. */
+function filterIssueData(rawIssue: any, codeowners: string[]): FilteredIssueData {
+	const issueAuthor: string = rawIssue?.author?.login || "";
 	const isIssueAuthorTrusted = codeowners.includes(issueAuthor);
 
 	const body = isIssueAuthorTrusted
-		? (issue?.body || "(no body)")
+		? (rawIssue?.body || "(no body)")
 		: `[Issue body hidden — author @${issueAuthor} is not a trusted codeowner]`;
 
-	const rawComments: unknown[] = Array.isArray((rawIssue as Record<string, unknown>)?.comments)
-		? (rawIssue as Record<string, unknown>).comments as unknown[]
-		: [];
+	const rawComments: any[] = rawIssue?.comments || [];
 	const trustedComments = rawComments
-		.filter((c: unknown): c is GhComment => {
-			if (typeof c !== "object" || c === null) return false;
-			const author = (c as Record<string, unknown>)?.author;
-			if (typeof author !== "object" || author === null) return false;
-			const login = (author as Record<string, unknown>)?.login;
-			return typeof login === "string" && codeowners.includes(login);
+		.filter((c: any) => {
+			const commentAuthor: string = c?.author?.login || "";
+			return codeowners.includes(commentAuthor);
 		})
-		.map((c: GhComment) => ({
-			author: c.author?.login || "unknown",
-			body: c.body || "",
+		.map((c: any) => ({
+			author: c?.author?.login || "unknown",
+			body: c?.body || "",
 		}));
 
 	return { body, comments: trustedComments, filteringActive: true };
@@ -353,13 +343,13 @@ function gh(args: string[]): string {
 			stdio: ["pipe", "pipe", "pipe"],
 			timeout: 30_000,
 		}).trim();
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		throw new Error(`gh ${args[0]} failed: ${message}`);
+	} catch (err: any) {
+		const stderr = err.stderr?.toString() || err.message;
+		throw new Error(`gh ${args[0]} failed: ${stderr}`);
 	}
 }
 
-function ghJson(args: string[]): unknown {
+function ghJson(args: string[]): any {
 	const output = gh(args);
 	if (!output) return null;
 	return JSON.parse(output);
@@ -367,33 +357,86 @@ function ghJson(args: string[]): unknown {
 
 function getProjectFields(
 	projectNumber: number,
-	owner: string,
+	_owner: string,
 ): ProjectField[] {
-	const result = ghJson([
-		"project",
-		"field-list",
-		String(projectNumber),
-		"--owner",
-		owner,
-		"--format",
-		"json",
-	]);
-	return result?.fields || result || [];
+	const resp = ghGraphQL(`{
+		viewer {
+			projectV2(number: ${projectNumber}) {
+				fields(first: 10) {
+					nodes {
+						... on ProjectV2Field { id name dataType }
+						... on ProjectV2SingleSelectField { id name dataType options { id name } }
+						... on ProjectV2IterationField { id name dataType }
+					}
+				}
+			}
+		}
+	}`);
+	const nodes = resp?.data?.viewer?.projectV2?.fields?.nodes || [];
+	return nodes.map((n: any) => ({
+		id: n.id,
+		name: n.name,
+		type: n.dataType || "UNKNOWN",
+		options: n.options || undefined,
+	}));
 }
 
-function getProjectItems(projectNumber: number, owner: string): ProjectItem[] {
-	const result = ghJson([
-		"project",
-		"item-list",
-		String(projectNumber),
-		"--owner",
-		owner,
-		"-L",
-		"100",
-		"--format",
-		"json",
-	]);
-	return result?.items || result || [];
+function getProjectItems(projectNumber: number, _owner: string): ProjectItem[] {
+	const resp = ghGraphQL(`{
+		viewer {
+			projectV2(number: ${projectNumber}) {
+				items(first: 100) {
+					nodes {
+						id
+						content {
+							... on Issue { number url }
+							... on PullRequest { number url }
+						}
+						fieldValues(first: 20) {
+							nodes {
+								... on ProjectV2ItemFieldSingleSelectValue {
+									name
+									field { ... on ProjectV2FieldCommon { id name } }
+								}
+								... on ProjectV2ItemFieldTextValue {
+									text
+									field { ... on ProjectV2FieldCommon { id name } }
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}`);
+	const nodes = resp?.data?.viewer?.projectV2?.items?.nodes || [];
+	return nodes.map((n: any) => {
+		const fieldNodes: any[] = n.fieldValues?.nodes || [];
+		// Extract status from single-select field named "Status"
+		let status: string | undefined;
+		const fv: Array<{ fieldId: string; value: string; optionId?: string }> = [];
+		for (const f of fieldNodes) {
+			if (f.name && f.field?.name?.toLowerCase() === "status") {
+				status = f.name;
+			}
+			if (f.field?.id) {
+				fv.push({
+					fieldId: f.field.id,
+					value: f.name || f.text || "",
+					optionId: undefined,
+				});
+			}
+		}
+		return {
+			id: n.id,
+			status,
+			content: n.content ? {
+				url: n.content.url,
+				number: n.content.number,
+			} : undefined,
+			fieldValues: fv.length > 0 ? fv : undefined,
+		};
+	});
 }
 
 function findIssueItem(
@@ -449,17 +492,15 @@ function setItemStatus(
 	]);
 }
 
-function getProjectId(projectNumber: number, owner: string): string {
-	const result = ghJson([
-		"project",
-		"view",
-		String(projectNumber),
-		"--owner",
-		owner,
-		"--format",
-		"json",
-	]);
-	return result?.id || "";
+function getProjectId(projectNumber: number, _owner: string): string {
+	const resp = ghGraphQL(`{
+		viewer {
+			projectV2(number: ${projectNumber}) {
+				id
+			}
+		}
+	}`);
+	return resp?.data?.viewer?.projectV2?.id || "";
 }
 
 // ─── Dependency gate ("blocked by" links) ─────────────────────────
@@ -501,7 +542,7 @@ interface GhTimelineResponse {
 	errors?: Array<{ message: string }>;
 }
 
-function ghGraphQL(query: string): unknown {
+function ghGraphQL(query: string): any {
 	const result = gh([
 		"api",
 		"graphql",
@@ -606,8 +647,8 @@ async function checkBlockedByDependencies(
 	let response: GhTimelineResponse;
 	try {
 		response = ghGraphQL(query) as GhTimelineResponse;
-	} catch (err) {
-		throw new Error(`Failed to query GitHub for dependencies: ${err instanceof Error ? err.message : String(err)}`);
+	} catch (err: any) {
+		throw new Error(`Failed to query GitHub for dependencies: ${err.message}`);
 	}
 
 	return parseTimelineResponse(response);
@@ -692,6 +733,85 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 	}
 
 	return result;
+}
+
+// ─── Extension tool discovery ─────────────────────────────────────
+
+/**
+ * Scan all .pi/extensions/*.ts files and extract tool names from
+ * pi.registerTool({ name: "..." }) calls. Returns a map of
+ * extension basename (without .ts) → tool names array.
+ * Cached at module level — only runs once.
+ */
+let _extToolsCache: Map<string, string[]> | null = null;
+
+function discoverExtensionTools(): Map<string, string[]> {
+	if (_extToolsCache) return _extToolsCache;
+
+	const map = new Map<string, string[]>();
+	const extDir = resolvePath(process.cwd(), ".pi/extensions");
+
+	let files: string[];
+	try {
+		files = readdirSync(extDir);
+	} catch {
+		_extToolsCache = map;
+		return map;
+	}
+
+	for (const file of files) {
+		if (!file.endsWith(".ts")) continue;
+		const basename = file.replace(/\.ts$/, "");
+		const filePath = resolvePath(extDir, file);
+
+		let content: string;
+		try {
+			content = readFileSync(filePath, "utf-8");
+		} catch {
+			continue;
+		}
+
+		// Match pi.registerTool({ ... name: "tool_name" ... })
+		const toolRe = /\.registerTool\(\s*\{[^}]*?\bname:\s*["']([^"']+)["']/gs;
+		const tools: string[] = [];
+		let m: RegExpExecArray | null;
+		while ((m = toolRe.exec(content)) !== null) {
+			tools.push(m[1]!);
+		}
+		if (tools.length > 0) {
+			map.set(basename, tools);
+		}
+	}
+
+	_extToolsCache = map;
+	return map;
+}
+
+/**
+ * Merge agent-declared tools with tools from agent's extensions.
+ * Returns a comma-separated string for --tools flag.
+ */
+function resolveTools(agentTools: string, extNamesRaw: string | undefined): string {
+	const toolSet = new Set(
+		agentTools.split(",").map((s) => s.trim()).filter(Boolean),
+	);
+
+	if (extNamesRaw && extNamesRaw.trim()) {
+		const extToolsMap = discoverExtensionTools();
+		const extNames = extNamesRaw
+			.split(",")
+			.map((s) => s.trim())
+			.filter((s) => s.length > 0 && s.toLowerCase() !== "supervisor");
+
+		for (const extName of extNames) {
+			const extTools = extToolsMap.get(extName);
+			if (extTools) {
+				for (const t of extTools) toolSet.add(t);
+			}
+		}
+	}
+
+	return [...toolSet].join(",");
 }
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -1023,12 +1143,8 @@ export async function runAgent(
 	ctx: ExtensionCommandContext,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 ): Promise<AgentRunResult> {
-	const tools = agent.config.tools || "read,bash,write,edit";
-	// NOTE: Extension-declared tools (e.g. codebase search from codebase-memory.ts)
-	// are NOT automatically added to the --tools flag. Agent configs that specify
-	// extensions: must also explicitly list extension tool names in their tools: field.
-	// This is a known limitation — previous resolveTools/discoverExtensionTools
-	// functions that auto-resolved extension tools were removed during cleanup.
+	const rawTools = agent.config.tools || "read,bash,write,edit";
+	const tools = resolveTools(rawTools, agent.config.extensions);
 	const model = agent.config.model || "";
 	const extFlags = resolveExtensions(agent.config.extensions);
 
@@ -1069,22 +1185,12 @@ export async function runAgent(
 	};
 
 	return new Promise((resolve) => {
-		const abortController = new AbortController();
 		const child = spawn("/usr/bin/pi", args, {
 			cwd: process.cwd(),
 			env: { ...process.env, PI_NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
-			signal: abortController.signal,
+			timeout: timeoutMs,
 		});
-
-		// Enforceable timeout via AbortController — spawn timeout option is
-		// Node >=14.18.0 but AbortController is more portable.
-		const timeoutTimer = setTimeout(() => {
-			abortController.abort();
-			child.kill("SIGTERM");
-			// Grace period then force kill
-			setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* ignore */ } }, 5_000);
-		}, timeoutMs);
 
 		const MAX_RAW_STDOUT = 500_000; // prevent RangeError on huge output
 		let rawStdout = "";
@@ -1147,7 +1253,6 @@ export async function runAgent(
 		});
 
 		child.on("close", (code, signal) => {
-			clearTimeout(timeoutTimer);
 			if (jsonBuffer.trim()) handleLine(jsonBuffer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
@@ -1191,7 +1296,6 @@ export async function runAgent(
 		});
 
 		child.on("error", (err) => {
-			clearTimeout(timeoutTimer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
@@ -1215,6 +1319,15 @@ export async function runAgent(
 }
 
 // ─── Output helpers ──────────────────────────────────────────────────
+
+export function extractTextFromContent(content: any): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((b: any) => b.type === "text" && b.text)
+		.map((b: any) => b.text)
+		.join("\n");
+}
 
 /** Pull a one-line summary from the agent's text output */
 function extractSummaryLine(
@@ -1471,9 +1584,8 @@ function tryAutoMerge(
 			conflictFiles: [],
 			message: "Merge succeeded with no conflicts.",
 		};
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		const stderr = (err instanceof Error && "stderr" in err) ? (err as NodeJS.ErrnoException).stderr?.toString() || message : message;
+	} catch (err: any) {
+		const stderr = err.stderr?.toString() || err.message || "";
 
 		// Check for conflicted files
 		let conflictFiles: string[] = [];
@@ -1603,21 +1715,22 @@ export function determineLspPreAuditDecision(
 	return { nextStatus: "Implementation", note: preAuditResult.note, auditTriggered: true };
 }
 
+// Dynamically import runPreAudit (lazy to avoid issues at load time)
+let _runPreAudit: any = null;
+async function getRunPreAudit(): Promise<any> {
+	if (_runPreAudit) return _runPreAudit;
+	try {
+		const mod = await import("./lsp-auditor.ts");
+		_runPreAudit = mod.runPreAudit;
+		return _runPreAudit;
+	} catch {
+		return null;
+	}
+}
+
 // ─── Extension ───────────────────────────────────────────────────────
 
-export default function supervisor(pi: ExtensionAPI): void {
-	// Dynamically import runPreAudit (lazy to avoid issues at load time)
-	let _runPreAudit: unknown = null;
-	async function getRunPreAudit(): Promise<unknown> {
-		if (_runPreAudit) return _runPreAudit;
-		try {
-			const mod = await import("./lsp-auditor.ts");
-			_runPreAudit = mod.runPreAudit;
-			return _runPreAudit;
-		} catch {
-			return null;
-		}
-	}
+export default function supervisor(pi: ExtensionAPI) {
 	// ── Message renderer: styled supervisor result ──────────────────
 
 	pi.registerMessageRenderer<SupervisorMessageDetails>("supervisor", (message, _options, theme) => {
@@ -1765,12 +1878,9 @@ export default function supervisor(pi: ExtensionAPI): void {
 					fields = getProjectFields(config.projectNumber, owner);
 					items = getProjectItems(config.projectNumber, owner);
 					projectId = getProjectId(config.projectNumber, owner);
-				} catch (err) {
-					const msg = err instanceof Error ? err.message : String(err);
-					if (
-						msg.includes("missing required scopes") ||
-						msg.includes("project")
-					) {
+				} catch (err: any) {
+					const msg = err.message || String(err);
+					if (msg.includes("missing required scopes")) {
 						ctx.ui.notify(
 							"GitHub token missing 'project' scope. Run: gh auth refresh -s project",
 							"error",
@@ -1823,9 +1933,9 @@ export default function supervisor(pi: ExtensionAPI): void {
 						ctx.ui.setStatus("supervisor", "");
 						return;
 					}
-				} catch (err) {
+				} catch (err: any) {
 					ctx.ui.notify(
-						`Dependency check failed: ${err instanceof Error ? err.message : String(err)}`,
+						`Dependency check failed: ${err.message}`,
 						"error",
 					);
 					ctx.ui.setStatus("supervisor", "");
@@ -1928,8 +2038,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 					let agent: ParsedAgent;
 					try {
 						agent = parseAgentFile(agentPath);
-					} catch (err) {
-						ctx.ui.notify(`Failed to parse agent: ${err instanceof Error ? err.message : String(err)}`, "error");
+					} catch (err: any) {
+						ctx.ui.notify(`Failed to parse agent: ${err.message}`, "error");
 						break;
 					}
 
@@ -2070,8 +2180,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 							if (decision.note) {
 								ctx.ui.notify(decision.note, "info");
 							}
-						} catch (auditErr) {
-							ctx.ui.notify(`LSP pre-audit error: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`, "warning");
+						} catch (auditErr: any) {
+							ctx.ui.notify(`LSP pre-audit error: ${auditErr.message}`, "warning");
 						}
 					}
 
@@ -2094,8 +2204,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 							`Issue #${issueNum} moved: ${loopStatus} → ${effectiveNextStatus}`,
 							"info",
 						);
-					} catch (err) {
-						ctx.ui.notify(`Failed to update status: ${err instanceof Error ? err.message : String(err)}`, "error");
+					} catch (err: any) {
+						ctx.ui.notify(`Failed to update status: ${err.message}`, "error");
 						break;
 					}
 
@@ -2152,9 +2262,9 @@ export default function supervisor(pi: ExtensionAPI): void {
 										content: `## ✅ Merge Conflicts Resolved\n\nPR #${conflictInfo.number} conflicts were resolved automatically and pushed.`,
 										display: true,
 									});
-								} catch (pushErr) {
+								} catch (pushErr: any) {
 									ctx.ui.notify(
-										`Merge succeeded but push failed: ${pushErr instanceof Error ? pushErr.message : String(pushErr)}`,
+										`Merge succeeded but push failed: ${pushErr.message}`,
 										"error",
 									);
 								}
@@ -2231,9 +2341,9 @@ export default function supervisor(pi: ExtensionAPI): void {
 												"error",
 											);
 										}
-									} catch (devErr) {
+									} catch (devErr: any) {
 										ctx.ui.notify(
-											`Failed to dispatch developer: ${devErr instanceof Error ? devErr.message : String(devErr)}`,
+											`Failed to dispatch developer: ${devErr.message}`,
 											"error",
 										);
 									}
@@ -2259,8 +2369,8 @@ export default function supervisor(pi: ExtensionAPI): void {
 				}
 
 				ctx.ui.setStatus("supervisor", "");
-			} catch (err) {
-				ctx.ui.notify(`Supervisor error: ${err instanceof Error ? err.message : String(err)}`, "error");
+			} catch (err: any) {
+				ctx.ui.notify(`Supervisor error: ${err.message}`, "error");
 				ctx.ui.setStatus("supervisor", "");
 			}
 		},
