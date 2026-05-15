@@ -33,11 +33,7 @@ function truncate(text: string, head: number, tail = 0): string {
 	if (text.length <= head + tail) return text;
 	const cut = text.length - head - tail;
 	if (tail > 0) {
-		return (
-			text.slice(0, head) +
-			`\n\n[... ${cut} chars truncated ...]\n\n` +
-			text.slice(-tail)
-		);
+		return text.slice(0, head) + `\n\n[... ${cut} chars truncated ...]\n\n` + text.slice(-tail);
 	}
 	return text.slice(0, head) + `\n\n[... ${cut} chars truncated ...]`;
 }
@@ -85,9 +81,8 @@ function serializeRecord(record: LogRecord): string {
 function userMessageToRecord(msg: any, step: number): LogRecord {
 	const text = extractText(msg.content);
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: "user",
 		tool: "message",
 		error: null,
@@ -111,16 +106,15 @@ function assistantMessageToRecord(msg: any, step: number): LogRecord {
 
 	const tokenUsage: TokenUsage | undefined = msg.usage
 		? {
-			input: msg.usage.input ?? 0,
-			output: msg.usage.output ?? 0,
-			total: msg.usage.totalTokens ?? msg.usage.input ?? 0 + msg.usage.output ?? 0,
-		}
+				input: msg.usage.input ?? 0,
+				output: msg.usage.output ?? 0,
+				total: msg.usage.totalTokens ?? (msg.usage.input ?? 0) + (msg.usage.output ?? 0),
+			}
 		: undefined;
 
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: "assistant",
 		tool: "message",
 		...(tokenUsage && { token_usage: tokenUsage }),
@@ -131,15 +125,10 @@ function assistantMessageToRecord(msg: any, step: number): LogRecord {
 }
 
 function toolResultToRecord(msg: any, step: number): LogRecord {
-	const output = truncate(
-		extractText(msg.content),
-		MAX_TOOL_OUTPUT,
-		MAX_TOOL_OUTPUT_TAIL,
-	);
+	const output = truncate(extractText(msg.content), MAX_TOOL_OUTPUT, MAX_TOOL_OUTPUT_TAIL);
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: "tool",
 		tool: msg.toolName || "unknown",
 		error: msg.isError ? output : null,
@@ -152,9 +141,8 @@ function bashExecutionToRecord(msg: any, step: number): LogRecord {
 	const output = truncate(msg.output || "", MAX_TOOL_OUTPUT, MAX_TOOL_OUTPUT_TAIL);
 	const errorMsg = msg.exitCode !== 0 ? output : null;
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: "bash",
 		tool: "bash",
 		error: errorMsg,
@@ -171,9 +159,8 @@ function bashExecutionToRecord(msg: any, step: number): LogRecord {
 
 function customMessageToRecord(msg: any, step: number): LogRecord {
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date(msg.timestamp).toISOString(),
+		timestamp:
+			typeof msg.timestamp === "string" ? msg.timestamp : new Date(msg.timestamp).toISOString(),
 		agent: msg.customType || "extension",
 		tool: msg.customType || "extension",
 		error: null,
@@ -184,9 +171,7 @@ function customMessageToRecord(msg: any, step: number): LogRecord {
 
 function compactionToRecord(msg: any, step: number): LogRecord {
 	return {
-		timestamp: typeof msg.timestamp === "string"
-			? msg.timestamp
-			: new Date().toISOString(),
+		timestamp: typeof msg.timestamp === "string" ? msg.timestamp : new Date().toISOString(),
 		agent: "compaction",
 		tool: "compaction",
 		error: null,
@@ -391,14 +376,36 @@ describe("serializeRecord", () => {
 
 	it("atomic append — multiple writes interleaved are independently parseable", () => {
 		const records: LogRecord[] = [
-			{ timestamp: "2025-06-01T10:00:00.000Z", agent: "user", tool: "message", error: null, loop_step: 1, payload: {} },
-			{ timestamp: "2025-06-01T10:00:01.000Z", agent: "assistant", tool: "message", token_usage: { input: 10, output: 5, total: 15 }, error: null, loop_step: 2, payload: {} },
-			{ timestamp: "2025-06-01T10:00:02.000Z", agent: "bash", tool: "bash", error: "fail", loop_step: 3, payload: {} },
+			{
+				timestamp: "2025-06-01T10:00:00.000Z",
+				agent: "user",
+				tool: "message",
+				error: null,
+				loop_step: 1,
+				payload: {},
+			},
+			{
+				timestamp: "2025-06-01T10:00:01.000Z",
+				agent: "assistant",
+				tool: "message",
+				token_usage: { input: 10, output: 5, total: 15 },
+				error: null,
+				loop_step: 2,
+				payload: {},
+			},
+			{
+				timestamp: "2025-06-01T10:00:02.000Z",
+				agent: "bash",
+				tool: "bash",
+				error: "fail",
+				loop_step: 3,
+				payload: {},
+			},
 		];
-		const combined = records.map(r => serializeRecord(r)).join("");
-		const lines = combined.split("\n").filter(l => l.length > 0);
+		const combined = records.map((r) => serializeRecord(r)).join("");
+		const lines = combined.split("\n").filter((l) => l.length > 0);
 		assert.strictEqual(lines.length, 3);
-		lines.forEach(l => {
+		lines.forEach((l) => {
 			const parsed = JSON.parse(l);
 			assert.ok("timestamp" in parsed);
 		});
@@ -599,11 +606,32 @@ describe("JSONL spec compliance", () => {
 
 	it("no blank lines in stream", () => {
 		const records: LogRecord[] = [
-			{ timestamp: "2025-06-01T10:00:00.000Z", agent: "user", tool: "message", error: null, loop_step: 1, payload: {} },
-			{ timestamp: "2025-06-01T10:00:01.000Z", agent: "assistant", tool: "message", error: null, loop_step: 2, payload: {} },
-			{ timestamp: "2025-06-01T10:00:02.000Z", agent: "bash", tool: "bash", error: "fail", loop_step: 3, payload: {} },
+			{
+				timestamp: "2025-06-01T10:00:00.000Z",
+				agent: "user",
+				tool: "message",
+				error: null,
+				loop_step: 1,
+				payload: {},
+			},
+			{
+				timestamp: "2025-06-01T10:00:01.000Z",
+				agent: "assistant",
+				tool: "message",
+				error: null,
+				loop_step: 2,
+				payload: {},
+			},
+			{
+				timestamp: "2025-06-01T10:00:02.000Z",
+				agent: "bash",
+				tool: "bash",
+				error: "fail",
+				loop_step: 3,
+				payload: {},
+			},
 		];
-		const content = records.map(r => serializeRecord(r)).join("");
+		const content = records.map((r) => serializeRecord(r)).join("");
 		assert.ok(!content.includes("\n\n"), "Should not contain blank lines");
 	});
 
@@ -642,11 +670,33 @@ describe("JSONL spec compliance", () => {
 
 	it("each line valid JSON", () => {
 		const records: LogRecord[] = [
-			{ timestamp: "2025-06-01T10:00:00.000Z", agent: "user", tool: "message", error: null, loop_step: 1, payload: { a: 1 } },
-			{ timestamp: "2025-06-01T10:00:01.000Z", agent: "assistant", tool: "message", token_usage: { input: 1, output: 2, total: 3 }, error: null, loop_step: 2, payload: { b: 2 } },
-			{ timestamp: "2025-06-01T10:00:02.000Z", agent: "tool", tool: "read", error: null, loop_step: 3, payload: { c: 3 } },
+			{
+				timestamp: "2025-06-01T10:00:00.000Z",
+				agent: "user",
+				tool: "message",
+				error: null,
+				loop_step: 1,
+				payload: { a: 1 },
+			},
+			{
+				timestamp: "2025-06-01T10:00:01.000Z",
+				agent: "assistant",
+				tool: "message",
+				token_usage: { input: 1, output: 2, total: 3 },
+				error: null,
+				loop_step: 2,
+				payload: { b: 2 },
+			},
+			{
+				timestamp: "2025-06-01T10:00:02.000Z",
+				agent: "tool",
+				tool: "read",
+				error: null,
+				loop_step: 3,
+				payload: { c: 3 },
+			},
 		];
-		const content = records.map(r => serializeRecord(r)).join("");
+		const content = records.map((r) => serializeRecord(r)).join("");
 		const lines = content.trimEnd().split("\n");
 		for (const line of lines) {
 			// Should not throw
@@ -671,12 +721,26 @@ describe("JSONL spec compliance", () => {
 	});
 
 	it("concatenation of multiple JSONL files is safe", () => {
-		const r1: LogRecord = { timestamp: "T1", agent: "a", tool: "t", error: null, loop_step: 1, payload: {} };
-		const r2: LogRecord = { timestamp: "T2", agent: "b", tool: "t", error: null, loop_step: 2, payload: {} };
+		const r1: LogRecord = {
+			timestamp: "T1",
+			agent: "a",
+			tool: "t",
+			error: null,
+			loop_step: 1,
+			payload: {},
+		};
+		const r2: LogRecord = {
+			timestamp: "T2",
+			agent: "b",
+			tool: "t",
+			error: null,
+			loop_step: 2,
+			payload: {},
+		};
 		const combined = serializeRecord(r1) + serializeRecord(r2);
 		const lines = combined.trimEnd().split("\n");
 		assert.strictEqual(lines.length, 2);
-		lines.forEach(l => JSON.parse(l)); // no throw
+		lines.forEach((l) => JSON.parse(l)); // no throw
 	});
 });
 
@@ -716,7 +780,9 @@ describe("Session init / filesystem", () => {
 		const sessionFile = path.join(sessionsDir, "abc123.jsonl");
 		fs.writeFileSync(sessionFile, "");
 		const latestLink = path.join(sessionsDir, "latest.jsonl");
-		try { fs.unlinkSync(latestLink); } catch {}
+		try {
+			fs.unlinkSync(latestLink);
+		} catch {}
 		fs.symlinkSync(sessionFile, latestLink);
 		const stat = fs.lstatSync(latestLink);
 		assert.ok(stat.isSymbolicLink());
@@ -791,27 +857,36 @@ describe("Full session integration", () => {
 				payload: { role: "session_start", sessionId: "session1", cwd: tmpDir },
 			},
 			// user message
-			userMessageToRecord({
-				timestamp: "2025-06-01T10:00:01.000Z",
-				content: [{ type: "text", text: "Hello" }],
-			}, 1),
+			userMessageToRecord(
+				{
+					timestamp: "2025-06-01T10:00:01.000Z",
+					content: [{ type: "text", text: "Hello" }],
+				},
+				1,
+			),
 			// assistant message
-			assistantMessageToRecord({
-				timestamp: "2025-06-01T10:00:02.000Z",
-				content: [{ type: "text", text: "Hi back!" }],
-				usage: { input: 100, output: 50, totalTokens: 150 },
-				stopReason: "stop",
-			}, 2),
+			assistantMessageToRecord(
+				{
+					timestamp: "2025-06-01T10:00:02.000Z",
+					content: [{ type: "text", text: "Hi back!" }],
+					usage: { input: 100, output: 50, totalTokens: 150 },
+					stopReason: "stop",
+				},
+				2,
+			),
 			// tool result
-			toolResultToRecord({
-				timestamp: "2025-06-01T10:00:03.000Z",
-				toolName: "read",
-				isError: false,
-				content: [{ type: "text", text: "file data" }],
-			}, 3),
+			toolResultToRecord(
+				{
+					timestamp: "2025-06-01T10:00:03.000Z",
+					toolName: "read",
+					isError: false,
+					content: [{ type: "text", text: "file data" }],
+				},
+				3,
+			),
 		];
 
-		const content = records.map(r => serializeRecord(r)).join("");
+		const content = records.map((r) => serializeRecord(r)).join("");
 		fs.writeFileSync(jsonlFile, content);
 
 		// Verify all lines parse
@@ -829,7 +904,9 @@ describe("Full session integration", () => {
 
 		// Create symlink
 		const latestLink = path.join(sessionsDir, "latest.jsonl");
-		try { fs.unlinkSync(latestLink); } catch {}
+		try {
+			fs.unlinkSync(latestLink);
+		} catch {}
 		fs.symlinkSync(jsonlFile, latestLink);
 
 		// Verify symlink content matches
@@ -843,9 +920,9 @@ describe("Full session integration", () => {
 			{ timestamp: "T2", agent: "bash", tool: "bash", error: "exit=1", loop_step: 2, payload: {} },
 			{ timestamp: "T3", agent: "user", tool: "message", error: null, loop_step: 3, payload: {} },
 		];
-		const content = records.map(r => serializeRecord(r)).join("");
+		const content = records.map((r) => serializeRecord(r)).join("");
 		const lines = content.trimEnd().split("\n");
-		const errorLines = lines.filter(l => {
+		const errorLines = lines.filter((l) => {
 			const parsed = JSON.parse(l);
 			return parsed.error !== null;
 		});
@@ -864,10 +941,13 @@ describe("Full session integration", () => {
 				payload: { index: i },
 			});
 		}
-		const content = records.map(r => serializeRecord(r)).join("");
+		const content = records.map((r) => serializeRecord(r)).join("");
 		const lineCount = content.trimEnd().split("\n").length;
 		assert.strictEqual(lineCount, 100);
 		// Each line independently parseable
-		content.trimEnd().split("\n").forEach(l => JSON.parse(l));
+		content
+			.trimEnd()
+			.split("\n")
+			.forEach((l) => JSON.parse(l));
 	});
 });

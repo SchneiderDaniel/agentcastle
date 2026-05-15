@@ -12,7 +12,6 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -31,25 +30,13 @@ interface ThresholdEntry {
 	color: string;
 }
 
-function resolveColor(name: string): string {
-	switch (name) {
-		case "green":  return "success";
-		case "orange": return "warning";
-		case "red":    return "error";
-		default:       return "dim";
-	}
-}
-
 const DEFAULT_THRESHOLDS: ThresholdEntry[] = [
 	{ maxTokens: 100_000, color: "green" },
 	{ maxTokens: 150_000, color: "orange" },
 	{ maxTokens: null, color: "red" },
 ];
 
-function pickThreshold(
-	tokens: number,
-	thresholds: ThresholdEntry[],
-): ThresholdEntry {
+function pickThreshold(tokens: number, thresholds: ThresholdEntry[]): ThresholdEntry {
 	const sorted = [...thresholds].sort((a, b) => {
 		if (a.maxTokens === null) return 1;
 		if (b.maxTokens === null) return -1;
@@ -64,25 +51,39 @@ function pickThreshold(
 
 function thinkingIcon(level: string | undefined): string {
 	switch (level) {
-		case "off":     return "○";
-		case "minimal": return "◐";
-		case "low":     return "◑";
-		case "medium":  return "◒";
-		case "high":    return "◓";
-		case "xhigh":   return "●";
-		default:        return "·";
+		case "off":
+			return "○";
+		case "minimal":
+			return "◐";
+		case "low":
+			return "◑";
+		case "medium":
+			return "◒";
+		case "high":
+			return "◓";
+		case "xhigh":
+			return "●";
+		default:
+			return "·";
 	}
 }
 
 function thinkingColor(level: string | undefined): string {
 	switch (level) {
-		case "off":     return "dim";
-		case "minimal": return "dim";
-		case "low":     return "muted";
-		case "medium":  return "accent";
-		case "high":    return "warning";
-		case "xhigh":   return "error";
-		default:        return "dim";
+		case "off":
+			return "dim";
+		case "minimal":
+			return "dim";
+		case "low":
+			return "muted";
+		case "medium":
+			return "accent";
+		case "high":
+			return "warning";
+		case "xhigh":
+			return "error";
+		default:
+			return "dim";
 	}
 }
 
@@ -101,30 +102,15 @@ function getWorktreeName(cwd: string): string | null {
 	}
 }
 
-function getGitBranch(cwd: string): string | null {
-	try {
-		const result = execSync("git rev-parse --abbrev-ref HEAD", {
-			cwd,
-			encoding: "utf-8",
-			timeout: 2000,
-			stdio: ["pipe", "pipe", "ignore"],
-		});
-		const branch = result.trim();
-		if (branch && branch !== "HEAD") return branch;
-		return null;
-	} catch {
-		return null;
-	}
-}
-
 interface ContextStatusBarConfig {
 	enabled: boolean;
 	thresholds: ThresholdEntry[];
 }
 
-function loadConfig(
-	rawSettings: Record<string, unknown> | null,
-): { config: ContextStatusBarConfig | null; warnings: string[] } {
+function loadConfig(rawSettings: Record<string, unknown> | null): {
+	config: ContextStatusBarConfig | null;
+	warnings: string[];
+} {
 	const warnings: string[] = [];
 	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS };
 
@@ -163,7 +149,8 @@ function loadConfig(
 		for (const entry of cfg.thresholds) {
 			if (typeof entry !== "object" || entry === null) continue;
 			const e = entry as Record<string, unknown>;
-			const maxTokens = e.maxTokens === null || e.maxTokens === undefined ? null : Number(e.maxTokens);
+			const maxTokens =
+				e.maxTokens === null || e.maxTokens === undefined ? null : Number(e.maxTokens);
 			const color = typeof e.color === "string" ? e.color : "";
 			if (maxTokens !== null && !Number.isFinite(maxTokens)) continue;
 			if (!color) continue;
@@ -201,30 +188,6 @@ describe("formatTokens", () => {
 		assert.strictEqual(formatTokens(0), "0");
 		assert.strictEqual(formatTokens(999), "999");
 		assert.strictEqual(formatTokens(42), "42");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// resolveColor tests
-// ---------------------------------------------------------------------------
-
-describe("resolveColor", () => {
-	it('maps "green" → "success"', () => {
-		assert.strictEqual(resolveColor("green"), "success");
-	});
-
-	it('maps "orange" → "warning"', () => {
-		assert.strictEqual(resolveColor("orange"), "warning");
-	});
-
-	it('maps "red" → "error"', () => {
-		assert.strictEqual(resolveColor("red"), "error");
-	});
-
-	it("maps unknown colors to dim", () => {
-		assert.strictEqual(resolveColor("blue"), "dim");
-		assert.strictEqual(resolveColor("purple"), "dim");
-		assert.strictEqual(resolveColor(""), "dim");
 	});
 });
 
@@ -448,10 +411,7 @@ describe("getWorktreeName", () => {
 	it("detects worktree name from .git file", () => {
 		const dir = join(tmpdir(), `pi-test-worktree-${Date.now()}`);
 		mkdirSync(dir, { recursive: true });
-		writeFileSync(
-			join(dir, ".git"),
-			"gitdir: /home/user/.git/worktrees/my-feature-branch\n"
-		);
+		writeFileSync(join(dir, ".git"), "gitdir: /home/user/.git/worktrees/my-feature-branch\n");
 		try {
 			assert.strictEqual(getWorktreeName(dir), "my-feature-branch");
 		} finally {
@@ -462,36 +422,9 @@ describe("getWorktreeName", () => {
 	it("returns 'worktree' for unknown worktree path format", () => {
 		const dir = join(tmpdir(), `pi-test-bad-worktree-${Date.now()}`);
 		mkdirSync(dir, { recursive: true });
-		writeFileSync(
-			join(dir, ".git"),
-			"gitdir: /some/weird/path\n"
-		);
+		writeFileSync(join(dir, ".git"), "gitdir: /some/weird/path\n");
 		try {
 			assert.strictEqual(getWorktreeName(dir), "worktree");
-		} finally {
-			rmSync(dir, { recursive: true, force: true });
-		}
-	});
-});
-
-// ---------------------------------------------------------------------------
-// getGitBranch tests (integration — requires git in PATH)
-// ---------------------------------------------------------------------------
-
-describe("getGitBranch", () => {
-	it("returns branch name for current repo", () => {
-		const branch = getGitBranch(process.cwd());
-		// Should return a branch name (we're in a git repo)
-		assert.ok(typeof branch === "string");
-		assert.ok(branch!.length > 0);
-		assert.notStrictEqual(branch, "HEAD");
-	});
-
-	it("returns null for non-git directory", () => {
-		const dir = join(tmpdir(), `pi-test-nonrepo-${Date.now()}`);
-		mkdirSync(dir, { recursive: true });
-		try {
-			assert.strictEqual(getGitBranch(dir), null);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

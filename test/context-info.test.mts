@@ -16,13 +16,20 @@ import { describe, it, beforeEach } from "node:test";
 // (matches .pi/extensions/context-info.ts implementation exactly)
 // ---------------------------------------------------------------------------
 
+interface MockCtx {
+	getContextUsage: () => { tokens?: number; contextWindow?: number } | undefined;
+}
+
 interface MockPi {
 	on: (event: string, handler: (...args: any[]) => void) => void;
 }
 
-function createContextInfoExtension(): { pi: MockPi; logCalls: string[] } {
+function createContextInfoExtension(): { pi: MockPi; logCalls: string[]; mockCtx: MockCtx } {
 	const logCalls: string[] = [];
 	const handlers = new Map<string, (...args: any[]) => void>();
+	const mockCtx: MockCtx = {
+		getContextUsage: () => undefined,
+	};
 
 	const mockPi: MockPi = {
 		on(event, handler) {
@@ -40,11 +47,13 @@ function createContextInfoExtension(): { pi: MockPi; logCalls: string[] } {
 		if (contextWindow === undefined || contextWindow <= 0) return;
 		if (contextTokens === undefined || contextTokens <= 0) return;
 		emitted = true;
-		logCalls.push(JSON.stringify({
-			type: "context_info",
-			contextTokens,
-			contextWindow,
-		}));
+		logCalls.push(
+			JSON.stringify({
+				type: "context_info",
+				contextTokens,
+				contextWindow,
+			}),
+		);
 	}
 
 	handlers.set("session_start", () => {
@@ -61,12 +70,13 @@ function createContextInfoExtension(): { pi: MockPi; logCalls: string[] } {
 		}
 	});
 
+	// Match production: use ctx.getContextUsage() instead of event.message.usage
 	handlers.set("message_end", (event: any) => {
 		const msg = event.message;
 		if (!msg || msg.role !== "assistant") return;
-		const input = msg.usage?.input;
-		if (typeof input === "number" && input > 0) {
-			contextTokens = input;
+		const usage = mockCtx.getContextUsage();
+		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
+			contextTokens = usage.tokens;
 			tryEmit();
 		}
 	});
@@ -79,12 +89,22 @@ function createContextInfoExtension(): { pi: MockPi; logCalls: string[] } {
 	return {
 		pi: mockPi,
 		logCalls,
+		mockCtx,
 		_handlers: handlers,
 		_invoke: invoke,
-	} as unknown as { pi: MockPi; logCalls: string[]; _invoke: (e: string, ...a: any[]) => void };
+	} as unknown as {
+		pi: MockPi;
+		logCalls: string[];
+		mockCtx: MockCtx;
+		_invoke: (e: string, ...a: any[]) => void;
+	};
 }
 
 type TestCtx = ReturnType<typeof createContextInfoExtension>;
+
+function setCtxUsage(ctx: TestCtx, tokens: number) {
+	ctx.mockCtx.getContextUsage = () => ({ tokens, contextWindow: 256000 });
+}
 
 function invoke(ctx: TestCtx, event: string, ...args: any[]) {
 	(ctx as any)._invoke(event, ...args);
@@ -104,21 +124,23 @@ describe("context-info extension — happy path", () => {
 	it("P2.1: model_select then assistant message with usage → emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, 12400);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 12400 } },
+			message: { role: "assistant" },
 		});
 
 		assert.strictEqual(ctx.logCalls.length, 1);
 		assert.strictEqual(
 			ctx.logCalls[0],
-			'{"type":"context_info","contextTokens":12400,"contextWindow":256000}'
+			'{"type":"context_info","contextTokens":12400,"contextWindow":256000}',
 		);
 	});
 
 	it("P2.2: message_end before model_select → deferred emit", () => {
 		invoke(ctx, "session_start", {});
+		setCtxUsage(ctx, 12400);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 12400 } },
+			message: { role: "assistant" },
 		});
 		// No emit yet — waiting for model info
 		assert.strictEqual(ctx.logCalls.length, 0);
@@ -128,7 +150,7 @@ describe("context-info extension — happy path", () => {
 		assert.strictEqual(ctx.logCalls.length, 1);
 		assert.strictEqual(
 			ctx.logCalls[0],
-			'{"type":"context_info","contextTokens":12400,"contextWindow":256000}'
+			'{"type":"context_info","contextTokens":12400,"contextWindow":256000}',
 		);
 	});
 });
@@ -143,8 +165,9 @@ describe("context-info extension — suppression cases", () => {
 	it("P2.3: contextWindow missing → no emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: {} });
+		setCtxUsage(ctx, 1000);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 1000 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
@@ -152,8 +175,9 @@ describe("context-info extension — suppression cases", () => {
 	it("P2.4: contextWindow is 0 → no emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: 0 } });
+		setCtxUsage(ctx, 1000);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 1000 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
@@ -161,24 +185,27 @@ describe("context-info extension — suppression cases", () => {
 	it("P2.5: contextWindow undefined → no emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: undefined } });
+		setCtxUsage(ctx, 1000);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 1000 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
 
-	it("P2.6: no usage.input in message → no emit", () => {
+	it("P2.6: getContextUsage returns undefined → no emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
-		invoke(ctx, "message_end", { message: { role: "assistant", content: [] } });
+		// Don't call setCtxUsage — getContextUsage returns undefined
+		invoke(ctx, "message_end", { message: { role: "assistant" } });
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
 
-	it("P2.7: usage.input is 0 → no emit", () => {
+	it("P2.7: getContextUsage returns tokens=0 → no emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, 0);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 0 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
@@ -186,8 +213,9 @@ describe("context-info extension — suppression cases", () => {
 	it("P2.8: message role is not assistant → no emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, 1000);
 		invoke(ctx, "message_end", {
-			message: { role: "user", usage: { input: 1000 } },
+			message: { role: "user" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
@@ -200,8 +228,9 @@ describe("context-info extension — suppression cases", () => {
 
 	it("P2.10: no model_select ever fires → no emit", () => {
 		invoke(ctx, "session_start", {});
+		setCtxUsage(ctx, 1000);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 1000 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
@@ -223,21 +252,23 @@ describe("context-info extension — reset behavior", () => {
 		// Round 1
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, 12400);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 12400 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 1);
 
-		// Round 2
+		// Round 2 — reset mockCtx as well (new session)
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: 512000 } });
+		setCtxUsage(ctx, 8000);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 8000 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 2);
 		assert.strictEqual(
 			ctx.logCalls[1],
-			'{"type":"context_info","contextTokens":8000,"contextWindow":512000}'
+			'{"type":"context_info","contextTokens":8000,"contextWindow":512000}',
 		);
 	});
 });
@@ -249,11 +280,12 @@ describe("context-info extension — error resilience", () => {
 		ctx = createContextInfoExtension();
 	});
 
-	it("P2.13: usage.input negative → no emit", () => {
+	it("P2.13: getContextUsage returns negative tokens → no emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, -1);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: -1 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
@@ -261,8 +293,9 @@ describe("context-info extension — error resilience", () => {
 	it("P2.14: contextWindow negative → no emit", () => {
 		invoke(ctx, "session_start", {});
 		invoke(ctx, "model_select", { model: { contextWindow: -1 } });
+		setCtxUsage(ctx, 1000);
 		invoke(ctx, "message_end", {
-			message: { role: "assistant", usage: { input: 1000 } },
+			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
 	});
