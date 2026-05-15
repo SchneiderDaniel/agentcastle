@@ -1,11 +1,11 @@
 ---
-description: Design a new pi extension through one-question-at-a-time interview, research best practices from pi docs and issue #46 learnings, then produce a detailed PRD with implementation spec.
+description: Design a new pi extension through one-question-at-a-time interview, research best practices from pi docs and defined extension best practices, then produce a detailed PRD with implementation spec.
 argument-hint: "[extension-idea]"
 ---
 
 # Extension Spec — Interactive Extension Design & PRD
 
-⚠️ **YOU ARE A SYSTEMS DESIGNER. NOT A CODE WRITER.** You interview the user one question at a time via the `ask_user` tool. You research best practices from pi extension docs, project issue #46 (TypeScript anti-pattern audit), and external references. You produce a detailed PRD with implementation spec. Only then do you offer to implement or file a GitHub issue.
+⚠️ **YOU ARE A SYSTEMS DESIGNER. NOT A CODE WRITER.** You interview the user one question at a time via the `ask_user` tool. You research best practices from pi extension docs, the TypeScript best practices audit defined below, and external references. You produce a detailed PRD with implementation spec. Only then do you offer to implement or file a GitHub issue.
 
 If an idea is provided as `$@`, use it as the starting topic. Otherwise, start by asking what extension they want to build.
 
@@ -28,7 +28,7 @@ Call the `ask_user` tool with:
 Before proposing anything, consult:
 1. **Pi extension docs** — `~/.pi/agent/extensions/` examples and `/usr/lib/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
 2. **Existing project extensions** — read `.pi/extensions/` to understand patterns and avoid duplication
-3. **Issue #46 best practices** — the full audit is embedded below in "Issue #46 — TypeScript Best Practices & Anti-Pattern Audit". Apply every rule.
+3. **Extension best practices** — the full audit is embedded below in the "Extension Best Practices — TypeScript & Anti-Pattern Audit" section. Apply every rule.
 
 ### Design, Don't Append
 
@@ -36,9 +36,9 @@ The PRD must be a complete, standalone document. Not a diff of suggestions.
 
 ---
 
-## Issue #46 — TypeScript Best Practices & Anti-Pattern Audit (EMBEDDED)
+## Extension Best Practices — TypeScript & Anti-Pattern Audit
 
-This is the full content of issue #46 from SchneiderDaniel/agentcastle. These rules are **mandatory** for every extension design. Violating any P0/P1 rule means the design is rejected.
+These rules are **mandatory** for every extension design. Violating any P0/P1 rule means the design is rejected.
 
 ### 🏗 Common Issues (Apply to All New Extensions)
 
@@ -173,7 +173,7 @@ Before designing, verify feasibility:
 
 2. **Check existing extensions** — does anything in `.pi/extensions/` already do part of this? Can we reuse shared types from a planned `.pi/extensions/types.ts`?
 
-3. **Validate against issue #46 rules** — flag any design that would introduce:
+3. **Validate against the best practices audit** — flag any design that would introduce:
    - `any` types on API boundaries
    - Module-level mutable state
    - Sync I/O at module init
@@ -260,7 +260,7 @@ One paragraph: what it does, who it's for, why it's needed.
 - Integration tests for extension adapter
 - Bug regression tests
 
-## Issue #46 Compliance
+## Best Practices Compliance
 | Rule | Status | Notes |
 |------|--------|-------|
 | No `any` on API boundaries | ✅/⚠️/❌ | ... |
@@ -357,7 +357,7 @@ Then proceed through all phases. Never skip phases. Never ask multiple questions
 ## Important Rules
 
 1. **Never write code until PHASE 4 "Start implementation" is selected.** The PRD is a design document, not code.
-2. **Always consult issue #46 rules before making a design decision.** If a design would introduce an anti-pattern, flag it immediately.
+2. **Always consult the best practices audit before making a design decision.** If a design would introduce an anti-pattern, flag it immediately.
 3. **The PRD must be self-contained.** Someone reading it should understand the full design without scrolling through the conversation.
 4. **Be specific about TypeScript types.** Vague "params: any" is unacceptable. Every tool parameter must have a TypeBox schema.
 5. **When creating a GitHub issue**, use the `refined` label and include the full PRD in the issue body. The title should be the extension name.
