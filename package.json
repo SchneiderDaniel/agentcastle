@@ -1,21 +1,21 @@
 {
-    "name": "main",
-    "version": "1.0.0",
-    "description": "---",
-    "main": "index.js",
-    "scripts": {
-        "test": "node --experimental-strip-types --test test/session-logger.test.mts test/session-query.test.mts test/context-info.test.mts test/context-status-bar.test.mts test/supervisor-extensions.test.mts test/supervisor-process-context-info.test.mts test/supervisor-stream-activity.test.mts test/lsp-auditor.test.mts test/lsp-auditor-settings.test.mts"
-    },
-    "keywords": [],
-    "author": "",
-    "license": "MIT",
-    "type": "commonjs",
-    "devDependencies": {
-        "@earendil-works/pi-coding-agent": "^0.74.0",
-        "prettier": "^3.8.3"
-    },
-    "dependencies": {
-        "@earendil-works/pi-tui": "^0.74.0",
-        "vscode-jsonrpc": "^8.2.1"
-    }
+	"name": "main",
+	"version": "1.0.0",
+	"description": "---",
+	"main": "index.js",
+	"scripts": {
+		"test": "node --experimental-strip-types --test test/session-logger.test.mts test/session-query.test.mts test/context-info.test.mts test/context-status-bar.test.mts test/supervisor-extensions.test.mts test/supervisor-process-context-info.test.mts test/lsp-auditor.test.mts test/lsp-auditor-settings.test.mts"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "MIT",
+	"type": "commonjs",
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "^0.74.0",
+		"prettier": "^3.8.3"
+	},
+	"dependencies": {
+		"@earendil-works/pi-tui": "^0.74.0",
+		"vscode-jsonrpc": "^8.2.1"
+	}
 }

@@ -172,7 +172,7 @@ export function processJsonLine(
 							state.thinkingOutputLines.push(state.liveThinking.trim());
 							for (const t of state.liveThinking.split("\n")) {
 								const trimmed = t.trim();
-								if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 200)}`);
+								if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 500)}`);
 							}
 							state.thinkingPushedThisTurn = true;
 						}
@@ -216,7 +216,7 @@ export function processJsonLine(
 										? block.thinking
 										: JSON.stringify(block.thinking).slice(0, 500);
 								for (const t of thinkingText.split("\n")) {
-									if (t.trim()) pushLog(state, `💭 ${t.slice(0, 200)}`);
+									if (t.trim()) pushLog(state, `💭 ${t.slice(0, 500)}`);
 								}
 							}
 						}
