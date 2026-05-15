@@ -11,3 +11,4 @@ The supervisor extension uses subprocess spawn (`/usr/bin/pi --mode json`) for e
 4. Extend `SupervisorMessageDetails` with `rawOutput`
 
 Proceed?",proceed
+2026-05-15T21:52:14.855Z,Which missing extensions should I add to which agents? Pick one or more options.,only the strong and recommended ones.
