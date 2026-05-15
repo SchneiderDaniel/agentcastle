@@ -24,7 +24,7 @@ const MAX_QUESTION_LINES = 12;
 /** Number of lines to scroll per PgUp/PgDn press. */
 const QUESTION_SCROLL_STEP = 5;
 
-export default function askUser(pi: ExtensionAPI) {
+export default function askUser(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "ask_user",
 		label: "Ask User",
@@ -74,14 +74,14 @@ export default function askUser(pi: ExtensionAPI) {
 			const { question, options } = params;
 
 			// Build SelectItems. Map labels back to values after selection.
-			const labelToValue: Record<string, string> = {};
+			const labelToValue: Array<{ label: string; value: string }> = [];
 			const items: SelectItem[] = [];
 
 			for (let i = 0; i < options.length; i++) {
 				const opt = options[i]!;
 				const suffix = opt.recommended ? " (Recommended)" : "";
 				const label = `${i + 1}. ${opt.label}${suffix}`;
-				labelToValue[label] = opt.value;
+				labelToValue.push({ label, value: opt.value });
 				items.push({ value: label, label });
 			}
 
@@ -231,7 +231,7 @@ export default function askUser(pi: ExtensionAPI) {
 							text: "User cancelled the question. Ask if they want to skip this topic and move on.",
 						},
 					],
-					details: {},
+					details: {} as Record<string, unknown>,
 				};
 			}
 
@@ -246,7 +246,7 @@ export default function askUser(pi: ExtensionAPI) {
 								text: "User cancelled or left 'Other' empty. Re-ask or mark this topic as unresolved.",
 							},
 						],
-						details: {},
+						details: {} as Record<string, unknown>,
 					};
 				}
 				return {
@@ -261,7 +261,7 @@ export default function askUser(pi: ExtensionAPI) {
 			}
 
 			// User picked a predefined option
-			const selectedValue = labelToValue[selectedLabel] ?? selectedLabel;
+			const selectedValue = labelToValue.find((e) => e.label === selectedLabel)?.value ?? selectedLabel;
 			return {
 				content: [
 					{

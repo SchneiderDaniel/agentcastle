@@ -185,7 +185,7 @@ Example: "Inline obj prop → new ref → re-render. \`useMemo\`."`,
 // Extension
 // ---------------------------------------------------------------------------
 
-export default function caveman(pi: ExtensionAPI) {
+export default function caveman(pi: ExtensionAPI): void {
 	let level: Level = "off";
 	let config: CavemanConfig = { ...DEFAULT_CONFIG };
 	let timer: ReturnType<typeof setInterval> | null = null;
@@ -245,8 +245,12 @@ export default function caveman(pi: ExtensionAPI) {
 			frameIndex++;
 		};
 
-		renderFrame();
-		timer = setInterval(renderFrame, anim.interval);
+		try {
+			renderFrame();
+			timer = setInterval(renderFrame, anim.interval);
+		} finally {
+			// If setInterval throws, old timer already cleared — no leak
+		}
 	}
 
 	// -- Restore state on session load --
@@ -256,9 +260,17 @@ export default function caveman(pi: ExtensionAPI) {
 
 		// Check for session-level override first (resuming a session)
 		let sessionLevel: Level | null = null;
+		/** Type guard: check if stored data has a valid caveman level */
+		function isCavemanLevelData(data: unknown): data is { level: Level } {
+			return typeof data === "object" && data !== null &&
+				"level" in data && typeof (data as Record<string, unknown>).level === "string" &&
+				LEVELS.includes((data as Record<string, unknown>).level as Level);
+		}
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (entry.type === "custom" && entry.customType === "caveman-level") {
-				sessionLevel = (entry.data as { level: Level })?.level ?? null;
+				if (isCavemanLevelData(entry.data)) {
+					sessionLevel = entry.data.level;
+				}
 			}
 		}
 
@@ -400,6 +412,9 @@ export default function caveman(pi: ExtensionAPI) {
 			);
 
 			const cycleSelectedValue = (direction: -1 | 1) => {
+				// NOTE: SettingsList doesn't expose selectedIndex publicly.
+				// This cast bypasses the private field — fragile if TUI lib changes.
+				// TODO: ask pi SDK team to expose selectedIndex on SettingsList API.
 				const selectedIndex = (
 					settingsList as unknown as { selectedIndex: number }
 				).selectedIndex;

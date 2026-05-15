@@ -221,9 +221,16 @@ function checkBashCommand(
 // Extension
 // ---------------------------------------------------------------------------
 
-export default function (pi: ExtensionAPI) {
-  const cwd = process.cwd();
-  let entries = loadPiIgnore(cwd);
+export default function (pi: ExtensionAPI): void {
+  // Defer sync I/O — load on first use, not at module init
+  let entries: IgnoreEntry[] | null = null;
+
+  function getEntries(cwd: string): IgnoreEntry[] {
+    if (!entries) {
+      entries = loadPiIgnore(cwd);
+    }
+    return entries;
+  }
 
   // Reload patterns on /reload
   pi.on("resources_discover", () => {
@@ -238,24 +245,25 @@ export default function (pi: ExtensionAPI) {
   const commandTools = ["bash"];
 
   pi.on("tool_call", async (event, ctx) => {
+    const ignoreEntries = getEntries(ctx.cwd);
     let blockedPath: string | null = null;
 
     if (pathTools.includes(event.toolName)) {
       blockedPath = checkPath(
         (event.input as { path?: string }).path,
-        entries,
+        ignoreEntries,
         ctx.cwd,
       );
     } else if (optPathTools.includes(event.toolName)) {
       blockedPath = checkPath(
         (event.input as { path?: string }).path,
-        entries,
+        ignoreEntries,
         ctx.cwd,
       );
     } else if (commandTools.includes(event.toolName)) {
       blockedPath = checkBashCommand(
         (event.input as { command?: string }).command ?? "",
-        entries,
+        ignoreEntries,
         ctx.cwd,
       );
     } else {

@@ -3,17 +3,9 @@ description: List open PRs across the main repo and all submodules, quiz the rev
 argument-hint: "(no argument — scans all repos)"
 ---
 
-# Quiz Master — Change Understanding Assessment
+# Quiz Master — PR Review Comprehension
 
-You are the **Quiz Master**. Your job: find open PRs across the main repo and all git submodules, quiz the reviewer on their understanding of the changes — what changed, why, and how the change impacts behavior — with multiple-choice questions, and auto-merge the PR **only if they score at least 80%**. No understanding, no merge.
-
-## Question Philosophy
-
-**Priority: understanding the change, not the code.** The goal is to verify the reviewer grasps what was modified, why it was modified, and how the modification alters behavior. Code-reading is a means to that end — not the end itself.
-
-- **~70% of questions** should focus on change comprehension: intent, impact, behavioral differences, edge cases addressed, design rationale.
-- **At most ~30% of questions** may ask about the code itself (what a specific line does, how a function works after the change). These code questions serve as a baseline — they prove the reviewer actually read the diff.
-- Never make the quiz purely about code trivia. Every code question should still tie back to understanding the change.
+You are the **Quiz Master**. Your job: find open PRs across the main repo and all git submodules, quiz the reviewer on the actual diff content with multiple-choice questions, and auto-merge the PR **only if they score at least 80%**. No comprehension, no merge.
 
 ## Prerequisites
 
@@ -229,7 +221,6 @@ Display exactly this before the first question:
 📝 REPO | Questions: N | Pass threshold: 80%
 
 Answer N multiple-choice questions about the changes in this PR.
-Most questions test your understanding of what changed and why — not just code-reading.
 No feedback between questions — results revealed at the end.
 
 ---
@@ -245,19 +236,15 @@ For each of the N questions:
 
 2. **Formulate the question silently.** Each question must test **understanding, not memorization**. The user sees a diff excerpt as context — the question asks them to reason about it. Follow these rules:
 
-   **Question focus — change understanding first, code comprehension second:**
+   **Question focus — ask about WHY and HOW, not WHAT:**
    - ✅ "Why was this change made?" / "What problem does this solve?"
    - ✅ "How does this change affect the behavior of X?"
    - ✅ "What would happen if this change were reverted?"
    - ✅ "Which scenario does this new error handling cover?"
    - ✅ "What assumption does the old code make that the new code fixes?"
-   - ✅ "What design trade-off does this change introduce?"
-   - ✅ "How does this change affect downstream consumers of X?"
-   - ⚠️ "What does the modified function X now return?" (code question — use sparingly, as baseline check)
-   - ⚠️ "Which abstraction did this refactor introduce?" (structural question — OK if tied to rationale)
-   - ❌ "What is the name of the file that was changed?" (trivia — never)
-   - ❌ "How many lines were added?" (trivia — never)
-   - ❌ "What is the exact syntax of the new line?" (rote memory — never)
+   - ❌ "What does function X return?" (trivia — user can just read the code)
+   - ❌ "What is the name of the file that was changed?" (trivia)
+   - ❌ "How many lines were added?" (trivia)
 
    **Context snippet — include with every question:**
    - Show the relevant diff excerpt (5-25 lines) as a code block above the question
@@ -305,19 +292,17 @@ D. <choice text>
 
 ### 3.6 — Coverage & variety
 
-Ensure questions cover diverse aspects of the diff — not all from the same file or the same type of change. **Prioritize change-understanding questions over code-reading questions.** Mix:
-- Behavioral changes (why a function now behaves differently) — **high priority**
-- Structural changes (why a file was split, a new abstraction introduced) — **high priority**
-- Error handling / edge cases (what failure mode is now covered) — **high priority**
-- Design rationale (what trade-off was made and why)
+Ensure questions cover diverse aspects of the diff — not all from the same file or the same type of change. Mix:
+- Behavioral changes (why a function now behaves differently)
+- Structural changes (why a file was split, a new abstraction introduced)
+- Error handling / edge cases (what failure mode is now covered)
 - Configuration or dependency changes (what capability does the new dependency enable)
 - Test changes (what scenario does the new test protect against)
 
-Vary question types across the set. For a 5-question quiz, aim for roughly:
-- 3-4 change-understanding questions (intent, impact, rationale, edge cases)
-- 1-2 code-reading questions (what the code does after the change — as baseline verification)
-
-Never have more code-reading questions than change-understanding questions. A quiz that is mostly "what does this function return?" fails its purpose.
+Vary question types across the set:
+- At least one "why" question (intent/motivation)
+- At least one "what if" question (consequence of reverting or misapplying)
+- At least one "which scenario" question (matching a change to a real-world situation)
 
 ---
 
@@ -461,7 +446,7 @@ Use `ask_user` to offer a retry:
 ## Important Reminders
 
 - **NEVER leak answer information during the quiz loop.** Follow the strict output rules in Step 3.3 without exception. Keep all diff analysis inside the ask_user question text as raw context. The correct answer must only be determined during Step 4.1 by re-examining the diff — never during the quiz itself.
-- **Test change understanding, not code memory.** Every question must include a context snippet (the relevant diff excerpt). Ask WHY and HOW the change works — what changed, how it impacts behavior, why it was done. Avoid trivia about function names, line counts, or raw syntax recall. A few code-reading questions are acceptable as baseline checks, but they must not dominate the quiz.
+- **Test understanding, not memory.** Every question must include a context snippet (the relevant diff excerpt). Ask WHY and HOW — not trivia like function names or line counts.
 - **3 to 5 questions only.** Never exceed 5 questions, regardless of PR size.
 - **NEVER merge unless score ≥ 80%.** No exceptions. No confirmation overrides.
 - **Use `ask_user` for ALL user interaction** — never raw text prompts.
