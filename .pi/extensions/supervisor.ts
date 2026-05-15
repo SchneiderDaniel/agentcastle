@@ -65,8 +65,6 @@ interface FilteredIssueData {
 	body: string;
 	/** Only comments from trusted codeowners */
 	comments: Array<{ author: string; body: string }>;
-	/** Whether filtering was applied (codeowners list was non-empty) */
-	filteringActive: boolean;
 }
 
 /** Structured result returned by runAgent for rendering */
@@ -188,7 +186,7 @@ export function loadConfig(): SupervisorConfig {
 		submodules = parseGitmodules();
 	}
 	// Validate per-agent timeouts against known agents from statusMapping
-	const knownAgents = Object.values(cfg.statusMapping);
+	const knownAgents = Object.values(cfg.statusMapping) as string[];
 	const agentTimeoutsMin = validateAgentTimeouts(cfg.agentTimeoutsMin, knownAgents);
 	return {
 		repo: cfg.repo,
@@ -326,14 +324,13 @@ function filterIssueData(rawIssue: any, codeowners: string[]): FilteredIssueData
 			body: c?.body || "",
 		}));
 
-	return { body, comments: trustedComments, filteringActive: true };
+	return { body, comments: trustedComments };
 }
 
 function gh(args: string[]): string {
 	try {
 		return execFileSync("gh", args, {
 			encoding: "utf-8",
-			stdio: ["pipe", "pipe", "pipe"],
 			timeout: 30_000,
 		}).trim();
 	} catch (err: any) {
@@ -348,7 +345,7 @@ function ghJson(args: string[]): any {
 	return JSON.parse(output);
 }
 
-function getProjectFields(projectNumber: number, _owner: string): ProjectField[] {
+function getProjectFields(projectNumber: number): ProjectField[] {
 	const resp = ghGraphQL(`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
@@ -371,7 +368,7 @@ function getProjectFields(projectNumber: number, _owner: string): ProjectField[]
 	}));
 }
 
-function getProjectItems(projectNumber: number, _owner: string): ProjectItem[] {
+function getProjectItems(projectNumber: number): ProjectItem[] {
 	const resp = ghGraphQL(`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
@@ -470,7 +467,7 @@ function setItemStatus(itemId: string, projectId: string, fieldId: string, optio
 	]);
 }
 
-function getProjectId(projectNumber: number, _owner: string): string {
+function getProjectId(projectNumber: number): string {
 	const resp = ghGraphQL(`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
@@ -654,18 +651,6 @@ function boldText(theme: any, text: string): string {
 
 // ─── Extension resolution ───────────────────────────────────────────
 
-/**
- * Resolve the extensions CLI flags for a given agent frontmatter.
- * - If extensions field is present and non-empty, split, trim, filter out
- *   "supervisor" (case-insensitive), and return `--extension <path>` flags.
- * - If nothing remains after filtering, fall back to `--no-extensions`.
- * - If extensions field is missing or empty, return `--no-extensions`.
- *
- * pi CLI uses `--extension` (singular) with a file path per flag.
- * Extension names are resolved relative to .pi/extensions/<name>.ts
- *
- * This is a pure function exported for unit testing.
- */
 const CONTEXT_INFO_EXTENSION = ".pi/extensions/context-info.ts";
 
 /**
@@ -903,9 +888,8 @@ export function processJsonLine(
 				const delta = ev.delta;
 				if (!delta) break;
 
-				// Reset turn-level dedup flags for this update batch
-				state.thinkingPushedThisTurn = false;
-				state.textPushedThisTurn = false;
+				// Don't reset flags here — done via thinking_start/text_start to
+				// prevent mid-turn flag wipe (e.g. text_delta after thinking_end)
 
 				const prevPhase = state.phase;
 				const eventPhase = getPhaseFromEvent(ev);
@@ -915,6 +899,14 @@ export function processJsonLine(
 				}
 
 				switch (delta.type) {
+					case "thinking_start": {
+						state.thinkingPushedThisTurn = false;
+						return { flush: true, workingChange: prevPhase !== "thinking" };
+					}
+					case "text_start": {
+						state.textPushedThisTurn = false;
+						return { flush: true, workingChange: prevPhase !== "text" };
+					}
 					case "thinking_delta": {
 						const td = delta.thinking_delta;
 						if (typeof td === "string" && td.length > 0) {
@@ -1023,6 +1015,9 @@ export function processJsonLine(
 					state.lastToolName = undefined;
 				}
 				state.phase = "idle";
+				// Reset flags for next turn
+				state.thinkingPushedThisTurn = false;
+				state.textPushedThisTurn = false;
 				return { flush: true, workingChange: true };
 			}
 
@@ -1251,6 +1246,14 @@ export async function runAgent(
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
+			}
+
+			// Flush any remaining live content (timeout/kill during stream)
+			if (state.liveText.trim()) {
+				state.textOutputLines.push(state.liveText.trim());
+			}
+			if (state.liveThinking.trim()) {
+				state.thinkingOutputLines.push(state.liveThinking.trim());
 			}
 
 			const durationMs = Date.now() - startedAt;
@@ -1624,12 +1627,7 @@ function tryAutoMerge(
 	}
 }
 
-function determineNextStatus(
-	agentName: string,
-	output: string,
-	_currentStatus: string,
-	_config: SupervisorConfig,
-): string | null {
+function determineNextStatus(agentName: string, output: string): string | null {
 	switch (agentName) {
 		case "architect":
 			return output.includes("ARCHITECTURE_COMPLETE") ? "Research" : null;
@@ -1721,7 +1719,7 @@ let _runPreAudit: any = null;
 async function getRunPreAudit(): Promise<any> {
 	if (_runPreAudit) return _runPreAudit;
 	try {
-		const mod = await import("./lsp-auditor.ts");
+		const mod = await import("./lsp-auditor");
 		_runPreAudit = mod.runPreAudit;
 		return _runPreAudit;
 	} catch {
@@ -1832,7 +1830,6 @@ export default function supervisor(pi: ExtensionAPI) {
 
 			try {
 				const config = loadConfig();
-				const owner = config.repo.split("/")[0]!;
 
 				// Initial fetch
 				ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
@@ -1856,6 +1853,7 @@ export default function supervisor(pi: ExtensionAPI) {
 
 				// Print issue header so user knows what issue is being processed
 				pi.sendMessage({
+					customType: "supervisor",
 					content: `## GitHub Issue: [#${issueNum}] ${issueTitle}\n\n**Repository:** \`${config.repo}\``,
 					display: true,
 				});
@@ -1870,9 +1868,9 @@ export default function supervisor(pi: ExtensionAPI) {
 				let projectId: string;
 
 				try {
-					fields = getProjectFields(config.projectNumber, owner);
-					items = getProjectItems(config.projectNumber, owner);
-					projectId = getProjectId(config.projectNumber, owner);
+					fields = getProjectFields(config.projectNumber);
+					items = getProjectItems(config.projectNumber);
+					projectId = getProjectId(config.projectNumber);
 				} catch (err: any) {
 					const msg = err.message || String(err);
 					if (msg.includes("missing required scopes")) {
@@ -2067,7 +2065,7 @@ export default function supervisor(pi: ExtensionAPI) {
 					});
 
 					// Determine and apply next status
-					const nextStatus = determineNextStatus(agentName, result.textOnly, loopStatus, config);
+					const nextStatus = determineNextStatus(agentName, result.textOnly);
 
 					// Break on failure only if the next agent depends on this one's output.
 					// Auditor should still review a "failed" developer run (code exists
@@ -2106,7 +2104,6 @@ export default function supervisor(pi: ExtensionAPI) {
 										{
 											cwd: resolvePath(wt),
 											encoding: "utf-8",
-											stdio: ["pipe", "pipe", "pipe"],
 											timeout: 10_000,
 										},
 									).trim();
@@ -2120,7 +2117,11 @@ export default function supervisor(pi: ExtensionAPI) {
 								const entries = ctx.sessionManager.getEntries();
 								retryCount = 0;
 								for (const e of entries) {
-									if (e.type === "lsp-audit-retry" && (e.payload as any)?.issueNum === issueNum) {
+									if (
+										e.type === "custom" &&
+										e.customType === "lsp-audit-retry" &&
+										(e.data as any)?.issueNum === issueNum
+									) {
 										retryCount++;
 									}
 								}
@@ -2209,8 +2210,9 @@ export default function supervisor(pi: ExtensionAPI) {
 										encoding: "utf-8",
 										timeout: 30_000,
 									});
-									ctx.ui.notify("Merge conflicts resolved and pushed!", "success");
+									ctx.ui.notify("Merge conflicts resolved and pushed!", "info");
 									pi.sendMessage({
+										customType: "supervisor",
 										content: `## ✅ Merge Conflicts Resolved\n\nPR #${conflictInfo.number} conflicts were resolved automatically and pushed.`,
 										display: true,
 									});
@@ -2270,7 +2272,7 @@ export default function supervisor(pi: ExtensionAPI) {
 										});
 
 										if (devResult.success) {
-											ctx.ui.notify("Developer resolved merge conflicts successfully!", "success");
+											ctx.ui.notify("Developer resolved merge conflicts successfully!", "info");
 										} else {
 											ctx.ui.notify(
 												"Developer failed to resolve conflicts. Manual intervention required.",
