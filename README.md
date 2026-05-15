@@ -57,6 +57,7 @@ This repository contains the **configuration and extensions**. You clone it and 
 | Python 3.10+ + venv + pip       | crawl4ai local web crawler            |
 | GitHub CLI (gh)                 | Git operations from Pi                |
 | `@earendil-works/pi-coding-agent` | The agent itself (global npm install) |
+| `@ast-grep/cli`                  | AST-based code search (`structural_search` tool) |
 | `~/.agent_env` file             | API keys (Apify token, etc.)          |
 | `~/.bashrc` auto-start block    | Docker + env loading on WSL boot      |
 
@@ -143,6 +144,30 @@ sudo npm install -g npm@latest
 ```bash
 sudo npm install -g @earendil-works/pi-coding-agent
 ```
+
+### AST-grep (structural search)
+
+AST-grep powers the `structural_search` tool — syntax-aware code search using Tree-sitter AST matching. Find function calls, class definitions, try/catch blocks, and method invocations without text-match noise from comments or strings.
+
+```bash
+sudo npm install -g @ast-grep/cli
+```
+
+Verify:
+
+```bash
+ast-grep --version   # expected: ast-grep 0.42.x
+pi "Use the structural_search tool to find all console.log calls"
+```
+
+> **Note:** If `sudo npm install -g` fails with EACCES, set a user-owned global prefix:
+> ```bash
+> mkdir -p ~/.npm-global
+> npm config set prefix ~/.npm-global
+> echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
+> source ~/.bashrc
+> npm install -g @ast-grep/cli
+> ```
 
 ---
 
@@ -550,6 +575,7 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | npm                                        | latest   | Artistic-2.0 | system     | [npmjs.com](https://npmjs.com)                                                                           |
 | **Infrastructure Tools**                   |          |              |            |                                                                                                          |
 | GitHub CLI (gh)                            | latest   | MIT          | system     | [cli.github.com](https://cli.github.com)                                                                 |
+| AST-grep                                   | ≥0.42    | MIT          | system     | [ast-grep.github.io](https://ast-grep.github.io)                                                         |
 | **Web Crawling (Python venv)**             |          |              |            |                                                                                                          |
 | crawl4ai                                   | latest   | Apache-2.0   | venv       | [github.com/unclecode/crawl4ai](https://github.com/unclecode/crawl4ai)                                   |
 | Playwright Chromium                        | latest   | Apache-2.0   | venv       | [playwright.dev](https://playwright.dev)                                                                 |
