@@ -1,5 +1,0 @@
-{"timestamp":"2025-06-01T10:00:00.000Z","agent":"system","tool":"session_start","error":null,"loop_step":0,"payload":{"role":"session_start","sessionId":"abc12345","cwd":"/home/user/project"}}
-{"timestamp":"2025-06-01T10:00:01.000Z","agent":"user","tool":"message","error":null,"loop_step":1,"payload":{"role":"user","content":"Hello"}}
-{"timestamp":"2025-06-01T10:00:02.000Z","agent":"assistant","tool":"message","token_usage":{"input":100,"output":50,"total":150},"error":null,"loop_step":2,"payload":{"role":"assistant","texts":["Hi there!"],"thinking":[],"toolCalls":[]}}
-{"timestamp":"2025-06-01T10:00:03.000Z","agent":"bash","tool":"bash","error":"exit=1\nCommand not found","loop_step":3,"payload":{"role":"bashExecution","command":"foobar","output":"Command not found","exitCode":1,"cancelled":false}}
-{"timestamp":"2025-06-01T10:00:04.000Z","agent":"tool","tool":"read","error":null,"loop_step":4,"payload":{"role":"toolResult","toolName":"read","output":"file contents"}}
