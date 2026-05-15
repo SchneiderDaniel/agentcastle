@@ -1,13 +1,27 @@
 ---
-description: Design a new pi extension through one-question-at-a-time interview, research best practices from pi docs and defined extension best practices, then produce a detailed PRD with implementation spec.
-argument-hint: "[extension-idea]"
+description: Design a new pi extension or refactor an existing one through one-question-at-a-time interview, research best practices from pi docs and defined extension best practices, then produce a detailed PRD with implementation spec.
+argument-hint: "[new-extension-idea|refactor:<extension-name>]"
 ---
 
-# Extension Spec — Interactive Extension Design & PRD
+# Extension Spec — New & Existing Extension Design PRD
 
 ⚠️ **YOU ARE A SYSTEMS DESIGNER. NOT A CODE WRITER.** You interview the user one question at a time via the `ask_user` tool. You research best practices from pi extension docs, the TypeScript best practices audit defined below, and external references. You produce a detailed PRD with implementation spec. Only then do you offer to implement or file a GitHub issue.
 
-If an idea is provided as `$@`, use it as the starting topic. Otherwise, start by asking what extension they want to build.
+## Mode Detection
+
+Determine the mode before asking questions:
+
+| Input | Mode | Action |
+|-------|------|--------|
+| `refactor:<name>` or `update:<name>` or `fix:<name>` | **Refactor** | Read the existing extension file(s), audit against best practices, then ask what to change |
+| `$@` mentions a file path in `.pi/extensions/` | **Refactor** | Same as above — read, audit, ask |
+| Any other `$@` or no argument | **New** | Ask what to build, then design from scratch |
+
+In **refactor mode**, you MUST read the existing extension before asking any question. Run:
+```bash
+ls -la .pi/extensions/<name>.ts .pi/extensions/<name>/index.ts 2>/dev/null
+```
+Read the file(s), compute line count, and note anti-patterns. Start the interview with a brief audit summary, then ask what changes are wanted.
 
 ---
 
@@ -40,7 +54,7 @@ The PRD must be a complete, standalone document. Not a diff of suggestions.
 
 These rules are **mandatory** for every extension design. Violating any P0/P1 rule means the design is rejected.
 
-### 🏗 Common Issues (Apply to All New Extensions)
+### 🏗 Common Issues (Apply to All Extensions)
 
 | # | Rule | Explanation |
 |---|------|-------------|
@@ -55,6 +69,18 @@ These rules are **mandatory** for every extension design. Violating any P0/P1 ru
 | **C9** | **Prefer interfaces over type intersections** | Interfaces create flat object types with conflict detection and cached type relationships. Intersections recursively merge and can produce `never`. |
 
 ---
+
+### 📐 Modular Architecture Best Practices (from supervisor.ts refactoring audit)
+
+| # | Rule | Explanation |
+|---|------|-------------|
+| **M1** | **Target < 300 lines per file** | Files over 300 lines become too large for agents to reason about. Entry point (`index.ts`) should be < 100 lines. |
+| **M2** | **Dependency layering: types → pure utils → dependent modules → orchestrator → entry** | `types.ts` has zero internal deps. Pure helpers import only types. Orchestrator imports everything. Entry point imports only orchestrator and renderer. **No circular imports.** |
+| **M3** | **Use directory structure: `.pi/extensions/<name>/index.ts`** | Pi auto-discovers `index.ts` inside a directory. Pi uses [jiti](https://github.com/unjs/jiti) to transpile at load — no build step needed. Sibling `import` from `./module` works natively. |
+| **M4** | **Entry point is thin — only registrations** | `index.ts` exports `default function(pi: ExtensionAPI)` and delegates to modules. No logic, no types, no helpers. Only `pi.registerCommand()`, `pi.registerTool()`, `pi.registerMessageRenderer()`. |
+| **M5** | **Extraction order: types → pure → dependent → orchestrator → entry** | When splitting a monolith: extract types first (zero deps), then pure utility modules, then modules with internal deps, then the orchestrator/command handler, then clean up `index.ts`. Verify after each step. |
+| **M6** | **Preserve external contracts during refactoring** | When restructuring, do NOT change: config format, security model, CLI flags, message renderer `customType`, completion markers, or external integrations (LSP hooks, dynamic imports). |
+| **M7** | **Re-export for testability** | Entry point may re-export pure functions from sub-modules so tests import from a single path without breaking encapsulation. |
 
 ### TypeScript & Extension Guidelines (from official docs + VS Code)
 
@@ -116,14 +142,14 @@ These rules are **mandatory** for every extension design. Violating any P0/P1 ru
 - **Bug regressions**: spawn timeout → spawn sleep child, assert kill after N ms. Error handler → inject `child.emit("error")`, assert `errors.length > 0`.
 - **No production I/O in unit tests**; use tmpfs or short-lived real processes in CI only.
 
-### 🎯 Priority Matrix for New Extensions
+### 🎯 Priority Matrix
 
 | Priority | What | When to flag |
 |----------|------|-------------|
 | 🔴 **P0 — Blocker** | `any` on security-critical paths, silent error swallowing, zombie processes | Design is rejected until fixed |
 | 🟠 **P1 — Must Fix** | `any` on API boundaries, module-level mutable state, `details: {}` | Must be addressed in PRD before approval |
 | 🟡 **P2 — Should Fix** | Missing return type annotations, sync I/O at init, `require()` usage | Should be documented in PRD with plan to fix |
-| 🟢 **P3 — Nice to Have** | Shared type module consolidation, magic number documentation | Document in PRD, fix during implementation |
+| 🟢 **P3 — Nice to Have** | Shared type module consolidation, magic number documentation, target file size adherence | Document in PRD, fix during implementation |
 
 ### ✅ Extension Anti-Pattern Checklist
 
@@ -143,20 +169,32 @@ Before finalizing any design, verify against this checklist:
 - [ ] Shared types extracted to dedicated type files, not duplicated inline
 - [ ] Event/message types use discriminated unions, not `any`
 - [ ] Pure helper functions have zero pi SDK imports
+- [ ] Each file targets < 300 lines; entry point < 100 lines
+- [ ] No circular imports; dependency graph flows types → utils → modules → orchestrator → entry
+- [ ] Entry point contains only registrations, no business logic
+- [ ] External contracts (config format, CLI flags, message types, completion markers) preserved unchanged
 
 ---
 
 ## PHASES
 
-### PHASE 0 — UNDERSTAND THE IDEA
+### PHASE 0 — UNDERSTAND THE SCOPE
 
+#### New extension mode
 1. Ask what the extension should do. Get concrete: what problem does it solve? Who uses it?
 2. Ask about scope: single tool? tool + commands? lifecycle hooks? UI components?
 3. Ask about dependencies: npm packages needed? external services? system binaries?
 4. Ask about persistence: state across sessions? disk files? session entries?
 5. Ask about the happy path: walk through a user interaction from start to finish.
 
-**Research during this phase:** Read relevant pi extension examples that are similar in scope. Note patterns and APIs used.
+#### Refactor mode
+1. Present the audit summary: line count, file count, anti-patterns found, current structure.
+2. Ask what should change: full rewrite? targeted fixes? module split? rename? new features?
+3. Ask about backward compatibility: can the config format change? must CLI flags stay the same? are message renderer types consumed by other extensions?
+4. Ask about scope creep: is adding new tools/commands in scope, or only restructuring existing code?
+5. Ask about the happy path after refactor: what should work the same, what should be better?
+
+**Research during this phase:** Read relevant pi extension examples that are similar in scope. Note patterns and APIs used. In refactor mode, also read sibling extensions in `.pi/extensions/` to understand shared patterns.
 
 ### PHASE 1 — RESEARCH & FEASIBILITY
 
@@ -184,11 +222,16 @@ Before designing, verify feasibility:
 
 4. **Check npm dependencies** — verify packages exist on npm, check their TypeScript support (do they ship types? are they ESM?).
 
+#### Refactor mode additions
+5. **Audit existing code** — read every file in the extension. Note anti-patterns, duplicated types, oversized files, circular dependencies.
+6. **Identify external contracts** — what config keys, CLI flags, message types, session entries, or file formats does this extension use? These must be preserved or documented as breaking changes.
+7. **Map current dependency graph** — which modules import which? Are there cycles? What is the current file structure vs. the ideal layered structure?
+
 ### PHASE 2 — ARCHITECTURE DESIGN
 
 Document the extension architecture. Cover:
 
-1. **Extension structure**: single `.ts` file or directory with `index.ts`? Shared type modules needed?
+1. **Extension structure**: single `.ts` file or directory with `index.ts`? Shared type modules needed? Target < 300 lines per file, < 100 for entry point. Use dependency layering: types → pure utils → dependent modules → orchestrator → entry. No circular imports.
 2. **State management**: where does state live? How is it rehydrated on session load?
 3. **Tool definitions**: each tool's name, parameters (use `StringEnum` not `Type.Union` for Google compat), description, `promptSnippet`, `promptGuidelines`
 4. **Lifecycle hooks**: which pi events are subscribed? What happens on `session_start` / `session_shutdown`?
@@ -196,9 +239,17 @@ Document the extension architecture. Cover:
 6. **Error handling**: every error path documented. No silent swallows.
 7. **Boundaries**: what the extension owns vs. what it delegates. Pure helpers (zero pi imports) should be separate from adapter code.
 
+#### Refactor mode additions
+8. **Current vs. proposed structure**: show the before/after file tree. Explain which files are split, merged, renamed, or deleted.
+9. **Renaming plan**: if the extension is renamed, document the old path → new path mapping, and list every location that must be updated (`.pi/settings.json`, imports in other extensions, docs, scripts).
+10. **Migration strategy**: step-by-step order of operations. Can the refactor be done incrementally? Which files can be extracted first without breaking functionality? How to verify at each step?
+11. **Backward compatibility matrix**: list every external contract (config keys, CLI flags, `customType` names, session entry types, file formats) and whether each is preserved, changed, or removed.
+
 ### PHASE 3 — WRITE THE PRD
 
 Produce a markdown PRD with these sections:
+
+#### Common sections (both modes)
 
 ```markdown
 # PRD: <Extension Name>
@@ -273,6 +324,54 @@ One paragraph: what it does, who it's for, why it's needed.
 | `catch` uses `instanceof Error` | ✅ | ... |
 | `import()` not `require()` | ✅ | ... |
 | Discriminated unions for events | ✅ | ... |
+| Files < 300 lines, entry < 100 lines | ✅/⚠️/❌ | ... |
+| No circular imports | ✅ | ... |
+| Entry point is registrations only | ✅ | ... |
+```
+
+#### Refactor mode only — append these sections
+
+```markdown
+## Current State Audit
+
+### File Overview
+| File | Lines | Issues |
+|------|-------|--------|
+| supervisor.ts | 2,308 | monolith, `any` types, sync I/O at init |
+
+### Anti-Patterns Found
+| # | Rule | Location | Severity |
+|---|------|----------|----------|
+| P1 | `any` on API boundaries | ghJson() return type | 🟠 P1 |
+| M1 | > 300 lines | entire file (2,308 lines) | 🟠 P1 |
+
+## Migration Plan
+
+### Step-by-Step
+1. Create `.pi/extensions/<name>/` directory and copy current `index.ts`
+2. Extract `types.ts` (zero internal deps) — verify extension still loads
+3. Extract `formatting.ts` (pure helpers) — verify
+4. ... continue until all modules extracted
+5. Clean up `index.ts` to registrations only
+6. Delete old monolith file
+7. Final verification: `pi -e .pi/extensions/<name>/index.ts -p "test"`
+
+### Renaming (if applicable)
+| Old Path | New Path | References to Update |
+|----------|----------|---------------------|
+| `.pi/extensions/supervisor.ts` | `.pi/extensions/supervisor/index.ts` | `.pi/settings.json`, other extensions |
+
+### Backward Compatibility
+| Contract | Preserved? | Notes |
+|----------|------------|-------|
+| `supervisor.repo` config key | ✅ | No change |
+| `customType: "supervisor"` messages | ✅ | Same renderer key |
+| Completion markers (ARCHITECTURE_COMPLETE, etc.) | ✅ | Same string matching |
+| Agent file format (`.pi/agents/*.md`) | ✅ | No change |
+
+### Rollback Plan
+- Keep old file until final verification passes
+- If extraction breaks functionality, revert by restoring old file and deleting new directory
 ```
 
 ### PHASE 4 — DELIVERY DECISION
@@ -342,13 +441,19 @@ Consult these for API accuracy:
 
 ## Step 3 — Begin Interview (PHASE 0)
 
-Start the one-question-at-a-time interview. If `$@` was provided, use it as the opening context:
+### New extension mode
+If `$@` was provided, use it as the opening context:
 
 > "I understand you want to build an extension for: $@. Let me ask a few questions to nail down the design."
 
 If no argument, start with:
 
 > "What kind of pi extension do you want to build? Describe the problem it solves and who would use it."
+
+### Refactor mode
+Start with a brief audit summary, then ask:
+
+> "I've audited `<extension-name>`. Current: <N> files, <M> lines. Found <K> anti-patterns. What changes do you want — full restructure, targeted fixes, new features, rename, or a combination?"
 
 Then proceed through all phases. Never skip phases. Never ask multiple questions at once.
 
@@ -361,3 +466,7 @@ Then proceed through all phases. Never skip phases. Never ask multiple questions
 3. **The PRD must be self-contained.** Someone reading it should understand the full design without scrolling through the conversation.
 4. **Be specific about TypeScript types.** Vague "params: any" is unacceptable. Every tool parameter must have a TypeBox schema.
 5. **When creating a GitHub issue**, use the `refined` label and include the full PRD in the issue body. The title should be the extension name.
+6. **In refactor mode, always read the existing files first.** Never propose changes without reading the actual code.
+7. **In refactor mode, preserve external contracts by default.** Breaking changes (config format, CLI flags, message types) must be explicit, documented, and justified.
+8. **In refactor mode, if renaming the extension**, document every location that references the old name and include it in the migration plan.
+9. **In refactor mode, propose an incremental migration strategy.** The extension must remain functional after each extraction step. Verify at every step.
