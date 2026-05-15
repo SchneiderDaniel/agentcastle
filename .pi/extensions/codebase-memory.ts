@@ -161,6 +161,13 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
     const alreadyIndexed = projects.some((p: { name: string }) => p.name === proj);
 
+    // Publish current node count as extension status (shown in status bar)
+    if (alreadyIndexed) {
+      const projInfo = projects.find((p: { name: string }) => p.name === proj);
+      const count = (projInfo as any)?.nodes;
+      if (count != null) ctx.ui?.setStatus("codebaseNodes", `◷ ${count} nodes`);
+    }
+
     if (!alreadyIndexed) {
       if (ctx.hasUI && ctx.ui) {
         await ctx.ui.custom((tui, theme, _kb, done) => {
@@ -169,7 +176,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
             try {
               const res = await cbmCli(pi, "index_repository", { repo_path: ctx.cwd }, loader.signal);
               if (res.ok) {
-                ctx.ui?.notify(`Codebase indexed: ${(res.data as any)?.nodes ?? "?"} nodes`, "info");
+                const nodes = (res.data as any)?.nodes ?? "?";
+                ctx.ui?.setStatus("codebaseNodes", `◷ ${nodes} nodes`);
               } else {
                 ctx.ui?.notify(`Codebase index failed: ${res.error}`, "warning");
               }
@@ -183,7 +191,8 @@ export default async function (pi: ExtensionAPI): Promise<void> {
       } else {
         const res = await cbmCli(pi, "index_repository", { repo_path: ctx.cwd });
         if (res.ok) {
-          ctx.ui?.notify(`Codebase indexed: ${(res.data as any)?.nodes ?? "?"} nodes`, "info");
+          const nodes = (res.data as any)?.nodes ?? "?";
+          ctx.ui?.setStatus("codebaseNodes", `◷ ${nodes} nodes`);
         } else {
           ctx.ui?.notify(`Codebase index failed: ${res.error}`, "warning");
         }
