@@ -2,18 +2,14 @@
 // Decide next transition status based on tsc checkpoint result.
 // Pure function — no Pi API, no process spawning.
 
+import type { TscDiagnostic } from "../tsc-checkpoint.ts";
+import { formatTscDiagnostics } from "../tsc-checkpoint.ts";
+
 /**
  * Result from a tsc checkpoint run.
  */
 export interface TscCheckpointResult {
-	diagnostics: Array<{
-		file: string;
-		line: number;
-		column: number;
-		severity: "Error";
-		message: string;
-		code?: string;
-	}>;
+	diagnostics: TscDiagnostic[];
 	hasErrors: boolean;
 }
 
@@ -24,46 +20,6 @@ export interface TscCheckpointDecision {
 	nextStatus: string;
 	note: string;
 	tscTriggered: boolean;
-}
-
-// Reuse formatTscDiagnostics inline for pure-function isolation
-function formatTscDiagnostics(
-	diagnostics: Array<{
-		file: string;
-		line: number;
-		column: number;
-		severity: "Error";
-		message: string;
-		code?: string;
-	}>,
-): string {
-	if (!diagnostics || diagnostics.length === 0) return "";
-
-	const byFile = new Map<string, typeof diagnostics>();
-	for (const d of diagnostics) {
-		const list = byFile.get(d.file) || [];
-		list.push(d);
-		byFile.set(d.file, list);
-	}
-
-	const blocks: string[] = [];
-	const files = [...byFile.keys()].sort();
-	for (const file of files) {
-		const diags = byFile.get(file)!;
-		diags.sort((a, b) => (a.line !== b.line ? a.line - b.line : a.column - b.column));
-
-		const lines: string[] = [];
-		for (const d of diags) {
-			let msg = d.message;
-			if (msg.length > 500) msg = msg.slice(0, 497) + "...";
-			const codePart = d.code ? ` (${d.code})` : "";
-			lines.push(`${file}, Line ${d.line}: [${d.severity}] ${msg}${codePart}`);
-		}
-		if (blocks.length > 0) blocks.push("");
-		blocks.push(lines.join("\n"));
-	}
-
-	return blocks.join("\n");
 }
 
 /**

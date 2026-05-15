@@ -13,7 +13,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -213,37 +213,77 @@ function shouldLint(path: string): boolean {
 	return LINT_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
+/** Exported type for ESLint diagnostics. */
+export interface EslintDiagnostic {
+	file: string;
+	line: number;
+	column: number;
+	severity: "Error" | "Warning";
+	message: string;
+	ruleId: string | null;
+}
+
 /**
  * Run ESLint on a single file and return formatted diagnostics message.
  * Returns empty string if no issues found or ESLint is unavailable.
  *
  * ESLint exits code 0 = no errors, 1 = lint errors found, 2 = config error.
- * For code 1, stdout still contains valid JSON array. execSync throws on
+ * For code 1, stdout still contains valid JSON array. execFileSync throws on
  * non-zero exit, so we catch and extract stdout from the error object.
+ *
+ * For code 2 (config error), retry with --no-eslintrc fallback.
  */
 function runEslintOnFile(filePath: string, cwd: string): string {
+	// Primary attempt with project ESLint config
+	let result = tryRunEslint(filePath, cwd, []);
+	if (result !== null) return result;
+
+	// Config error (exit code 2) — retry with --no-eslintrc fallback
+	result = tryRunEslint(filePath, cwd, ["--no-eslintrc"]);
+	return result ?? "";
+}
+
+/**
+ * Attempt to run ESLint with given extra args.
+ * Returns formatted string on success (or lint errors found).
+ * Returns null if ESLint exited with code 2 (config error).
+ * Returns empty string if no issues.
+ */
+function tryRunEslint(filePath: string, cwd: string, extraArgs: string[]): string | null {
 	try {
-		const command = `npx eslint --no-error-on-unmatched-pattern --format json --fix "${filePath}"`;
-		const stdout = execSync(command, {
-			cwd,
-			encoding: "utf-8",
-			timeout: 15_000,
-			maxBuffer: 5 * 1024 * 1024,
-		}) as string;
+		const stdout = execFileSync(
+			"npx",
+			[
+				"eslint",
+				"--no-error-on-unmatched-pattern",
+				"--format",
+				"json",
+				"--fix",
+				...extraArgs,
+				filePath,
+			],
+			{
+				cwd,
+				encoding: "utf-8",
+				timeout: 15_000,
+				maxBuffer: 5 * 1024 * 1024,
+			},
+		) as string;
 
 		// No errors: parse and return (empty messages = empty result)
 		const diags = parseEslintOutput(stdout);
 		if (diags.length === 0) return "";
 		return formatEslintDiagnostics(diags);
 	} catch (err: unknown) {
-		// ESLint exits code 1 when lint errors found — stdout still has JSON
-		// Only try to parse if the error object has stdout property
 		const execErr = err as { stdout?: string; stderr?: string; status?: number };
+		// Exit code 2 = config error — signal retry with --no-eslintrc
+		if (execErr.status === 2) return null;
+		// Exit code 1 = lint errors found — stdout still has valid JSON
 		if (execErr.stdout) {
 			const diags = parseEslintOutput(execErr.stdout);
 			if (diags.length > 0) return formatEslintDiagnostics(diags);
 		}
-		// Exit code 2 or real crash — skip silently
+		// Other error — skip silently
 		return "";
 	}
 }

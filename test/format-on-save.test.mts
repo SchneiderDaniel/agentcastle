@@ -2,6 +2,7 @@
  * Tests for format-on-save ESLint integration (Tier 1)
  *
  * Pure function tests for parseEslintOutput().
+ * Local copies match source at .pi/extensions/format-on-save.ts exactly.
  *
  * Run with:
  *   node --experimental-strip-types --test test/format-on-save.test.mts
@@ -11,29 +12,10 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Types (mirrored from implementation for test isolation)
+// Types (match source at .pi/extensions/format-on-save.ts)
 // ═══════════════════════════════════════════════════════════════════════
 
-interface EslintMessage {
-	line: number;
-	column: number;
-	severity: number; // 1=warning, 2=error
-	message: string;
-	ruleId: string | null;
-}
-
-interface EslintFileResult {
-	filePath: string;
-	messages: EslintMessage[];
-	errorCount: number;
-	warningCount: number;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Pure function under test (will be extracted to format-on-save.ts later)
-// ═══════════════════════════════════════════════════════════════════════
-
-export interface EslintDiagnostic {
+interface EslintDiagnostic {
 	file: string;
 	line: number;
 	column: number;
@@ -42,27 +24,38 @@ export interface EslintDiagnostic {
 	ruleId: string | null;
 }
 
-/**
- * Parse ESLint JSON output into EslintDiagnostic[].
- * ESLint JSON format is an array of file results, each with messages[].
- * Severity: 1=Warning, 2=Error.
- *
- * Returns empty array if no errors/warnings.
- */
-export function parseEslintOutput(jsonOutput: string): EslintDiagnostic[] {
+// ═══════════════════════════════════════════════════════════════════════
+// Pure function under test (match source exactly)
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Parse ESLint JSON output into diagnostics array. */
+function parseEslintOutput(jsonOutput: string): Array<{
+	file: string;
+	line: number;
+	column: number;
+	severity: "Error" | "Warning";
+	message: string;
+	ruleId: string | null;
+}> {
 	try {
 		const data = JSON.parse(jsonOutput);
 		if (!Array.isArray(data)) return [];
 
-		const diagnostics: EslintDiagnostic[] = [];
+		const diagnostics: Array<{
+			file: string;
+			line: number;
+			column: number;
+			severity: "Error" | "Warning";
+			message: string;
+			ruleId: string | null;
+		}> = [];
 
 		for (const fileResult of data) {
 			if (!fileResult || !Array.isArray(fileResult.messages)) continue;
 
 			const filePath = fileResult.filePath || "unknown";
-			const messages: EslintMessage[] = fileResult.messages;
 
-			for (const msg of messages) {
+			for (const msg of fileResult.messages) {
 				const severity: "Error" | "Warning" = msg.severity === 2 ? "Error" : "Warning";
 				diagnostics.push({
 					file: filePath,
@@ -81,17 +74,20 @@ export function parseEslintOutput(jsonOutput: string): EslintDiagnostic[] {
 	}
 }
 
-/**
- * Format ESLint diagnostics into a follow-up message for the Developer.
- *
- * Format same as LSP auditor: file, Line N: [Severity] message (ruleId)
- * Grouped by file, sorted by line, errors first per file.
- */
-export function formatEslintDiagnostics(diagnostics: EslintDiagnostic[]): string {
+/** Format ESLint diagnostics into developer-readable follow-up message. */
+function formatEslintDiagnostics(
+	diagnostics: Array<{
+		file: string;
+		line: number;
+		column: number;
+		severity: "Error" | "Warning";
+		message: string;
+		ruleId: string | null;
+	}>,
+): string {
 	if (!diagnostics || diagnostics.length === 0) return "";
 
-	// Group by file
-	const byFile = new Map<string, EslintDiagnostic[]>();
+	const byFile = new Map<string, typeof diagnostics>();
 	for (const d of diagnostics) {
 		const list = byFile.get(d.file) || [];
 		list.push(d);

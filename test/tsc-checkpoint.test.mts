@@ -2,6 +2,7 @@
  * Tests for tsc-checkpoint (Tier 2)
  *
  * Pure function tests for parseTscOutput() and formatTscDiagnostics().
+ * Local copies match source at .pi/extensions/tsc-checkpoint.ts exactly.
  *
  * Run with:
  *   node --experimental-strip-types --test test/tsc-checkpoint.test.mts
@@ -11,7 +12,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Types (same shape as LspDiagnostic from lsp-auditor.ts)
+// Types (match source at .pi/extensions/tsc-checkpoint.ts)
 // ═══════════════════════════════════════════════════════════════════════
 
 interface TscDiagnostic {
@@ -24,36 +25,43 @@ interface TscDiagnostic {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Pure functions under test
+// Pure functions under test (match source exactly)
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
  * Parse raw tsc --noEmit stderr output into TscDiagnostic[].
  *
- * tsc error format: file.ts(line,column): error TS<code>: <message>
+ * tsc error format: file.ts(line,column): error TS<code>: message
  *
  * Handles:
- * - Multiple errors, multiple files
- * - Errors with and without TS code
- * - ANSI color codes (--pretty enabled by default)
- * - Non-error lines (info, file discovery, etc.) filtered out
+ * - Multiple errors from multiple files
+ * - Errors with and without TS error code
+ * - Non-error lines are filtered out (info, file counts, etc.)
+ * - ANSI color codes (--pretty is default) — stripped via regex
  */
-export function parseTscOutput(raw: string): TscDiagnostic[] {
+function parseTscOutput(raw: string): TscDiagnostic[] {
 	if (!raw || typeof raw !== "string") return [];
 
 	const lines = raw.split("\n");
 	const diagnostics: TscDiagnostic[] = [];
-	// Regex: file(line,col): error TS<code>: message
-	// Groups: 1=file, 2=line, 3=col, 4=code (optional TS prefix), 5=message
-	const errorRegex = /^([^(]+)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/;
-	const errorRegexNoCode = /^([^(]+)\((\d+),(\d+)\):\s+error\s+(.+)$/;
+
+	// Strip ANSI color codes first
+	const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
+
+	// Match: file(line,col): error TS<code>: message
+	const errorRegex = /^([^:(]+)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/;
+	// Match: file(line,col): error message (no TS code)
+	const errorRegexNoCode = /^([^:(]+)\((\d+),(\d+)\):\s+error\s+(.+)$/;
 
 	for (const line of lines) {
 		const trimmed = line.trim();
 		if (!trimmed) continue;
 
+		// Strip ANSI before matching
+		const clean = stripAnsi(trimmed);
+
 		// Try with TS code first
-		let match = trimmed.match(errorRegex);
+		let match = clean.match(errorRegex);
 		if (match) {
 			diagnostics.push({
 				file: match[1]!,
@@ -67,7 +75,7 @@ export function parseTscOutput(raw: string): TscDiagnostic[] {
 		}
 
 		// Try without TS code
-		match = trimmed.match(errorRegexNoCode);
+		match = clean.match(errorRegexNoCode);
 		if (match) {
 			diagnostics.push({
 				file: match[1]!,
@@ -84,9 +92,9 @@ export function parseTscOutput(raw: string): TscDiagnostic[] {
 
 /**
  * Format TSC diagnostics into developer-readable message.
- * Same format as LSP auditor: file, Line N: [Error] message.
+ * Same format as LSP auditor: file, Line N: [Error] message (code).
  */
-export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
+function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 	if (!diagnostics || diagnostics.length === 0) return "";
 
 	// Group by file
@@ -202,9 +210,13 @@ describe("parseTscOutput", () => {
 		const raw =
 			"\u001b[96msrc/app.ts\u001b[0m\u001b[93m(10,5)\u001b[0m: \u001b[91merror\u001b[0m\u001b[90m TS2322: \u001b[0m\u001b[97mType error.\u001b[0m";
 		const result = parseTscOutput(raw);
-		// With ANSI codes, parsing may fail or produce partially correct results
-		// The function should not crash. Best effort parsing.
-		assert.ok(Array.isArray(result));
+		// ANSI stripping in source parses this correctly
+		assert.strictEqual(result.length, 1);
+		assert.strictEqual(result[0]!.file, "src/app.ts");
+		assert.strictEqual(result[0]!.line, 10);
+		assert.strictEqual(result[0]!.column, 5);
+		assert.strictEqual(result[0]!.code, "TS2322");
+		assert.strictEqual(result[0]!.message, "Type error.");
 	});
 
 	it("line and column parsed as numbers", () => {

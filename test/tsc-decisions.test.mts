@@ -2,6 +2,7 @@
  * Tests for tsc-decisions (Tier 2 pipeline integration)
  *
  * Pure function tests for determineTscCheckpointDecision().
+ * Local copies match source at .pi/extensions/supervisor/tsc-decisions.ts exactly.
  *
  * Run with:
  *   node --experimental-strip-types --test test/tsc-decisions.test.mts
@@ -11,7 +12,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Types
+// Types (match source)
 // ═══════════════════════════════════════════════════════════════════════
 
 interface TscDiagnostic {
@@ -35,46 +36,13 @@ interface TscCheckpointDecision {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Pure function under test
+// Pure function under test (match source exactly)
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Decide next pipeline status based on tsc checkpoint result.
- *
- * - If intendedNext !== "Audit" (e.g. still in some other status) → pass through
- * - If tsc has errors → stay in "Implementation"
- * - If tsc is clean → proceed to "Audit"
- * - If tsc was not triggered → pass through to intended next
+ * Format TSC diagnostics into developer-readable message.
+ * Same format as LSP auditor: file, Line N: [Error] message (code).
  */
-export function determineTscCheckpointDecision(
-	result: TscCheckpointResult | null,
-	intendedNext: string,
-): TscCheckpointDecision {
-	if (intendedNext !== "Audit") {
-		return { nextStatus: intendedNext, note: "", tscTriggered: false };
-	}
-
-	if (!result) {
-		return { nextStatus: "Audit", note: "TSC checkpoint skipped", tscTriggered: false };
-	}
-
-	if (result.hasErrors) {
-		const formatted = formatTscDiagnostics(result.diagnostics);
-		return {
-			nextStatus: "Implementation",
-			note: `TSC checkpoint: ${result.diagnostics.length} type error(s) found — fix before proceeding.\n${formatted}`,
-			tscTriggered: true,
-		};
-	}
-
-	return {
-		nextStatus: "Audit",
-		note: "TSC checkpoint: ✓ no type errors detected",
-		tscTriggered: true,
-	};
-}
-
-// Reuse formatTscDiagnostics from tsc-checkpoint
 function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 	if (!diagnostics || diagnostics.length === 0) return "";
 
@@ -103,6 +71,46 @@ function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 	}
 
 	return blocks.join("\n");
+}
+
+/**
+ * Decide the next pipeline status based on tsc checkpoint result.
+ *
+ * - If intendedNext !== "Audit" → pass through (no-op)
+ * - If result is null (not triggered) → proceed to Audit with skip note
+ * - If hasErrors → stay in Implementation with diagnostic details
+ * - If clean → proceed to Audit with success note
+ */
+function determineTscCheckpointDecision(
+	result: TscCheckpointResult | null,
+	intendedNext: string,
+): TscCheckpointDecision {
+	if (intendedNext !== "Audit") {
+		return { nextStatus: intendedNext, note: "", tscTriggered: false };
+	}
+
+	if (!result) {
+		return {
+			nextStatus: "Audit",
+			note: "TSC checkpoint skipped",
+			tscTriggered: false,
+		};
+	}
+
+	if (result.hasErrors) {
+		const formatted = formatTscDiagnostics(result.diagnostics);
+		return {
+			nextStatus: "Implementation",
+			note: `TSC checkpoint: ${result.diagnostics.length} type error(s) found — fix before proceeding.\n${formatted}`,
+			tscTriggered: true,
+		};
+	}
+
+	return {
+		nextStatus: "Audit",
+		note: "TSC checkpoint: ✓ no type errors detected",
+		tscTriggered: true,
+	};
 }
 
 // ═══════════════════════════════════════════════════════════════════════
