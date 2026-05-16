@@ -5,8 +5,8 @@
  * with selectable options (and optional "Other" free-text fallback), or
  * open-ended free-text questions.
  *
- * All completed interactions are logged to .pi/context/qna.csv in RFC 4180
- * format for auditability.
+ * All completed interactions are logged to .pi/context/qna.csv with columns
+ * datetime; question; answer (semicolon-separated).
  *
  * For choice mode: Uses a scrollable custom dialog so long questions (with
  * code blocks) don't push options off-screen. PgUp/PgDn scroll the question
@@ -31,31 +31,31 @@ const MAX_QUESTION_LINES = 12;
 const QUESTION_SCROLL_STEP = 5;
 
 // ---------------------------------------------------------------------------
-// CSV helpers (RFC 4180)
+// CSV helpers (semicolon-separated)
 // ---------------------------------------------------------------------------
 
 /**
- * Escape a single CSV field per RFC 4180 section 2.
- * Fields containing commas, double quotes, or CRLF are enclosed in double
+ * Escape a single field.
+ * Fields containing semicolons, double quotes, or CRLF are enclosed in double
  * quotes; internal double quotes are doubled ("").
  */
 function escapeCsvField(s: string): string {
-	if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+	if (s.includes('"') || s.includes(";") || s.includes("\n") || s.includes("\r")) {
 		return `"${s.replace(/"/g, '""')}"`;
 	}
 	return s;
 }
 
 /**
- * Build a single CSV row for a Q&A entry.
- * Columns: timestamp, question, answer. Terminated with \n.
+ * Build a single row for a Q&A entry.
+ * Columns: datetime; question; answer. Terminated with \n.
  */
 function toCsvRow(timestamp: string, question: string, answer: string): string {
-	return `${escapeCsvField(timestamp)},${escapeCsvField(question)},${escapeCsvField(answer)}\n`;
+	return `${escapeCsvField(timestamp)};${escapeCsvField(question)};${escapeCsvField(answer)}\n`;
 }
 
 /**
- * Append one Q&A entry to .pi/context/qna.csv.
+ * Append one Q&A entry to .pi/context/qna.csv (semicolon-separated).
  * Creates the directory and file if missing. Errors are silently swallowed
  * (best-effort per R3).
  */
@@ -84,9 +84,8 @@ export default function askUser(pi: ExtensionAPI): void {
 		name: "ask_user",
 		label: "Ask User",
 		description:
-			"Ask the user a question. Supports multiple-choice (default) and free-text modes. Use choice mode when you need the user to pick from predefined options. Use freetext mode for open-ended questions like 'Tell me about yourself' or 'What do you think?'. All Q&A is logged to .pi/context/qna.csv.",
-		promptSnippet:
-			"Ask user a question (choice or free-text mode)",
+			"Ask the user a question. Supports multiple-choice (default) and free-text modes. Use choice mode when you need the user to pick from predefined options. Use freetext mode for open-ended questions like 'Tell me about yourself' or 'What do you think?'. All Q&A logged to .pi/context/qna.csv (semicolon-separated).",
+		promptSnippet: "Ask user a question (choice or free-text mode)",
 		promptGuidelines: [
 			"Use ask_user with mode:'choice' (default) for structured multiple-choice questions. Always provide at least 3 options, mark one as recommended, and the 'Other' option is appended automatically unless disableOther is set to true. Do not add 'Other' to the options array yourself.",
 			"Use ask_user with mode:'freetext' for open-ended questions where predefined options would be constraining. Examples: asking for a description, opinion, or freeform input. In freetext mode, options are ignored.",
@@ -98,12 +97,10 @@ export default function askUser(pi: ExtensionAPI): void {
 				Type.Union(
 					[
 						Type.Literal("choice", {
-							description:
-								"Multiple-choice mode — user picks from a list of options (default)",
+							description: "Multiple-choice mode — user picks from a list of options (default)",
 						}),
 						Type.Literal("freetext", {
-							description:
-								"Free-text mode — user types an open-ended answer without options",
+							description: "Free-text mode — user types an open-ended answer without options",
 						}),
 					],
 					{
