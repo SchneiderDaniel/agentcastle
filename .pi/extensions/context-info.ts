@@ -608,14 +608,14 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					const castlePad = "   ";
 
 					const castleLines = [
-						castlePad + dim(" #_||_#                                                    #_||_#"),
+						castlePad + dim(" #_||_#                                                     #_||_#"),
 						castlePad + dim(" \\####/                                                     \\####/"),
 						castlePad + dim("  │                      🏰 Agent Castle                       │"),
 						castlePad + dim("  |  |   # # # #                                   # # # #   |  |"),
 						castlePad + dim("  | #|---|-----|                                   |-----|---|# |"),
 						castlePad + dim("  |  |         +-----------------------------------+         |  |"),
 						castlePad + dim("/    \\        |                                   |        /    \\"),
-						castlePad + dim("|      |       |                                   |       |      |"),
+						castlePad + dim(" |      |       |                                   |       |      |"),
 						castlePad + dim("|  /\\  |       |                                   |       |  /\\  |"),
 						castlePad + dim("| /  \\ |       |                                   |       | /  \\ |"),
 						castlePad + dim("|/    \\| #_||_#|                                   |#_||_# |/    \\|"),
@@ -625,31 +625,36 @@ export default function contextInfo(pi: ExtensionAPI): void {
 						castlePad + dim(" _|__|____|__| |                                   | |__|____|__|_"),
 						castlePad + dim("|            | |                                   | |            |"),
 						castlePad + dim("|   /\\/\\/\\   | |                                   | |   /\\/\\/\\   |"),
+						castlePad + dim("|  |      |  | +-----------------------------------+ |  |      |  |"),
 						castlePad + dim("|__|______|__|_______________________________________|__|______|__|"),
 					];
 
-					// Bottom box content rows — inside the +-----------------------------------+ area
+					// Bottom box content — inside |  |      |  | +-----------------------------------+ |  |      |  |
 					const boxW = 33;
-					const makeBottomRow = (content: string): string => {
+					const makeBoxRow = (content: string): string => {
 						const w = Math.min(visibleWidth(content), boxW);
 						const pad = Math.max(0, Math.floor((boxW - w) / 2));
 						const right = Math.max(0, boxW - pad - w);
-						return castlePad + dim("|  |      |  | | ") + " ".repeat(pad) + muted(content) + " ".repeat(right) + dim(" | |  |      |  |");
+						return castlePad + dim("|  |      |  | │ ") + " ".repeat(pad) + muted(content) + " ".repeat(right) + dim(" │ |  |      |  |");
 					};
 
 					const contentRows = [
-						makeBottomRow(`🧠 Model:       ${modelId}`),
-						makeBottomRow(`📊 Context:     ${cwStr} tokens`),
-						makeBottomRow(`🧩 Extensions:  ${extCount}`),
-						makeBottomRow(`📝 Prompts:     ${promptCount}`),
-						makeBottomRow(`🎨 Themes:      ${themeCount}`),
+						makeBoxRow(`🧠 Model:       ${modelId}`),
+						makeBoxRow(`📊 Context:     ${cwStr} tokens`),
+						makeBoxRow(`🧩 Extensions:  ${extCount}`),
+						makeBoxRow(`📝 Prompts:     ${promptCount}`),
+						makeBoxRow(`🎨 Themes:      ${themeCount}`),
 					];
 
+					const boxBorder = castlePad + dim("|  |      |  | +-----------------------------------+ |  |      |  |");
+					const footer = castlePad + dim("|__|______|__|_______________________________________|__|______|__|");
+
 					const lines: string[] = [
-						...castleLines.slice(0, 17),  // lines 0-16 (top + middle of castle)
-						...contentRows,                // info rows inside bottom box
-						castlePad + dim("|  |      |  | +-----------------------------------+ |  |      |  |"),  // bottom box border
-						castlePad + dim("|__|______|__|_______________________________________|__|______|__|"),  // footer
+						...castleLines.slice(0, 17),   // lines 0-16 (castle core, no bottom box)
+						boxBorder,                      // top border of content box
+						...contentRows,                  // info rows inside box
+						boxBorder,                      // bottom border of content box
+						footer,
 					];
 					cachedWidth = width;
 					cachedLines = lines;
