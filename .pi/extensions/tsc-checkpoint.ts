@@ -17,7 +17,6 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -146,7 +145,7 @@ export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Run `npx tsc --noEmit` in the worktree directory.
+ * Run `npx tsc --noEmit` in the worktree directory via pi.exec.
  *
  * Returns structured result with parsed diagnostics and whether any
  * errors were found.
@@ -154,49 +153,33 @@ export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
  * If tsconfig.json doesn't exist, returns { hasErrors: false } silently.
  * If tsc binary not found, returns { hasErrors: false } silently.
  */
-export function runTscCheckpoint(worktreePath: string): TscCheckpointResult {
+export async function runTscCheckpoint(
+	pi: ExtensionAPI,
+	worktreePath: string,
+): Promise<TscCheckpointResult> {
 	// Check for tsconfig.json first
 	const tsconfigPath = resolve(worktreePath, "tsconfig.json");
 	if (!existsSync(tsconfigPath)) {
-		// Try tsconfig.json variations (tsconfig.base.json etc.)
-		// But tsc itself resolves tsconfig.json — skip if none
-		// We just return empty — no tsconfig means no tsc check
 		return { diagnostics: [], hasErrors: false };
 	}
 
-	try {
-		const stdout = execFileSync("npx", ["tsc", "--noEmit"], {
-			cwd: worktreePath,
-			encoding: "utf-8",
-			timeout: 60_000, // 60s for cold start
-			maxBuffer: 10 * 1024 * 1024, // 10MB
-		}) as string;
+	const result = await pi.exec("npx", ["tsc", "--noEmit"], {
+		cwd: worktreePath,
+		timeout: 60_000, // 60s for cold start
+	});
 
-		// tsc --noEmit outputs nothing to stdout on success
-		// But also check stderr in case of warnings
+	// tsc --noEmit exits 0 = success (no errors)
+	if (result.code === 0) {
 		return { diagnostics: [], hasErrors: false };
-	} catch (err: unknown) {
-		// tsc exits non-zero when type errors found
-		// stderr contains error messages
-		const execErr = err as {
-			stdout?: string;
-			stderr?: string;
-			status?: number;
-			message?: string;
-		};
-
-		// tsc outputs errors to stderr
-		let output = execErr.stderr || execErr.stdout || "";
-		if (!output && execErr.message) {
-			output = execErr.message;
-		}
-
-		const diagnostics = parseTscOutput(output);
-		return {
-			diagnostics,
-			hasErrors: diagnostics.length > 0,
-		};
 	}
+
+	// Non-zero exit = type errors found. tsc outputs errors to stderr.
+	const output = result.stderr || result.stdout || "";
+	const diagnostics = parseTscOutput(output);
+	return {
+		diagnostics,
+		hasErrors: diagnostics.length > 0,
+	};
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -225,7 +208,7 @@ export default function tscCheckpoint(pi: ExtensionAPI): void {
 				deliverAs: "followUp",
 			});
 
-			const result = runTscCheckpoint(worktreePath);
+			const result = await runTscCheckpoint(pi, worktreePath);
 
 			if (result.hasErrors) {
 				const formatted = formatTscDiagnostics(result.diagnostics);
