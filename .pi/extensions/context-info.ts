@@ -127,25 +127,6 @@ function getWorktreeName(cwd: string): string | null {
 	}
 }
 
-/** Count files matching suffix in a directory (non-recursive) */
-function countFiles(dir: string, suffix: string): number {
-	try {
-		if (!existsSync(dir)) return 0;
-		const entries = readdirSync(dir, { withFileTypes: true });
-		let count = 0;
-		for (const entry of entries) {
-			if (entry.isFile() && entry.name.endsWith(suffix)) count++;
-			// Also count index.ts in subdirectories for extensions
-			if (entry.isDirectory() && suffix === ".ts") {
-				if (existsSync(joinPath(dir, entry.name, "index.ts"))) count++;
-			}
-		}
-		return count;
-	} catch {
-		return 0;
-	}
-}
-
 /** Read a single value from pi's global settings.json */
 function readPiSetting(key: string): string | undefined {
 	try {
@@ -165,7 +146,11 @@ function readPiSetting(key: string): string | undefined {
 // ─── Config loading ──────────────────────────────────────────────────
 
 function loadConfig(): ContextStatusBarConfig | null {
-	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS, showTimer: true };
+	const defaults: ContextStatusBarConfig = {
+		enabled: true,
+		thresholds: DEFAULT_THRESHOLDS,
+		showTimer: true,
+	};
 	const settingsPath = ".pi/settings.json";
 	if (!existsSync(settingsPath)) return defaults;
 
@@ -491,10 +476,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 							tokenDisplay += " " + theme.fg(pctColor, `[${pct}%]`);
 						}
 					} else if (lastContextWindow) {
-						tokenDisplay = theme.fg(
-							"dim",
-							`◉ .../${formatTokens(lastContextWindow)}`,
-						);
+						tokenDisplay = theme.fg("dim", `◉ .../${formatTokens(lastContextWindow)}`);
 					} else {
 						tokenDisplay = theme.fg("dim", "◉ .../?");
 					}
@@ -567,98 +549,115 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	function listNames(dir: string, suffix: string): string[] {
 		try {
 			if (!existsSync(dir)) return [];
-			return readdirSync(dir, { withFileTypes: true })
-				.filter((e) => e.isFile() && e.name.endsWith(suffix))
-				.map((e) => e.name.replace(new RegExp(`${suffix.replace(".", "\\.")}$`), ""))
-				.sort();
+			const results: string[] = [];
+			const walk = (d: string) => {
+				const entries = readdirSync(d, { withFileTypes: true });
+				for (const entry of entries) {
+					const fullPath = joinPath(d, entry.name);
+					if (entry.isDirectory()) {
+						if (entry.name !== "." && entry.name !== "..") {
+							walk(fullPath);
+						}
+					} else if (entry.isFile() && entry.name.endsWith(suffix)) {
+						results.push(entry.name.replace(new RegExp(`${suffix.replace(".", "\\.")}$`), ""));
+					}
+				}
+			};
+			walk(dir);
+			return results.sort();
 		} catch {
 			return [];
 		}
 	}
 
+	function countExtensions(): number {
+		try {
+			if (!existsSync(".pi/extensions")) return 0;
+			const entries = readdirSync(".pi/extensions", { withFileTypes: true });
+			let count = 0;
+			for (const entry of entries) {
+				if (entry.isFile() && entry.name.endsWith(".ts")) {
+					count++;
+				} else if (entry.isDirectory() && entry.name !== "." && entry.name !== "..") {
+					count++;
+				}
+			}
+			return count;
+		} catch {
+			return 0;
+		}
+	}
+
 	function showWelcomeBanner(ctx: ExtensionContext) {
-		// Collect info once at startup
-		const extCount = listNames(".pi/extensions", ".ts").length;
+		const extCount = countExtensions();
 		const promptCount = listNames(".pi/prompts", ".md").length;
 		const themeCount = listNames(".pi/themes", ".json").length;
-		const modelId = ctx.model?.id ?? "?";
-		const cw = ctx.model?.contextWindow;
-		const cwStr = typeof cw === "number" && cw > 0 ? formatTokens(cw) : "?";
 
 		ctx.ui.setWidget("agentcastle-welcome", (_tui, theme) => {
-			let cachedWidth = -1;
-			let cachedLines: string[] = [];
-
-			const BOX_W = 72; // wider castle-style box
-
 			return {
 				dispose() {},
-				invalidate() {
-					cachedWidth = -1;
-					cachedLines = [];
-				},
-				render(width: number): string[] {
-					if (cachedLines.length > 0 && cachedWidth === width) {
-						return cachedLines;
-					}
-
+				invalidate() {},
+				render(_width: number): string[] {
 					const dim = (s: string) => theme.fg("dim", s);
 					const muted = (s: string) => theme.fg("muted", s);
-					// User's ASCII castle design (66 chars wide, centered in 72)
-					const castlePad = "   ";
+					const accent = (s: string) => theme.fg("accent", s);
 
-					const castleLines = [
-						castlePad + dim(" #_||_#                                                     #_||_#"),
-						castlePad + dim(" \\####/                                                     \\####/"),
-						castlePad + dim("  │                      🏰 Agent Castle                       │"),
-						castlePad + dim("  |  |   # # # #                                   # # # #   |  |"),
-						castlePad + dim("  | #|---|-----|                                   |-----|---|# |"),
-						castlePad + dim("  |  |         +-----------------------------------+         |  |"),
-						castlePad + dim("/    \\        |                                   |        /    \\"),
-						castlePad + dim(" |      |       |                                   |       |      |"),
-						castlePad + dim("|  /\\  |       |                                   |       |  /\\  |"),
-						castlePad + dim("| /  \\ |       |                                   |       | /  \\ |"),
-						castlePad + dim("|/    \\| #_||_#|                                   |#_||_# |/    \\|"),
-						castlePad + dim(" \\####/  \\####/|                                   |\\####/  \\####/"),
-						castlePad + dim("  |  |    |  | |                                   | |  |    |  |"),
-						castlePad + dim("  | #|    | #| |                                   | | #|    | #|"),
-						castlePad + dim(" _|__|____|__| |                                   | |__|____|__|_"),
-						castlePad + dim("|            | |                                   | |            |"),
-						castlePad + dim("|   /\\/\\/\\   | |                                   | |   /\\/\\/\\   |"),
-						castlePad + dim("|  |      |  | +-----------------------------------+ |  |      |  |"),
-						castlePad + dim("|__|______|__|_______________________________________|__|______|__|"),
+					const modelId = ctx.model?.id ?? "?";
+					const cw = ctx.model?.contextWindow;
+					const cwStr = typeof cw === "number" && cw > 0 ? formatTokens(cw) : "?";
+
+					const baseW = 64;
+
+					// ── Centered title ────────────────────────
+					const titleText = "\ud83c\udff0 Agent Castle";
+					const titleVis = visibleWidth(titleText);
+					const titlePad = Math.max(0, Math.floor((baseW - titleVis) / 2));
+					const titleLine =
+						" ".repeat(titlePad) + accent(titleText) + " ".repeat(baseW - titlePad - titleVis);
+
+					// ── Castle art (towers + walls) ────────────
+					const castle: string[] = [
+						"       #_||_#               #_||_#               #_||_#",
+						"       \\####/               \\####/               \\####/",
+						"        |  |                 |  |                 |  |",
+						"  # # # |  | # # # # # # # # |  | # # # # # # # # |  | # # #",
+						"  |-----|  |-----|-------|---|  |---|-------|-----|  |-----|",
+						"  |     /  \\     |       |   /  \\   |       |     /  \\     |",
+						" /     |    |     \\  /\\  /   |    |   \\  /\\  /     |    |     \\",
+						"|      |    |      \\/  \\/    |    |    \\/  \\/      |    |      |",
+						"|______[____]________________[____]________________[____]______|",
 					];
 
-					// Bottom box content — inside |  |      |  | +-----------------------------------+ |  |      |  |
-					const boxW = 33;
-					const makeBoxRow = (content: string): string => {
-						const w = Math.min(visibleWidth(content), boxW);
-						const pad = Math.max(0, Math.floor((boxW - w) / 2));
-						const right = Math.max(0, boxW - pad - w);
-						return castlePad + dim("|  |      |  | │ ") + " ".repeat(pad) + muted(content) + " ".repeat(right) + dim(" │ |  |      |  |");
-					};
+					// Pad all castle lines to baseW
+					const castleLines = castle.map((line) => {
+						const w = visibleWidth(line);
+						return dim(w < baseW ? line + " ".repeat(baseW - w) : line);
+					});
 
-					const contentRows = [
-						makeBoxRow(`🧠 Model:       ${modelId}`),
-						makeBoxRow(`📊 Context:     ${cwStr} tokens`),
-						makeBoxRow(`🧩 Extensions:  ${extCount}`),
-						makeBoxRow(`📝 Prompts:     ${promptCount}`),
-						makeBoxRow(`🎨 Themes:      ${themeCount}`),
+					// ── Stats lines: built via concatenation, NO .replace on ANSI strings ──
+					// Format: | LABEL:      VALUE                            |
+					// Inner content width (between "| " and " |" borders) = 60
+					function statLine(label: string, value: string): string {
+						const labelStr = muted(label);
+						const valueStr = accent(value);
+						const rawLabelW = visibleWidth(label);
+						const rawValueW = visibleWidth(value);
+						const padding = 60 - rawLabelW - rawValueW;
+						return dim("| ") + labelStr + valueStr + " ".repeat(Math.max(0, padding)) + dim(" |");
+					}
+
+					const statLines: string[] = [
+						statLine("🧠 Model:      ", modelId),
+						statLine("📊 Context:    ", cwStr),
+						statLine("🧩 Extensions: ", String(extCount)),
+						statLine("📝 Prompts:    ", String(promptCount)),
+						statLine("🎨 Themes:     ", String(themeCount)),
 					];
 
-					const boxBorder = castlePad + dim("|  |      |  | +-----------------------------------+ |  |      |  |");
-					const footer = castlePad + dim("|__|______|__|_______________________________________|__|______|__|");
+					// Bottom wall
+					const bottom = dim("|" + "_".repeat(62) + "|");
 
-					const lines: string[] = [
-						...castleLines.slice(0, 17),   // lines 0-16 (castle core, no bottom box)
-						boxBorder,                      // top border of content box
-						...contentRows,                  // info rows inside box
-						boxBorder,                      // bottom border of content box
-						footer,
-					];
-					cachedWidth = width;
-					cachedLines = lines;
-					return lines;
+					return [titleLine, ...castleLines, ...statLines, bottom];
 				},
 			};
 		});
