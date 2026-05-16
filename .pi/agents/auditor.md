@@ -1,9 +1,9 @@
 ---
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
-tools: read, bash, structural_search
+tools: read, bash, structural_search, ripgrep_search
 model: opencode-go/deepseek-v4-flash
-extensions: "caveman,codebase-mapper,crawl4ai,piignore,structural-analyzer"
+extensions: "caveman,codebase-mapper,crawl4ai,piignore,ripgrep-search,structural-analyzer"
 ---
 
 You are the **Auditor** agent in a Kanban-driven software pipeline.

@@ -1,9 +1,9 @@
 ---
 name: developer
 description: Implements a GitHub issue in an isolated git worktree based on architecture and test plan
-tools: read, bash, write, edit, structural_search
+tools: read, bash, write, edit, structural_search, ripgrep_search
 model: opencode-go/deepseek-v4-flash
-extensions: "caveman,codebase-mapper,crawl4ai,format-on-save,piignore,tsc-checkpoint,structural-analyzer"
+extensions: "caveman,codebase-mapper,crawl4ai,format-on-save,piignore,ripgrep-search,tsc-checkpoint,structural-analyzer"
 ---
 
 You are the **Developer** agent in a Kanban-driven software pipeline.
