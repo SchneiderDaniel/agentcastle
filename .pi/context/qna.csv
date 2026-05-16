@@ -34,3 +34,22 @@ I'll go with option 1 (raw Unicode) unless you specify otherwise. This avoids AP
 2026-05-16T20:33:58.861Z,"Should the second TPS row always render (even with '-- t/s'), or appear only when a real TPS value is available?",always_render
 2026-05-16T20:34:06.740Z,"Final check — does this revised layout + scope cover everything, or anything else to add?",no_done
 2026-05-16T20:35:33.831Z,Issue #77 is refined. What's next?,done
+2026-05-16T20:44:34.761Z,Why is reasoning/thinking level needed per agent? What problem does it solve for you?,agent_depth_variance
+2026-05-16T20:44:50.513Z,"Let's assign thinking levels per agent. pi CLI supports: off, minimal, low, medium, high, xhigh. What levels fit each agent?",assignment_a
+2026-05-16T20:45:04.576Z,What field name should we use in agent markdown frontmatter?,thinking
+2026-05-16T20:45:17.954Z,What happens if `thinking` field is missing from agent frontmatter?,no_flag_default
+2026-05-16T20:45:28.316Z,How should invalid thinking values be handled?,reject_error
+2026-05-16T20:45:47.552Z,What's inside scope vs out of scope for this issue?,core_scope
+2026-05-16T20:46:13.353Z,How should blank thinking value behave?,treat_missing
+2026-05-16T20:46:21.130Z,Are there any dependencies for this issue?,no_deps
+2026-05-16T20:46:30.608Z,"All topics covered. Here's what we agreed:
+
+🎯 PURPOSE: Different agents need different thinking depth — Architect deep (high), Developer fast (low)
+📋 SCOPE: IN → Add `thinking` field to AgentFrontmatter type, parse in agent-loader, pass --thinking in agent-runner, update all 5 agent .md files with assigned levels. OUT → TUI runtime toggle, project-level default, model validation
+📋 ASSIGNED LEVELS: architect=high, researcher=medium, developer=low, test-designer=medium, auditor=medium
+🔢 CONSTRAINTS: Field named `thinking`. Valid values: off, minimal, low, medium, high, xhigh
+❌ ERROR HANDLING: Missing/empty → skip flag. Invalid value → reject with error listing valid levels
+🔗 DEPENDENCIES: None
+
+After discussing all this — anything else you'd want to add as a requirement?",no_done
+2026-05-16T20:47:15.144Z,Issue #57 is refined. What's next?,done
