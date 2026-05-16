@@ -36,10 +36,16 @@ interface ThresholdEntry {
 	maxTokens: number | null;
 }
 
+interface TpsSample {
+	time: number;
+	cumulativeTokens: number;
+}
+
 interface ContextStatusBarConfig {
 	enabled: boolean;
 	thresholds: ThresholdEntry[];
 	showTimer: boolean;
+	showTps: boolean;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────
@@ -108,6 +114,38 @@ function pickThresholdHex(tokens: number, thresholds: ThresholdEntry[]): string 
 	return colors[colors.length - 1] ?? "#ff5252";
 }
 
+// ─── TPS helpers ────────────────────────────────────────────────────
+
+/** Compute tokens per second from rolling buffer (30s window) */
+function computeTps(samples: TpsSample[]): number | null {
+	if (samples.length < 2) return null;
+
+	const now = Date.now();
+	const cutoff = now - 30_000;
+
+	// Filter to 30s window
+	const active = samples.filter((s) => s.time >= cutoff);
+	if (active.length < 2) return null;
+
+	const first = active[0]!;
+	const last = active[active.length - 1]!;
+	const tokenDelta = last.cumulativeTokens - first.cumulativeTokens;
+	const timeDelta = last.time - first.time;
+
+	if (timeDelta <= 0) return null;
+	if (tokenDelta <= 0) return null;
+
+	return (tokenDelta / timeDelta) * 1000;
+}
+
+/** Format TPS value to display string */
+function formatTps(tps: number | null): string {
+	if (tps === null) return "-- t/s";
+	if (tps < 0.1) return "0.0 t/s";
+	if (tps > 999.9) return `${Math.round(tps)} t/s`;
+	return `${tps.toFixed(1)} t/s`;
+}
+
 // ─── Git helpers ─────────────────────────────────────────────────────
 
 /** Detect if we're in a git worktree and return its name */
@@ -150,6 +188,7 @@ function loadConfig(): ContextStatusBarConfig | null {
 		enabled: true,
 		thresholds: DEFAULT_THRESHOLDS,
 		showTimer: true,
+		showTps: true,
 	};
 	const settingsPath = ".pi/settings.json";
 	if (!existsSync(settingsPath)) return defaults;
@@ -195,7 +234,13 @@ function loadConfig(): ContextStatusBarConfig | null {
 		showTimer = cfg.showTimer;
 	}
 
-	return { enabled, thresholds, showTimer };
+	// Parse showTps
+	let showTps = true;
+	if ("showTps" in cfg && typeof cfg.showTps === "boolean") {
+		showTps = cfg.showTps;
+	}
+
+	return { enabled, thresholds, showTimer, showTps };
 }
 
 // ─── Thinking level → icon ───────────────────────────────────────────
@@ -252,6 +297,27 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	// ── Startup widget state ───────────────────────────────────────
 	let startupWidgetActive = false;
 
+	// ── TPS state ──────────────────────────────────────────────────
+	const tpsSamples: TpsSample[] = [];
+	let lastComputedTps: number | null = null;
+	let lastSampledOutput: number | undefined = undefined;
+
+	function sampleTps(output: number | undefined) {
+		if (typeof output !== "number" || output < 0) return;
+		// Detect reset between responses (new response starts from 0)
+		if (typeof lastSampledOutput === "number" && output < lastSampledOutput) {
+			tpsSamples.length = 0;
+		}
+		lastSampledOutput = output;
+		const now = Date.now();
+		tpsSamples.push({ time: now, cumulativeTokens: output });
+		// Prune samples older than 30s
+		const cutoff = now - 30_000;
+		while (tpsSamples.length > 0 && tpsSamples[0]!.time < cutoff) {
+			tpsSamples.shift();
+		}
+	}
+
 	// ── Timer helpers ──────────────────────────────────────────────
 	function startTimer(ctx: ExtensionContext) {
 		stopTimer();
@@ -277,6 +343,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		config = loadConfig();
 		lastContextWindow = undefined;
 		emitted = false;
+		// Reset TPS state on new session
+		tpsSamples.length = 0;
+		lastComputedTps = null;
+		lastSampledOutput = undefined;
 
 		// Deferred I/O — detect worktree on first session
 		if (worktreeName === null) {
@@ -353,6 +423,14 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		const usage = ctx.getContextUsage();
 		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
 			tryEmit(ctx);
+		}
+	});
+
+	pi.on("message_update", async (event: any, _ctx: ExtensionContext) => {
+		// Sample streaming output tokens for TPS estimation
+		const output = event.assistantMessageEvent?.partial?.usage?.output;
+		if (typeof output === "number") {
+			sampleTps(output);
 		}
 	});
 
@@ -490,13 +568,19 @@ export default function contextInfo(pi: ExtensionAPI): void {
 						rightStr = tokenDisplay;
 					}
 
+					// ── TPS computation ───────────────────────────
+					const computed = computeTps(tpsSamples);
+					if (computed !== null) {
+						lastComputedTps = computed;
+					}
+
 					// ── Separator character ──────────────────────
 					const sep = theme.fg("dim", "│");
 
 					// ── Combine left + extension statuses ───────
 					const fullLeft = extStr ? `${leftStr} ${extStr}` : leftStr;
 
-					// ── Layout: left+ext | center | right ───────
+					// ── Build row 1 (existing status bar) ────────
 					const leftW = visibleWidth(fullLeft);
 					const centerW = visibleWidth(centerStr);
 					const rightW = visibleWidth(rightStr);
@@ -506,13 +590,14 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					const sepCount = 2;
 					const sepWidth = 3 + sepCount * 2; // " │ " per separator
 
+					let row1: string;
 					if (totalContent + sepWidth <= width) {
 						// All fits — distribute remaining space
 						const remaining = width - totalContent - sepWidth;
 						const padLeft = Math.floor(remaining / 2);
 						const padRight = remaining - padLeft;
 
-						const line =
+						row1 =
 							fullLeft +
 							" ".repeat(padLeft + 1) +
 							sep +
@@ -522,20 +607,27 @@ export default function contextInfo(pi: ExtensionAPI): void {
 							sep +
 							" ".repeat(1) +
 							rightStr;
-
-						return [truncateToWidth(line, width)];
-					}
-
-					// Narrow terminal — compact mode: left+ext | right (drop center)
-					if (leftW + rightW + sepWidth <= width) {
+					} else if (leftW + rightW + sepWidth <= width) {
+						// Narrow terminal — compact mode: left+ext | right (drop center)
 						const remaining = width - leftW - rightW - sepWidth;
-						const line = fullLeft + " ".repeat(remaining + 2) + sep + " ".repeat(1) + rightStr;
-						return [truncateToWidth(line, width)];
+						row1 = fullLeft + " ".repeat(remaining + 2) + sep + " ".repeat(1) + rightStr;
+					} else {
+						// Very narrow — just right-aligned tokens
+						row1 = " ".repeat(Math.max(0, width - rightW)) + rightStr;
 					}
 
-					// Very narrow — just right-aligned tokens
-					const line = " ".repeat(Math.max(0, width - rightW)) + rightStr;
-					return [truncateToWidth(line, width)];
+					row1 = truncateToWidth(row1, width);
+
+					// ── Build row 2 (TPS, right-aligned) ─────────
+					if (config.showTps) {
+						const tpsDisplay = formatTps(lastComputedTps);
+						const tpsStr = theme.fg("dim", tpsDisplay);
+						const tpsW = visibleWidth(tpsStr);
+						const row2 = " ".repeat(Math.max(0, width - tpsW)) + tpsStr;
+						return [row1, truncateToWidth(row2, width)];
+					}
+
+					return [row1];
 				},
 			};
 		});

@@ -2,6 +2,9 @@
 	"quietStartup": true,
 	"theme": "agentcastle",
 	"sessionDir": ".pi/sessions",
+	"contextStatusBar": {
+		"showTps": true
+	},
 	"supervisor": {
 		"repo": "SchneiderDaniel/agentcastle",
 		"projectNumber": 3,

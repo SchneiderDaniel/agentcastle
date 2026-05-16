@@ -102,10 +102,46 @@ function getWorktreeName(cwd: string): string | null {
 	}
 }
 
+interface TpsSample {
+	time: number;
+	cumulativeTokens: number;
+}
+
 interface ContextStatusBarConfig {
 	enabled: boolean;
 	thresholds: ThresholdEntry[];
 	showTimer: boolean;
+	showTps: boolean;
+}
+
+/** Compute tokens per second from rolling buffer (30s window) */
+function computeTps(samples: TpsSample[]): number | null {
+	if (samples.length < 2) return null;
+
+	const now = Date.now();
+	const cutoff = now - 30_000;
+
+	// Filter to 30s window
+	const active = samples.filter((s) => s.time >= cutoff);
+	if (active.length < 2) return null;
+
+	const first = active[0]!;
+	const last = active[active.length - 1]!;
+	const tokenDelta = last.cumulativeTokens - first.cumulativeTokens;
+	const timeDelta = last.time - first.time;
+
+	if (timeDelta <= 0) return null;
+	if (tokenDelta <= 0) return null;
+
+	return (tokenDelta / timeDelta) * 1000;
+}
+
+/** Format TPS value to display string */
+function formatTps(tps: number | null): string {
+	if (tps === null) return "-- t/s";
+	if (tps < 0.1) return "0.0 t/s";
+	if (tps > 999.9) return `${Math.round(tps)} t/s`;
+	return `${tps.toFixed(1)} t/s`;
 }
 
 function loadConfig(rawSettings: Record<string, unknown> | null): {
@@ -113,7 +149,12 @@ function loadConfig(rawSettings: Record<string, unknown> | null): {
 	warnings: string[];
 } {
 	const warnings: string[] = [];
-	const defaults: ContextStatusBarConfig = { enabled: true, thresholds: DEFAULT_THRESHOLDS, showTimer: true };
+	const defaults: ContextStatusBarConfig = {
+		enabled: true,
+		thresholds: DEFAULT_THRESHOLDS,
+		showTimer: true,
+		showTps: true,
+	};
 
 	if (!rawSettings || typeof rawSettings !== "object") {
 		return { config: defaults, warnings };
@@ -175,7 +216,17 @@ function loadConfig(rawSettings: Record<string, unknown> | null): {
 		}
 	}
 
-	return { config: { enabled, thresholds, showTimer }, warnings };
+	// Parse showTps
+	let showTps = true;
+	if ("showTps" in cfg) {
+		if (typeof cfg.showTps === "boolean") {
+			showTps = cfg.showTps;
+		} else {
+			warnings.push("contextStatusBar.showTps must be boolean; using true");
+		}
+	}
+
+	return { config: { enabled, thresholds, showTimer, showTps }, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +315,7 @@ describe("loadConfig", () => {
 		assert.ok(result.config);
 		assert.strictEqual(result.config!.enabled, true);
 		assert.strictEqual(result.config!.showTimer, true);
+		assert.strictEqual(result.config!.showTps, true);
 		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
@@ -272,6 +324,7 @@ describe("loadConfig", () => {
 		assert.ok(result.config);
 		assert.strictEqual(result.config!.enabled, true);
 		assert.strictEqual(result.config!.showTimer, true);
+		assert.strictEqual(result.config!.showTps, true);
 		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
@@ -280,6 +333,7 @@ describe("loadConfig", () => {
 		assert.ok(result.config);
 		assert.strictEqual(result.config!.enabled, true);
 		assert.strictEqual(result.config!.showTimer, true);
+		assert.strictEqual(result.config!.showTps, true);
 		assert.deepStrictEqual(result.config!.thresholds, DEFAULT_THRESHOLDS);
 	});
 
@@ -295,6 +349,7 @@ describe("loadConfig", () => {
 		assert.ok(result.config);
 		assert.strictEqual(result.config!.enabled, true);
 		assert.strictEqual(result.config!.showTimer, true);
+		assert.strictEqual(result.config!.showTps, true);
 		assert.strictEqual(result.config!.thresholds.length, 2);
 	});
 
@@ -480,5 +535,165 @@ describe("getWorktreeName", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// TPS config tests
+// ---------------------------------------------------------------------------
+
+describe("loadConfig — showTps", () => {
+	it("showTps defaults to true when key absent", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showTps, true);
+	});
+
+	it("showTps: true → showTps true", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showTps: true,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showTps, true);
+	});
+
+	it("showTps: false → showTps false", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showTps: false,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showTps, false);
+	});
+
+	it("showTps false with showTimer false → both false", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showTimer: false,
+				showTps: false,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showTimer, false);
+		assert.strictEqual(result.config!.showTps, false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// computeTps tests
+// ---------------------------------------------------------------------------
+
+describe("computeTps", () => {
+	it("empty buffer → null", () => {
+		assert.strictEqual(computeTps([]), null);
+	});
+
+	it("single sample → null", () => {
+		assert.strictEqual(computeTps([{ time: Date.now(), cumulativeTokens: 100 }]), null);
+	});
+
+	it("two samples with positive delta → tps", () => {
+		const now = Date.now();
+		const samples: TpsSample[] = [
+			{ time: now - 10_000, cumulativeTokens: 0 },
+			{ time: now, cumulativeTokens: 500 },
+		];
+		// 500 tokens in 10s = 50 t/s
+		const tps = computeTps(samples);
+		assert.ok(tps !== null);
+		assert.strictEqual(tps, 50);
+	});
+
+	it("samples outside 30s window are pruned", () => {
+		const now = Date.now();
+		// Old sample 60s ago — outside 30s window
+		const samples: TpsSample[] = [
+			{ time: now - 60_000, cumulativeTokens: 0 },
+			{ time: now - 5_000, cumulativeTokens: 0 },
+			{ time: now, cumulativeTokens: 300 },
+		];
+		const tps = computeTps(samples);
+		assert.ok(tps !== null);
+		// After pruning old 60s sample: 300 tokens in 5s = 60 t/s
+		assert.strictEqual(tps, 60);
+	});
+
+	it("zero token delta → null", () => {
+		const now = Date.now();
+		const samples: TpsSample[] = [
+			{ time: now - 10_000, cumulativeTokens: 100 },
+			{ time: now, cumulativeTokens: 100 },
+		];
+		assert.strictEqual(computeTps(samples), null);
+	});
+
+	it("zero time delta → null", () => {
+		const now = Date.now();
+		const samples: TpsSample[] = [
+			{ time: now, cumulativeTokens: 0 },
+			{ time: now, cumulativeTokens: 100 },
+		];
+		assert.strictEqual(computeTps(samples), null);
+	});
+
+	it("all samples older than 30s → null", () => {
+		const now = Date.now();
+		const samples: TpsSample[] = [
+			{ time: now - 60_000, cumulativeTokens: 0 },
+			{ time: now - 45_000, cumulativeTokens: 500 },
+		];
+		assert.strictEqual(computeTps(samples), null);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatTps tests
+// ---------------------------------------------------------------------------
+
+describe("formatTps", () => {
+	it("null → -- t/s", () => {
+		assert.strictEqual(formatTps(null), "-- t/s");
+	});
+
+	it("42.5 → 42.5 t/s", () => {
+		assert.strictEqual(formatTps(42.5), "42.5 t/s");
+	});
+
+	it("0 → 0.0 t/s", () => {
+		assert.strictEqual(formatTps(0), "0.0 t/s");
+	});
+
+	it("0.05 → 0.0 t/s (very slow)", () => {
+		assert.strictEqual(formatTps(0.05), "0.0 t/s");
+	});
+
+	it("0.1 → 0.1 t/s", () => {
+		assert.strictEqual(formatTps(0.1), "0.1 t/s");
+	});
+
+	it("999.9 → 999.9 t/s", () => {
+		assert.strictEqual(formatTps(999.9), "999.9 t/s");
+	});
+
+	it("1000 → 1000 t/s (integer, no decimal)", () => {
+		assert.strictEqual(formatTps(1000), "1000 t/s");
+	});
+
+	it("1234.5 → 1235 t/s (rounded integer)", () => {
+		assert.strictEqual(formatTps(1234.5), "1235 t/s");
 	});
 });
