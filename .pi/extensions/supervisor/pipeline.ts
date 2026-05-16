@@ -307,7 +307,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								const wt = `${config.worktreeBase!}${branch}`;
 
 								ctx.ui.setStatus("supervisor", "Running TSC checkpoint...");
-								const tscResult = runTscCheckpointFn(wt);
+								const tscResult = await runTscCheckpointFn(pi, wt);
 								const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
 
 								if (tscDecision.nextStatus !== "Audit") {

@@ -2,6 +2,7 @@
 // Decide next transition status based on tsc checkpoint result.
 // Pure function — no Pi API, no process spawning.
 
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TscDiagnostic } from "../tsc-checkpoint.ts";
 import { formatTscDiagnostics } from "../tsc-checkpoint.ts";
 
@@ -65,10 +66,12 @@ export function determineTscCheckpointDecision(
 /**
  * Lazy import for runTscCheckpoint to avoid circular dependencies at load time.
  */
-let _runTscCheckpoint: ((worktreePath: string) => TscCheckpointResult) | null = null;
+let _runTscCheckpoint:
+	| ((pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>)
+	| null = null;
 
 export async function getRunTscCheckpoint(): Promise<
-	((worktreePath: string) => TscCheckpointResult) | null
+	((pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>) | null
 > {
 	if (_runTscCheckpoint) return _runTscCheckpoint;
 	try {
