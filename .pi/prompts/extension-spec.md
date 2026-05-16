@@ -72,6 +72,17 @@ These rules are **mandatory** for every extension design. Violating any P0/P1 ru
 | **M6** | **Preserve external contracts during refactoring** | When restructuring, do NOT change: config format, security model, CLI flags, message renderer `customType`, completion markers, or external integrations (LSP hooks, dynamic imports). |
 | **M7** | **Re-export for testability** | Entry point may re-export pure functions from sub-modules so tests import from a single path without breaking encapsulation. |
 
+### ♻️ Reuse Pi Built-in APIs
+
+| # | Rule | Explanation |
+|---|------|-------------|
+| **R1** | **Prefer `pi.exec()` over raw `child_process`** | `pi.exec()` is async (non-blocking), integrates with Pi abort signals (`ctx.signal`), streams output, and never blocks the event loop. Do NOT use `execFileSync`, `execSync`, `exec`, or `spawn` (for short-lived processes). Use raw `spawn` only for long-running daemon processes (LSP servers, watchers). |
+| **R2** | **Prefer `pi.appendEntry()` over raw file I/O for persistence** | Extension state that should survive restarts gets stored in the session JSONL file. Queryable via `ctx.sessionManager.getEntries()`. Use raw `fs` only for config files that must outlive sessions or be shared across projects. |
+| **R3** | **Prefer `ctx.sessionManager` over manual session file parsing** | SessionManager provides tree navigation (`getBranch`, `getTree`, `getChildren`), entry access (`getEntries`, `getEntry`), and context building (`buildSessionContext`). Do not `fs.readFileSync` the session file directly. |
+| **R4** | **Prefer `ctx.ui.*` over building custom TUI for standard dialogs** | `ctx.ui.confirm()`, `ctx.ui.select()`, `ctx.ui.input()`, `ctx.ui.notify()`, `ctx.ui.setStatus()` cover 90% of user-interaction needs. Use `ctx.ui.custom()` only for complex multi-step interactions. |
+| **R5** | **Prefer `pi.sendUserMessage()` over manual message construction** | Handles delivery modes (`steer`, `followUp`, `nextTurn`), session integration, and trigger-turn logic. Do not manually construct message objects and append to session. |
+| **R6** | **Prefer `ctx.cwd` over `process.cwd()`** | `process.cwd()` captured at module load is stale if directory changes. `ctx.cwd` is always current. Compute paths lazily at call time. (See also [C6](#-common-issues-apply-to-all-extensions) and [P7](#-common-pitfalls--do-not-repeat-these) on stale `process.cwd()`.) |
+
 ### TypeScript & Extension Guidelines (from official docs + VS Code)
 
 - **Never use `any`** — use `unknown` + type guards. `any` disables all type checking.
@@ -163,6 +174,12 @@ Before finalizing any design, verify against this checklist:
 - [ ] No circular imports; dependency graph flows types → utils → modules → orchestrator → entry
 - [ ] Entry point contains only registrations, no business logic
 - [ ] External contracts (config format, CLI flags, message types, completion markers) preserved unchanged
+- [ ] `pi.exec()` used instead of raw `child_process` for subprocess execution
+- [ ] `pi.appendEntry()` used for session-persistent state (not raw file I/O)
+- [ ] `ctx.sessionManager` used instead of direct session file parsing
+- [ ] `ctx.ui.*` dialogs used for standard user interactions (not custom TUI)
+- [ ] `pi.sendUserMessage()` used for sending messages to the conversation
+- [ ] `ctx.cwd` used in place of `process.cwd()` for current working directory
 
 ---
 
