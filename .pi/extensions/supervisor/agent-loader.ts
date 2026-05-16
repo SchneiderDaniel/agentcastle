@@ -4,6 +4,8 @@
 import type { ParsedAgent, AgentFrontmatter } from "./types";
 import { readFileSync } from "node:fs";
 
+const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
+
 export function parseAgentFile(filePath: string): ParsedAgent {
 	const content = readFileSync(filePath, "utf-8");
 	const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
@@ -25,5 +27,10 @@ export function parseAgentFile(filePath: string): ParsedAgent {
 		}
 	}
 	if (!config.name) throw new Error(`Agent file ${filePath} missing 'name'`);
+	if (config.thinking && !VALID_THINKING_LEVELS.includes(config.thinking)) {
+		throw new Error(
+			`Invalid thinking level "${config.thinking}". Valid: ${VALID_THINKING_LEVELS.join(", ")}`,
+		);
+	}
 	return { config, systemPrompt: match[2]!.trim() };
 }
