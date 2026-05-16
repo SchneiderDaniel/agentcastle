@@ -268,7 +268,6 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	let startupWidgetActive = false;
 
 	// ── Timer helpers ──────────────────────────────────────────────
-
 	function startTimer(ctx: ExtensionContext) {
 		stopTimer();
 		timerInterval = setInterval(() => {
@@ -579,9 +578,9 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 	function showWelcomeBanner(ctx: ExtensionContext) {
 		// Collect info once at startup
-		const extNames = listNames(".pi/extensions", ".ts");
-		const promptNames = listNames(".pi/prompts", ".md");
-		const themeNames = listNames(".pi/themes", ".json");
+		const extCount = listNames(".pi/extensions", ".ts").length;
+		const promptCount = listNames(".pi/prompts", ".md").length;
+		const themeCount = listNames(".pi/themes", ".json").length;
 		const modelId = ctx.model?.id ?? "?";
 		const cw = ctx.model?.contextWindow;
 		const cwStr = typeof cw === "number" && cw > 0 ? formatTokens(cw) : "?";
@@ -590,7 +589,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			let cachedWidth = -1;
 			let cachedLines: string[] = [];
 
-			const BOX_W = 48; // fixed internal box width
+			const BOX_W = 72; // wider castle-style box
 
 			return {
 				dispose() {},
@@ -604,64 +603,54 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					}
 
 					const dim = (s: string) => theme.fg("dim", s);
-					const accent = (s: string) => theme.fg("accent", s);
 					const muted = (s: string) => theme.fg("muted", s);
+					// User's ASCII castle design (66 chars wide, centered in 72)
+					const castlePad = "   ";
 
-					const top = dim("╭" + "─".repeat(BOX_W - 2) + "╮");
-					const mid = dim("├" + "─".repeat(BOX_W - 2) + "┤");
-					const bot = dim("╰" + "─".repeat(BOX_W - 2) + "╯");
-
-					function row(content: string): string {
-						const innerW = BOX_W - 4; // space inside borders minus 2 padding spaces
-						const visW = visibleWidth(content);
-						const padNeeded = Math.max(0, innerW - visW);
-						return dim("│") + " " + content + " ".repeat(padNeeded) + " " + dim("│");
-					}
-
-					// Wrap comma-separated list into multiple rows
-					function listRows(prefix: string, names: string[]): string[] {
-						const innerW = BOX_W - 4;
-						const out: string[] = [];
-						if (names.length === 0) {
-							out.push(row(muted(`${prefix}(none)`)));
-							return out;
-						}
-						// Continuation indent = visible width of prefix (so names align vertically)
-						const prefixW = visibleWidth(prefix);
-						const contIndent = " ".repeat(prefixW);
-						let line = prefix;
-						let isFirst = true;
-						for (const name of names) {
-							const sep = isFirst ? "" : ", ";
-							const candidate = line + sep + name;
-							if (visibleWidth(candidate) <= innerW) {
-								line = candidate;
-								isFirst = false;
-							} else {
-								out.push(row(muted(line)));
-								line = contIndent + name;
-								isFirst = false;
-							}
-						}
-						if (line) out.push(row(muted(line)));
-						return out;
-					}
-
-					const pad = Math.max(0, Math.floor((width - BOX_W) / 2));
-					const pf = " ".repeat(pad);
-
-					const lines = [
-						pf + top,
-						pf + row(accent(theme.bold("🏰 Agent Castle"))),
-						pf + mid,
-						pf + row(muted(`🧠 Model:      ${modelId}`)),
-						pf + row(muted(`📊 Context:    ${cwStr} tokens`)),
-						...listRows("🧩 Extensions: ", extNames).map((l) => pf + l),
-						...listRows("📝 Prompts:    ", promptNames).map((l) => pf + l),
-						...listRows("🎨 Themes:     ", themeNames).map((l) => pf + l),
-						pf + bot,
+					const castleLines = [
+						castlePad + dim(" #_||_#                                                    #_||_#"),
+						castlePad + dim(" \\####/                                                     \\####/"),
+						castlePad + dim("  │                      🏰 Agent Castle                       │"),
+						castlePad + dim("  |  |   # # # #                                   # # # #   |  |"),
+						castlePad + dim("  | #|---|-----|                                   |-----|---|# |"),
+						castlePad + dim("  |  |         +-----------------------------------+         |  |"),
+						castlePad + dim("/    \\        |                                   |        /    \\"),
+						castlePad + dim("|      |       |                                   |       |      |"),
+						castlePad + dim("|  /\\  |       |                                   |       |  /\\  |"),
+						castlePad + dim("| /  \\ |       |                                   |       | /  \\ |"),
+						castlePad + dim("|/    \\| #_||_#|                                   |#_||_# |/    \\|"),
+						castlePad + dim(" \\####/  \\####/|                                   |\\####/  \\####/"),
+						castlePad + dim("  |  |    |  | |                                   | |  |    |  |"),
+						castlePad + dim("  | #|    | #| |                                   | | #|    | #|"),
+						castlePad + dim(" _|__|____|__| |                                   | |__|____|__|_"),
+						castlePad + dim("|            | |                                   | |            |"),
+						castlePad + dim("|   /\\/\\/\\   | |                                   | |   /\\/\\/\\   |"),
+						castlePad + dim("|__|______|__|_______________________________________|__|______|__|"),
 					];
 
+					// Bottom box content rows — inside the +-----------------------------------+ area
+					const boxW = 33;
+					const makeBottomRow = (content: string): string => {
+						const w = Math.min(visibleWidth(content), boxW);
+						const pad = Math.max(0, Math.floor((boxW - w) / 2));
+						const right = Math.max(0, boxW - pad - w);
+						return castlePad + dim("|  |      |  | | ") + " ".repeat(pad) + muted(content) + " ".repeat(right) + dim(" | |  |      |  |");
+					};
+
+					const contentRows = [
+						makeBottomRow(`🧠 Model:       ${modelId}`),
+						makeBottomRow(`📊 Context:     ${cwStr} tokens`),
+						makeBottomRow(`🧩 Extensions:  ${extCount}`),
+						makeBottomRow(`📝 Prompts:     ${promptCount}`),
+						makeBottomRow(`🎨 Themes:      ${themeCount}`),
+					];
+
+					const lines: string[] = [
+						...castleLines.slice(0, 17),  // lines 0-16 (top + middle of castle)
+						...contentRows,                // info rows inside bottom box
+						castlePad + dim("|  |      |  | +-----------------------------------+ |  |      |  |"),  // bottom box border
+						castlePad + dim("|__|______|__|_______________________________________|__|______|__|"),  // footer
+					];
 					cachedWidth = width;
 					cachedLines = lines;
 					return lines;
