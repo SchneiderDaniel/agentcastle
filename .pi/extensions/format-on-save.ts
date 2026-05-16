@@ -13,7 +13,6 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -58,18 +57,20 @@ function findProjectRoot(fromDir: string): string {
 }
 
 /**
- * Build the prettier CLI command to format a file.
+ * Build prettier args as { command, args } array, never a shell string.
  * Uses local node_modules if available, otherwise npx prettier.
+ * Array args prevent shell injection — no shell variable expansion,
+ * no command chaining, no quoting needed for paths with spaces.
  */
-function buildPrettierCommand(cwd: string, filePath: string): string {
+function buildPrettierArgs(cwd: string, filePath: string): { command: string; args: string[] } {
 	const projectRoot = findProjectRoot(cwd);
 	const localPrettier = resolve(projectRoot, "node_modules", ".bin", "prettier");
 	const configPath = resolve(cwd, ".prettierrc");
 
 	if (existsSync(localPrettier)) {
-		return `"${localPrettier}" --config "${configPath}" --write "${filePath}"`;
+		return { command: localPrettier, args: ["--config", configPath, "--write", filePath] };
 	}
-	return `npx prettier --config "${configPath}" --write "${filePath}"`;
+	return { command: "npx", args: ["prettier", "--config", configPath, "--write", filePath] };
 }
 
 /**
@@ -94,22 +95,13 @@ function looksLikeFilePath(path: unknown): path is string {
 // ─── Formatter ───────────────────────────────────────────────────────
 
 /**
- * Run prettier --write on a file. Returns true on success.
+ * Run prettier --write on a file using pi.exec. Returns true on success.
  */
-function formatFile(filePath: string, configDir: string): boolean {
-	try {
-		const command = buildPrettierCommand(configDir, filePath);
-		execSync(command, {
-			cwd: configDir,
-			encoding: "utf-8",
-			timeout: 15_000,
-			maxBuffer: 5 * 1024 * 1024, // 5MB
-		});
-		return true;
-	} catch {
-		// Prettier may fail on syntax errors — that's fine, LLM will fix
-		return false;
-	}
+async function formatFile(pi: ExtensionAPI, filePath: string, configDir: string): Promise<boolean> {
+	const { command, args } = buildPrettierArgs(configDir, filePath);
+	const result = await pi.exec(command, args, { cwd: configDir, timeout: 15_000 });
+	// Non-zero exit is data, not exception
+	return result.code === 0;
 }
 
 // ─── ESLint Helpers (Tier 1 diagnostics) ────────────────────────────
@@ -228,18 +220,22 @@ export interface EslintDiagnostic {
  * Returns empty string if no issues found or ESLint is unavailable.
  *
  * ESLint exits code 0 = no errors, 1 = lint errors found, 2 = config error.
- * For code 1, stdout still contains valid JSON array. execFileSync throws on
- * non-zero exit, so we catch and extract stdout from the error object.
+ * For code 1, stdout still contains valid JSON array.
+ * pi.exec returns non-zero exit as result.code, not thrown exception.
  *
  * For code 2 (config error), retry with --no-eslintrc fallback.
  */
-function runEslintOnFile(filePath: string, cwd: string): string {
+async function runEslintOnFile(
+	pi: ExtensionAPI,
+	filePath: string,
+	cwd: string,
+): Promise<string> {
 	// Primary attempt with project ESLint config
-	let result = tryRunEslint(filePath, cwd, []);
+	let result = await tryRunEslint(pi, filePath, cwd, []);
 	if (result !== null) return result;
 
 	// Config error (exit code 2) — retry with --no-eslintrc fallback
-	result = tryRunEslint(filePath, cwd, ["--no-eslintrc"]);
+	result = await tryRunEslint(pi, filePath, cwd, ["--no-eslintrc"]);
 	return result ?? "";
 }
 
@@ -249,43 +245,38 @@ function runEslintOnFile(filePath: string, cwd: string): string {
  * Returns null if ESLint exited with code 2 (config error).
  * Returns empty string if no issues.
  */
-function tryRunEslint(filePath: string, cwd: string, extraArgs: string[]): string | null {
-	try {
-		const stdout = execFileSync(
-			"npx",
-			[
-				"eslint",
-				"--no-error-on-unmatched-pattern",
-				"--format",
-				"json",
-				"--fix",
-				...extraArgs,
-				filePath,
-			],
-			{
-				cwd,
-				encoding: "utf-8",
-				timeout: 15_000,
-				maxBuffer: 5 * 1024 * 1024,
-			},
-		) as string;
+async function tryRunEslint(
+	pi: ExtensionAPI,
+	filePath: string,
+	cwd: string,
+	extraArgs: string[],
+): Promise<string | null> {
+	const result = await pi.exec(
+		"npx",
+		[
+			"eslint",
+			"--no-error-on-unmatched-pattern",
+			"--format",
+			"json",
+			"--fix",
+			...extraArgs,
+			filePath,
+		],
+		{ cwd, timeout: 15_000 },
+	);
 
-		// No errors: parse and return (empty messages = empty result)
-		const diags = parseEslintOutput(stdout);
+	// Exit code 2 = config error — signal retry with --no-eslintrc
+	if (result.code === 2) return null;
+
+	// Exit code 0 or 1 — parse stdout for diagnostics
+	if (result.code === 0 || result.code === 1) {
+		const diags = parseEslintOutput(result.stdout);
 		if (diags.length === 0) return "";
 		return formatEslintDiagnostics(diags);
-	} catch (err: unknown) {
-		const execErr = err as { stdout?: string; stderr?: string; status?: number };
-		// Exit code 2 = config error — signal retry with --no-eslintrc
-		if (execErr.status === 2) return null;
-		// Exit code 1 = lint errors found — stdout still has valid JSON
-		if (execErr.stdout) {
-			const diags = parseEslintOutput(execErr.stdout);
-			if (diags.length > 0) return formatEslintDiagnostics(diags);
-		}
-		// Other error — skip silently
-		return "";
 	}
+
+	// Other error — skip silently
+	return "";
 }
 
 // ─── Extension ───────────────────────────────────────────────────────
@@ -320,14 +311,14 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// Step 1: Format the file in-place with --write
-		const ok = formatFile(absolutePath, ctx.cwd);
+		const ok = await formatFile(pi, absolutePath, ctx.cwd);
 		if (ok && ctx.hasUI) {
 			ctx.ui.notify(`Formatted: ${filePath}`, "info");
 		}
 
 		// Step 2: ESLint on saved file (Tier 1 diagnostics, advisory only)
 		if (shouldLint(absolutePath)) {
-			const lintMsg = runEslintOnFile(absolutePath, ctx.cwd);
+			const lintMsg = await runEslintOnFile(pi, absolutePath, ctx.cwd);
 			if (lintMsg && ctx.hasUI) {
 				ctx.ui.notify(`ESLint ran: ${filePath}`, "info");
 			}

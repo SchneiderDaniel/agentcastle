@@ -10,6 +10,9 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
+import type { ExecResult } from "@earendil-works/pi-coding-agent";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types (match source at .pi/extensions/tsc-checkpoint.ts)
@@ -304,5 +307,109 @@ describe("formatTscDiagnostics", () => {
 			},
 		]);
 		assert.ok(result.includes("🚀 unicode 世界"));
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tests: runTscCheckpoint adapter (requires pi.exec mock)
+// ═══════════════════════════════════════════════════════════════════════
+
+interface TscCheckpointResult {
+	diagnostics: TscDiagnostic[];
+	hasErrors: boolean;
+}
+
+/**
+ * Run `npx tsc --noEmit` using pi.exec.
+ */
+async function runTscCheckpoint(
+	pi: { exec: (cmd: string, args: string[], opts?: unknown) => Promise<ExecResult> },
+	worktreePath: string,
+): Promise<TscCheckpointResult> {
+	// Check for tsconfig.json first
+	const tsconfigPath = resolve(worktreePath, "tsconfig.json");
+	if (!existsSync(tsconfigPath)) {
+		return { diagnostics: [], hasErrors: false };
+	}
+
+	const result = await pi.exec("npx", ["tsc", "--noEmit"], {
+		cwd: worktreePath,
+		timeout: 60_000,
+	});
+
+	if (result.code === 0) {
+		return { diagnostics: [], hasErrors: false };
+	}
+
+	const output = result.stderr || result.stdout || "";
+	const diagnostics = parseTscOutput(output);
+	return {
+		diagnostics,
+		hasErrors: diagnostics.length > 0,
+	};
+}
+
+describe("runTscCheckpoint (async, pi.exec)", () => {
+	it("returns no errors when pi.exec returns code 0", async () => {
+		const pi = {
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		};
+		// Use a dir without tsconfig.json so it returns early
+		const result = await runTscCheckpoint(pi as any, "/nonexistent");
+		// No tsconfig.json, should return early with no errors
+		assert.strictEqual(result.hasErrors, false);
+		assert.strictEqual(result.diagnostics.length, 0);
+	});
+
+	it("returns parsed diagnostics when pi.exec returns non-zero", async () => {
+		const stderr = "src/app.ts(10,5): error TS2322: Type 'string' is not assignable.";
+		const pi = {
+			exec: async () => ({ stdout: "", stderr, code: 1, killed: false }),
+		};
+		// Create a temp tsconfig to bypass the early-exit check
+		const testDir = resolve(process.cwd(), "tmp-tsc-test");
+		try {
+			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
+			const result = await runTscCheckpoint(pi as any, testDir);
+			assert.strictEqual(result.hasErrors, true);
+			assert.strictEqual(result.diagnostics.length, 1);
+			assert.strictEqual(result.diagnostics[0]!.code, "TS2322");
+		} finally {
+			// Cleanup
+			try { rmSync(testDir, { recursive: true }); } catch {}
+		}
+	});
+
+	it("handles no tsconfig.json gracefully", async () => {
+		const pi = {
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		};
+		const result = await runTscCheckpoint(pi as any, "/tmp/no-tsconfig-dir");
+		assert.strictEqual(result.hasErrors, false);
+		assert.strictEqual(result.diagnostics.length, 0);
+	});
+
+	it("passes correct args to pi.exec when tsconfig exists", async () => {
+		let captured: { cmd: string; args: string[]; opts?: unknown } | undefined;
+		const pi = {
+			exec: async (cmd: string, args: string[], opts?: unknown) => {
+				captured = { cmd, args, opts };
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			},
+		};
+		const testDir = resolve(process.cwd(), "tmp-tsc-test2");
+		try {
+			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
+			await runTscCheckpoint(pi as any, testDir);
+			assert.ok(captured);
+			assert.strictEqual(captured!.cmd, "npx");
+			assert.deepStrictEqual(captured!.args, ["tsc", "--noEmit"]);
+			assert.strictEqual((captured!.opts as any)?.cwd, testDir);
+			assert.strictEqual((captured!.opts as any)?.timeout, 60_000);
+		} finally {
+			try { rmSync(testDir, { recursive: true }); } catch {}
+		}
 	});
 });
