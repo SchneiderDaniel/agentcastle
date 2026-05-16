@@ -398,6 +398,9 @@ export async function runAgent(
 		"--no-context-files",
 	];
 	if (model) args.push("--model", model);
+	if (agent.config.thinking && agent.config.thinking.trim()) {
+		args.push("--thinking", agent.config.thinking.trim());
+	}
 
 	const widgetId = `agent-${agent.config.name}`;
 	const agentName = agent.config.name;

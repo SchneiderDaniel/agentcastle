@@ -22,6 +22,7 @@ export interface AgentFrontmatter {
 	tools?: string;
 	model?: string;
 	extensions?: string;
+	thinking?: string;
 	[key: string]: unknown;
 }
 
