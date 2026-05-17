@@ -680,10 +680,32 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 	}
 
+	function countSkills(): number {
+		try {
+			const skillsDir = ".pi/skills";
+			if (!existsSync(skillsDir)) return 0;
+			const entries = readdirSync(skillsDir, { withFileTypes: true });
+			let count = 0;
+			for (const entry of entries) {
+				if (entry.name === ".gitkeep") continue;
+				if (entry.isFile() && entry.name.endsWith(".md")) {
+					count++;
+				} else if (entry.isDirectory() && entry.name !== "." && entry.name !== "..") {
+					const skillMdPath = joinPath(skillsDir, entry.name, "SKILL.md");
+					if (existsSync(skillMdPath)) count++;
+				}
+			}
+			return count;
+		} catch {
+			return 0;
+		}
+	}
+
 	function showWelcomeBanner(ctx: ExtensionContext) {
 		const extCount = countExtensions();
 		const promptCount = listNames(".pi/prompts", ".md").length;
 		const themeCount = listNames(".pi/themes", ".json").length;
+		const skillCount = countSkills();
 
 		ctx.ui.setWidget("agentcastle-welcome", (_tui, theme) => {
 			return {
@@ -693,10 +715,6 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					const dim = (s: string) => theme.fg("dim", s);
 					const muted = (s: string) => theme.fg("muted", s);
 					const accent = (s: string) => theme.fg("accent", s);
-
-					const modelId = ctx.model?.id ?? "?";
-					const cw = ctx.model?.contextWindow;
-					const cwStr = typeof cw === "number" && cw > 0 ? formatTokens(cw) : "?";
 
 					const baseW = 64;
 
@@ -739,11 +757,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					}
 
 					const statLines: string[] = [
-						statLine("🧠 Model:      ", modelId),
-						statLine("📊 Context:    ", cwStr),
 						statLine("🧩 Extensions: ", String(extCount)),
 						statLine("📝 Prompts:    ", String(promptCount)),
 						statLine("🎨 Themes:     ", String(themeCount)),
+						statLine("🔧 Skills:     ", String(skillCount)),
 					];
 
 					// Bottom wall
