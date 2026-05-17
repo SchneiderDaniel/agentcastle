@@ -7,3 +7,6 @@ This fixes:
 - Tower walls align better with roof structure
 
 See the before/after above. Approve?";apply
+2026-05-17T06:14:53.877Z;"Change line 4 from 3 dashes (`---`) to 5 dashes (`-----`) on both sides of middle tower? This fills the right gap exactly (60→64 chars). Middle tower stays centered at col 30.5.
+
+If you meant only +1 dash (`----` = 4 dashes), that gives 62 chars — still 2 short of full width. Want 4 or 5?";five
