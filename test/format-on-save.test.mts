@@ -2,7 +2,7 @@
  * Tests for format-on-save ESLint integration (Tier 1)
  *
  * Pure function tests for parseEslintOutput().
- * Local copies match source at .pi/extensions/format-on-save.ts exactly.
+ * Imports from refactored modules.
  *
  * Run with:
  *   node --experimental-strip-types --test test/format-on-save.test.mts
@@ -10,158 +10,20 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
-import type { ExecResult } from "@earendil-works/pi-coding-agent";
+
+import {
+	parseEslintOutput,
+	formatEslintDiagnostics,
+	runEslintOnFile,
+	type ExecFn,
+} from "../.pi/extensions/format-on-save/eslint.mts";
+import { buildPrettierArgs } from "../.pi/extensions/format-on-save/formatting.mts";
+import { formatFile } from "../.pi/extensions/format-on-save/formatter.mts";
+import type { EslintDiagnostic } from "../.pi/extensions/format-on-save/types.mts";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Types (match source at .pi/extensions/format-on-save.ts)
+// Tests: parseEslintOutput
 // ═══════════════════════════════════════════════════════════════════════
-
-interface EslintDiagnostic {
-	file: string;
-	line: number;
-	column: number;
-	severity: "Error" | "Warning";
-	message: string;
-	ruleId: string | null;
-}
-
-interface PrettierArgs {
-	command: string;
-	args: string[];
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Pure function under test (match source exactly)
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Find the project root with a package.json, walking up from the given
- * directory. Used to locate the nearest node_modules for prettier.
- */
-function findProjectRoot(fromDir: string): string {
-	let dir = resolve(fromDir);
-	while (true) {
-		if (existsSync(resolve(dir, "package.json"))) return dir;
-		const parent = resolve(dir, "..");
-		if (parent === dir) break;
-		dir = parent;
-	}
-	return fromDir; // fallback
-}
-
-/**
- * Build prettier args as { command, args } array, never a shell string.
- * Uses local node_modules if available, otherwise npx prettier.
- */
-function buildPrettierArgs(cwd: string, filePath: string): PrettierArgs {
-	const projectRoot = findProjectRoot(cwd);
-	const localPrettier = resolve(projectRoot, "node_modules", ".bin", "prettier");
-	const configPath = resolve(cwd, ".prettierrc");
-
-	if (existsSync(localPrettier)) {
-		return { command: localPrettier, args: ["--config", configPath, "--write", filePath] };
-	}
-	return { command: "npx", args: ["prettier", "--config", configPath, "--write", filePath] };
-}
-
-/** Parse ESLint JSON output into diagnostics array. */
-function parseEslintOutput(jsonOutput: string): Array<{
-	file: string;
-	line: number;
-	column: number;
-	severity: "Error" | "Warning";
-	message: string;
-	ruleId: string | null;
-}> {
-	try {
-		const data = JSON.parse(jsonOutput);
-		if (!Array.isArray(data)) return [];
-
-		const diagnostics: Array<{
-			file: string;
-			line: number;
-			column: number;
-			severity: "Error" | "Warning";
-			message: string;
-			ruleId: string | null;
-		}> = [];
-
-		for (const fileResult of data) {
-			if (!fileResult || !Array.isArray(fileResult.messages)) continue;
-
-			const filePath = fileResult.filePath || "unknown";
-
-			for (const msg of fileResult.messages) {
-				const severity: "Error" | "Warning" = msg.severity === 2 ? "Error" : "Warning";
-				diagnostics.push({
-					file: filePath,
-					line: msg.line || 0,
-					column: msg.column || 0,
-					severity,
-					message: msg.message || "",
-					ruleId: msg.ruleId || null,
-				});
-			}
-		}
-
-		return diagnostics;
-	} catch {
-		return [];
-	}
-}
-
-/** Format ESLint diagnostics into developer-readable follow-up message. */
-function formatEslintDiagnostics(
-	diagnostics: Array<{
-		file: string;
-		line: number;
-		column: number;
-		severity: "Error" | "Warning";
-		message: string;
-		ruleId: string | null;
-	}>,
-): string {
-	if (!diagnostics || diagnostics.length === 0) return "";
-
-	const byFile = new Map<string, typeof diagnostics>();
-	for (const d of diagnostics) {
-		const list = byFile.get(d.file) || [];
-		list.push(d);
-		byFile.set(d.file, list);
-	}
-
-	const blocks: string[] = [];
-	const files = [...byFile.keys()].sort();
-	for (const file of files) {
-		const diags = byFile.get(file)!;
-		// Sort: errors first, then by line
-		diags.sort((a, b) => {
-			if (a.severity !== b.severity) return a.severity === "Error" ? -1 : 1;
-			if (a.line !== b.line) return a.line - b.line;
-			return a.column - b.column;
-		});
-
-		const lines: string[] = [];
-		for (const d of diags) {
-			let msg = d.message;
-			if (msg.length > 500) msg = msg.slice(0, 497) + "...";
-			const rulePart = d.ruleId ? ` (${d.ruleId})` : "";
-			lines.push(`${file}, Line ${d.line}: [${d.severity}] ${msg}${rulePart}`);
-		}
-		if (blocks.length > 0) blocks.push("");
-		blocks.push(lines.join("\n"));
-	}
-
-	return blocks.join("\n");
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Tests
-// ═══════════════════════════════════════════════════════════════════════
-
-// ── parseEslintOutput ────────────────────────────────────────────────
 
 describe("parseEslintOutput", () => {
 	it("parses valid ESLint JSON with errors", () => {
@@ -272,7 +134,9 @@ describe("parseEslintOutput", () => {
 	});
 });
 
-// ── buildPrettierArgs ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// Tests: buildPrettierArgs
+// ═══════════════════════════════════════════════════════════════════════
 
 describe("buildPrettierArgs", () => {
 	it("returns { command, args } with npx when no local prettier", () => {
@@ -312,7 +176,9 @@ describe("buildPrettierArgs", () => {
 	});
 });
 
-// ── formatEslintDiagnostics ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+// Tests: formatEslintDiagnostics
+// ═══════════════════════════════════════════════════════════════════════
 
 describe("formatEslintDiagnostics", () => {
 	it("empty → empty string", () => {
@@ -374,105 +240,41 @@ describe("formatEslintDiagnostics", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Tests: adapter functions (require pi.exec mock)
+// Tests: adapter functions (require exec mock)
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Create a mock pi.exec that returns the given result.
+ * Create a mock exec function that returns the given result.
  */
-function mockPiExec(result: ExecResult): { exec: () => Promise<ExecResult> } {
-	return {
-		exec: async (_cmd: string, _args: string[], _opts?: unknown) => result,
-	};
+function mockExec(result: {
+	stdout: string;
+	stderr: string;
+	code: number;
+	killed: boolean;
+}): ExecFn {
+	return async (_cmd: string, _args: string[], _opts?: unknown) => result;
 }
 
-/**
- * Run prettier --write on a file using pi.exec. Returns true on success.
- */
-async function formatFile(
-	pi: { exec: (cmd: string, args: string[], opts?: unknown) => Promise<ExecResult> },
-	filePath: string,
-	configDir: string,
-): Promise<boolean> {
-	const { command, args } = buildPrettierArgs(configDir, filePath);
-	const result = await pi.exec(command, args, { cwd: configDir, timeout: 15_000 });
-	return result.code === 0;
-}
-
-/**
- * Attempt to run ESLint with given extra args.
- * Returns formatted string on success (or lint errors found).
- * Returns null if ESLint exited with code 2 (config error).
- * Returns empty string if no issues.
- */
-async function tryRunEslint(
-	pi: { exec: (cmd: string, args: string[], opts?: unknown) => Promise<ExecResult> },
-	filePath: string,
-	cwd: string,
-	extraArgs: string[],
-): Promise<string | null> {
-	const result = await pi.exec(
-		"npx",
-		[
-			"eslint",
-			"--no-error-on-unmatched-pattern",
-			"--format",
-			"json",
-			"--fix",
-			...extraArgs,
-			filePath,
-		],
-		{ cwd, timeout: 15_000 },
-	);
-
-	if (result.code === 2) return null; // Config error
-	if (result.code === 0 || result.code === 1) {
-		const diags = parseEslintOutput(result.stdout);
-		if (diags.length === 0) return "";
-		return formatEslintDiagnostics(diags);
-	}
-	return "";
-}
-
-/**
- * Run ESLint on a single file and return formatted diagnostics message.
- */
-async function runEslintOnFile(
-	pi: { exec: (cmd: string, args: string[], opts?: unknown) => Promise<ExecResult> },
-	filePath: string,
-	cwd: string,
-): Promise<string> {
-	// Primary attempt with project ESLint config
-	let result = await tryRunEslint(pi, filePath, cwd, []);
-	if (result !== null) return result;
-
-	// Config error (exit code 2) — retry with --no-eslintrc fallback
-	result = await tryRunEslint(pi, filePath, cwd, ["--no-eslintrc"]);
-	return result ?? "";
-}
-
-describe("formatFile (async, pi.exec)", () => {
-	it("returns true when pi.exec returns code 0", async () => {
-		const pi = mockPiExec({ stdout: "", stderr: "", code: 0, killed: false });
-		const ok = await formatFile(pi as any, "/tmp/test.ts", "/tmp");
+describe("formatFile (async, exec)", () => {
+	it("returns true when exec returns code 0", async () => {
+		const exec = mockExec({ stdout: "", stderr: "", code: 0, killed: false });
+		const ok = await formatFile(exec, "/tmp/test.ts", "/tmp");
 		assert.strictEqual(ok, true);
 	});
 
-	it("returns false when pi.exec returns non-zero code", async () => {
-		const pi = mockPiExec({ stdout: "", stderr: "error", code: 1, killed: false });
-		const ok = await formatFile(pi as any, "/tmp/test.ts", "/tmp");
+	it("returns false when exec returns non-zero code", async () => {
+		const exec = mockExec({ stdout: "", stderr: "error", code: 1, killed: false });
+		const ok = await formatFile(exec, "/tmp/test.ts", "/tmp");
 		assert.strictEqual(ok, false);
 	});
 
-	it("passes correct command and args to pi.exec", async () => {
+	it("passes correct command and args to exec", async () => {
 		let captured: { cmd: string; args: string[]; opts?: unknown } | undefined;
-		const pi = {
-			exec: async (cmd: string, args: string[], opts?: unknown) => {
-				captured = { cmd, args, opts };
-				return { stdout: "", stderr: "", code: 0, killed: false };
-			},
+		const exec: ExecFn = async (cmd, args, opts) => {
+			captured = { cmd, args, opts };
+			return { stdout: "", stderr: "", code: 0, killed: false };
 		};
-		await formatFile(pi as any, "/tmp/test.ts", "/tmp");
+		await formatFile(exec, "/tmp/test.ts", "/tmp");
 		assert.ok(captured);
 		assert.strictEqual(captured!.cmd, "npx");
 		assert.ok(captured!.args.includes("prettier"));
@@ -481,10 +283,10 @@ describe("formatFile (async, pi.exec)", () => {
 	});
 });
 
-describe("tryRunEslint (async, pi.exec)", () => {
-	it("returns empty string on code 0 (no errors)", async () => {
-		const pi = mockPiExec({ stdout: "[]", stderr: "", code: 0, killed: false });
-		const result = await tryRunEslint(pi as any, "test.ts", "/tmp", []);
+describe("runEslintOnFile (async, exec)", () => {
+	it("returns empty string on eslint code 0 (no errors)", async () => {
+		const exec = mockExec({ stdout: "[]", stderr: "", code: 0, killed: false });
+		const result = await runEslintOnFile(exec, "test.ts", "/tmp");
 		assert.strictEqual(result, "");
 	});
 
@@ -493,48 +295,42 @@ describe("tryRunEslint (async, pi.exec)", () => {
 			{
 				filePath: "src/app.ts",
 				messages: [
-					{ line: 10, column: 5, severity: 2, message: "Unexpected any", ruleId: "no-explicit-any" },
+					{
+						line: 10,
+						column: 5,
+						severity: 2,
+						message: "Unexpected any",
+						ruleId: "no-explicit-any",
+					},
 				],
 				errorCount: 1,
 				warningCount: 0,
 			},
 		]);
-		const pi = mockPiExec({ stdout, stderr: "", code: 1, killed: false });
-		const result = await tryRunEslint(pi as any, "test.ts", "/tmp", []);
+		const exec = mockExec({ stdout, stderr: "", code: 1, killed: false });
+		const result = await runEslintOnFile(exec, "test.ts", "/tmp");
 		assert.ok(result);
 		assert.ok(result!.includes("src/app.ts"));
 		assert.ok(result!.includes("[Error]"));
 	});
 
-	it("returns null on code 2 (config error)", async () => {
-		const pi = mockPiExec({ stdout: "", stderr: "config error", code: 2, killed: false });
-		const result = await tryRunEslint(pi as any, "test.ts", "/tmp", []);
-		assert.strictEqual(result, null);
+	it("retries with --no-eslintrc after config error", async () => {
+		let callCount = 0;
+		const exec: ExecFn = async (_cmd, args, _opts) => {
+			callCount++;
+			if (callCount === 1) {
+				return { stdout: "", stderr: "", code: 2, killed: false };
+			}
+			return { stdout: "[]", stderr: "", code: 0, killed: false };
+		};
+		const result = await runEslintOnFile(exec, "test.ts", "/tmp");
+		assert.strictEqual(result, "");
+		assert.strictEqual(callCount, 2);
 	});
 
 	it("returns empty string on unexpected error code", async () => {
-		const pi = mockPiExec({ stdout: "", stderr: "", code: 127, killed: false });
-		const result = await tryRunEslint(pi as any, "test.ts", "/tmp", []);
+		const exec = mockExec({ stdout: "", stderr: "", code: 127, killed: false });
+		const result = await runEslintOnFile(exec, "test.ts", "/tmp");
 		assert.strictEqual(result, "");
-	});
-});
-
-describe("runEslintOnFile (async, pi.exec)", () => {
-	it("retries with --no-eslintrc after config error", async () => {
-		let callCount = 0;
-		const pi = {
-			exec: async (_cmd: string, args: string[], _opts?: unknown) => {
-				callCount++;
-				if (callCount === 1) {
-					// First call: config error (code 2)
-					return { stdout: "", stderr: "", code: 2, killed: false };
-				}
-				// Second call: success
-				return { stdout: "[]", stderr: "", code: 0, killed: false };
-			},
-		};
-		const result = await runEslintOnFile(pi as any, "test.ts", "/tmp");
-		assert.strictEqual(result, "");
-		assert.strictEqual(callCount, 2);
 	});
 });
