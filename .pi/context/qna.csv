@@ -1,0 +1,12 @@
+2026-05-17T06:07:16.468Z;"Fix line 2 of castle art: replace `""        |  |                 |  |                 |  |""` with `""       _|  |_               _|  |_               _|  |_""`?
+
+This fixes:
+- Left margin mismatch (8→7 spaces, matching lines 0-1)
+- Width mismatch (54→55 chars, matching lines 0-1)
+- Missing `_` overhang on each side of tower body
+- Tower walls align better with roof structure
+
+See the before/after above. Approve?";apply
+2026-05-17T06:14:53.877Z;"Change line 4 from 3 dashes (`---`) to 5 dashes (`-----`) on both sides of middle tower? This fills the right gap exactly (60→64 chars). Middle tower stays centered at col 30.5.
+
+If you meant only +1 dash (`----` = 4 dashes), that gives 62 chars — still 2 short of full width. Want 4 or 5?";five

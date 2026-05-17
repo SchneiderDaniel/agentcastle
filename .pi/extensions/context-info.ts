@@ -580,37 +580,29 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					// ── Left side only (git info) ─────────────
 					const fullLeft = leftStr;
 
-					// ── Build row 1 (existing status bar) ────────
+					// ── Build row 1 (rightStr right-aligned) ─────
 					const leftW = visibleWidth(fullLeft);
 					const centerW = visibleWidth(centerStr);
 					const rightW = visibleWidth(rightStr);
 
-					// Calculate spacing
-					const totalContent = leftW + centerW + rightW;
-					const sepCount = 2;
-					const sepWidth = 3 + sepCount * 2; // " │ " per separator
+					// Separator: " │ " = 3 visible chars
+					const sepUnit = 3;
 
 					let row1: string;
-					if (totalContent + sepWidth <= width) {
-						// All fits — distribute remaining space
-						const remaining = width - totalContent - sepWidth;
-						const padLeft = Math.floor(remaining / 2);
-						const padRight = remaining - padLeft;
-
-						row1 =
-							fullLeft +
-							" ".repeat(padLeft + 1) +
-							sep +
-							" ".repeat(1) +
-							centerStr +
-							" ".repeat(padRight + 1) +
-							sep +
-							" ".repeat(1) +
-							rightStr;
-					} else if (leftW + rightW + sepWidth <= width) {
-						// Narrow terminal — compact mode: left+ext | right (drop center)
-						const remaining = width - leftW - rightW - sepWidth;
-						row1 = fullLeft + " ".repeat(remaining + 2) + sep + " ".repeat(1) + rightStr;
+					if (leftW + centerW + rightW + 2 * sepUnit <= width) {
+						// All fits — left | center, then rightStr pushed to right edge
+						const leftSection = fullLeft + " " + sep + " ";
+						const centerSection = centerStr + " " + sep + " ";
+						const beforeRight = leftSection + centerSection;
+						const beforeRightW = visibleWidth(beforeRight);
+						const padForRight = Math.max(0, width - beforeRightW - rightW);
+						row1 = beforeRight + " ".repeat(padForRight) + rightStr;
+					} else if (leftW + rightW + sepUnit <= width) {
+						// Narrow — drop center, left | rightStr right-aligned
+						const leftSection = fullLeft + " " + sep + " ";
+						const leftSectionW = visibleWidth(leftSection);
+						const padBeforeRight = Math.max(0, width - leftSectionW - rightW);
+						row1 = leftSection + " ".repeat(padBeforeRight) + rightStr;
 					} else {
 						// Very narrow — just right-aligned tokens
 						row1 = " ".repeat(Math.max(0, width - rightW)) + rightStr;
@@ -688,10 +680,32 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 	}
 
+	function countSkills(): number {
+		try {
+			const skillsDir = ".pi/skills";
+			if (!existsSync(skillsDir)) return 0;
+			const entries = readdirSync(skillsDir, { withFileTypes: true });
+			let count = 0;
+			for (const entry of entries) {
+				if (entry.name === ".gitkeep") continue;
+				if (entry.isFile() && entry.name.endsWith(".md")) {
+					count++;
+				} else if (entry.isDirectory() && entry.name !== "." && entry.name !== "..") {
+					const skillMdPath = joinPath(skillsDir, entry.name, "SKILL.md");
+					if (existsSync(skillMdPath)) count++;
+				}
+			}
+			return count;
+		} catch {
+			return 0;
+		}
+	}
+
 	function showWelcomeBanner(ctx: ExtensionContext) {
 		const extCount = countExtensions();
 		const promptCount = listNames(".pi/prompts", ".md").length;
 		const themeCount = listNames(".pi/themes", ".json").length;
+		const skillCount = countSkills();
 
 		ctx.ui.setWidget("agentcastle-welcome", (_tui, theme) => {
 			return {
@@ -701,10 +715,6 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					const dim = (s: string) => theme.fg("dim", s);
 					const muted = (s: string) => theme.fg("muted", s);
 					const accent = (s: string) => theme.fg("accent", s);
-
-					const modelId = ctx.model?.id ?? "?";
-					const cw = ctx.model?.contextWindow;
-					const cwStr = typeof cw === "number" && cw > 0 ? formatTokens(cw) : "?";
 
 					const baseW = 64;
 
@@ -717,12 +727,12 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 					// ── Castle art (towers + walls) ────────────
 					const castle: string[] = [
-						"       #_||_#               #_||_#               #_||_#",
-						"       \\####/               \\####/               \\####/",
-						"        |  |                 |  |                 |  |",
-						"  # # # |  | # # # # # # # # |  | # # # # # # # # |  | # # #",
-						"  |-----|  |-----|-------|---|  |---|-------|-----|  |-----|",
-						"  |     /  \\     |       |   /  \\   |       |     /  \\     |",
+						"       #_||_#                #_||_#                #_||_#",
+						"       \\####/                \\####/                \\####/",
+						"       _|  |_                _|  |_                _|  |_",
+						"  # # # |  | # # # # # # # # #|  | # # # # # # # #  |  | # # #",
+						"  |-----|  |-----|-------|----|  |----|-------|-----|  |-----|",
+						"  |     /  \\     |       |    /  \\    |       |     /  \\     |",
 						" /     |    |     \\  /\\  /   |    |   \\  /\\  /     |    |     \\",
 						"|      |    |      \\/  \\/    |    |    \\/  \\/      |    |      |",
 						"|______[____]________________[____]________________[____]______|",
@@ -747,17 +757,16 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					}
 
 					const statLines: string[] = [
-						statLine("🧠 Model:      ", modelId),
-						statLine("📊 Context:    ", cwStr),
 						statLine("🧩 Extensions: ", String(extCount)),
 						statLine("📝 Prompts:    ", String(promptCount)),
 						statLine("🎨 Themes:     ", String(themeCount)),
+						statLine("🔧 Skills:     ", String(skillCount)),
 					];
 
 					// Bottom wall
 					const bottom = dim("|" + "_".repeat(62) + "|");
 
-					return [titleLine, ...castleLines, ...statLines, bottom];
+					return [titleLine, "", ...castleLines, ...statLines, bottom];
 				},
 			};
 		});
