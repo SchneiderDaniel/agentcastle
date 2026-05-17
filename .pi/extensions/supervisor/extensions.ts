@@ -2,7 +2,7 @@
 // Resolve --extension CLI flags from agent frontmatter.
 // Discover tools from registered extensions.
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -40,7 +40,17 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 
 	const result: string[] = [];
 	for (const ext of extensions) {
-		result.push("--extension", `.pi/extensions/${ext}.ts`);
+		// Try single-file extension first, then directory-based
+		const filePath = `.pi/extensions/${ext}.ts`;
+		const dirPath = `.pi/extensions/${ext}/index.ts`;
+		if (existsSync(resolvePath(process.cwd(), filePath))) {
+			result.push("--extension", filePath);
+		} else if (existsSync(resolvePath(process.cwd(), dirPath))) {
+			result.push("--extension", dirPath);
+		} else {
+			// Default to single-file path (will fail at runtime, but preserves existing behavior)
+			result.push("--extension", filePath);
+		}
 	}
 
 	return result;

@@ -1,0 +1,77 @@
+/**
+ * format-on-save — Auto-formats TypeScript/JavaScript files with Prettier
+ *                  then runs ESLint --fix for lint+styling (advisory, non-blocking)
+ *
+ * Hooks into write/edit tool results. After a TypeScript/JavaScript/TSX/JSX/JSON
+ * file is written or edited, runs Prettier to reformat it.
+ *
+ * Tier 1 diagnostics: After Prettier, runs ESLint on the saved file and reports
+ * errors/warnings as a follow-up message to the Developer (non-blocking).
+ *
+ * Uses project-local prettier from .pi/extensions/../node_modules or falls back
+ * to npx prettier. ESLint uses npx eslint.
+ */
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { shouldFormat, shouldLint, looksLikeFilePath, MAX_FILE_SIZE_BYTES } from "./formatting.mts";
+import { runEslintOnFile } from "./eslint.mts";
+import { formatFile } from "./formatter.mts";
+
+export default function (pi: ExtensionAPI) {
+	pi.on("tool_result", async (event, ctx) => {
+		// Only handle write and edit tools
+		if (event.toolName !== "write" && event.toolName !== "edit") return;
+
+		// Skip errors
+		if (event.isError) return;
+
+		// Extract the file path from input
+		const filePath = (event.input as { path?: string }).path;
+		if (!looksLikeFilePath(filePath)) return;
+
+		// Resolve relative paths against cwd
+		const absolutePath = resolve(ctx.cwd, filePath);
+
+		// Skip non-formatable files
+		if (!shouldFormat(absolutePath)) return;
+
+		// Skip files that don't exist (shouldn't happen after write, but safe)
+		if (!existsSync(absolutePath)) return;
+
+		// Skip files that are too large
+		try {
+			const stats = statSync(absolutePath);
+			if (stats.size > MAX_FILE_SIZE_BYTES) return;
+		} catch {
+			return;
+		}
+
+		// Step 1: Format the file in-place with --write
+		const ok = await formatFile(pi.exec.bind(pi), absolutePath, ctx.cwd);
+		if (ok && ctx.hasUI) {
+			ctx.ui.notify(`Formatted: ${filePath}`, "info");
+		}
+
+		// Step 2: ESLint on saved file (Tier 1 diagnostics, advisory only)
+		if (shouldLint(absolutePath)) {
+			const lintMsg = await runEslintOnFile(pi.exec.bind(pi), absolutePath, ctx.cwd);
+			if (lintMsg && ctx.hasUI) {
+				ctx.ui.notify(`ESLint ran: ${filePath}`, "info");
+			}
+			if (lintMsg) {
+				// Non-blocking — deliver as followUp, Developer can proceed
+				const followUp = [
+					`## Lint Diagnostics — ${filePath}`,
+					``,
+					`ESLint found the following issues (advisory — not blocking):`,
+					``,
+					lintMsg,
+				].join("\n");
+				pi.sendUserMessage?.(followUp, { deliverAs: "followUp" });
+			}
+		}
+	});
+}
