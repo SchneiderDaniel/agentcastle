@@ -577,8 +577,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					// ── Separator character ──────────────────────
 					const sep = theme.fg("dim", "│");
 
-					// ── Combine left + extension statuses ───────
-					const fullLeft = extStr ? `${leftStr} ${extStr}` : leftStr;
+					// ── Left side only (git info) ─────────────
+					const fullLeft = leftStr;
 
 					// ── Build row 1 (existing status bar) ────────
 					const leftW = visibleWidth(fullLeft);
@@ -618,12 +618,20 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 					row1 = truncateToWidth(row1, width);
 
-					// ── Build row 2 (TPS, right-aligned) ─────────
-					if (config.showTps) {
-						const tpsDisplay = formatTps(lastComputedTps);
-						const tpsStr = theme.fg("dim", tpsDisplay);
-						const tpsW = visibleWidth(tpsStr);
-						const row2 = " ".repeat(Math.max(0, width - tpsW)) + tpsStr;
+					// ── Build row 2 (ext statuses left, TPS right) ──
+					if (extStr || config.showTps) {
+						const left2 = extStr || "";
+						let right2 = "";
+						if (config.showTps) {
+							const tpsDisplay = formatTps(lastComputedTps);
+							right2 = theme.fg("dim", tpsDisplay);
+						}
+						const leftW = visibleWidth(left2);
+						const rightW = visibleWidth(right2);
+						const gap = Math.max(0, width - leftW - rightW);
+						const row2 = right2
+							? left2 + " ".repeat(gap) + right2
+							: left2 + " ".repeat(Math.max(0, width - leftW));
 						return [row1, truncateToWidth(row2, width)];
 					}
 
