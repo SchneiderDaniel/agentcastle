@@ -104,9 +104,25 @@ export async function runAgent(
 			const now = Date.now();
 			const parts: string[] = [];
 			parts.push(`⏱ ${formatDuration(now - state.startedAt)}`);
-			if (state.tokenCount > 0) parts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
+			if (state.tokenCount > 0) {
+				let tokenStr = `${formatTokens(state.tokenCount)} tokens`;
+				// Color token count based on context window % thresholds (same as main footer)
+				if (
+					state.contextInfoReceived &&
+					state.contextWindow !== undefined &&
+					state.contextWindow > 0
+				) {
+					const pct = (state.tokenCount / state.contextWindow) * 100;
+					if (pct > 90) {
+						tokenStr = `${ctx.ui.theme.fg("error", formatTokens(state.tokenCount))} tokens`;
+					} else if (pct > 70) {
+						tokenStr = `${ctx.ui.theme.fg("warning", formatTokens(state.tokenCount))} tokens`;
+					}
+				}
+				parts.push(`📊 ${tokenStr}`);
+			}
 			if (state.toolCount > 0) parts.push(`🔧 ${state.toolCount} tools`);
-			ctx.ui.setStatus("supervisor", `${agentName}  ${parts.join(" · ")}`);
+			ctx.ui.setStatus("supervisor", `subagent: ${agentName}  ${parts.join(" · ")}`);
 		};
 
 		const scheduleFlush = () => {
