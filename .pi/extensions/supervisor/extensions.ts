@@ -2,7 +2,7 @@
 // Resolve --extension CLI flags from agent frontmatter.
 // Discover tools from registered extensions.
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -40,7 +40,16 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 
 	const result: string[] = [];
 	for (const ext of extensions) {
-		result.push("--extension", `.pi/extensions/${ext}.ts`);
+		const tsPath = `.pi/extensions/${ext}.ts`;
+		const dirPath = `.pi/extensions/${ext}`;
+		// Prefer directory-based extension (index.ts) over .ts file
+		const dirIndexPath = `${dirPath}/index.ts`;
+		const fullDirPath = resolvePath(process.cwd(), dirPath);
+		if (existsSync(fullDirPath) && statSync(fullDirPath).isDirectory()) {
+			result.push("--extension", dirIndexPath);
+		} else {
+			result.push("--extension", tsPath);
+		}
 	}
 
 	return result;
@@ -64,10 +73,24 @@ export function discoverExtensionTools(): Map<string, string[]> {
 		return map;
 	}
 
-	for (const file of files) {
-		if (!file.endsWith(".ts")) continue;
-		const basename = file.replace(/\.ts$/, "");
-		const filePath = resolvePath(extDir, file);
+	const entries = files.filter((f) => f.endsWith(".ts") || !f.includes("."));
+
+	for (const entry of entries) {
+		const entryPath = resolvePath(extDir, entry);
+
+		// Handle subdirectory extension (index.ts)
+		let filePath: string;
+		let basename: string;
+		if (entry.endsWith(".ts")) {
+			basename = entry.replace(/\.ts$/, "");
+			filePath = entryPath;
+		} else if (statSync(entryPath).isDirectory()) {
+			basename = entry;
+			filePath = resolvePath(entryPath, "index.ts");
+			if (!existsSync(filePath)) continue;
+		} else {
+			continue;
+		}
 
 		let content: string;
 		try {
