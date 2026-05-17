@@ -10,3 +10,42 @@ See the before/after above. Approve?";apply
 2026-05-17T06:14:53.877Z;"Change line 4 from 3 dashes (`---`) to 5 dashes (`-----`) on both sides of middle tower? This fills the right gap exactly (60→64 chars). Middle tower stays centered at col 30.5.
 
 If you meant only +1 dash (`----` = 4 dashes), that gives 62 chars — still 2 short of full width. Want 4 or 5?";five
+2026-05-17T07:04:26.045Z;"You said more loops like auditor and developer. What additional agents/loops are you planning? 
+
+Example: CI checks before merge? Security scan? Deploy gate? Multi-repo sync? Give me concrete names you're thinking about.";the researcher is currently ran after the archteict. but with the new info the researcher gets from the internet, if might be that the archteicutre need a revisit. that is what i am thinking of atm
+2026-05-17T07:06:05.152Z;"How deep could these feedback loops go? Specifically:
+
+1) If researcher sends back to architect, could architect send back again, creating a multi-cycle loop?
+2) Could developer implementation fail in a way that sends back to TestDesign or Architecture (not just Audit)?
+3) Any plans for parallel agents (e.g., researcher + security scanner running concurrently)?
+
+I'm mapping out if your graph is a simple cycle or a full state machine.";no parallel, only sequential, that is a guide by us. developer should not send it back. after the archtiect has done the reqork with the researcher input, the ticket goes then to the develoepr.
+2026-05-17T07:07:43.027Z;"Two paths emerge:
+
+**Option A — Keep custom, refactor for cycles**
+Current pipeline.ts is ~450 lines. Could extract the state machine into a config-driven loop (e.g., status→agent→transition rules as data). Adding Research↔Architecture feedback is one more transition rule. Lighter weight, no external dep.
+
+**Option B — Adopt an orchestration library**
+Something like XState (state machine) or Temporal (durable workflow). More structure, steeper learning curve, but scales to arbitrary complexity.
+
+What's your tolerance for:
+- Adding an external dependency?
+- Learning curve for the team?
+- Future complexity beyond these feedback loops?
+
+Also: is this library decision about *this* repo only, or are you thinking about a pattern other repos would adopt?";"i want to keep it simple. that is also a guideline for he project. If there is a simple library that gives us the ability to has a sequential worklfow with ""send back2 that wiuld be somehting that i would consider. but i have no idea, as i do not know any libraries"
+2026-05-17T07:09:03.144Z;"Want me to sketch this refactor concretely? I'd:
+
+1. Extract current hardcoded status transitions (determineNextStatus) into a data-driven workflow config
+2. Add `canLoopBackTo` support for the Research↔Architecture cycle
+3. Keep everything else (TSC/LSP hooks, merge resolution) as-is
+
+Or do you want me to evaluate a specific library you've heard about?";sketch_refactor
+2026-05-17T07:10:50.029Z;"Want me to implement this refactor? I'd:
+
+1. Create `workflow.ts` with the config array
+2. Refactor `pipeline.ts` loop to be config-driven
+3. Clean up `status-transitions.ts` (becomes thin wrapper or removed)
+4. Add `FEEDBACK_ARCHITECTURE` marker support for researcher
+
+Or do you want to tweak the design first?";the sketch is good, lets create a git issue for that with all the content and we will develop that then later.
