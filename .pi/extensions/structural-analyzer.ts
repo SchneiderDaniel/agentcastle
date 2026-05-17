@@ -12,6 +12,7 @@
  * Design:
  * - Single flat file with clear sequential phases: validate → exec → parse → return
  * - Pure validate/parse/truncate functions are exported for unit testing
+ * - Binary detection is lazy (deferred to first tool execution) with async cache
  * - ast-grep invoked via pi.exec() — no Python wrapper needed
  * - Collision rule: generic single-word patterns are rejected, forcing agent
  *   to use ripgrep for text search
@@ -19,7 +20,6 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { execSync } from "node:child_process";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -45,23 +45,6 @@ export interface SgMatch {
 export interface SgResult {
 	matches: number;
 	results: SgMatch[];
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Helpers
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Determine the correct ast-grep binary name.
- * On Linux, `sg` conflicts with setgroups — prefer `ast-grep`.
- */
-export function getSgBinary(): string {
-	try {
-		execSync("ast-grep --version", { encoding: "utf-8", stdio: "pipe" });
-		return "ast-grep";
-	} catch {
-		return "sg";
-	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -110,18 +93,6 @@ export function truncateSnippet(text: string): string {
 	if (!text) return "";
 	if (text.length <= 120) return text;
 	return text.slice(0, 119) + "…";
-}
-
-/**
- * Build ast-grep command arguments for a pattern search.
- *
- * Uses --json=stream for NDJSON output (one JSON object per line).
- * Pattern is passed as a separate array element to prevent shell injection.
- */
-export function buildSgArgs(pattern: string, language: string): { command: string; args: string[] } {
-	const command = getSgBinary();
-	const args = ["scan", "--pattern", pattern, "--json=stream", "--lang", language];
-	return { command, args };
 }
 
 /**
@@ -175,6 +146,16 @@ export function parseSgOutput(raw: string): SgResult {
 // ═══════════════════════════════════════════════════════════════════════
 
 export default function structuralAnalyzer(pi: ExtensionAPI): void {
+	// Lazy async binary detection — cached after first call
+	let sgBinary: string | null = null;
+
+	async function getSgBinary(): Promise<string> {
+		if (sgBinary) return sgBinary;
+		const result = await pi.exec("ast-grep", ["--version"], { timeout: 5_000 });
+		sgBinary = result.code === 0 ? "ast-grep" : "sg";
+		return sgBinary;
+	}
+
 	pi.registerTool({
 		name: "structural_search",
 		label: "Structural Search",
@@ -187,8 +168,7 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 			"Use this to answer 'Where is this function called?' or 'Find all try/catch blocks' " +
 			"without noise from text matches in comments or strings. " +
 			"Requires ast-grep installed (`npm i -g @ast-grep/cli`).",
-		promptSnippet:
-			"Search codebase for structural code patterns using ast-grep AST matching",
+		promptSnippet: "Search codebase for structural code patterns using ast-grep AST matching",
 		promptGuidelines: [
 			"Use structural_search for syntax-aware code searches where you need to find function calls, class definitions, try/catch blocks, or method invocations without text-match noise from comments or strings.",
 			"Pattern syntax uses $META_VAR for single AST node matching (e.g., console.log($A)) and $$$MULTI for zero-or-more nodes (e.g., try { $$$BODY } catch (e) { $A }).",
@@ -228,10 +208,11 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 				};
 			}
 
-			// Build and run ast-grep command
-			const { command, args } = buildSgArgs(pattern, language);
+			// Get binary (lazy init, cached for subsequent calls)
+			const binary = await getSgBinary();
+			const args = ["scan", "--pattern", pattern, "--json=stream", "--lang", language];
 
-			const result = await pi.exec(command, args, {
+			const result = await pi.exec(binary, args, {
 				cwd: ctx.cwd,
 				timeout: 30_000,
 			});
@@ -252,11 +233,13 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 							content: [
 								{
 									type: "text" as const,
-									text:
-										`ast-grep failed (exit code ${result.code}): ${stderrMsg}`,
+									text: `ast-grep failed (exit code ${result.code}): ${stderrMsg}`,
 								},
 							],
-							details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<string, unknown>,
+							details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<
+								string,
+								unknown
+							>,
 							isError: true,
 						};
 					}

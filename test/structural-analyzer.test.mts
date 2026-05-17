@@ -1,8 +1,9 @@
 /**
  * Tests for Structural Analyzer (ast-grep integration)
  *
- * Pure function tests for parseSgOutput(), validatePattern(), truncateSnippet(), buildSgArgs().
- * Local copies match source at .pi/extensions/structural-analyzer.ts exactly.
+ * Pure function tests for parseSgOutput(), validatePattern(), truncateSnippet().
+ * Local buildSgArgs simplified to pure arg-building (binary name passed as param).
+ * New lazy binary detection test mocks pi.exec to verify caching behavior.
  *
  * Run with:
  *   node --experimental-strip-types --test test/structural-analyzer.test.mts
@@ -16,6 +17,7 @@ import { describe, it } from "node:test";
 import { existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
+import structuralAnalyzer from "../.pi/extensions/structural-analyzer.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types (match source at .pi/extensions/structural-analyzer.ts)
@@ -44,21 +46,8 @@ interface SgResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Pure functions under test (match source exactly)
+// Pure functions under test (local copies for test isolation)
 // ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Determine the correct ast-grep binary name.
- * On Linux, `sg` conflicts with setgroups — prefer `ast-grep`.
- */
-function getSgBinary(): string {
-	try {
-		execSync("ast-grep --version", { encoding: "utf-8", stdio: "pipe" });
-		return "ast-grep";
-	} catch {
-		return "sg";
-	}
-}
 
 /**
  * Validate that a pattern is suitable for ast-grep (structural/syntax-aware search)
@@ -104,15 +93,19 @@ function truncateSnippet(text: string): string {
 }
 
 /**
- * Build ast-grep command arguments for a pattern search.
+ * Build ast-grep command arguments for a pattern search (pure arg-building only).
  *
+ * Binary name is passed explicitly (not detected here).
  * Uses --json=stream for NDJSON output (one JSON object per line).
  * Pattern is passed as a separate array element to prevent shell injection.
  */
-function buildSgArgs(pattern: string, language: string): { command: string; args: string[] } {
-	const command = getSgBinary();
+function buildSgArgs(
+	binary: string,
+	pattern: string,
+	language: string,
+): { command: string; args: string[] } {
 	const args = ["scan", "--pattern", pattern, "--json=stream", "--lang", language];
-	return { command, args };
+	return { command: binary, args };
 }
 
 /**
@@ -201,7 +194,7 @@ const MISSING_FIELDS_LINE = JSON.stringify({
 /** Output with null/undefined handling. */
 
 // ═══════════════════════════════════════════════════════════════════════
-// Tests
+// Tests — Pure functions
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("validatePattern", () => {
@@ -287,7 +280,8 @@ describe("truncateSnippet", () => {
 	});
 
 	it("truncates multi-line string respecting char count", () => {
-		const longLine = "line with a lot of content that goes on and on and on and on and on and on and on and on and on and on and on and on and on and on\nand another line";
+		const longLine =
+			"line with a lot of content that goes on and on and on and on and on and on and on and on and on and on and on and on and on and on\nand another line";
 		const result = truncateSnippet(longLine);
 		assert.ok(result.length <= 120);
 		if (result !== longLine) {
@@ -348,23 +342,171 @@ describe("parseSgOutput", () => {
 	});
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// Tests — buildSgArgs (pure arg-building only, binary passed as param)
+// ═══════════════════════════════════════════════════════════════════════
+
 describe("buildSgArgs", () => {
 	it("builds correct args for ts pattern", () => {
-		const { command, args } = buildSgArgs("console.log($A)", "ts");
-		assert.ok(command === "ast-grep" || command === "sg");
-		assert.deepStrictEqual(args, ["scan", "--pattern", "console.log($A)", "--json=stream", "--lang", "ts"]);
+		const { command, args } = buildSgArgs("ast-grep", "console.log($A)", "ts");
+		assert.strictEqual(command, "ast-grep");
+		assert.deepStrictEqual(args, [
+			"scan",
+			"--pattern",
+			"console.log($A)",
+			"--json=stream",
+			"--lang",
+			"ts",
+		]);
 	});
 
 	it("builds correct args for py pattern", () => {
-		const { command, args } = buildSgArgs("try { $$$BODY }", "py");
-		assert.ok(command === "ast-grep" || command === "sg");
-		assert.deepStrictEqual(args, ["scan", "--pattern", "try { $$$BODY }", "--json=stream", "--lang", "py"]);
+		const { command, args } = buildSgArgs("ast-grep", "try { $$$BODY }", "py");
+		assert.strictEqual(command, "ast-grep");
+		assert.deepStrictEqual(args, [
+			"scan",
+			"--pattern",
+			"try { $$$BODY }",
+			"--json=stream",
+			"--lang",
+			"py",
+		]);
 	});
 
 	it("pattern is passed as separate arg (not shell-escaped)", () => {
-		const { args } = buildSgArgs("console.log($A)", "ts");
+		const { args } = buildSgArgs("ast-grep", "console.log($A)", "ts");
 		// The pattern is its own array element — no quoting in the arg itself
 		assert.strictEqual(args[2], "console.log($A)");
+	});
+
+	it("accepts sg as binary name", () => {
+		const { command, args } = buildSgArgs("sg", "console.log($A)", "ts");
+		assert.strictEqual(command, "sg");
+		assert.deepStrictEqual(args, [
+			"scan",
+			"--pattern",
+			"console.log($A)",
+			"--json=stream",
+			"--lang",
+			"ts",
+		]);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tests — Lazy binary detection (mocks pi.exec)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("lazy binary detection", () => {
+	it("detects ast-grep on first execute and caches result", async () => {
+		// Track all calls to pi.exec
+		const execCalls: Array<{ command: string; args: string[] }> = [];
+		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+		const mockPi = {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (command: string, args: string[]) => {
+				execCalls.push({ command, args });
+				if (command === "ast-grep" && args[0] === "--version") {
+					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+				}
+				// For scan commands, return empty success (no matches)
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			},
+		};
+
+		structuralAnalyzer(mockPi as any);
+
+		assert.ok(capturedExecute !== undefined, "execute handler should be registered");
+
+		// First execute — should trigger binary detection
+		await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		// First call should be binary detection: ast-grep --version
+		assert.strictEqual(execCalls.length >= 1, true);
+		assert.strictEqual(execCalls[0]!.command, "ast-grep");
+		assert.deepStrictEqual(execCalls[0]!.args, ["--version"]);
+
+		execCalls.length = 0;
+
+		// Second execute — should NOT trigger binary detection (cached)
+		await capturedExecute!(
+			"id2",
+			{ pattern: "class $NAME", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		// First call now should be the scan, not --version check
+		assert.strictEqual(execCalls.length >= 1, true);
+		assert.strictEqual(execCalls[0]!.command, "ast-grep");
+		assert.strictEqual(execCalls[0]!.args[0], "scan");
+	});
+
+	it("falls back to sg when ast-grep not found and caches fallback", async () => {
+		const execCalls: Array<{ command: string; args: string[] }> = [];
+		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+		const mockPi = {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (command: string, args: string[]) => {
+				execCalls.push({ command, args });
+				if (command === "ast-grep" && args[0] === "--version") {
+					return { stdout: "", stderr: "not found", code: 127, killed: false };
+				}
+				// For sg scan, return success
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			},
+		};
+
+		structuralAnalyzer(mockPi as any);
+
+		assert.ok(capturedExecute !== undefined);
+
+		// First execute — ast-grep not found, should fall back to sg
+		await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		// First call: ast-grep --version fails
+		assert.strictEqual(execCalls[0]!.command, "ast-grep");
+		assert.strictEqual(execCalls[0]!.args[0], "--version");
+
+		// Second call: should use sg for scan
+		assert.strictEqual(execCalls[1]!.command, "sg");
+		assert.strictEqual(execCalls[1]!.args[0], "scan");
+
+		execCalls.length = 0;
+
+		// Third call (second execute): should still use sg (cached)
+		await capturedExecute!(
+			"id2",
+			{ pattern: "class $NAME", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		// First call should be sg scan, no --version check
+		assert.strictEqual(execCalls[0]!.command, "sg");
+		assert.strictEqual(execCalls[0]!.args[0], "scan");
+		// No second call should exist (no binary check)
+		assert.strictEqual(execCalls.length, 1);
 	});
 });
 
@@ -390,68 +532,108 @@ describe("integration: ast-grep binary", () => {
 		}
 	})();
 
-	const skipMsg = "ast-grep binary not installed — skip integration test (install with: npm i -g @ast-grep/cli)";
+	const skipMsg =
+		"ast-grep binary not installed — skip integration test (install with: npm i -g @ast-grep/cli)";
 
-	it("runs sg scan with console.log pattern on fixture dir", { skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 }, () => {
-		const sampleDir = resolve("test/fixtures/structural-sample");
-		if (!existsSync(sampleDir)) {
-			throw new Error("test/fixtures/structural-sample/ not found");
-		}
+	it(
+		"runs sg scan with console.log pattern on fixture dir",
+		{ skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 },
+		() => {
+			const sampleDir = resolve("test/fixtures/structural-sample");
+			if (!existsSync(sampleDir)) {
+				throw new Error("test/fixtures/structural-sample/ not found");
+			}
 
-		const binary = "ast-grep";
-		const args = ["scan", "--pattern", "console.log($A)", "--json=stream", "--lang", "ts", "--cwd", sampleDir];
+			const binary = "ast-grep";
+			const args = [
+				"scan",
+				"--pattern",
+				"console.log($A)",
+				"--json=stream",
+				"--lang",
+				"ts",
+				"--cwd",
+				sampleDir,
+			];
 
-		const stdout = execSync(`${binary} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`, {
-			cwd: sampleDir,
-			encoding: "utf-8",
-			stdio: "pipe",
-			timeout: 10_000,
-		});
+			const stdout = execSync(
+				`${binary} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`,
+				{
+					cwd: sampleDir,
+					encoding: "utf-8",
+					stdio: "pipe",
+					timeout: 10_000,
+				},
+			);
 
-		const result = parseSgOutput(stdout);
-		assert.ok(result.matches > 0, `Expected at least 1 match, got ${result.matches}`);
+			const result = parseSgOutput(stdout);
+			assert.ok(result.matches > 0, `Expected at least 1 match, got ${result.matches}`);
 
-		for (const entry of result.results) {
-			assert.ok(typeof entry.file === "string" && entry.file.length > 0);
-			assert.ok(typeof entry.lines === "string");
-			assert.ok(typeof entry.snippet === "string" && entry.snippet.length <= 120);
-		}
-	});
+			for (const entry of result.results) {
+				assert.ok(typeof entry.file === "string" && entry.file.length > 0);
+				assert.ok(typeof entry.lines === "string");
+				assert.ok(typeof entry.snippet === "string" && entry.snippet.length <= 120);
+			}
+		},
+	);
 
-	it("runs sg scan with try/catch pattern on Python fixtures", { skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 }, () => {
-		const sampleDir = resolve("test/fixtures/structural-sample");
-		if (!existsSync(sampleDir)) {
-			throw new Error("test/fixtures/structural-sample/ not found");
-		}
+	it(
+		"runs sg scan with try/catch pattern on Python fixtures",
+		{ skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 },
+		() => {
+			const sampleDir = resolve("test/fixtures/structural-sample");
+			if (!existsSync(sampleDir)) {
+				throw new Error("test/fixtures/structural-sample/ not found");
+			}
 
-		const binary = "ast-grep";
-		const args = ["scan", "--pattern", "try { $$$BODY } catch (e) { console.log($A) }", "--json=stream", "--lang", "py", "--cwd", sampleDir];
+			const binary = "ast-grep";
+			const args = [
+				"scan",
+				"--pattern",
+				"try { $$$BODY } catch (e) { console.log($A) }",
+				"--json=stream",
+				"--lang",
+				"py",
+				"--cwd",
+				sampleDir,
+			];
 
-		const stdout = execSync(`${binary} ${args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`, {
-			cwd: sampleDir,
-			encoding: "utf-8",
-			stdio: "pipe",
-			timeout: 10_000,
-		});
+			const stdout = execSync(
+				`${binary} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`,
+				{
+					cwd: sampleDir,
+					encoding: "utf-8",
+					stdio: "pipe",
+					timeout: 10_000,
+				},
+			);
 
-		const result = parseSgOutput(stdout);
-		assert.ok(result.matches > 0, `Expected at least 1 match, got ${result.matches}`);
-	});
+			const result = parseSgOutput(stdout);
+			assert.ok(result.matches > 0, `Expected at least 1 match, got ${result.matches}`);
+		},
+	);
 
-	it("returns error for nonexistent language", { skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 }, () => {
-		const binary = "ast-grep";
-		try {
-			const stdout = execSync(`${binary} scan --pattern 'console.log($A)' --json=stream --lang xyz`, {
-				encoding: "utf-8",
-				stdio: "pipe",
-				timeout: 10_000,
-			});
-			// If it somehow succeeds, that's unexpected but we don't fail
-			assert.ok(true);
-		} catch (e: unknown) {
-			const err = e as { stderr?: string; stdout?: string; status?: number };
-			// Expect error for unsupported language
-			assert.ok(err.stderr || err.status !== 0, "Expected error for unsupported language");
-		}
-	});
+	it(
+		"returns error for nonexistent language",
+		{ skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 },
+		() => {
+			const binary = "ast-grep";
+			try {
+				const stdout = execSync(
+					`${binary} scan --pattern 'console.log($A)' --json=stream --lang xyz`,
+					{
+						encoding: "utf-8",
+						stdio: "pipe",
+						timeout: 10_000,
+					},
+				);
+				// If it somehow succeeds, that's unexpected but we don't fail
+				assert.ok(true);
+			} catch (e: unknown) {
+				const err = e as { stderr?: string; stdout?: string; status?: number };
+				// Expect error for unsupported language
+				assert.ok(err.stderr || err.status !== 0, "Expected error for unsupported language");
+			}
+		},
+	);
 });
