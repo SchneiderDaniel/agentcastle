@@ -240,8 +240,8 @@ export default function (pi: ExtensionAPI): void {
 	}
 
 	// Reload patterns on /reload
-	pi.on("resources_discover", () => {
-		entries = loadPiIgnore(process.cwd());
+	pi.on("resources_discover", (_event, ctx) => {
+		entries = loadPiIgnore(ctx.cwd);
 	});
 
 	// Tools that take a direct path parameter
