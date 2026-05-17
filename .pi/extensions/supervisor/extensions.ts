@@ -18,6 +18,9 @@ export const CONTEXT_INFO_EXTENSION = ".pi/extensions/context-info.ts";
  * - If extensions field is missing or empty, return no extensions.
  * - Context-info is NOT auto-injected — it's a TUI extension (footer, widgets,
  *   telemetry) that adds noise to stderr in --mode json subprocess agents.
+ *   Reason: pi's takeOverStdout() redirects process.stdout.write → stderr
+ *   in non-interactive modes, so any console.log from extensions ends up
+ *   in stderr where the supervisor captures it as error output.
  *   Agents that want context-info must declare it explicitly.
  */
 export function resolveExtensions(extensionsRaw: string | undefined): string[] {
