@@ -1,8 +1,8 @@
 /**
- * Tests for .pi/extensions/ask-user.ts — Free-text mode + CSV logging
+ * Tests for .pi/extensions/ask-user/ — CSV logging + schema shape
  *
- * Tests the RFC 4180 CSV escaping helper, the CSV append logic, and
- * verifies module exports via structural import.
+ * Tests the RFC 4180 CSV escaping helper (semicolon-separated), CSV append
+ * logic, and structural schema shape.
  *
  * Run with:
  *   node --experimental-strip-types --test test/ask-user.test.mts
@@ -15,32 +15,35 @@ import os from "node:os";
 import { describe, it, beforeEach, afterEach } from "node:test";
 
 // ---------------------------------------------------------------------------
-// Helpers under test — duplicated from ask-user.ts (not exported)
+// Helpers under test — duplicated from .pi/extensions/ask-user/csv-logger.ts
+// (Project convention: tests duplicate pure functions to avoid runtime module
+//  resolution issues with node --experimental-strip-types + .ts imports.)
 // ---------------------------------------------------------------------------
 
 /**
  * Escape a single CSV field per RFC 4180.
- * Fields containing commas, double quotes, or newlines are enclosed in
- * double quotes; internal double quotes are doubled.
+ * Fields containing semicolons, double quotes, or CRLF are enclosed in
+ * double quotes; internal double quotes are doubled ("").
  */
 function escapeCsvField(s: string): string {
-	if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
+	if (s.includes('"') || s.includes(";") || s.includes("\n") || s.includes("\r")) {
 		return `"${s.replace(/"/g, '""')}"`;
 	}
 	return s;
 }
 
 /**
- * Build a CSV row from header-name→value map.
- * Columns are ordered: timestamp, question, answer.
+ * Build a single CSV row for a Q&A entry.
+ * Columns: datetime; question; answer. Terminated with \n.
  */
 function toCsvRow(timestamp: string, question: string, answer: string): string {
-	return `${escapeCsvField(timestamp)},${escapeCsvField(question)},${escapeCsvField(answer)}\n`;
+	return `${escapeCsvField(timestamp)};${escapeCsvField(question)};${escapeCsvField(answer)}\n`;
 }
 
 /**
- * Append one Q&A entry to .pi/context/qna.csv.
- * Creates directory and file if missing. Errors are silently swallowed.
+ * Append one Q&A entry to .pi/context/qna.csv (semicolon-separated).
+ * Creates the directory and file if missing. Errors are silently swallowed
+ * (best-effort per R3).
  */
 async function appendQnaEntry(
 	projectDir: string,
@@ -59,19 +62,19 @@ async function appendQnaEntry(
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests: escapeCsvField
+// Unit tests: escapeCsvField with semicolons
 // ---------------------------------------------------------------------------
 
-describe("escapeCsvField (RFC 4180)", () => {
+describe("escapeCsvField (RFC 4180, semicolon-separated)", () => {
 	it("passes through plain text without quotes", () => {
 		assert.strictEqual(escapeCsvField("hello"), "hello");
 		assert.strictEqual(escapeCsvField("keep_as_is"), "keep_as_is");
 		assert.strictEqual(escapeCsvField("123"), "123");
 	});
 
-	it("wraps field with commas in double quotes", () => {
-		assert.strictEqual(escapeCsvField("a,b"), '"a,b"');
-		assert.strictEqual(escapeCsvField("1,2,3"), '"1,2,3"');
+	it("wraps field with semicolons in double quotes", () => {
+		assert.strictEqual(escapeCsvField("a;b"), '"a;b"');
+		assert.strictEqual(escapeCsvField("1;2;3"), '"1;2;3"');
 	});
 
 	it("wraps field with double quotes and doubles internal quotes", () => {
@@ -87,9 +90,9 @@ describe("escapeCsvField (RFC 4180)", () => {
 		assert.strictEqual(escapeCsvField("line1\r\nline2"), '"line1\r\nline2"');
 	});
 
-	it("handles combination of commas, quotes, and newlines", () => {
-		const input = 'a,b "c"\nd';
-		const expected = '"a,b ""c""\nd"';
+	it("handles combination of semicolons, quotes, and newlines", () => {
+		const input = 'a;b "c"\nd';
+		const expected = '"a;b ""c""\nd"';
 		assert.strictEqual(escapeCsvField(input), expected);
 	});
 
@@ -107,22 +110,15 @@ describe("escapeCsvField (RFC 4180)", () => {
 // ---------------------------------------------------------------------------
 
 describe("toCsvRow", () => {
-	it("produces correct CSV line with three columns", () => {
+	it("produces correct CSV line with three columns (semicolons)", () => {
 		const row = toCsvRow("2026-05-15T19:00:00.000Z", "What is your name?", "Alice");
-		assert.strictEqual(row, "2026-05-15T19:00:00.000Z,What is your name?,Alice\n");
+		assert.strictEqual(row, "2026-05-15T19:00:00.000Z;What is your name?;Alice\n");
 	});
 
 	it("escapes fields with special characters", () => {
-		const row = toCsvRow(
-			"2026-05-15T19:00:00.000Z",
-			'Is "this" correct?',
-			"Yes, it's fine",
-		);
-		// Answer contains a comma, so it gets quoted too
-		assert.strictEqual(
-			row,
-			'2026-05-15T19:00:00.000Z,"Is ""this"" correct?","Yes, it\'s fine"\n',
-		);
+		const row = toCsvRow("2026-05-15T19:00:00.000Z", 'Is "this" correct?', "Yes; it's fine");
+		// Answer contains a semicolon, so it gets quoted too
+		assert.strictEqual(row, '2026-05-15T19:00:00.000Z;"Is ""this"" correct?";"Yes; it\'s fine"\n');
 	});
 });
 
@@ -166,27 +162,17 @@ describe("appendQnaEntry (real I/O)", () => {
 		assert.strictEqual(lines.length, 2, "Should have exactly 2 rows");
 	});
 
-	it("escapes commas in question/answer correctly", async () => {
-		await appendQnaEntry(
-			tmpDir,
-			"2026-05-15T19:00:00.000Z",
-			"Pick A, B, or C",
-			"A, definitely A",
-		);
+	it("escapes semicolons in question/answer correctly", async () => {
+		await appendQnaEntry(tmpDir, "2026-05-15T19:00:00.000Z", "Pick A; B; or C", "A; definitely A");
 
 		const csvPath = path.join(tmpDir, ".pi", "context", "qna.csv");
 		const content = fs.readFileSync(csvPath, "utf-8");
-		assert.ok(content.includes('"Pick A, B, or C"'), "Comma in question should be quoted");
-		assert.ok(content.includes('"A, definitely A"'), "Comma in answer should be quoted");
+		assert.ok(content.includes('"Pick A; B; or C"'), "Semicolon in question should be quoted");
+		assert.ok(content.includes('"A; definitely A"'), "Semicolon in answer should be quoted");
 	});
 
 	it("escapes double quotes in question/answer correctly", async () => {
-		await appendQnaEntry(
-			tmpDir,
-			"2026-05-15T19:00:00.000Z",
-			'She said "hello"',
-			'He replied "hi"',
-		);
+		await appendQnaEntry(tmpDir, "2026-05-15T19:00:00.000Z", 'She said "hello"', 'He replied "hi"');
 
 		const csvPath = path.join(tmpDir, ".pi", "context", "qna.csv");
 		const content = fs.readFileSync(csvPath, "utf-8");
@@ -209,8 +195,6 @@ describe("appendQnaEntry (real I/O)", () => {
 
 describe("ask_user schema shape", () => {
 	it("mode parameter should accept 'choice' and 'freetext' values", () => {
-		// Verify the schema definition matches expected shape
-		// This is a compile-time check via runtime assertion
 		const modeValues = ["choice", "freetext"] as const;
 		assert.ok(modeValues.includes("choice"));
 		assert.ok(modeValues.includes("freetext"));
@@ -218,14 +202,12 @@ describe("ask_user schema shape", () => {
 	});
 
 	it("options should be optional when mode is freetext", async () => {
-		// Simulates Type.Object params parsing with optional options
 		const paramsWithoutOptions = {
 			question: "Tell me about yourself",
 			mode: "freetext" as const,
 		};
 		assert.ok("question" in paramsWithoutOptions, "Question is required");
 		assert.ok("mode" in paramsWithoutOptions, "Mode is present");
-		// options is optional — this should not fail
 		const hasOptions = "options" in paramsWithoutOptions;
 		assert.strictEqual(hasOptions, false, "Options should be absent for freetext");
 	});

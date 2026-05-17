@@ -20,8 +20,12 @@ export function gh(args: string[]): string {
 			encoding: "utf-8",
 			timeout: 30_000,
 		}).trim();
-	} catch (err: any) {
-		const stderr = err.stderr?.toString() || err.message;
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		const stderr =
+			err instanceof Error && "stderr" in err && typeof (err as any).stderr?.toString === "function"
+				? (err as any).stderr.toString()
+				: msg;
 		throw new Error(`gh ${args[0]} failed: ${stderr}`);
 	}
 }
@@ -272,8 +276,9 @@ export async function checkBlockedByDependencies(
 	let response: GhTimelineResponse;
 	try {
 		response = ghGraphQL(query) as GhTimelineResponse;
-	} catch (err: any) {
-		throw new Error(`Failed to query GitHub for dependencies: ${err.message}`);
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		throw new Error(`Failed to query GitHub for dependencies: ${msg}`);
 	}
 
 	return parseTimelineResponse(response);

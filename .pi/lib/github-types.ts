@@ -5,7 +5,7 @@
  * Used by supervisor.ts for typed GitHub API responses.
  */
 
-import { isObject } from "./types.js";
+import { isObject } from "./types.ts";
 
 // ─── GitHub Issue ────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@
 // Resolve --extension CLI flags from agent frontmatter.
 // Discover tools from registered extensions.
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -40,15 +40,16 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 
 	const result: string[] = [];
 	for (const ext of extensions) {
-		const tsPath = `.pi/extensions/${ext}.ts`;
-		const dirPath = `.pi/extensions/${ext}`;
-		// Prefer directory-based extension (index.ts) over .ts file
-		const dirIndexPath = `${dirPath}/index.ts`;
-		const fullDirPath = resolvePath(process.cwd(), dirPath);
-		if (existsSync(fullDirPath) && statSync(fullDirPath).isDirectory()) {
-			result.push("--extension", dirIndexPath);
+		// Try single-file extension first, then directory-based
+		const filePath = `.pi/extensions/${ext}.ts`;
+		const dirPath = `.pi/extensions/${ext}/index.ts`;
+		if (existsSync(resolvePath(process.cwd(), filePath))) {
+			result.push("--extension", filePath);
+		} else if (existsSync(resolvePath(process.cwd(), dirPath))) {
+			result.push("--extension", dirPath);
 		} else {
-			result.push("--extension", tsPath);
+			// Default to single-file path (will fail at runtime, but preserves existing behavior)
+			result.push("--extension", filePath);
 		}
 	}
 
@@ -59,11 +60,12 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 
 let _extToolsCache: Map<string, string[]> | null = null;
 
-export function discoverExtensionTools(): Map<string, string[]> {
+export function discoverExtensionTools(cwd?: string): Map<string, string[]> {
 	if (_extToolsCache) return _extToolsCache;
 
 	const map = new Map<string, string[]>();
-	const extDir = resolvePath(process.cwd(), ".pi/extensions");
+	const baseCwd = cwd || process.cwd();
+	const extDir = resolvePath(baseCwd, ".pi/extensions");
 
 	let files: string[];
 	try {
@@ -120,7 +122,11 @@ export function discoverExtensionTools(): Map<string, string[]> {
  * Merge agent-declared tools with tools from agent's extensions.
  * Returns a comma-separated string for --tools flag.
  */
-export function resolveTools(agentTools: string, extNamesRaw: string | undefined): string {
+export function resolveTools(
+	agentTools: string,
+	extNamesRaw: string | undefined,
+	cwd?: string,
+): string {
 	const toolSet = new Set(
 		agentTools
 			.split(",")
@@ -129,7 +135,7 @@ export function resolveTools(agentTools: string, extNamesRaw: string | undefined
 	);
 
 	if (extNamesRaw && extNamesRaw.trim()) {
-		const extToolsMap = discoverExtensionTools();
+		const extToolsMap = discoverExtensionTools(cwd);
 		const extNames = extNamesRaw
 			.split(",")
 			.map((s) => s.trim())

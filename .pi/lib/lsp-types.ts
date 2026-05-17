@@ -49,7 +49,7 @@ export interface LspInitializeResult {
 
 // ─── Type guards ─────────────────────────────────────────────────────
 
-import { isObject } from "./types.js";
+import { isObject } from "./types.ts";
 
 export function isLspDiagnosticData(obj: unknown): obj is LspDiagnosticData {
 	return isObject(obj) && isObject(obj.range) && typeof obj.message === "string";
