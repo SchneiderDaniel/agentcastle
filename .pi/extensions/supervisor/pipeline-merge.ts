@@ -1,0 +1,149 @@
+// ─── Pipeline Merge ──────────────────────────────────────────────
+// Post-pipeline merge conflict orchestration.
+// Extracted from pipeline.ts to keep that file under 300 lines.
+
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { SupervisorConfig } from "./types";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { generateBranchName } from "./agent-task";
+import { tryAutoMerge } from "./merge";
+import { checkPrConflicts } from "./github";
+import { parseAgentFile } from "./agent-loader";
+import { runAgent } from "./agent-runner";
+import { resolveTimeoutMs } from "./config";
+
+/**
+ * Handle post-pipeline merge conflict detection and resolution.
+ * Called when pipeline reaches "Done" status.
+ */
+export async function handlePostPipelineMerge(
+	issueNum: number,
+	issueTitle: string,
+	loopStatus: string,
+	config: SupervisorConfig,
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+): Promise<void> {
+	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+
+	ctx.ui.setStatus("supervisor", "Checking PR for merge conflicts...");
+	const conflictInfo = await checkPrConflicts(branch, config.repo);
+
+	if (!conflictInfo) {
+		ctx.ui.notify("No PR found for this branch — skipping conflict check.", "info");
+		return;
+	}
+
+	if (conflictInfo.hasConflict) {
+		ctx.ui.notify(
+			`PR #${conflictInfo.number} has merge conflicts! (mergeable: ${conflictInfo.mergeable}, state: ${conflictInfo.mergeStateStatus})`,
+			"warning",
+		);
+
+		const shouldFix = await ctx.ui.confirm(
+			"Merge Conflict Detected",
+			`PR #${conflictInfo.number} (${branch}) has merge conflicts with ${conflictInfo.baseRefName}. Should I fix them?`,
+		);
+
+		if (shouldFix) {
+			const wt = `${config.worktreeBase}${branch}`;
+
+			ctx.ui.setStatus("supervisor", "Attempting auto-merge...");
+			const mergeResult = await tryAutoMerge(wt, branch, config.defaultBranch!, config.remote!, pi);
+
+			if (mergeResult.success) {
+				try {
+					execFileSync("git", ["push", config.remote!, branch], {
+						cwd: wt,
+						encoding: "utf-8",
+						timeout: 30_000,
+					});
+					ctx.ui.notify("Merge conflicts resolved and pushed!", "info");
+					pi.sendMessage({
+						customType: "supervisor",
+						content: `## ✅ Merge Conflicts Resolved\n\nPR #${conflictInfo.number} conflicts were resolved automatically and pushed.`,
+						display: true,
+					});
+				} catch (pushErr: unknown) {
+					const msg = pushErr instanceof Error ? pushErr.message : String(pushErr);
+					ctx.ui.notify(`Merge succeeded but push failed: ${msg}`, "error");
+				}
+			} else {
+				ctx.ui.notify(
+					`Auto-merge failed: ${mergeResult.message}. Dispatching developer to resolve...`,
+					"warning",
+				);
+
+				const devAgentPath = `.pi/agents/developer.md`;
+				if (existsSync(devAgentPath)) {
+					try {
+						const devAgent = parseAgentFile(devAgentPath);
+						const devTask = [
+							`## Task: Resolve Merge Conflicts`,
+							``,
+							`**Branch:** ${branch}`,
+							`**Worktree:** ${wt}`,
+							`**Base branch:** ${config.defaultBranch}`,
+							`**Conflicted files:** ${mergeResult.conflictFiles.join(", ") || "(unknown)"}`,
+							``,
+							`### Steps`,
+							`1. Enter worktree: \`cd ${wt}\``,
+							`2. Fetch base: \`git fetch ${config.remote} ${config.defaultBranch}\``,
+							`3. Merge base: \`git merge ${config.remote}/${config.defaultBranch}\``,
+							`4. Resolve conflicts in the conflicted files`,
+							`5. Stage resolved files: \`git add -A\``,
+							`6. Commit merge: \`git commit -m "fix: resolve merge conflicts for PR #${conflictInfo.number}"\``,
+							`7. Push: \`git push ${config.remote} ${branch}\``,
+							``,
+							`When done, output CONFLICTS_RESOLVED on its own line.`,
+						].join("\n");
+
+						const devTimeoutMs = resolveTimeoutMs("developer", config.agentTimeoutsMin);
+						const devResult = await runAgent(devAgent, devTask, ctx, devTimeoutMs);
+
+						pi.sendMessage({
+							customType: "supervisor",
+							content: `## Conflict Resolution: ${devResult.agentName} — ${devResult.success ? "SUCCESS" : "FAILED"}\n\n${devResult.textOutput || devResult.summaryLine}`,
+							display: true,
+							details: {
+								agentName: devResult.agentName,
+								success: devResult.success,
+								statusLabel: devResult.success ? "SUCCESS" : "FAILED",
+								toolCount: devResult.toolCount,
+								tokenCount: devResult.tokenCount,
+								durationMs: devResult.durationMs,
+								textOutput: devResult.textOutput,
+								summaryLine: devResult.summaryLine,
+								thinkingOutput: devResult.thinkingOutput,
+								hasThinking: !!devResult.thinkingOutput,
+							},
+						});
+
+						if (devResult.success) {
+							ctx.ui.notify("Developer resolved merge conflicts successfully!", "info");
+						} else {
+							ctx.ui.notify(
+								"Developer failed to resolve conflicts. Manual intervention required.",
+								"error",
+							);
+						}
+					} catch (devErr: unknown) {
+						const msg = devErr instanceof Error ? devErr.message : String(devErr);
+						ctx.ui.notify(`Failed to dispatch developer: ${msg}`, "error");
+					}
+				} else {
+					ctx.ui.notify(
+						"Developer agent not found. Cannot resolve conflicts automatically.",
+						"error",
+					);
+				}
+			}
+		}
+	} else {
+		ctx.ui.notify(
+			`PR #${conflictInfo.number} has no merge conflicts (mergeable: ${conflictInfo.mergeable}).`,
+			"info",
+		);
+	}
+}

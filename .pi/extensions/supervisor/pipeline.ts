@@ -9,9 +9,7 @@ import type {
 	ProjectItem,
 	SupervisorMessageDetails,
 } from "./types";
-import { readFileSync, existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-import { resolve as resolvePath } from "node:path";
+import { existsSync } from "node:fs";
 import { loadConfig, resolveTimeoutMs } from "./config";
 import {
 	ghJson,
@@ -23,17 +21,15 @@ import {
 	findStatusOption,
 	setItemStatus,
 	checkBlockedByDependencies,
-	checkPrConflicts,
 	filterIssueData,
 } from "./github";
 import { parseAgentFile } from "./agent-loader";
-import { buildAgentTask, generateBranchName } from "./agent-task";
+import { buildAgentTask } from "./agent-task";
 import { runAgent } from "./agent-runner";
 import { determineNextStatus } from "./status-transitions";
-import { tryAutoMerge } from "./merge";
-import { determineLspPreAuditDecision, getRunPreAudit } from "./lsp-decisions";
-import { determineTscCheckpointDecision, getRunTscCheckpoint } from "./tsc-decisions";
 import { countRejections } from "./formatting";
+import { runTscAndLspAudit } from "./pipeline-audit";
+import { handlePostPipelineMerge } from "./pipeline-merge";
 
 export function registerSupervisorCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("supervisor", {
@@ -88,8 +84,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					fields = getProjectFields(config.projectNumber);
 					items = getProjectItems(config.projectNumber);
 					projectId = getProjectId(config.projectNumber);
-				} catch (err: any) {
-					const msg = err.message || String(err);
+				} catch (err: unknown) {
+					const msg = err instanceof Error ? err.message : String(err);
 					if (msg.includes("missing required scopes")) {
 						ctx.ui.notify(
 							"GitHub token missing 'project' scope. Run: gh auth refresh -s project",
@@ -140,8 +136,9 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						ctx.ui.setStatus("supervisor", "");
 						return;
 					}
-				} catch (err: any) {
-					ctx.ui.notify(`Dependency check failed: ${err.message}`, "error");
+				} catch (err: unknown) {
+					const msg = err instanceof Error ? err.message : String(err);
+					ctx.ui.notify(`Dependency check failed: ${msg}`, "error");
 					ctx.ui.setStatus("supervisor", "");
 					return;
 				}
@@ -223,8 +220,9 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					let agent;
 					try {
 						agent = parseAgentFile(agentPath);
-					} catch (err: any) {
-						ctx.ui.notify(`Failed to parse agent: ${err.message}`, "error");
+					} catch (err: unknown) {
+						const msg = err instanceof Error ? err.message : String(err);
+						ctx.ui.notify(`Failed to parse agent: ${msg}`, "error");
 						break;
 					}
 
@@ -300,157 +298,19 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					let effectiveNextStatus = nextStatus;
 					if (nextStatus === "Audit") {
 						try {
-							// Step 1: TSC checkpoint (Tier 2) — blocks if errors found
-							const runTscCheckpointFn = await getRunTscCheckpoint();
-							if (runTscCheckpointFn) {
-								const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
-								const wt = `${config.worktreeBase!}${branch}`;
-
-								ctx.ui.setStatus("supervisor", "Running TSC checkpoint...");
-								const tscResult = await runTscCheckpointFn(pi, wt);
-								const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
-
-								if (tscDecision.nextStatus !== "Audit") {
-									// TSC has errors — stay in Implementation, send followUp, skip LSP
-									effectiveNextStatus = tscDecision.nextStatus;
-									if (tscDecision.note) {
-										ctx.ui.notify(tscDecision.note, "warning");
-										pi.sendUserMessage?.(tscDecision.note, { deliverAs: "followUp" });
-									}
-									// Skip LSP audit — pointless if tsc has errors
-								} else {
-									// TSC clean — proceed to LSP pre-audit
-									if (tscDecision.note) {
-										ctx.ui.notify(tscDecision.note, "info");
-									}
-
-									// Step 2: LSP pre-audit (Tier 3 — existing)
-									const runPreAuditFn = await getRunPreAudit();
-									let preAuditResult: any = null;
-									let hasModifiedFiles = true;
-									let retryCount = 0;
-
-									if (runPreAuditFn) {
-										try {
-											const diffOut = execFileSync(
-												"git",
-												["diff", config.defaultBranch!, "--name-only"],
-												{
-													cwd: resolvePath(wt),
-													encoding: "utf-8",
-													timeout: 10_000,
-												},
-											).trim();
-											hasModifiedFiles = diffOut.length > 0;
-										} catch {
-											hasModifiedFiles = false;
-										}
-
-										const entries = ctx.sessionManager.getEntries();
-										retryCount = 0;
-										for (const e of entries) {
-											if (
-												e.type === "custom" &&
-												e.customType === "lsp-audit-retry" &&
-												(e.data as any)?.issueNum === issueNum
-											) {
-												retryCount++;
-											}
-										}
-
-										if (hasModifiedFiles) {
-											ctx.ui.setStatus("supervisor", "Running LSP pre-audit diagnostics...");
-											preAuditResult = await runPreAuditFn(
-												{
-													issueNum,
-													worktreePath: wt,
-													defaultBranch: config.defaultBranch!,
-													repo: config.repo,
-												},
-												pi,
-												ctx,
-											);
-										}
-									}
-
-									const decision = determineLspPreAuditDecision(
-										nextStatus,
-										preAuditResult,
-										retryCount,
-										hasModifiedFiles,
-									);
-
-									effectiveNextStatus = decision.nextStatus;
-									if (decision.note) {
-										ctx.ui.notify(decision.note, "info");
-									}
-								}
-							} else {
-								// TSC checkpoint not available — skip to LSP pre-audit
-								const runPreAuditFn = await getRunPreAudit();
-								let preAuditResult: any = null;
-								let hasModifiedFiles = true;
-								let retryCount = 0;
-
-								if (runPreAuditFn) {
-									const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
-									const wt = `${config.worktreeBase!}${branch}`;
-									try {
-										const diffOut = execFileSync(
-											"git",
-											["diff", config.defaultBranch!, "--name-only"],
-											{
-												cwd: resolvePath(wt),
-												encoding: "utf-8",
-												timeout: 10_000,
-											},
-										).trim();
-										hasModifiedFiles = diffOut.length > 0;
-									} catch {
-										hasModifiedFiles = false;
-									}
-
-									const entries = ctx.sessionManager.getEntries();
-									retryCount = 0;
-									for (const e of entries) {
-										if (
-											e.type === "custom" &&
-											e.customType === "lsp-audit-retry" &&
-											(e.data as any)?.issueNum === issueNum
-										) {
-											retryCount++;
-										}
-									}
-
-									if (hasModifiedFiles) {
-										ctx.ui.setStatus("supervisor", "Running LSP pre-audit diagnostics...");
-										preAuditResult = await runPreAuditFn(
-											{
-												issueNum,
-												worktreePath: wt,
-												defaultBranch: config.defaultBranch!,
-												repo: config.repo,
-											},
-											pi,
-											ctx,
-										);
-									}
-								}
-
-								const decision = determineLspPreAuditDecision(
-									nextStatus,
-									preAuditResult,
-									retryCount,
-									hasModifiedFiles,
-								);
-
-								effectiveNextStatus = decision.nextStatus;
-								if (decision.note) {
-									ctx.ui.notify(decision.note, "info");
-								}
-							}
-						} catch (auditErr: any) {
-							ctx.ui.notify(`TSC/LSP pre-audit error: ${auditErr.message}`, "warning");
+							const auditResult = await runTscAndLspAudit(
+								issueNum,
+								issueTitle,
+								config,
+								agentName,
+								loopFilteredData,
+								pi,
+								ctx,
+							);
+							effectiveNextStatus = auditResult.nextStatus;
+						} catch (auditErr: unknown) {
+							const msg = auditErr instanceof Error ? auditErr.message : String(auditErr);
+							ctx.ui.notify(`TSC/LSP pre-audit error: ${msg}`, "warning");
 						}
 					}
 
@@ -466,8 +326,9 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							`Issue #${issueNum} moved: ${loopStatus} → ${effectiveNextStatus}`,
 							"info",
 						);
-					} catch (err: any) {
-						ctx.ui.notify(`Failed to update status: ${err.message}`, "error");
+					} catch (err: unknown) {
+						const msg = err instanceof Error ? err.message : String(err);
+						ctx.ui.notify(`Failed to update status: ${msg}`, "error");
 						break;
 					}
 
@@ -476,127 +337,13 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 
 				// ── Post-pipeline: check for PR merge conflicts ──
 				if (loopStatus.toLowerCase() === "done") {
-					const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
-
-					ctx.ui.setStatus("supervisor", "Checking PR for merge conflicts...");
-					const conflictInfo = await checkPrConflicts(branch, config.repo);
-
-					if (conflictInfo && conflictInfo.hasConflict) {
-						ctx.ui.notify(
-							`PR #${conflictInfo.number} has merge conflicts! (mergeable: ${conflictInfo.mergeable}, state: ${conflictInfo.mergeStateStatus})`,
-							"warning",
-						);
-
-						const shouldFix = await ctx.ui.confirm(
-							"Merge Conflict Detected",
-							`PR #${conflictInfo.number} (${branch}) has merge conflicts with ${conflictInfo.baseRefName}. Should I fix them?`,
-						);
-
-						if (shouldFix) {
-							const wt = `${config.worktreeBase}${branch}`;
-
-							ctx.ui.setStatus("supervisor", "Attempting auto-merge...");
-							const mergeResult = tryAutoMerge(wt, branch, config.defaultBranch!, config.remote!);
-
-							if (mergeResult.success) {
-								try {
-									execFileSync("git", ["push", config.remote!, branch], {
-										cwd: wt,
-										encoding: "utf-8",
-										timeout: 30_000,
-									});
-									ctx.ui.notify("Merge conflicts resolved and pushed!", "info");
-									pi.sendMessage({
-										customType: "supervisor",
-										content: `## ✅ Merge Conflicts Resolved\n\nPR #${conflictInfo.number} conflicts were resolved automatically and pushed.`,
-										display: true,
-									});
-								} catch (pushErr: any) {
-									ctx.ui.notify(`Merge succeeded but push failed: ${pushErr.message}`, "error");
-								}
-							} else {
-								ctx.ui.notify(
-									`Auto-merge failed: ${mergeResult.message}. Dispatching developer to resolve...`,
-									"warning",
-								);
-
-								const devAgentPath = `.pi/agents/developer.md`;
-								if (existsSync(devAgentPath)) {
-									try {
-										const devAgent = parseAgentFile(devAgentPath);
-										const devTask = [
-											`## Task: Resolve Merge Conflicts`,
-											``,
-											`**Branch:** ${branch}`,
-											`**Worktree:** ${wt}`,
-											`**Base branch:** ${config.defaultBranch}`,
-											`**Conflicted files:** ${mergeResult.conflictFiles.join(", ") || "(unknown)"}`,
-											``,
-											`### Steps`,
-											`1. Enter worktree: \`cd ${wt}\``,
-											`2. Fetch base: \`git fetch ${config.remote} ${config.defaultBranch}\``,
-											`3. Merge base: \`git merge ${config.remote}/${config.defaultBranch}\``,
-											`4. Resolve conflicts in the conflicted files`,
-											`5. Stage resolved files: \`git add -A\``,
-											`6. Commit merge: \`git commit -m "fix: resolve merge conflicts for PR #${conflictInfo.number}"\``,
-											`7. Push: \`git push ${config.remote} ${branch}\``,
-											``,
-											`When done, output CONFLICTS_RESOLVED on its own line.`,
-										].join("\n");
-
-										const devTimeoutMs = resolveTimeoutMs("developer", config.agentTimeoutsMin);
-										const devResult = await runAgent(devAgent, devTask, ctx, devTimeoutMs);
-
-										pi.sendMessage({
-											customType: "supervisor",
-											content: `## Conflict Resolution: ${devResult.agentName} — ${devResult.success ? "SUCCESS" : "FAILED"}\n\n${devResult.textOutput || devResult.summaryLine}`,
-											display: true,
-											details: {
-												agentName: devResult.agentName,
-												success: devResult.success,
-												statusLabel: devResult.success ? "SUCCESS" : "FAILED",
-												toolCount: devResult.toolCount,
-												tokenCount: devResult.tokenCount,
-												durationMs: devResult.durationMs,
-												textOutput: devResult.textOutput,
-												summaryLine: devResult.summaryLine,
-												thinkingOutput: devResult.thinkingOutput,
-												hasThinking: !!devResult.thinkingOutput,
-											},
-										});
-
-										if (devResult.success) {
-											ctx.ui.notify("Developer resolved merge conflicts successfully!", "info");
-										} else {
-											ctx.ui.notify(
-												"Developer failed to resolve conflicts. Manual intervention required.",
-												"error",
-											);
-										}
-									} catch (devErr: any) {
-										ctx.ui.notify(`Failed to dispatch developer: ${devErr.message}`, "error");
-									}
-								} else {
-									ctx.ui.notify(
-										"Developer agent not found. Cannot resolve conflicts automatically.",
-										"error",
-									);
-								}
-							}
-						}
-					} else if (conflictInfo) {
-						ctx.ui.notify(
-							`PR #${conflictInfo.number} has no merge conflicts (mergeable: ${conflictInfo.mergeable}).`,
-							"info",
-						);
-					} else {
-						ctx.ui.notify("No PR found for this branch — skipping conflict check.", "info");
-					}
+					await handlePostPipelineMerge(issueNum, issueTitle, loopStatus, config, pi, ctx);
 				}
 
 				ctx.ui.setStatus("supervisor", "");
-			} catch (err: any) {
-				ctx.ui.notify(`Supervisor error: ${err.message}`, "error");
+			} catch (err: unknown) {
+				const msg = err instanceof Error ? err.message : String(err);
+				ctx.ui.notify(`Supervisor error: ${msg}`, "error");
 				ctx.ui.setStatus("supervisor", "");
 			}
 		},
