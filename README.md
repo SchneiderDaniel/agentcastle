@@ -1,4 +1,4 @@
-# Agentcastle: The Pi Stack
+# Agentcastle: The Pi Stack (In Development)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.74.0-6e3bf0)](https://pi.dev)
