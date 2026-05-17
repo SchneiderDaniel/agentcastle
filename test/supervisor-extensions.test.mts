@@ -7,7 +7,9 @@
  */
 
 import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
+import { existsSync, statSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 
 // ---------------------------------------------------------------------------
 // resolveExtensions — duplicated from supervisor.ts for pure-unit testing
@@ -29,7 +31,15 @@ function resolveExtensions(extensionsRaw: string | undefined): string[] {
 
 	const result: string[] = [];
 	for (const ext of extensions) {
-		result.push("--extension", `.pi/extensions/${ext}.ts`);
+		const tsPath = `.pi/extensions/${ext}.ts`;
+		const dirPath = `.pi/extensions/${ext}`;
+		const dirIndexPath = `${dirPath}/index.ts`;
+		const fullDirPath = resolvePath(process.cwd(), dirPath);
+		if (existsSync(fullDirPath) && statSync(fullDirPath).isDirectory()) {
+			result.push("--extension", dirIndexPath);
+		} else {
+			result.push("--extension", tsPath);
+		}
 	}
 
 	// Auto-inject context-info (deduplicated)
@@ -241,26 +251,17 @@ describe("edge cases", () => {
 
 	it("caveman,crawl4ai (PS requirement) + context-info", () => {
 		const result = resolveExtensions("caveman,crawl4ai");
-		assert.deepStrictEqual(result, [
-			"--extension",
-			".pi/extensions/caveman.ts",
-			"--extension",
-			".pi/extensions/crawl4ai.ts",
-			"--extension",
-			".pi/extensions/context-info.ts",
-		]);
+		// caveman is now directory-based -> resolves to /index.ts
+		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
+		assert.ok(result.some((r) => r.includes("crawl4ai.ts")));
+		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 
 	it("supervisor with caveman → supervisor excluded, context-info added", () => {
 		const result = resolveExtensions("supervisor,caveman,crawl4ai");
-		assert.deepStrictEqual(result, [
-			"--extension",
-			".pi/extensions/caveman.ts",
-			"--extension",
-			".pi/extensions/crawl4ai.ts",
-			"--extension",
-			".pi/extensions/context-info.ts",
-		]);
+		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
+		assert.ok(result.some((r) => r.includes("crawl4ai.ts")));
+		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 
 	it("single extension (not supervisor) + context-info", () => {

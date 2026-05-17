@@ -2,7 +2,7 @@
 // Resolve --extension CLI flags from agent frontmatter.
 // Discover tools from registered extensions.
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -75,10 +75,24 @@ export function discoverExtensionTools(cwd?: string): Map<string, string[]> {
 		return map;
 	}
 
-	for (const file of files) {
-		if (!file.endsWith(".ts")) continue;
-		const basename = file.replace(/\.ts$/, "");
-		const filePath = resolvePath(extDir, file);
+	const entries = files.filter((f) => f.endsWith(".ts") || !f.includes("."));
+
+	for (const entry of entries) {
+		const entryPath = resolvePath(extDir, entry);
+
+		// Handle subdirectory extension (index.ts)
+		let filePath: string;
+		let basename: string;
+		if (entry.endsWith(".ts")) {
+			basename = entry.replace(/\.ts$/, "");
+			filePath = entryPath;
+		} else if (statSync(entryPath).isDirectory()) {
+			basename = entry;
+			filePath = resolvePath(entryPath, "index.ts");
+			if (!existsSync(filePath)) continue;
+		} else {
+			continue;
+		}
 
 		let content: string;
 		try {
