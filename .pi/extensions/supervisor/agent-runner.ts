@@ -7,7 +7,12 @@ import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./t
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { resolveTools, resolveExtensions } from "./extensions";
-import { formatDuration, extractSummaryLine, formatTokens } from "./formatting";
+import {
+	formatDuration,
+	extractSummaryLine,
+	formatTokens,
+	buildSubagentStatusLine,
+} from "./formatting";
 import { resolveTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import {
 	processJsonLine,
@@ -101,28 +106,19 @@ export async function runAgent(
 				flushTimer = null;
 			}
 			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName));
-			const now = Date.now();
-			const parts: string[] = [];
-			parts.push(`⏱ ${formatDuration(now - state.startedAt)}`);
-			if (state.tokenCount > 0) {
-				let tokenStr = `${formatTokens(state.tokenCount)} tokens`;
-				// Color token count based on context window % thresholds (same as main footer)
-				if (
-					state.contextInfoReceived &&
-					state.contextWindow !== undefined &&
-					state.contextWindow > 0
-				) {
-					const pct = (state.tokenCount / state.contextWindow) * 100;
-					if (pct > 90) {
-						tokenStr = `${ctx.ui.theme.fg("error", formatTokens(state.tokenCount))} tokens`;
-					} else if (pct > 70) {
-						tokenStr = `${ctx.ui.theme.fg("warning", formatTokens(state.tokenCount))} tokens`;
-					}
-				}
-				parts.push(`📊 ${tokenStr}`);
-			}
-			if (state.toolCount > 0) parts.push(`🔧 ${state.toolCount} tools`);
-			ctx.ui.setStatus("supervisor", `subagent: ${agentName}  ${parts.join(" · ")}`);
+			ctx.ui.setStatus(
+				"supervisor",
+				buildSubagentStatusLine(
+					agentName,
+					state.startedAt,
+					state.tokenCount,
+					state.toolCount,
+					state.contextInfoReceived,
+					state.contextWindow,
+					Date.now(),
+					ctx.ui.theme,
+				),
+			);
 		};
 
 		const scheduleFlush = () => {

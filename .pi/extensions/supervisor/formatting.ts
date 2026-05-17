@@ -74,6 +74,50 @@ export function extractSummaryLine(
 	return success ? `${agentName} completed` : `${agentName} failed`;
 }
 
+// ─── Subagent status line builder ──────────────────────────────────
+// Builds the status string for ctx.ui.setStatus("supervisor", ...) with
+// subagent prefix and token count colored by context window % thresholds.
+
+export function buildSubagentStatusLine(
+	agentName: string,
+	startedAt: number,
+	tokenCount: number,
+	toolCount: number,
+	contextInfoReceived: boolean,
+	contextWindow: number | undefined,
+	now: number,
+	theme?: { fg: (color: string, text: string) => string },
+): string {
+	const parts: string[] = [];
+	const durationMs = now - startedAt;
+	parts.push(`\u23f1 ${formatDuration(durationMs)}`);
+
+	if (tokenCount > 0) {
+		let tokenStr = `${formatTokens(tokenCount)} tokens`;
+		// Color token count based on context window % thresholds (same as main footer)
+		if (contextInfoReceived && contextWindow !== undefined && contextWindow > 0) {
+			const pct = (tokenCount / contextWindow) * 100;
+			if (pct > 90 && theme) {
+				tokenStr = `${theme.fg("error", formatTokens(tokenCount))} tokens`;
+			} else if (pct > 70 && theme) {
+				tokenStr = `${theme.fg("warning", formatTokens(tokenCount))} tokens`;
+			}
+		}
+		parts.push(`\ud83d\udcca ${tokenStr}`);
+	}
+
+	if (toolCount > 0) parts.push(`\ud83d\udd27 ${toolCount} tools`);
+
+	return `subagent: ${agentName}  ${parts.join(" \u00b7 ")}`;
+}
+
+// ─── Footer extension statuses joiner ──────────────────────────────
+// Joins extension statuses with pipe separator for visual distinction.
+
+export function joinExtensionStatuses(statuses: string[]): string {
+	return statuses.join(" | ");
+}
+
 export function countRejections(comments: any[]): number {
 	let count = 0;
 	for (let i = comments.length - 1; i >= 0; i--) {

@@ -7,75 +7,12 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-
-// ---------------------------------------------------------------------------
-// Pure function: buildSubagentStatusLine
-// Extracted from agent-runner.ts flushWidget() for unit testing.
-// Returns the status string passed to ctx.ui.setStatus("supervisor", ...).
-// ---------------------------------------------------------------------------
-
-function buildSubagentStatusLine(
-	agentName: string,
-	startedAt: number,
-	tokenCount: number,
-	toolCount: number,
-	contextInfoReceived: boolean,
-	contextWindow: number | undefined,
-	now: number,
-	theme?: { fg: (color: string, text: string) => string },
-): string {
-	const parts: string[] = [];
-	const durationMs = now - startedAt;
-	parts.push(`⏱ ${formatDuration(durationMs)}`);
-
-	if (tokenCount > 0) {
-		let tokenStr = `${formatTokens(tokenCount)} tokens`;
-		// Color token count based on context window usage
-		if (contextInfoReceived && contextWindow !== undefined && contextWindow > 0) {
-			const pct = (tokenCount / contextWindow) * 100;
-			if (pct > 90 && theme) {
-				tokenStr = `${theme.fg("error", formatTokens(tokenCount))} tokens`;
-			} else if (pct > 70 && theme) {
-				tokenStr = `${theme.fg("warning", formatTokens(tokenCount))} tokens`;
-			} else {
-				tokenStr = `${formatTokens(tokenCount)} tokens`;
-			}
-		}
-		parts.push(`📊 ${tokenStr}`);
-	}
-
-	if (toolCount > 0) parts.push(`🔧 ${toolCount} tools`);
-
-	return `subagent: ${agentName}  ${parts.join(" · ")}`;
-}
-
-// ---------------------------------------------------------------------------
-// Pure function: joinExtensionStatuses
-// Simulates footer.js sortedStatuses.join("|") change.
-// ---------------------------------------------------------------------------
-
-function joinExtensionStatuses(statuses: string[]): string {
-	return statuses.join(" | ");
-}
-
-// ---------------------------------------------------------------------------
-// formatDuration / formatTokens duplicates (from formatting.ts)
-// ---------------------------------------------------------------------------
-
-function formatDuration(ms: number): string {
-	if (ms < 1_000) return `${ms}ms`;
-	const sec = Math.round(ms / 1_000);
-	if (sec < 60) return `${sec}s`;
-	const min = Math.floor(sec / 60);
-	const remainSec = sec % 60;
-	return `${min}m ${remainSec}s`;
-}
-
-function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-	return String(n);
-}
+import {
+	buildSubagentStatusLine,
+	joinExtensionStatuses,
+	formatDuration,
+	formatTokens,
+} from "../.pi/extensions/supervisor/formatting.ts";
 
 // ---------------------------------------------------------------------------
 // Mock theme for testing color thresholds
@@ -115,7 +52,6 @@ describe("R1: Pipe separator between extension statuses", () => {
 	});
 
 	it("AC3: inner status formatting preserved (no stripping of internal spaces)", () => {
-		// Statuses may contain internal spaces like "caveman: LITE" or "subagent: developer  ⏱ 4m23s ..."
 		const result = joinExtensionStatuses(["caveman: LITE", "subagent: dev"]);
 		assert.ok(result.includes("caveman: LITE"));
 		assert.ok(result.includes("subagent: dev"));
@@ -129,7 +65,6 @@ describe("R1: Pipe separator between extension statuses", () => {
 
 	it("only pipe separator changed — no other formatting changes", () => {
 		const result = joinExtensionStatuses(["caveman: LITE"]);
-		// Should not add any extra padding beyond what was already there
 		assert.strictEqual(result, "caveman: LITE");
 	});
 });
@@ -404,5 +339,23 @@ describe("Integration: combined footer line construction", () => {
 	it("three extensions all separated by pipe", () => {
 		const result = joinExtensionStatuses(["a", "b", "c"]);
 		assert.strictEqual(result, "a | b | c");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests — formatTokens and formatDuration re-exports work
+// ---------------------------------------------------------------------------
+
+describe("formatting.ts re-exports", () => {
+	it("formatTokens exports from formatting.ts", () => {
+		assert.strictEqual(formatTokens(500), "500");
+		assert.strictEqual(formatTokens(1500), "1.5K");
+		assert.strictEqual(formatTokens(1_500_000), "1.5M");
+	});
+
+	it("formatDuration exports from formatting.ts", () => {
+		assert.strictEqual(formatDuration(500), "500ms");
+		assert.strictEqual(formatDuration(1500), "2s");
+		assert.strictEqual(formatDuration(120_000), "2m 0s");
 	});
 });
