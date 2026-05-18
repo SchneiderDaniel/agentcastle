@@ -161,9 +161,20 @@ pi
   - [Why extensions instead of MCP?](#why-extensions-instead-of-mcp)
   - [Extensions](#extensions)
   - [Agent Definitions](#agent-definitions)
+  - [Prompt Templates](#prompt-templates)
+  - [Skills](#skills)
+- [🤖 Supervisor — Multi-Agent Pipeline](#supervisor--multi-agent-pipeline)
+  - [Pipeline Flow](#pipeline-flow)
+  - [Agent Deep Dive](#agent-deep-dive)
+  - [Git Worktree Lifecycle](#git-worktree-lifecycle)
+  - [Submodule Strategy](#submodule-strategy)
+  - [Quality Gates](#quality-gates)
+  - [Merge Conflict Resolution](#merge-conflict-resolution)
+  - [GitHub Interaction](#github-interaction)
+  - [Configuration Reference](#configuration-reference)
+  - [Complete Walkthrough](#complete-walkthrough)
 - [📦 Daily Usage](#daily-usage)
   - [Project Setup (one-time)](#project-setup-one-time)
-  - [Running the Supervisor](#running-the-supervisor)
   - [Workflows](#workflows)
   - [Context & Templates](#context--templates)
 - [📦 Verification](#verification)
@@ -527,6 +538,427 @@ Metadata stored in `.pi/sessions/metadata.json`.
 
 ---
 
+## 🤖 Supervisor — Multi-Agent Pipeline
+
+The supervisor (`/supervisor <issue-number>`) is the heart of this harness. It takes a GitHub issue, runs it through 5 agent stages in a Kanban loop, creates git worktrees, runs quality gates, and creates pull requests — all autonomously.
+
+### Pipeline Flow
+
+```
+     ┌─────────────────────────────────────────────────────────────────────────┐
+     │                         GITHUB PROJECT BOARD                           │
+     │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐ ┌─────────┐  │
+     │  │ Research │ │Architect.│ │TestDesign│ │Implement.    │ │  Audit  │  │
+     │  │          │ │          │ │          │ │              │ │         │  │
+     │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └──────┬───────┘ └────┬────┘  │
+     │       │             │            │              │              │       │
+     └───────┼─────────────┼────────────┼──────────────┼──────────────┼───────┘
+             │             │            │              │              │
+    ┌────────▼────────┐ ┌──▼────────┐ ┌─▼───────────┐ │    ┌─────────▼──────┐
+    │  Researcher     │ │ Architect │ │ TestDesigner │ │    │   Auditor      │
+    │  crawls web     │ │ proposes  │ │ writes       │ │    │   reviews      │
+    │  for best       │ │ target    │ │ test plan    │ │    │   implements   │
+    │  practices,     │ │ architec- │ │ from archi-  │ │    │   creates PR   │
+    │  lib versions,  │ │ ture      │ │ tecture      │ │    │   or rejects   │
+    │  pitfalls       │ │           │ │              │ │    │                │
+    └────────┬────────┘ └──┬────────┘ └─┬───────────┘ │    └────────┬───────┘
+             │             │            │              │             │
+             ▼             ▼            ▼              │             ▼
+     GitHub Comment   GitHub Comment  GitHub Comment   │    GitHub Comment
+     ## Research      ## Architectu-  ## Test Plan      │    ## Audit Approved
+     Findings         re Approach                       │    + PR created
+                                                        │
+                        ┌───────────────────────────────┘
+                        │
+                        ▼
+              ┌──────────────────────┐
+              │  QUALITY GATES       │
+              │  ┌────────────────┐  │
+              │  │ TSC --noEmit   │──│──→ pass → continue
+              │  │ (tsc-checkpoint)│  │     fail → back to Implementation
+              │  └────────────────┘  │
+              │  ┌────────────────┐  │
+              │  │ LSP pre-audit  │──│──→ pass → continue
+              │  │ (lsp-auditor)  │  │     fail → back to Implementation
+              │  │                │  │     (max 3 retries)
+              │  └────────────────┘  │
+              └──────────────────────┘
+                        │
+                        ▼
+              ┌──────────────────────┐
+              │  Auditor decision    │
+              │  ┌──────────────┐    │
+              │  │ APPROVED?    │──│──→ Yes → Create PR → DONE
+              │  │              │    │     No  → back to Implementation
+              │  └──────────────┘    │
+              └──────────────────────┘
+                        │
+                        ▼
+              ┌──────────────────────┐
+              │  POST-PIPELINE       │
+              │  Check PR for        │
+              │  merge conflicts     │
+              │  Auto-merge or       │
+              │  dispatch Developer  │
+              └──────────────────────┘
+```
+
+**Loop rules:**
+- Each agent posts a structured GitHub comment on the issue
+- Supervisor reads the agent's output for a **completion marker** to know the agent finished
+- If agent times out, supervisor logs it and stops
+- Auditor can reject → sends back to Implementation (counts as 1 rejection)
+- LSP/TSC errors → sends back to Implementation (does NOT count as rejection, max 3 retries)
+- `maxRejections` (default 5) stops the loop to prevent infinite cycles
+
+---
+
+### Agent Deep Dive
+
+| # | Agent | Entry Marker | Completion Marker | Model | Tools | Thinking | Role |
+|---|-------|-------------|-------------------|-------|-------|----------|------|
+| 1 | **Researcher** | issue has status `Research` | `RESEARCH_COMPLETE` | opencode-go/deepseek-v4-flash | read, bash, structural_search, ripgrep_search | medium | Crawls 3-5 public web pages on the issue topic, synthesizes findings into a structured `## Research Findings` comment. Deduplicates: skips if comment already exists (re-run safe). Never makes recommendations — just presents facts with source URLs. |
+| 2 | **Architect** | status `Architecture` | `ARCHITECTURE_COMPLETE` | opencode-go/deepseek-v4-flash | read, bash, structural_search, ripgrep_search | high | Reads the issue body + Research Findings comment. Applies Clean Architecture (dependency rule), PEAA (layering, service layer, domain model), Philosophy of Software Design (deep modules) principles. Proposes target architecture as a GitHub comment. |
+| 3 | **TestDesigner** | status `TestDesign` | `TEST_PLAN_COMPLETE` | opencode-go/deepseek-v4-flash | read, bash, structural_search, ripgrep_search | medium | Reads the issue + Architecture comment. Writes a test plan following Clean Architecture testing discipline, PEAA responsibility-level testing, and Working Effectively with Legacy Code patterns. Posts as GitHub comment. |
+| 4 | **Developer** | status `Implementation` | `IMPLEMENTATION_COMPLETE` | opencode-go/deepseek-v4-flash | read, bash, write, edit, structural_search, ripgrep_search | low | Creates a git worktree, implements code changes, commits, pushes. Also handles submodule changes. Uses `format-on-save` extension for auto-formatting. |
+| 5 | **Auditor** | status `Audit` | `AUDIT_APPROVED` or `AUDIT_REJECTED` | opencode-go/deepseek-v4-flash | read, bash, structural_search, ripgrep_search | medium | Reviews code in worktree against architecture and test plan. Runs `git diff`. Creates PR if approved (with companion submodule PRs if needed), or rejects with specific issues listed. |
+
+**Before Auditor runs**, the supervisor runs quality gates ([see below](#quality-gates)).
+
+---
+
+### Git Worktree Lifecycle
+
+Each issue gets an **isolated git worktree**. This is critical — it prevents agents from interfering with each other and keeps `main` clean.
+
+**Branch naming convention:**
+```
+worktree-git-issue-<number>-<title-slug>
+# Example:
+worktree-git-issue-42-add-user-authentication
+```
+
+**Worktree path:**
+```
+../worktree-git-issue-<number>-<title-slug>/
+# (configurable via supervisor.worktreeBase in settings.json)
+```
+
+**Lifecycle from agent perspective:**
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│               WORKTREE LIFECYCLE                             │
+│                                                              │
+│  1. Developer enters stage                                   │
+│     ┌───────────────────────────────────────────────┐       │
+│     │ git worktree add ../<branch> <defaultBranch>  │       │
+│     │ cd ../<branch>                                │       │
+│     └───────────────────────────────────────────────┘       │
+│                          │                                   │
+│  2. Implement + commit                                      │
+│     ┌───────────────────────────────────────────────┐       │
+│     │ git add -A                                     │       │
+│     │ git commit -m "feat(#42): Add user auth"       │       │
+│     │ git push origin <branch>                       │       │
+│     └───────────────────────────────────────────────┘       │
+│                          │                                   │
+│  3. Auditor reviews in same worktree                        │
+│     ┌───────────────────────────────────────────────┐       │
+│     │ cd ../<branch>                                │       │
+│     │ git diff <defaultBranch>  ← review changes    │       │
+│     └───────────────────────────────────────────────┘       │
+│                          │                                   │
+│  4. On approval: Auditor creates PR                         │
+│     ┌───────────────────────────────────────────────┐       │
+│     │ gh pr create --repo owner/repo               │       │
+│     │   --base <defaultBranch>                     │       │
+│     │   --head <branch>                            │       │
+│     │   --title "feat(#42): Add user auth"          │       │
+│     │   --body "Closes #42"                        │       │
+│     └───────────────────────────────────────────────┘       │
+│                          │                                   │
+│  5. Post-pipeline: merge conflict check                     │
+│     ┌───────────────────────────────────────────────┐       │
+│     │ gh pr view <branch> --json mergeable,...      │       │
+│     │ If conflicted → auto-merge or dispatch dev    │       │
+│     └───────────────────────────────────────────────┘       │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Key rules:**
+- Developer MUST `cd` into worktree before any write/edit/bash — never work in project root
+- All Git operations (add, commit, push) happen inside the worktree
+- The worktree persists after approval — cleanup is manual (`git worktree remove`)
+- Configurable via `supervisor.worktreeBase` and `supervisor.branchPrefix` in `.pi/settings.json`
+
+---
+
+### Submodule Strategy
+
+When the repository has submodules (configured via `.gitmodules` or `supervisor.submodules`), the Developer works on **both repos simultaneously** using a **matched-branch pattern**:
+
+```
+┌─ Main repo (agentcastle)  ──────────────────────────────────┐
+│  Branch: worktree-git-issue-42-add-user-authentication      │
+│  Commit includes submodule pointer update (pinned SHA)      │
+└─────────────────────────────────────────────────────────────┘
+                          ║
+                    same branch name
+                          ║
+┌─ Submodule (flask_blogs) ───────────────────────────────────┐
+│  Branch: worktree-git-issue-42-add-user-authentication      │
+│  Actual code changes live here                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Auditor handles PR creation in correct order:**
+
+```
+Step 1 — Create submodule PR FIRST (if submodule has changes):
+  cd flask_blogs
+  gh pr create --repo owner/flask_blogs \
+    --base main --head <branch> \
+    --title "feat(#42): ..."
+
+Step 2 — Create main repo PR SECOND (includes submodule pointer):
+  gh pr create --repo owner/agentcastle \
+    --base main --head <branch> \
+    --title "feat(#42): ..." \
+    --body "Closes #42"
+```
+
+**Critical order:** Submodule PR must be created **first**. If main repo PR is created first, the submodule SHA doesn't exist remotely and teammates get `fatal: reference is not a tree` when they pull. The `push.recurseSubmodules check` git config is a safety net.
+
+---
+
+### Quality Gates
+
+Before transitioning `Implementation → Audit`, the supervisor runs two automated checks on the worktree:
+
+**1. TSC Checkpoint** (`tsc-checkpoint` extension)
+- Runs `npx tsc --noEmit` on the worktree
+- Parses tsc error format: `file(line,col): error TS<code>: message`
+- Only runs if `tsconfig.json` exists
+- Non-blocking if tsc binary not found
+- Output: formatted diagnostic list per file
+
+**2. LSP Pre-Audit** (`lsp-auditor` extension)
+- Runs real Language Server Protocol diagnostics on **modified files only** (git diff vs `defaultBranch`)
+- Groups files by language server (TypeScript, Python, ESLint, etc.)
+- Each group is audited concurrently via separate LSP server process
+- Auto-retries on errors (max 3 attempts), with exponential backoff
+- Only blocks if: a) LSP server is available AND b) server reports errors
+- If no LSP server for a language, that file passes silently
+
+**Decision table:**
+
+| TSC result | LSP result | Outcome |
+|-----------|-----------|---------|
+| pass      | pass      | → Audit |
+| pass      | fail      | → Implementation (retry LSP, max 3) |
+| pass      | N/A (no LSP) | → Audit |
+| fail      | (skipped) | → Implementation |
+| N/A (no tsconfig) | pass | → Audit |
+
+---
+
+### Merge Conflict Resolution
+
+After the pipeline reaches `Done`, the supervisor checks the created PR for merge conflicts:
+
+```
+                        ┌─────────────────────┐
+                        │  PR created          │
+                        │  (pipeline done)     │
+                        └──────────┬──────────┘
+                                   │
+                         ┌─────────▼─────────┐
+                         │  gh pr view ...    │
+                         │  --json mergeable  │
+                         └─────────┬─────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │                             │
+              ┌─────▼─────┐               ┌──────▼──────┐
+              │ Conflict? │               │ No conflict │
+              │           │               │  → done     │
+              └─────┬─────┘               └─────────────┘
+                    │
+         ┌──────────▼──────────┐
+         │  Ask user: fix?     │
+         │  (ctx.ui.confirm)   │
+         └──────────┬──────────┘
+                    │
+         ┌──────────▼──────────┐
+         │  Auto-merge attempt │
+         │  (git merge base)   │
+         └──────────┬──────────┘
+                    │
+         ┌──────────▼──────────┐
+         │  Auto-merge         │
+         │  succeeded?         │
+         └──────────┬──────────┘
+                    │
+       ┌────────────┴────────────┐
+       │                         │
+  ┌────▼────┐             ┌──────▼──────┐
+  │ Yes     │             │ No — dispatch│
+  │ git push│             │ Developer    │
+  │ done    │             │ agent to     │
+  └─────────┘             │ resolve      │
+                          └─────────────┘
+```
+
+---
+
+### GitHub Interaction
+
+The supervisor interacts with GitHub on every step. Here's the full contract:
+
+| Action | Method | Purpose |
+|--------|--------|---------|
+| `gh issue view <N> --json number,title,body,author,comments` | pi.exec | Fetch issue data (pre-filtered to trusted codeowners) |
+| `gh project view <projectNumber> --owner <owner> --json fields` | pi.exec | Get field IDs (status options) |
+| `gh project item-list <projectNumber> --owner <owner> --format json` | pi.exec | Find issue's project item, read current status |
+| `gh api graphql ...` (set status) | pi.exec | Move issue to next status on board |
+| `gh issue comment <N> --repo <R> --body <B>` | pi.exec | Agent posts structured comment (research, architecture, test plan, audit) |
+| `gh pr create --repo <R> --base <B> --head <H>` | pi.exec | Auditor creates PR on approval |
+| `gh pr view <branch> --json ...` | pi.exec | Post-pipeline merge conflict check |
+
+**Security:** All issue data is **pre-filtered** before reaching agents — only the body (if author is a codeowner) and comments from trusted codeowners are passed. The agent is explicitly instructed: "Use ONLY the issue data provided above. Do NOT run `gh issue view`." This prevents prompt injection via untrusted issue comments.
+
+---
+
+### Configuration Reference
+
+All supervisor settings live in `.pi/settings.json` under the `supervisor` key:
+
+```jsonc
+{
+  "supervisor": {
+    // REQUIRED — GitHub repo in owner/repo format
+    "repo": "SchneiderDaniel/agentcastle",
+
+    // REQUIRED — GitHub Project (v2) number
+    "projectNumber": 3,
+
+    // REQUIRED — maps board status name → agent file stem
+    "statusMapping": {
+      "Research": "researcher",
+      "Architecture": "architect",
+      "TestDesign": "test-designer",
+      "Implementation": "developer",
+      "Audit": "auditor"
+    },
+
+    // REQUIRED — trusted GitHub usernames (filters issue data)
+    "codeowners": ["SchneiderDaniel"],
+
+    // Name of the single-select field on the project board
+    "statusField": "Status",
+
+    // Max times Auditor can reject before loop stops (default: 5)
+    "maxRejections": 5,
+
+    // Remote name for git push (default: "origin")
+    "remote": "origin",
+
+    // Default branch for worktree base and PR target (default: "main")
+    "defaultBranch": "main",
+
+    // Parent directory for worktrees (default: "../")
+    "worktreeBase": "../",
+
+    // Prefix for auto-generated branch names (default: "worktree-git-issue-")
+    "branchPrefix": "worktree-git-issue-",
+
+    // Per-agent timeout in minutes (optional)
+    "agentTimeoutsMin": {
+      "researcher": 10,
+      "developer": 30
+    },
+
+    // Override submodules (auto-parsed from .gitmodules if absent)
+    "submodules": [
+      { "path": "flask_blogs", "repo": "Owner/flask_blogs" }
+    ]
+  }
+}
+```
+
+---
+
+### Complete Walkthrough
+
+Here's what happens end-to-end when you run `/supervisor 42`:
+
+```
+You: /supervisor 42
+
+── Step 1: Fetch ────────────────────────────────────────────────
+Supervisor reads .pi/settings.json → repo, project board, statuses
+Fetches issue #42 from GitHub, filters to trusted codeowners only
+Reads issue's current status from project board → "Research"
+
+── Step 2: Researcher ───────────────────────────────────────────
+Spins up:  pi -p --mode json --system-prompt <researcher.md> --task "..."
+Agent crawls 3-5 web pages about the issue topic
+Posts:  gh issue comment 42 --repo owner/repo --body "## Research Findings..."
+Outputs: RESEARCH_COMPLETE
+Supervisor moves issue → "Architecture" on board
+
+── Step 3: Architect ────────────────────────────────────────────
+Spins up agent with architect system prompt + issue data + research
+Uses read, bash, structural_search, ripgrep_search to analyze codebase
+Proposes architecture following Clean Architecture + PEAA principles
+Posts:  gh issue comment 42 --body "## Architecture Approach..."
+Outputs: ARCHITECTURE_COMPLETE
+Supervisor moves issue → "TestDesign"
+
+── Step 4: TestDesigner ─────────────────────────────────────────
+Spins up agent with test-designer prompt + issue + architecture
+Writes test plan: unit, integration, characterization tests
+Posts:  gh issue comment 42 --body "## Test Plan..."
+Outputs: TEST_PLAN_COMPLETE
+Supervisor moves issue → "Implementation"
+
+── Step 5: Developer ────────────────────────────────────────────
+Spins up agent with developer prompt + issue + arch + test plan
+  Creates worktree:  git worktree add ../<branch> main
+  cd ../<branch>
+  Implements feature, runs tests, formats code
+  git add -A && git commit -m "feat(#42): ..."
+  git push origin <branch>
+Outputs: IMPLEMENTATION_COMPLETE
+
+── Step 6: Quality Gates ────────────────────────────────────────
+  TSC: runs npx tsc --noEmit on worktree → pass
+  LSP: runs diagnostics on modified files → pass
+Supervisor moves issue → "Audit"
+
+── Step 7: Auditor ──────────────────────────────────────────────
+Spins up agent with auditor prompt + all previous data
+  cd ../<branch>
+  git diff main (reviews changes)
+  Reviews against architecture + test plan
+  Decision: APPROVED ✔
+  Creates submodule PRs if needed
+  Creates main PR: gh pr create --repo owner/repo --head <branch> --title "feat(#42): ..."
+  Posts: ## Audit Approved
+Outputs: AUDIT_APPROVED
+Supervisor moves issue → "Done"
+
+── Step 8: Post-pipeline ────────────────────────────────────────
+  Checks PR for merge conflicts
+  If conflicted → asks you if you want to auto-fix
+  If yes → attempts auto-merge
+  If auto-merge fails → dispatches Developer to resolve
+
+── Done ─────────────────────────────────────────────────────────
+Issue #42 is complete with a PR ready for final review.
+```
+
 ## 📦 Daily Usage
 
 ### Project Setup (one-time)
@@ -545,39 +977,6 @@ The script:
 - Writes the new project number back to `.pi/settings.json`
 
 Switch the project to **Board** layout in the browser and change **Group by** from the default `Status` to `Workflow` for a full Kanban view.
-
-### Running the Supervisor
-
-The supervisor processes GitHub issues through a Kanban pipeline:
-
-1. Create an issue in your GitHub repo (`supervisor.repo` in `.pi/settings.json`)
-2. Add it to the GitHub Project board with status `Research`
-3. Inside pi, run: `/supervisor <issue-number>`
-
-The supervisor reads the issue's status from the project board and dispatches the appropriate agent. Each agent writes its output as a GitHub comment. The supervisor then moves the issue to the next status column. The cycle repeats until the issue reaches **Done** or hits `maxRejections` (default 5).
-
-```
-Research → Architecture → TestDesign → Implementation → Audit → Done
-                                                              ↑
-    ↑ (rejection by Auditor) ────────────────────────────────┘
-    ↑ (LSP pre-audit errors, max 3 retries) ─────────────────┘
-```
-
-Current status-to-agent mapping (`.pi/settings.json` → `supervisor.statusMapping`):
-
-| Status           | Agent            | Description                                                          |
-| ---------------- | ---------------- | -------------------------------------------------------------------- |
-| `Research`       | `researcher`     | Crawls web for best practices, lib versions, pitfalls, security      |
-| `Architecture`   | `architect`      | Proposes target architecture based on research findings              |
-| `TestDesign`     | `test-designer`  | Writes test plan from architecture comment                           |
-| `Implementation` | `developer`      | Implements in isolated git worktree                                  |
-| `Audit`          | `auditor`        | Reviews implementation, runs LSP/TSC pre-audit, approves or rejects  |
-
-Before transitioning Implementation → Audit, the supervisor runs two **Tier 2 diagnostics**:
-- **LSP pre-audit** (`lsp-auditor` extension) — runs real Language Server Protocol diagnostics on modified files, groups by language server, auto-retries on errors (max 3 attempts).
-- **TSC checkpoint** (`tsc-checkpoint` extension) — runs `tsc --noEmit` on the worktree.
-
-If either finds errors, the issue goes back to Implementation.
 
 ### Workflows
 
