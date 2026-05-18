@@ -1,20 +1,9 @@
 /**
- * Ripgrep Search — literal text search via ripgrep
+ * ripgrep-search — Fast literal text search across the codebase
  *
- * Registers a `ripgrep_search` tool that runs `rg --vimgrep --max-columns=200
- * --max-count=<max_count> --no-heading "<query>" <directory>` via pi.exec(),
- * parses the vimgrep output format (file:line:column:text), and returns a
- * structured JSON result.
- *
- * This is the Extraction Layer — the agent uses this to answer "Where did
- * someone write the exact string '5000'?".
- *
- * Design:
- * - Single flat file with clear sequential phases: validate → buildArgs → exec → parse → return
- * - Pure validate/parse/buildArgs functions are exported for unit testing
- * - rg invoked via pi.exec() with args array — no shell injection possible
- * - Collision rule: structural patterns (class/def/function prefixes or ${ syntax)
- *   are rejected, forcing agent to use structural_search or map_codebase
+ * Provides the ripgrep_search tool. Uses ripgrep to find exact strings,
+ * magic numbers, error messages, and configuration values. Respects .gitignore.
+ * Rejects structural patterns (class/def/function) — use structural_search for those.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -173,15 +162,14 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 		label: "Ripgrep Search",
 		description:
 			"Search codebase for literal text or regex patterns using ripgrep. " +
-			"Executes rg --vimgrep --max-columns=200 --max-count=<limit> \"<query>\" via subprocess. " +
+			'Executes rg --vimgrep --max-columns=200 --max-count=<limit> "<query>" via subprocess. ' +
 			"Output: JSON object with total_returned count and array of results containing " +
-			'{ file: string, line: number, column: number, text: string }. ' +
+			"{ file: string, line: number, column: number, text: string }. " +
 			"Use this to answer 'Where did someone write the exact string \"5000\"?' or " +
 			"'Find all occurrences of \"TIMEOUT_MS\" in the codebase.' " +
 			"Respects .gitignore natively. " +
 			"Requires ripgrep installed (`rg --version`).",
-		promptSnippet:
-			"Search codebase for literal text or regex using ripgrep",
+		promptSnippet: "Search codebase for literal text or regex using ripgrep",
 		promptGuidelines: [
 			"Use ripgrep_search for literal text searches — magic numbers, hardcoded strings, error messages, TODOs, configuration values.",
 			"Do NOT use ripgrep_search to find function definitions, class declarations, or structural code patterns. For those, use map_codebase (ctags) for symbol lookup or structural_search (ast-grep) for AST-aware pattern matching.",
@@ -199,8 +187,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			directory: Type.Optional(
 				Type.String({
 					default: ".",
-					description:
-						"Directory scope for the search (default: current working directory)",
+					description: "Directory scope for the search (default: current working directory)",
 				}),
 			),
 			max_count: Type.Optional(
@@ -267,7 +254,10 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 								"\n\nEnsure ripgrep is installed (`rg --version`).",
 						},
 					],
-					details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<string, unknown>,
+					details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<
+						string,
+						unknown
+					>,
 					isError: true,
 				};
 			}

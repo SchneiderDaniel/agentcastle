@@ -1,7 +1,9 @@
 /**
- * Supervisor — Kanban-driven agent orchestration for GitHub issues
+ * Supervisor — Kanban-driven multi-agent workflow for GitHub issues
  *
- * Entry point. Delegates to modules.
+ * Manages issue lifecycle through Research → Architecture → TestDesign
+ * → Implementation → Audit stages. Assigns specialized sub-agents per
+ * stage based on status transitions in GitHub projects.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

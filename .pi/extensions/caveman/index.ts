@@ -1,8 +1,8 @@
 /**
- * Caveman extension — entry point
+ * Caveman — Compresses AI responses into terse, no-fluff style
  *
- * Adapter layer: creates stores, wires event handlers.
- * No business logic, no state.
+ * Strips articles, filler, and pleasantries from all agent output.
+ * Adjustable intensity via /caveman command.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";

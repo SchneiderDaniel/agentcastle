@@ -1,19 +1,9 @@
 /**
- * tsc-checkpoint — TypeScript type-check at checkpoint (Tier 2 diagnostics)
+ * tsc-checkpoint — TypeScript type-checking gate for commits and pipeline stages
  *
- * Runs `npx tsc --noEmit` in the worktree directory to detect type errors.
- * Developer can trigger via /check command, or pipeline runs it automatically
- * when transitioning Implementation → Audit.
- *
- * Design:
- * - Pure parse functions (parseTscOutput, formatTscDiagnostics) exported for
- *   unit testing — no I/O, no Pi API dependency.
- * - runTscCheckpoint() is the adapter: spawns process, calls parse, returns
- *   structured result.
- * - /check command registered via pi.registerCommand() for manual use.
- *
- * tsc error format: file.ts(line,column): error TS<code>: message
- * tsc --noEmit checks whole project respecting tsconfig.json.
+ * Runs npx tsc --noEmit to catch type errors before code moves forward.
+ * Trigger manually with /check or automatically during Implementation→Audit
+ * pipeline transitions.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

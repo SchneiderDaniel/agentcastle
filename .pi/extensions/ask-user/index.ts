@@ -1,11 +1,8 @@
 /**
- * ask-user — interactive questions for the AI (choice + free-text)
+ * ask-user — Lets the AI ask you interactive questions during a task
  *
- * Thin entry point. Registers the ask_user tool with TypeBox schema from
- * types.ts and delegates execute logic to csv-logger.ts and question-ui.ts.
- *
- * All completed interactions are logged to .pi/context/qna.csv with columns
- * datetime; question; answer (semicolon-separated).
+ * Supports multiple-choice and free-text questions. Every interaction
+ * is logged to .pi/context/qna.csv for audit trail.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

@@ -1,17 +1,8 @@
 /**
- * Session Logger — thin wrapper around pi's built-in session storage
+ * session-logger — Supplementary session metadata and latest-session symlink
  *
- * Pi's native sessions already persist all messages, model changes,
- * thinking-level changes, compactions, and tree state to JSONL.
- * Configured via sessionDir in settings.json.
- *
- * This extension adds extras pi doesn't provide:
- * - `.pi/sessions/latest.jsonl` symlink ──┬── current session file
- * - `metadata.json` per session directory  ── token counts, costs, timestamps
- * - `/session-logger` toggle command
- *
- * Session storage is handled entirely by pi's SessionManager.
- * This extension only reads events and writes supplementary data.
+ * Adds .pi/sessions/latest.jsonl symlink and per-session metadata.json
+ * with token counts, costs, and timestamps. Toggle with /session-logger.
  */
 
 import * as path from "node:path";

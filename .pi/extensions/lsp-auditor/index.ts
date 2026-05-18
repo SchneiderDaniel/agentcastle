@@ -1,8 +1,8 @@
 /**
- * LSP Auditor — Extension entry point.
+ * lsp-auditor — Pre-audit code quality via LSP before commit
  *
- * Registers the lsp-auditor command and exports the default hook.
- * Under 50 lines.
+ * Runs language server checks on changed files. Reports diagnostics
+ * as an audit step before code is committed or merged.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";

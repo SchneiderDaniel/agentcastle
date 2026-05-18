@@ -1,19 +1,8 @@
 /**
- * Codebase Mapper — universal-ctags integration for codebase skeleton mapping
+ * codebase-mapper — Scans codebase structure with ctags and returns symbol hierarchy
  *
- * Registers a `map_codebase` tool that runs `ctags -R --output-format=json`
- * on a target directory, parses JSONL output, groups symbols by file path,
- * and returns a hierarchical tree.
- *
- * This is exclusively the Discovery Layer — it returns only symbol metadata
- * (name, kind, file, line), never file contents or function bodies.
- *
- * Design:
- * - Single flat file (< 250 lines) with clear sequential phases:
- *   exec → parse → group → return
- * - Pure parse/group functions are exported for unit testing
- * - ctags invoked via pi.exec() — no Python wrapper needed
- * - max_depth passed to ctags via --maxdepth flag for pre-filtering
+ * Provides the map_codebase tool. Discovers all symbols (classes, functions,
+ * methods, variables) grouped by file. Returns metadata only — never file contents.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -138,13 +127,11 @@ export function buildCodebaseMap(raw: string): CodebaseMap {
  * Default excludes: node_modules, .git (common sources of noise).
  * max_depth: 0 = unlimited (ctags default).
  */
-export function buildCtagsArgs(targetDir: string, maxDepth: number): { command: string; args: string[] } {
-	const args = [
-		"-R",
-		"--output-format=json",
-		"--exclude=node_modules",
-		"--exclude=.git",
-	];
+export function buildCtagsArgs(
+	targetDir: string,
+	maxDepth: number,
+): { command: string; args: string[] } {
+	const args = ["-R", "--output-format=json", "--exclude=node_modules", "--exclude=.git"];
 
 	if (maxDepth > 0) {
 		args.push(`--maxdepth=${maxDepth}`);
@@ -172,8 +159,7 @@ export default function codebaseMapper(pi: ExtensionAPI): void {
 			"This tool is strictly read-only and metadata-focused. " +
 			"It never returns file contents or function bodies. " +
 			"Requires universal-ctags compiled with JSON output support.",
-		promptSnippet:
-			"Map a codebase directory by running ctags and returning symbol hierarchy",
+		promptSnippet: "Map a codebase directory by running ctags and returning symbol hierarchy",
 		promptGuidelines: [
 			"Use map_codebase at the start of a task to get a macro-level skeleton of the repository. This answers 'What files and functions exist?' without reading individual files.",
 			"Default target_directory is project root, default max_depth is 0 (unlimited). Pass max_depth=3 for a top-level overview only.",
@@ -184,8 +170,7 @@ export default function codebaseMapper(pi: ExtensionAPI): void {
 			target_directory: Type.Optional(
 				Type.String({
 					default: ".",
-					description:
-						"Path to the directory to map (default: current working directory)",
+					description: "Path to the directory to map (default: current working directory)",
 				}),
 			),
 			max_depth: Type.Optional(
@@ -224,7 +209,10 @@ export default function codebaseMapper(pi: ExtensionAPI): void {
 									"\n\nEnsure universal-ctags is installed with JSON output support (`ctags --list-output-formats`).",
 							},
 						],
-						details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<string, unknown>,
+						details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<
+							string,
+							unknown
+						>,
 					};
 				}
 			}

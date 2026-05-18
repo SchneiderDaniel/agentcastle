@@ -1,15 +1,8 @@
 /**
- * format-on-save — Auto-formats TypeScript/JavaScript files with Prettier
- *                  then runs ESLint --fix for lint+styling (advisory, non-blocking)
+ * format-on-save — Auto-formats TS/JS files with Prettier and reports ESLint issues
  *
- * Hooks into write/edit tool results. After a TypeScript/JavaScript/TSX/JSX/JSON
- * file is written or edited, runs Prettier to reformat it.
- *
- * Tier 1 diagnostics: After Prettier, runs ESLint on the saved file and reports
- * errors/warnings as a follow-up message to the Developer (non-blocking).
- *
- * Uses project-local prettier from .pi/extensions/../node_modules or falls back
- * to npx prettier. ESLint uses npx eslint.
+ * Triggers on every write/edit tool call. Runs Prettier to reformat,
+ * then ESLint --fix for lint errors. Non-blocking advisory only.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

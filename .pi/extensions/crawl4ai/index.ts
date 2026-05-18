@@ -1,9 +1,8 @@
 /**
- * crawl4ai extension entry point — orchestrator.
+ * crawl4ai — Web page crawling and content extraction
  *
- * Closure state (venvReady, depsReady) + pi.registerTool call only.
- * Fallback chain: crawl4ai -> Apify -> direct fetch.
- * Preserves existing behavior exactly.
+ * Provides the web_crawl tool. Tries crawl4ai first, falls back to
+ * Apify then direct HTTP fetch. Extracts page content as markdown.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

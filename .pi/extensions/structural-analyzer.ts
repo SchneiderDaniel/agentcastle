@@ -1,21 +1,9 @@
 /**
- * Structural Analyzer — ast-grep integration for syntax-aware code search
+ * structural-search — AST-aware code search for function calls, classes, and patterns
  *
- * Registers a `structural_search` tool that runs ast-grep (`sg` or `ast-grep`)
- * with a structural pattern, parses NDJSON output, and returns a structured
- * list of file paths, line ranges, and truncated snippets.
- *
- * This is the Relational Layer — if Ctags provides the nodes in your graph,
- * ast-grep provides the edges. The agent uses this to answer "Where is
- * `verify_token` called, and what is passed to it?"
- *
- * Design:
- * - Single flat file with clear sequential phases: validate → exec → parse → return
- * - Pure validate/parse/truncate functions are exported for unit testing
- * - Binary detection is lazy (deferred to first tool execution) with async cache
- * - ast-grep invoked via pi.exec() — no Python wrapper needed
- * - Collision rule: generic single-word patterns are rejected, forcing agent
- *   to use ripgrep for text search
+ * Provides the structural_search tool. Uses ast-grep with Tree-sitter parsing
+ * to find semantic code relationships. Answers questions like "Where is
+ * verify_token called and what is passed to it?".
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

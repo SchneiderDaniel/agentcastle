@@ -1,28 +1,14 @@
 /**
- * context-info — Agent Castle Terminal Revamp
+ * context-info — Rich status bar with git branch, model info, token usage, and TPS
  *
- * Replaces pi's default footer with a rich Neovim/lain-inspired status bar.
- *
- * Status bar shows (L → R):
- *    branch [worktree]  │  🧠 model · reasoning  │  ◉ 12.5K/200K [6%]
- *
- * Also emits telemetry JSON on first assistant response.
- *
- * Theme: requires "agentcastle" theme for best visuals, but works with any theme.
- * Install: pi install --theme .pi/themes/agentcastle.json
- *
- * Config (.pi/settings.json, optional):
- *   "contextStatusBar": {
- *     "enabled": true,
- *     "thresholds": [
- *       { "maxTokens": 100000 },
- *       { "maxTokens": 150000 },
- *       { "maxTokens": null }
- *     ]
- *   }
+ * Replaces pi's default footer with an info-dense status line.
+ * Shows: git branch, active model, thinking level, session timer,
+ * token usage with thresholds, and tokens-per-second during streaming.
+ * Works with any theme. Use /explain-extensions to list all active extensions.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { ContextStatusBarConfig, TpsSample } from "./types.js";
 import { loadConfig, readPiSetting } from "./config.js";
 import { getWorktreeName } from "./git-helpers.js";
@@ -106,14 +92,38 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				ctx.ui.notify("No extensions found", "info");
 				return;
 			}
-			const lines = extensions.map((ext) => {
-				if (ext.error) {
-					return `${ext.name}: (error: ${ext.error})`;
+
+			ctx.ui.setWidget("explain-extensions", (_tui, theme) => {
+				const accent = (s: string) => theme.fg("accent", s);
+				const dim = (s: string) => theme.fg("dim", s);
+
+				const lines: string[] = [];
+
+				for (const ext of extensions) {
+					if (ext.error) {
+						lines.push(accent("  " + ext.name) + dim("  error: " + ext.error));
+						continue;
+					}
+					// First line only from JSDoc — no embedded newlines
+					const firstLine = (ext.description ?? "(no description)").split("\n")[0].trim();
+					lines.push(accent("  " + ext.name) + dim("  " + firstLine));
 				}
-				const desc = ext.description ?? "(no description)";
-				return `${ext.name}: ${desc}`;
+
+				lines.push(
+					dim("  ─ ") +
+						dim(String(extensions.length)) +
+						dim(" extensions ─ disappears when you type"),
+				);
+
+				return {
+					render: (width: number) =>
+						lines.map((line) => {
+							if (line === "" || line.trim() === "") return "";
+							return truncateToWidth(line, width);
+						}),
+					invalidate: () => {},
+				};
 			});
-			ctx.ui.notify(lines.join("\n"), "info");
 		},
 	});
 
@@ -184,12 +194,13 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		showWelcomeBanner(ctx, startupWidgetActive);
 	});
 
-	// Clear welcome banner on first user input
+	// Clear welcome banner and explain-extensions on first user input
 	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
 		if (startupWidgetActive.value) {
 			ctx.ui.setWidget("agentcastle-welcome", undefined);
 			startupWidgetActive.value = false;
 		}
+		ctx.ui.setWidget("explain-extensions", undefined);
 	});
 
 	pi.on("thinking_level_select", async (event, ctx: ExtensionContext) => {

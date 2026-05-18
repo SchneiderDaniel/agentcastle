@@ -1,25 +1,9 @@
 /**
- * PiIgnore Extension
+ * piignore — Blocks AI access to sensitive files via .piignore patterns
  *
- * Reads .piignore files (gitignore format) from the project root and
- * walking up parent directories. Blocks read/write/edit/bash/grep/find/ls
- * access to any path matching the ignore patterns.
- *
- * For bash commands, extracts path-like tokens from the command string
- * and checks each against ignore patterns.
- *
- * Zero dependencies — uses only Node built-ins.
- *
- * Usage:
- *   1. Create .piignore at project root with gitignore-style patterns
- *   2. /reload
- *
- * Example .piignore:
- *   .env
- *   .env.*
- *   secrets/
- *   **&#47;*.key
- *   !important.log
+ * Reads .piignore (gitignore format) from project root. Prevents the AI
+ * from reading, writing, editing, or inspecting paths matching ignore
+ * patterns. Keeps .env, secrets/, and other sensitive data safe.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
