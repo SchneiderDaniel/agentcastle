@@ -80,6 +80,8 @@ Clone the repo gives you the configuration and extensions. But you need these **
 | GitHub CLI (gh) | Git operations from Pi |
 | `@earendil-works/pi-coding-agent` | The agent itself (global npm install) |
 | `@ast-grep/cli` | AST-based code search (`structural_search`) |
+| `universal-ctags` | Codebase symbol indexing (`map_codebase`) |
+| `ripgrep` (rg) | Fast code text search (`ripgrep_search`) |
 | `~/.agent_env` file | API keys (Apify token, etc.) |
 | `~/.bashrc` auto-start block | Docker + env loading on WSL boot |
 
@@ -87,7 +89,7 @@ Clone the repo gives you the configuration and extensions. But you need these **
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs python3 python3-pip python3-venv jq unzip
+sudo apt-get install -y nodejs python3 python3-pip python3-venv jq unzip universal-ctags ripgrep
 sudo npm install -g npm@latest
 ```
 

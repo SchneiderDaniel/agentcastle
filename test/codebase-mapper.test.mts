@@ -13,7 +13,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 
@@ -378,54 +378,69 @@ describe("integration: ctags binary", () => {
 	const hasJsonFormat = (() => {
 		if (!hasCtags) return false;
 		try {
-			const out = execSync("ctags --list-output-formats", {
+			// Probe: run ctags on a tiny inline temp file, check JSON output
+			const tmpFile = resolve("/tmp/__ctags_json_probe.ts");
+			writeFileSync(tmpFile, "const x = 1;\n", "utf-8");
+			const out = execSync(`ctags --output-format=json "${tmpFile}"`, {
 				encoding: "utf-8",
 				stdio: "pipe",
+				timeout: 5_000,
 			});
-			return out.toLowerCase().includes("json");
+			const parsed = JSON.parse(out.trim());
+			return parsed._type === "tag" || parsed._type === "ptag";
 		} catch {
 			return false;
+		} finally {
+			try {
+				execSync(`rm -f /tmp/__ctags_json_probe.ts`, { stdio: "ignore" });
+			} catch {
+				/* ignore */
+			}
 		}
 	})();
 
 	const skipMsg = hasCtags
-		? "ctags lacks JSON output format (requires universal-ctags with libjansson)"
+		? "ctags lacks JSON output format"
 		: "ctags not installed — skip integration test";
 
-	it("runs ctags on a sample directory and returns parseable JSONL", { skip: !hasCtags || !hasJsonFormat ? skipMsg : false }, () => {
-		const sampleDir = resolve("test/fixtures/ctags-sample");
-		if (!existsSync(sampleDir)) {
-			// Create minimal sample dir if missing
-			throw new Error(
-				"test/fixtures/ctags-sample/ not found. Create it with .py/.ts files containing known symbols.",
-			);
-		}
-
-		const stdout = execSync(
-			"ctags -R --output-format=json --maxdepth=3 --exclude=node_modules --exclude=.git .",
-			{
-				cwd: sampleDir,
-				encoding: "utf-8",
-				stdio: "pipe",
-				timeout: 10_000,
-			},
-		);
-
-		assert.ok(stdout.length > 0, "ctags should produce output");
-		const map = buildCodebaseMap(stdout);
-
-		// Should find at least some symbols
-		const totalSymbols = Object.values(map).flat().length;
-		assert.ok(totalSymbols > 0, `Expected at least 1 symbol, got ${totalSymbols}`);
-
-		// Each entry should have required fields
-		for (const [file, symbols] of Object.entries(map)) {
-			assert.ok(typeof file === "string" && file.length > 0);
-			for (const sym of symbols) {
-				assert.ok(typeof sym.type === "string");
-				assert.ok(typeof sym.name === "string");
-				assert.ok(typeof sym.line === "number");
+	it(
+		"runs ctags on a sample directory and returns parseable JSONL",
+		{ skip: !hasCtags || !hasJsonFormat ? skipMsg : false },
+		() => {
+			const sampleDir = resolve("test/fixtures/ctags-sample");
+			if (!existsSync(sampleDir)) {
+				// Create minimal sample dir if missing
+				throw new Error(
+					"test/fixtures/ctags-sample/ not found. Create it with .py/.ts files containing known symbols.",
+				);
 			}
-		}
-	});
+
+			const stdout = execSync(
+				"ctags -R --output-format=json --maxdepth=3 --exclude=node_modules --exclude=.git .",
+				{
+					cwd: sampleDir,
+					encoding: "utf-8",
+					stdio: "pipe",
+					timeout: 10_000,
+				},
+			);
+
+			assert.ok(stdout.length > 0, "ctags should produce output");
+			const map = buildCodebaseMap(stdout);
+
+			// Should find at least some symbols
+			const totalSymbols = Object.values(map).flat().length;
+			assert.ok(totalSymbols > 0, `Expected at least 1 symbol, got ${totalSymbols}`);
+
+			// Each entry should have required fields
+			for (const [file, symbols] of Object.entries(map)) {
+				assert.ok(typeof file === "string" && file.length > 0);
+				for (const sym of symbols) {
+					assert.ok(typeof sym.type === "string");
+					assert.ok(typeof sym.name === "string");
+					assert.ok(typeof sym.line === "number");
+				}
+			}
+		},
+	);
 });
