@@ -170,17 +170,13 @@ Assess maintainability:
 
 #### If APPROVE:
 
-1. Create a Pull Request:
-   ```
-   gh pr create --repo <owner/repo> --base main --head <branch-name> --title "feat(#<N>): <issue-title>" --body "Closes #<N>"
-   ```
-
-2. Add an approval comment. The comment MUST include sections that explain the change so reviewers understand the PR without reading the full diff.
-
-   **For non-trivial PRs** (3+ files, new logic, significant refactors):
+1. **Write audit summary to a temp file.**
+   Write the structured summary to a temp file, omitting any empty sections. This file is shared by both the PR body and the approval comment.
 
    ```
-   gh issue comment <N> --repo <owner/repo> --body "## Audit Approved
+   SUMMARY_FILE=/tmp/audit-summary-<N>.md
+   cat > "$SUMMARY_FILE" << 'SUMMARYEOF'
+   ## Audit Approved
 
    ### Summary
    [1-2 sentences: what changed, why]
@@ -189,13 +185,13 @@ Assess maintainability:
    [Brief approach. Code snippets only when they clarify. Keep short.]
 
    ### Key decisions
-   [Trade-offs, 1 sentence each. Omit if none.]
+   [Trade-offs, 1 sentence each. Omit section if none.]
 
    ### Review findings
-   [🟢/🟡 non-blocking notes. Omit if none.]
+   [🟢/🟡 non-blocking notes. Omit section if none.]
 
    ### Diagram
-   [Optional mermaid. Omit if no value.]
+   [Optional mermaid. Omit section if no value.]
 
    - Architecture compliance: ✓
    - Ticket fulfillment: ✓
@@ -205,14 +201,39 @@ Assess maintainability:
    - Code quality: ✓
    - Completeness: ✓
 
-   PR created. Ready for merge."
+   PR created. Ready for merge.
+   SUMMARYEOF
    ```
-
-   **For trivial PRs** (single-line, typo, config): `## Audit Approved` + checklist + 1-line description.
 
    Replace `<test commands>` with the actual command(s) executed. If multiple suites were run, list them separated by ` && ` or newlines.
 
-3. Output `AUDIT_APPROVED` on its own line
+   **For trivial PRs** (single-line, typo, config): write a minimal summary with `## Audit Approved` + checklist + 1-line description.
+
+   **Omit empty sections:** Before each optional section (Key decisions, Review findings, Diagram), add a shell conditional to skip it if there's nothing to report. Only sections with content should appear in the summary.
+
+2. **Create a Pull Request** with the summary as body:
+   ```
+   if [ -s "$SUMMARY_FILE" ]; then
+     gh pr create --repo <owner/repo> --base main --head <branch-name> \
+       --title "feat(#<N>): <issue-title>" \
+       --body-file "$SUMMARY_FILE"
+   else
+     gh pr create --repo <owner/repo> --base main --head <branch-name> \
+       --title "feat(#<N>): <issue-title>" \
+       --body "Closes #<N>"
+   fi
+   ```
+
+3. **Post the approval comment** using the same summary file:
+   ```
+   if [ -s "$SUMMARY_FILE" ]; then
+     gh issue comment <N> --repo <owner/repo> --body-file "$SUMMARY_FILE"
+   else
+     gh issue comment <N> --repo <owner/repo> --body "## Audit Approved\n\nThe implementation has been reviewed and meets all requirements."
+   fi
+   ```
+
+4. Output `AUDIT_APPROVED` on its own line
 
 #### If REJECT:
 
