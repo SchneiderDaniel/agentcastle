@@ -1,6 +1,5 @@
 ---
 description: Design a new pi extension or refactor an existing one through automatic analysis, research best practices from pi docs and defined extension best practices, then produce a detailed PRD with implementation spec.
-argument-hint: "[new-extension-idea|refactor:<extension-name>]"
 ---
 
 # Extension Spec — New & Existing Extension Design PRD

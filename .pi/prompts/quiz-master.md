@@ -1,6 +1,5 @@
 ---
 description: List open PRs across the main repo and all submodules, quiz the reviewer on diff content with multiple-choice questions, and auto-merge if they score at least 80%.
-argument-hint: "(no argument — scans all repos)"
 ---
 
 # Quiz Master — PR Review Comprehension
