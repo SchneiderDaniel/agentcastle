@@ -29,6 +29,7 @@ import { getWorktreeName } from "./git-helpers.js";
 import { tryEmit } from "./telemetry.js";
 import { processStartTime, installFooter } from "./footer.js";
 import { showWelcomeBanner } from "./welcome.js";
+import { listLocalExtensions } from "./extensions.js";
 
 export default function contextInfo(pi: ExtensionAPI): void {
 	// State — enclosed in closure, not module scope
@@ -94,6 +95,27 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			timerInterval = null;
 		}
 	}
+
+	// ── Commands ────────────────────────────────────────────────────
+
+	pi.registerCommand("explain-extensions", {
+		description: "List all project-local extensions with descriptions",
+		handler: async (_args, ctx) => {
+			const extensions = listLocalExtensions();
+			if (extensions.length === 0) {
+				ctx.ui.notify("No extensions found", "info");
+				return;
+			}
+			const lines = extensions.map((ext) => {
+				if (ext.error) {
+					return `${ext.name}: (error: ${ext.error})`;
+				}
+				const desc = ext.description ?? "(no description)";
+				return `${ext.name}: ${desc}`;
+			});
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
+	});
 
 	// ── Hooks ──────────────────────────────────────────────────────
 

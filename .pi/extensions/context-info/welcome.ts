@@ -9,6 +9,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { countExtensions } from "./extensions.js";
 
 function listNames(dir: string, suffix: string): string[] {
 	try {
@@ -31,24 +32,6 @@ function listNames(dir: string, suffix: string): string[] {
 		return results.sort();
 	} catch {
 		return [];
-	}
-}
-
-function countExtensions(): number {
-	try {
-		if (!existsSync(".pi/extensions")) return 0;
-		const entries = readdirSync(".pi/extensions", { withFileTypes: true });
-		let count = 0;
-		for (const entry of entries) {
-			if (entry.isFile() && entry.name.endsWith(".ts")) {
-				count++;
-			} else if (entry.isDirectory() && entry.name !== "." && entry.name !== "..") {
-				count++;
-			}
-		}
-		return count;
-	} catch {
-		return 0;
 	}
 }
 
@@ -130,7 +113,24 @@ export function showWelcomeBanner(
 				}
 
 				const statLines: string[] = [
-					statLine("🧩 Extensions: ", String(extCount)),
+					// Extensions line with /explain-extensions hint
+					(() => {
+						const labelStr = muted("🧩 Extensions: ");
+						const valueStr = accent(String(extCount));
+						const hintStr = dim(" (/explain-extensions)");
+						const rawLabelW = visibleWidth("🧩 Extensions: ");
+						const rawValueW =
+							visibleWidth(String(extCount)) + visibleWidth(" (/explain-extensions)");
+						const padding = 60 - rawLabelW - rawValueW;
+						return (
+							dim("| ") +
+							labelStr +
+							valueStr +
+							hintStr +
+							" ".repeat(Math.max(0, padding)) +
+							dim(" |")
+						);
+					})(),
 					statLine("📝 Prompts:    ", String(promptCount)),
 					statLine("🎨 Themes:     ", String(themeCount)),
 					statLine("🔧 Skills:     ", String(skillCount)),
