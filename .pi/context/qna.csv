@@ -232,3 +232,8 @@ After discussing all topics — does anything else come to mind that you'd add a
 2026-05-18T18:43:26.850Z;Are there any dependencies? Does this issue depend on another issue/PR being done first?;no_deps
 2026-05-18T18:43:39.514Z;After discussing all these topics — does anything else come to mind that you'd now like to add as a requirement?;no_done
 2026-05-18T18:44:27.312Z;Issue #97 is refined. What's next?;done
+2026-05-18T18:56:56.776Z;Select your optimization objective for model recommendations.;balanced
+2026-05-18T18:57:11.287Z;Do you have any platform or API restrictions? (e.g., 'only models available via opencode', 'only models on GitHub Copilot CLI', 'no OpenAI', 'only open-weight models'). Leave blank if none.;only opencode go models
+2026-05-18T19:03:44.366Z;"Recommendation complete. DeepSeek V4 Flash is already optimal for all agents under Balanced objective on opencode-go. No model changes needed.
+
+Apply recommendation? Since current model matches recommended model for all agents, no files would change.";accept_no_changes
