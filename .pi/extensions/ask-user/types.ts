@@ -37,6 +37,46 @@ export interface QuestionResult {
 }
 
 // ---------------------------------------------------------------------------
+// Q&A storage types
+// ---------------------------------------------------------------------------
+
+/** A single Q&A entry stored in JSONL. */
+export interface QnaEntry {
+	datetime: string;
+	question: string;
+	answer: string;
+}
+
+/** Action type for the ask_user_read tool. */
+export type QnaReadAction = "list" | "get" | "query";
+
+/**
+ * Schema for the ask_user_read tool parameters.
+ * Uses TypeBox for runtime validation.
+ */
+export const QnaReadParams = Type.Object({
+	action: StringEnum(["list", "get", "query"] as const, {
+		description: "Action to perform: list, get, or query",
+	}),
+	limit: Type.Optional(
+		Type.Number({
+			description: "Number of entries to return (default 20, used with list action)",
+			default: 20,
+		}),
+	),
+	id: Type.Optional(
+		Type.Number({
+			description: "1-based line number of the entry (used with get action)",
+		}),
+	),
+	text: Type.Optional(
+		Type.String({
+			description: "Search text for query action (case-insensitive search in question and answer)",
+		}),
+	),
+});
+
+// ---------------------------------------------------------------------------
 // TypeBox schemas
 // ---------------------------------------------------------------------------
 
