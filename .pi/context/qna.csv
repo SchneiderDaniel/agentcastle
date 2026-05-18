@@ -221,3 +221,14 @@ Options for the CLI interface:";slash_command
 🔗 DEPS: None — standalone.
 
 After discussing all topics — does anything else come to mind that you'd add as a requirement?";no_done
+2026-05-18T18:41:08.392Z;Why is this /explain-extensions feature needed? For whom does it solve what problem?;dev_discover
+2026-05-18T18:41:27.994Z;Where should the explanation for each extension come from? Extensions are TypeScript files — they don't currently have a description field.;jsdoc_comment
+2026-05-18T18:41:47.551Z;What format should the /explain-extensions output have? How should each extension be presented?;simple_list
+2026-05-18T18:42:10.170Z;How should extensions without a JSDoc comment be handled? And should directory-based extensions (e.g., context-info/ with an index.ts) be shown?;include_all_no_desc
+2026-05-18T18:42:26.621Z;"Where exactly should the hint appear in the castle welcome banner? Currently the line shows: ""| 🧩 Extensions: 13             |""";inline
+2026-05-18T18:42:38.183Z;The `/explain-extensions` command reuses the same extension discovery logic already in context-info/welcome.ts and supervisor/extensions.ts. Where should the command be added?;context_info
+2026-05-18T18:42:51.188Z;What should /explain-extensions show if the .pi/extensions directory doesn't exist, or an individual extension file can't be read?;graceful_errors
+2026-05-18T18:43:17.890Z;The pi framework loads extensions from both `.pi/extensions/` (project-local) and `~/.pi/agent/extensions/` (global/user-wide). Should the command list both, or only project-local?;project_only
+2026-05-18T18:43:26.850Z;Are there any dependencies? Does this issue depend on another issue/PR being done first?;no_deps
+2026-05-18T18:43:39.514Z;After discussing all these topics — does anything else come to mind that you'd now like to add as a requirement?;no_done
+2026-05-18T18:44:27.312Z;Issue #97 is refined. What's next?;done

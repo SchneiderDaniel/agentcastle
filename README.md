@@ -9,13 +9,33 @@ WSL (Ubuntu) + Zed + Git Worktrees + Pi AI — sandboxed execution, real-time fe
 
 ---
 
+## Philosophy
+
+Everyone should build their own Pi. This repo is **my personal** Pi agent harness. You can fork it as a starting point, but the real power comes from shaping it into **your own** — your preferred tools, your workflows, your guardrails.
+
+Why? Every developer and every team is different. The most effective way of working with an AI coding harness is the one that fits **your** workflow, not a one-size-fits-all maximalist suite. A harness packed with every imaginable feature often gets in the way. The best harness is the one you build for yourself.
+
+Customize ruthlessly. Make it yours.
+
+---
+
 ## What is this?
 
 Agentcastle is a pre-configured AI coding harness that gives the [Pi coding agent](https://pi.dev) a full toolchain:
 
-- **Web crawling** — Three-tier fallback: local Chromium → Apify cloud → HTTP
-- **Session logging** — Every session saved as LLM-optimized markdown for later analysis
-- **Extensions-based** — Secure pi extensions, no MCP servers
+- **Codebase mapping** — `map_codebase` tool via universal-ctags: symbol tree of any directory
+- **Structural search** — `structural_search` tool via ast-grep: AST-aware pattern matching
+- **Text search** — `ripgrep_search` tool via ripgrep: fast literal/regex code search
+- **Web crawling** — `web_crawl` tool: three-tier fallback (local Chromium → Apify cloud → HTTP)
+- **Rich TUI** — Custom Neovim-inspired status bar, welcome banner, live TPS estimation
+- **Session logging** — Every session saved as JSONL for later query & analysis
+- **Multi-agent pipeline** — Researcher → Architect → TestDesigner → Developer → Auditor
+- **LSP pre-audit** — Real LSP diagnostics before merge, auto-retry on errors
+- **TypeScript checkpoint** — `/check` command: `tsc --noEmit` on demand
+- **PiIgnore** — `.piignore` blocks paths from agent read/write/edit/bash
+- **Format on save** — Auto Prettier + ESLint after every write/edit
+- **Extensions-based** — 12+ secure pi extensions, no MCP servers
+- **Custom theme** — Dark cyberpunk TUI theme (agentcastle)
 
 All components run locally. No code leaves your machine (except LLM API calls to your provider).
 
@@ -29,25 +49,42 @@ This repository contains the **configuration and extensions**. You clone it and 
 
 | File/Path                           | What it is                              |
 | ----------------------------------- | --------------------------------------- |
-| `.pi/extensions/caveman.ts`              | Token-efficient communication protocol    |
-| `.pi/extensions/crawl4ai.ts`             | Three-tier web crawler                    |
-| `.pi/extensions/session-logger.ts`       | Session logging to markdown               |
-| `.pi/extensions/ask-user.ts`             | Interactive multiple-choice questions     |
-| `.pi/extensions/format-on-save.ts`       | Auto-format TypeScript/JS with Prettier   |
-| `.pi/extensions/supervisor.ts`           | Kanban-driven multi-agent orchestration   |
-| `.pi/agents/architect.md`               | Architect agent system prompt             |
-| `.pi/agents/developer.md`               | Developer agent system prompt             |
-| `flask_blogs/`                            | Submodule: Flask blog apps (hippocooking, planhead, sudoku) |
-| `.pi/agents/auditor.md`                 | Auditor agent system prompt               |
-| `.pi/agents/test-designer.md`           | TestDesigner agent system prompt          |
-| `.pi/settings.json`                      | Provider + supervisor config              |
+| `.pi/extensions/ask-user/`               | Interactive MC questions + CSV logger     |
+| `.pi/extensions/caveman/`                | Token-efficient communication protocol    |
+| `.pi/extensions/codebase-mapper.ts`       | `map_codebase` tool via universal-ctags  |
+| `.pi/extensions/context-info/`            | Rich TUI status bar, welcome banner, TPS  |
+| `.pi/extensions/crawl4ai/`                | Three-tier web crawler                    |
+| `.pi/extensions/format-on-save/`          | Auto Prettier + ESLint after write/edit   |
+| `.pi/extensions/lsp-auditor/`             | LSP diagnostics pre-audit for supervisor  |
+| `.pi/extensions/piignore.ts`              | `.piignore` path blocking                 |
+| `.pi/extensions/ripgrep-search.ts`        | `ripgrep_search` tool via ripgrep         |
+| `.pi/extensions/session-logger/`          | Session logging to JSONL                  |
+| `.pi/extensions/structural-analyzer.ts`   | `structural_search` tool via ast-grep     |
+| `.pi/extensions/supervisor/`              | Kanban-driven multi-agent orchestration   |
+| `.pi/extensions/tsc-checkpoint.ts`        | `/check` command: `tsc --noEmit`          |
+| `.pi/agents/researcher.md`               | Researcher agent (pipeline step 1)        |
+| `.pi/agents/architect.md`                | Architect agent (pipeline step 2)         |
+| `.pi/agents/test-designer.md`            | TestDesigner agent (pipeline step 3)      |
+| `.pi/agents/developer.md`                | Developer agent (pipeline step 4)         |
+| `.pi/agents/auditor.md`                  | Auditor agent (pipeline step 5)           |
+| `.pi/agent/settings.json`                | Default AI provider config                |
+| `.pi/settings.json`                      | Supervisor + context status bar config    |
+| `.pi/themes/agentcastle.json`            | Dark cyberpunk TUI theme                  |
+| `.pi/lib/`                               | Shared types for extensions               |
 | `.pi/prompts/issue-cutter.md`            | Epic → sub-issues with layer labels       |
 | `.pi/prompts/issue-refinement.md`        | Socratic interview + MC refinement        |
+| `.pi/prompts/extension-spec.md`          | Extension design PRD generator            |
+| `.pi/prompts/handover.md`                | Session handover document                 |
+| `.pi/prompts/quiz-master.md`             | PR review comprehension quiz + auto-merge |
+| `.piignore`                              | Agent path blocking (gitignore syntax)    |
 | `AGENTS.md`                              | Caveman protocol (active every session)   |
-| `package.json`                           | Project metadata + test script            |
-| `test/session-logger.test.mts`           | Session logger test                       |
-| `test/supervisor-extensions.test.mts`    | Supervisor extension resolution tests     |
-| `.gitmodules`                             | Submodule configuration                   |
+| `package.json`                           | Project metadata + 27 test files          |
+| `scripts/postinstall.sh`                 | Patch pi footer.js pipe separator         |
+| `scripts/session-query.sh`               | Query JSONL session logs with jq          |
+| `scripts/setup-github-project.sh`        | Create GitHub Project from settings       |
+| `test/`                                  | 27+ unit/integration test files           |
+| `flask_blogs/`                           | Submodule: Flask blog apps                |
+| `.gitmodules`                            | Submodule configuration                   |
 
 ### 🔧 You install once on your machine
 
@@ -69,12 +106,21 @@ This repository contains the **configuration and extensions**. You clone it and 
 
 | Category            | Capability                                                                                                         |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 🕷️ **Web Crawl**    | `web_crawl` tool: local crawl4ai (real Chromium) → Apify cloud actor → direct HTTP + regex extraction              |
-| 📝 **Session Log**  | Full conversation + thinking blocks + tool calls saved as markdown + metadata JSON                                 |
+| 🗺️ **Codebase Map** | `map_codebase` via universal-ctags: file-by-file symbol tree, max-depth filter                                    |
+| 🔍 **Structural Search** | `structural_search` via ast-grep: AST-aware pattern matching (function calls, try/catch, class defs)          |
+| 🔎 **Text Search**  | `ripgrep_search` via ripgrep: fast literal/regex search, respects .gitignore                                       |
+| 🕷️ **Web Crawl**    | `web_crawl`: local crawl4ai (real Chromium) → Apify cloud → direct HTTP + regex extraction                         |
+| 🖥️ **Rich TUI**     | Custom status bar (branch, model, token usage, TPS), welcome banner, animated working indicator                    |
+| 📝 **Session Log**  | Full conversation as JSONL files, queryable via `scripts/session-query.sh` + jq                                    |
 | 🦴 **Caveman Mode** | Token-efficient communication via `AGENTS.md` — active in every session                                            |
+| 🤖 **Multi-Agent**  | Kanban pipeline: Researcher → Architect → TestDesigner → Developer → Auditor + auto-retry                          |
+| ✅ **LSP Pre-Audit**| Real LSP diagnostics before merge, groups by server, auto-retry on errors (max 3)                                  |
+| 🔬 **TSC Checkpoint**| `/check` command: `tsc --noEmit` type-check on worktree                                                          |
+| 🚫 **PiIgnore**     | `.piignore` blocks paths from agent tools (read/write/edit/bash)                                                   |
+| 🎨 **Format on Save**| Auto Prettier + ESLint after every write/edit                                                                     |
+| 🎭 **Custom Theme** | agentcastle dark theme: cyberpunk palette (electric blue, neon mint, soft mauve)                                   |
+| 🧩 **Extensions**   | 12+ extensions auto-discovered from `.pi/extensions/`. No config files, no MCP servers.                             |
 | 📋 **SBOM**         | Full software bill of materials included in this README                                                            |
-| 🤖 **Multi-Agent**  | Kanban-driven pipeline: Supervisor dispatches Architect → TestDesigner → Developer → Auditor in loop |
-| 🧩 **Extensions**   | 6 extensions auto-discovered from `.pi/extensions/`. No config files, no MCP servers.                              |
 
 ---
 
@@ -84,12 +130,15 @@ This repository contains the **configuration and extensions**. You clone it and 
 # 1. Install prerequisites (one-time, Ubuntu 24.04 LTS)
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs python3 python3-pip python3-venv jq unzip
-sudo npm install -g @earendil-works/pi-coding-agent
+sudo npm install -g @earendil-works/pi-coding-agent @ast-grep/cli
 
 # 2. Set your AI provider (one-time)
 pi --provider opencode-go --api-key "your-key-here"
 
-# 3. Start coding
+# 3. Install agentcastle theme
+pi install --theme .pi/themes/agentcastle.json
+
+# 4. Start coding
 pi
 ```
 
@@ -139,25 +188,20 @@ sudo apt-get install -y nodejs python3 python3-pip python3-venv jq unzip
 sudo npm install -g npm@latest
 ```
 
-### Pi Agent
+### Pi Agent + AST-grep + TypeScript
 
 ```bash
-sudo npm install -g @earendil-works/pi-coding-agent
-```
+sudo npm install -g @earendil-works/pi-coding-agent @ast-grep/cli
 
-### AST-grep (structural search)
-
-AST-grep powers the `structural_search` tool — syntax-aware code search using Tree-sitter AST matching. Find function calls, class definitions, try/catch blocks, and method invocations without text-match noise from comments or strings.
-
-```bash
-sudo npm install -g @ast-grep/cli
+# TypeScript for tsc-checkpoint extension
+sudo npm install -g typescript
 ```
 
 Verify:
 
 ```bash
 ast-grep --version   # expected: ast-grep 0.42.x
-pi "Use the structural_search tool to find all console.log calls"
+pi --version         # expected: 0.74.x
 ```
 
 > **Note:** If `sudo npm install -g` fails with EACCES, set a user-owned global prefix:
@@ -166,7 +210,7 @@ pi "Use the structural_search tool to find all console.log calls"
 > npm config set prefix ~/.npm-global
 > echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
 > source ~/.bashrc
-> npm install -g @ast-grep/cli
+> npm install -g @earendil-works/pi-coding-agent @ast-grep/cli typescript
 > ```
 
 ---
@@ -347,30 +391,35 @@ Pi lives in Zed's integrated terminal (`Ctrl + ~`). Set the terminal profile to 
 ## 📦 Architecture
 
 ```
-┌──────────────────────────────────────────────┐
-│  Zed Editor (WSL)                            │
-│  ┌────────────────────────────────────────┐  │
-│  │  Pi TUI (Terminal)                      │  │
-│  │  ┌──────┐  ┌──────┐  ┌──────────────┐  │  │
-│  │  │Exts  │  │AI Provider   │            │  │
-│  │  │.pi/  │  │OpenCode Go   │            │  │
-│  │  │exts/ │  │Anthropic/... │            │  │
-│  │  └──┬───┘  └──────────────┘            │  │
-│  │     │                                    │  │
-│  └─────┼────────────────────────────────────┘  │
-└────────┼───────────────────────────────────────┘
-         │
-    ┌────▼────────────┐
-    │                 │
-┌───▼──────────┐
-│crawl4ai      │
-│Python venv   │
-│(host browser)│
-│              │
-└──────────────┘
+┌────────────────────────────────────────────────────┐
+│  Zed Editor (WSL)                                  │
+│  ┌──────────────────────────────────────────────┐  │
+│  │  Pi TUI (Terminal) — agentcastle theme       │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │  │
+│  │  │ Exts     │ │ AI Prov │ │ Rich Footer  │ │  │
+│  │  │ .pi/     │ │OpenCode  │ │branch model  │ │  │
+│  │  │ exts/    │ │Go/...    │ │tokens TPS    │ │  │
+│  │  └───┬──────┘ └──────────┘ └──────────────┘ │  │
+│  │      │                                        │  │
+│  └──────┼────────────────────────────────────────┘  │
+└─────────┼───────────────────────────────────────────┘
+          │
+     ┌────▼────────────────────────────┐
+     │  External tools                  │
+     │  ┌──────────┐ ┌───────────────┐ │
+     │  │ ctags    │ │ ast-grep      │ │
+     │  │map_code- │ │structural_    │ │
+     │  │base tool │ │search tool    │ │
+     │  └──────────┘ └───────────────┘ │
+     │  ┌──────────┐ ┌───────────────┐ │
+     │  │ ripgrep  │ │ crawl4ai      │ │
+     │  │ripgrep_  │ │Python venv    │ │
+     │  │search    │ │(host browser) │ │
+     │  └──────────┘ └───────────────┘ │
+     └─────────────────────────────────┘
 ```
 
-**Key principle:** Web crawling runs on the host (network-only for crawl).
+**Key principle:** All tools run locally. Web crawling runs on host (network-only for crawl). Ctags, ast-grep, ripgrep are system binaries invoked via `pi.exec()`. No MCP servers, no network-exposed tool endpoints.
 
 ### Why extensions instead of MCP?
 
@@ -401,25 +450,33 @@ Pi extensions use **prompt snippets** — concise one-line descriptions that rep
 
 Pi auto-discovers extensions from `.pi/extensions/` in your **project root**. No `.pi.config.ts` file needed. No `--extension` flag needed.
 
-| Extension            | File                 | Purpose                                                                                                        |
-| -------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Supervisor**       | `supervisor.ts`      | Kanban-driven multi-agent pipeline. Reads issue from GitHub project board, dispatches Architect → TestDesigner → Developer → Auditor in loop until Done. Registers `/supervisor <issue-number>` slash command. |
-| **Web Crawler**      | `crawl4ai.ts`        | Three-tier web crawling: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps.     |
-| **Session Logger**   | `session-logger.ts`  | Logs sessions to `.pi/sessions/<id>/session.md` + `metadata.json`. Toggle with `/session-logger`.              |
-| **Caveman Protocol** | `caveman.ts`         | Token-efficient communication style. Active via `AGENTS.md`.                                                   |
-| **Ask User**         | `ask-user.ts`        | Interactive multiple-choice picker for AI-to-user questions. Uses `ctx.ui.select()` with arrow-key navigation. |
-| **Format on Save**   | `format-on-save.ts`  | Auto-formats TypeScript/JavaScript files with Prettier after write/edit operations. Keeps code style consistent without manual indentation fixes. |
+| Extension            | Path                          | Purpose                                                                                                        |
+| -------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Codebase Mapper**  | `codebase-mapper.ts`          | `map_codebase` tool via universal-ctags. Returns symbol tree (classes, functions, variables) grouped by file.  |
+| **Structural Analyzer** | `structural-analyzer.ts`    | `structural_search` tool via ast-grep. AST-aware pattern matching (function calls, try/catch, class defs).    |
+| **Ripgrep Search**   | `ripgrep-search.ts`           | `ripgrep_search` tool via ripgrep. Fast literal/regex code search, respects .gitignore.                       |
+| **Supervisor**       | `supervisor/`                 | Kanban-driven multi-agent pipeline. Reads issue from GitHub project, dispatches Researcher → Architect → TestDesigner → Developer → Auditor in loop. Registers `/supervisor <issue-number>` command. |
+| **Web Crawler**      | `crawl4ai/`                   | `web_crawl` tool: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps.           |
+| **Context Info**     | `context-info/`               | Rich TUI status bar (branch, model, tokens, TPS), welcome banner, animated working indicator, telemetry.       |
+| **Session Logger**   | `session-logger/`             | Logs sessions to `.pi/sessions/<id>.jsonl`. Toggle with `/session-logger`. Query with `scripts/session-query.sh`. |
+| **Caveman Protocol** | `caveman/`                    | Token-efficient communication style. Active via `AGENTS.md`. Configurable intensity levels.                    |
+| **Ask User**         | `ask-user/`                   | Interactive MC picker for AI-to-user questions. Uses `ctx.ui.select()` with arrow-key navigation + CSV logging.|                                       |
+| **Format on Save**   | `format-on-save/`             | Auto-formats TS/JS with Prettier + ESLint --fix after write/edit. Non-blocking lint warnings.                  |
+| **PiIgnore**         | `piignore.ts`                 | Blocks paths matching `.piignore` patterns from read/write/edit/bash tools. Supports negation (!).             |
+| **TSC Checkpoint**   | `tsc-checkpoint.ts`           | `/check` command runs `tsc --noEmit` on worktree. Parses TS error format. Used in pipeline Implementation→Audit.|
+| **LSP Auditor**      | `lsp-auditor/`                | Passive extension: runs real LSP diagnostics on modified files before merge. Groups by server, auto-retry on errors. Called by supervisor pipeline. |
 
 ### Agent Definitions
 
 Agents are defined as Markdown files in `.pi/agents/` with YAML frontmatter specifying their name, description, allowed tools, and model. The supervisor reads these definitions at runtime.
 
-| Agent              | File                   | Model                        | Tools                  |
-| ------------------ | ---------------------- | ---------------------------- | ---------------------- |
-| **Architect**      | `architect.md`         | `opencode-go/kimi-k2.6`      | `read`, `bash`         |
-| **Developer**      | `developer.md`         | `opencode-go/deepseek-v4-pro` | `read`, `bash`, `write`, `edit` |
-| **Auditor**        | `auditor.md`           | `opencode-go/glm-5.1`       | `read`, `bash`         |
-| **TestDesigner**   | `test-designer.md`     | `opencode-go/deepseek-v4-flash` | `read`, `bash`        |
+| Agent              | File                   | Model                           | Tools                                                       | Extensions (extra)                       |
+| ------------------ | ---------------------- | ------------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
+| **Researcher**     | `researcher.md`        | `opencode-go/deepseek-v4-flash` | `read`, `bash`, `structural_search`, `ripgrep_search`       | `caveman, codebase-mapper, crawl4ai, piignore, ripgrep-search, structural-analyzer` |
+| **Architect**      | `architect.md`         | `opencode-go/deepseek-v4-flash` | `read`, `bash`, `structural_search`, `ripgrep_search`       | `caveman, codebase-mapper, crawl4ai, piignore, ripgrep-search, structural-analyzer` |
+| **TestDesigner**   | `test-designer.md`     | `opencode-go/deepseek-v4-flash` | `read`, `bash`, `structural_search`, `ripgrep_search`       | `caveman, codebase-mapper, crawl4ai, piignore, ripgrep-search, structural-analyzer` |
+| **Developer**      | `developer.md`         | `opencode-go/deepseek-v4-flash` | `read`, `bash`, `write`, `edit`, `structural_search`, `ripgrep_search` | `caveman, codebase-mapper, crawl4ai, format-on-save, piignore, ripgrep-search, tsc-checkpoint, structural-analyzer` |
+| **Auditor**        | `auditor.md`           | `opencode-go/deepseek-v4-flash` | `read`, `bash`, `structural_search`, `ripgrep_search`       | `caveman, codebase-mapper, crawl4ai, piignore, ripgrep-search, structural-analyzer` |
 
 Each agent's system prompt defines its role in the Kanban pipeline. The supervisor reads the issue's status from the GitHub project board and dispatches the matching agent. See the [Supervisor workflow](#running-the-supervisor) below.
 
@@ -427,10 +484,13 @@ Each agent's system prompt defines its role in the Kanban pipeline. The supervis
 
 User-invocable prompt expansions in `.pi/prompts/`. Type `/name` in the editor to expand a template.
 
-| Template             | Description                                                                                                                                                                           | Config                                                                                         |
+| Template             | Description                                                                                                                                                                           | Config / Usage                                                                                  |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **issue-cutter**     | Split a refined epic into ordered, independently testable sub-issues. Each gets `refined` + layer label (e.g. `database`, `backend`). Auto-links children to parent epic via GraphQL. | Set `supervisor.repo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-cutter <number>`     |
-| **issue-refinement** | Grill an issue against the codebase, conduct Socratic interview via `ask_user` tool (≥3 MC options per question), replace body with concrete ACs.                                     | Set `supervisor.repo` in `.pi/settings.json` to `owner/repo`. Invoke: `/issue-refinement <number>` |
+| **issue-cutter**     | Split a refined epic into ordered, independently testable sub-issues. Each gets `refined` + layer label (e.g. `database`, `backend`). Auto-links children to parent epic via GraphQL. | Set `supervisor.repo` in `.pi/settings.json`. Invoke: `/issue-cutter <number>`                  |
+| **issue-refinement** | Grill an issue against codebase, Socratic interview via `ask_user` (≥3 MC options), replace body with concrete ACs.                                                                   | Set `supervisor.repo` in `.pi/settings.json`. Invoke: `/issue-refinement <number>`              |
+| **extension-spec**   | Design a new pi extension or refactor existing one. Researches best practices from pi docs, audits TypeScript, produces PRD with implementation spec.                                  | Invoke: `/extension-spec <idea>`. Supports `refactor:<name>` mode.                             |
+| **handover**         | Write concise handover document summarizing the conversation so a fresh agent can continue. Saves to `tmp/` with datetime prefix.                                                     | Invoke: `/handover`. Output: `tmp/<datetime>_<topic>.md`.                                       |
+| **quiz-master**      | List open PRs across main repo + all submodules, quiz reviewer on diff with MC questions, auto-merge if score ≥80%.                                                                   | Requires `gh` auth. Set `supervisor.repo` in `.pi/settings.json`. Invoke: `/quiz-master`.       |
 
 ### Skills
 
@@ -440,7 +500,7 @@ Skills are expert procedural guides stored in `.pi/skills/`. The agent loads the
 
 > **Design decision:** Prefer pi **extensions** (`.pi/extensions/`) or manual **prompt templates** (`.pi/prompts/`) over skills. Extensions only expose concise prompt snippets (~50-120 tokens) instead of full JSON Schema. Prompt templates are lazy — only loaded when explicitly invoked. If a skill is truly unavoidable, keep its description minimal and its scope narrow.
 
-Currently no skills installed.
+Currently no skills installed. Skills dir: `.pi/skills/.gitkeep`.
 
 #### Session Logger
 
@@ -450,13 +510,20 @@ Currently no skills installed.
 /session-logger off    # force off
 ```
 
-Output:
+Output (JSONL format):
 
 ```
-.pi/sessions/<uuid>/
-├── session.md      # Full conversation: messages, thinking, tool calls, compactions
-└── metadata.json   # Token totals, cost, model/thinking changes, compaction count
+.pi/sessions/<datetime>_<uuid>.jsonl
 ```
+
+Each line is a JSON event: messages, thinking blocks, tool calls, compactions. Query with:
+
+```bash
+./scripts/session-query.sh 'select(.role == "user")'
+cat .pi/sessions/latest.jsonl | ./scripts/session-query.sh 'select(.tool == "bash")'
+```
+
+Metadata stored in `.pi/sessions/metadata.json`.
 
 ---
 
@@ -484,26 +551,49 @@ Switch the project to **Board** layout in the browser and change **Group by** fr
 The supervisor processes GitHub issues through a Kanban pipeline:
 
 1. Create an issue in your GitHub repo (`supervisor.repo` in `.pi/settings.json`)
-2. Add it to the GitHub Project board with status `Architecture`
+2. Add it to the GitHub Project board with status `Research`
 3. Inside pi, run: `/supervisor <issue-number>`
 
 The supervisor reads the issue's status from the project board and dispatches the appropriate agent. Each agent writes its output as a GitHub comment. The supervisor then moves the issue to the next status column. The cycle repeats until the issue reaches **Done** or hits `maxRejections` (default 5).
 
 ```
-Architecture → TestDesign → Implementation → Audit → Done
-     ↑                                          │
-     └─────────── (on rejection) ──────────────┘
+Research → Architecture → TestDesign → Implementation → Audit → Done
+                                                              ↑
+    ↑ (rejection by Auditor) ────────────────────────────────┘
+    ↑ (LSP pre-audit errors, max 3 retries) ─────────────────┘
 ```
 
-See `.pi/settings.json` → `supervisor.statusMapping` for the status-to-agent mapping.
+Current status-to-agent mapping (`.pi/settings.json` → `supervisor.statusMapping`):
+
+| Status           | Agent            | Description                                                          |
+| ---------------- | ---------------- | -------------------------------------------------------------------- |
+| `Research`       | `researcher`     | Crawls web for best practices, lib versions, pitfalls, security      |
+| `Architecture`   | `architect`      | Proposes target architecture based on research findings              |
+| `TestDesign`     | `test-designer`  | Writes test plan from architecture comment                           |
+| `Implementation` | `developer`      | Implements in isolated git worktree                                  |
+| `Audit`          | `auditor`        | Reviews implementation, runs LSP/TSC pre-audit, approves or rejects  |
+
+Before transitioning Implementation → Audit, the supervisor runs two **Tier 2 diagnostics**:
+- **LSP pre-audit** (`lsp-auditor` extension) — runs real Language Server Protocol diagnostics on modified files, groups by language server, auto-retries on errors (max 3 attempts).
+- **TSC checkpoint** (`tsc-checkpoint` extension) — runs `tsc --noEmit` on the worktree.
+
+If either finds errors, the issue goes back to Implementation.
 
 ### Workflows
 
-| Action                 | Command                                                                                                                    |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Start session**      | `pi`                                                                                                                       |
-| **Run supervisor**     | `/supervisor <issue-number>`                                                                                               |
-| **View session logs**  | `ls .pi/sessions/`                                                                                                         |
+| Action                     | Command / Usage                                                                                   |
+| -------------------------- | ------------------------------------------------------------------------------------------------- |
+| **Start session**          | `pi`                                                                                              |
+| **Run supervisor**         | `/supervisor <issue-number>`                                                                      |
+| **Run TSC type-check**     | `/check`                                                                                          |
+| **Toggle session logger**  | `/session-logger on` / `/session-logger off`                                                       |
+| **Toggle caveman level**   | `/caveman` (cycle: lite → full → off) or `/caveman lite`                                          |
+| **Query session logs**     | `./scripts/session-query.sh 'select(.role == "user")'`                                           |
+| **Design an extension**    | `/extension-spec <idea>`                                                                          |
+| **Write handover**         | `/handover`                                                                                       |
+| **Quiz PR reviewer**       | `/quiz-master`                                                                                    |
+| **View session logs**      | `ls .pi/sessions/`                                                                                |
+| **Reload config**          | `/reload` (after editing .piignore, settings.json, etc.)                                          |
 
 ### Context & Templates
 
@@ -528,13 +618,26 @@ Before writing your first line of code, verify all components.
 echo $APIFY_TOKEN            # Should print your token
 ```
 
-### 2. Pi Autonomy
+### 2. Tool Verification
+
+```bash
+# Codebase mapper
+pi "Run map_codebase on the root with max_depth=1"
+
+# Structural search
+pi "Use structural_search to find all console.log calls in TypeScript files"
+
+# Text search
+pi "Use ripgrep_search to find 'TODO' in the project"
+```
+
+### 3. Pi Autonomy
 
 ```bash
 pi "Respond with exactly one word: 'Operational'."
 ```
 
-### 3. Execution Routing (Acid Test)
+### 4. Execution Routing (Acid Test)
 
 ```bash
 pi -p "Create a file named '.pi/test-file.txt' with the content 'host works', then tell me the absolute path where it was created."
@@ -564,6 +667,13 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | zod                                        | 4.4.2    | MIT          | transitive | [zod.dev](https://zod.dev)                                                                               |
 | **Formatter**                              |          |              |            |                                                                                                          |
 | prettier                                    | ^3.8.3   | MIT          | dev        | [prettier.io](https://prettier.io)                                                                       |
+| **TUI & UI**                              |          |              |            |                                                                                                          |
+| @earendil-works/pi-tui                      | ^0.74.0  | MIT          | prod       | [pi.dev](https://pi.dev)                                                                                 |
+| boxen                                       | ^7.1.1   | MIT          | prod       | [github.com/sindresorhus/boxen](https://github.com/sindresorhus/boxen)                                   |
+| **LSP**                                   |          |              |            |                                                                                                          |
+| vscode-jsonrpc                              | ^8.2.1   | MIT          | prod       | [github.com/microsoft/vscode-jsonrpc](https://github.com/microsoft/vscode-jsonrpc)                       |
+| **TypeScript**                            |          |              |            |                                                                                                          |
+| typescript                                  | ^6.0.3   | Apache-2.0   | dev        | [typescriptlang.org](https://www.typescriptlang.org)                                                     |
 | **Utilities**                              |          |              |            |                                                                                                          |
 | fast-xml-parser                            | 5.7.2    | MIT          | transitive | [github.com/NaturalIntelligence/fast-xml-parser](https://github.com/NaturalIntelligence/fast-xml-parser) |
 | tslib                                      | 2.8.1    | 0BSD         | transitive | [github.com/microsoft/tslib](https://github.com/microsoft/tslib)                                         |
@@ -576,16 +686,25 @@ _Expected:_ File appears on host at `<project-root>/.pi/test-file.txt`.
 | **Infrastructure Tools**                   |          |              |            |                                                                                                          |
 | GitHub CLI (gh)                            | latest   | MIT          | system     | [cli.github.com](https://cli.github.com)                                                                 |
 | AST-grep                                   | ≥0.42    | MIT          | system     | [ast-grep.github.io](https://ast-grep.github.io)                                                         |
+| Universal Ctags                           | latest   | GPL-2.0      | system     | [ctags.io](https://ctags.io)                                                                             |
+| ripgrep (rg)                              | latest   | MIT          | system     | [github.com/BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep)                                   |
 | **Web Crawling (Python venv)**             |          |              |            |                                                                                                          |
 | crawl4ai                                   | latest   | Apache-2.0   | venv       | [github.com/unclecode/crawl4ai](https://github.com/unclecode/crawl4ai)                                   |
 | Playwright Chromium                        | latest   | Apache-2.0   | venv       | [playwright.dev](https://playwright.dev)                                                                 |
 | **Project Extensions (`.pi/extensions/`)** |          |              |            |                                                                                                          |
-| caveman.ts                                 | —        | MIT          | project    | This repository                                                                                          |
-| crawl4ai.ts                                | —        | MIT          | project    | This repository                                                                                          |
-| session-logger.ts                          | —        | MIT          | project    | This repository                                                                                          |
-| ask-user.ts                                | —        | MIT          | project    | This repository                                                                                          |
-| supervisor.ts                              | —        | MIT          | project    | This repository                                                                                          |
-| format-on-save.ts                          | —        | MIT          | project    | This repository                                                                                          |
+| codebase-mapper.ts                         | —        | MIT          | project    | This repository                                                                                          |
+| structural-analyzer.ts                     | —        | MIT          | project    | This repository                                                                                          |
+| ripgrep-search.ts                          | —        | MIT          | project    | This repository                                                                                          |
+| caveman/                                   | —        | MIT          | project    | This repository                                                                                          |
+| crawl4ai/                                  | —        | MIT          | project    | This repository                                                                                          |
+| session-logger/                            | —        | MIT          | project    | This repository                                                                                          |
+| ask-user/                                  | —        | MIT          | project    | This repository                                                                                          |
+| supervisor/                                | —        | MIT          | project    | This repository                                                                                          |
+| format-on-save/                            | —        | MIT          | project    | This repository                                                                                          |
+| context-info/                              | —        | MIT          | project    | This repository                                                                                          |
+| lsp-auditor/                               | —        | MIT          | project    | This repository                                                                                          |
+| piignore.ts                                | —        | MIT          | project    | This repository                                                                                          |
+| tsc-checkpoint.ts                          | —        | MIT          | project    | This repository                                                                                          |
 
 > **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
 
@@ -635,6 +754,45 @@ Run `gh auth login` and choose **Login with a web browser** (not Paste token, no
 cat ~/my-pat-token.txt | gh auth login --with-token
 ```
 
+### `map_codebase` fails with "ctags not found"
+
+Install universal-ctags with JSON output:
+
+```bash
+sudo apt-get install -y universal-ctags
+ctags --list-output-formats   # should include 'json'
+```
+
+### `structural_search` fails with "ast-grep not found"
+
+```bash
+sudo npm install -g @ast-grep/cli
+ast-grep --version   # expected: 0.42.x
+```
+
+### `ripgrep_search` fails with "rg not found"
+
+```bash
+sudo apt-get install -y ripgrep
+rg --version
+```
+
+### `/check` fails with "tsc not found"
+
+```bash
+sudo npm install -g typescript
+tsc --version
+```
+
+### `.piignore` blocking legitimate paths
+
+Edit `.piignore` and add a negation pattern:
+```
+# Allow specific path that would otherwise be blocked
+!path/to/allow
+```
+Reload: `/reload`
+
 ---
 
 ## Contributing
@@ -644,7 +802,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 1. Fork the repository
 2. Create a feature branch (`git worktree add -b feature/amazing feature-amazing` is the recommended workflow)
 3. Make your changes
-4. Run `node --test test/` if applicable
+4. Run tests: `npm test` (runs all 27+ test files)
 5. Submit a PR
 
 
@@ -657,6 +815,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 
 - ✅ No MCP servers — only pi extensions (no network-exposed tool servers)
 - ✅ API keys loaded from `~/.agent_env`, never committed
+- ✅ `.piignore` path blocking — block sensitive files from agent read/write/edit/bash
 
 ---
 
@@ -695,3 +854,9 @@ Built on top of these excellent projects:
 - [Caveman](https://github.com/JuliusBrussee/caveman) — Token-efficient AI communication protocol
 - [pi-caveman](https://github.com/jonjonrankin/pi-caveman) — Multi-level caveman mode for Pi
 - [Matt Pocock's Skills](https://github.com/mattpocock/skills) — Inspiration for the `issue-refinement` prompt (grill-with-docs pattern)
+
+### Extensions & Tools
+- [Pi SDK & Extensions Documentation](https://pi.dev/docs/latest) — Extension API, commands, hooks, theme system
+- [ast-grep](https://ast-grep.github.io) — Structural code search via Tree-sitter AST
+- [ripgrep](https://github.com/BurntSushi/ripgrep) — Ultra-fast literal/regex code search
+- [universal-ctags](https://ctags.io) — Codebase symbol indexing
