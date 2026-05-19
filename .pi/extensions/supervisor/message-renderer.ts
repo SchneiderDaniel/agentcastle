@@ -88,6 +88,23 @@ export function createMessageRenderer(pi: ExtensionAPI) {
 			}
 		}
 
+		// Raw output section (if available)
+		if (details.hasRawOutput && details.rawOutput) {
+			c.addChild(new Spacer(1));
+			c.addChild(new Text(fit(theme.fg("dim", "── Raw Output ──")), 1, 0));
+			// Show first 500 chars as preview, truncate with ...
+			const preview =
+				details.rawOutput.length > 500
+					? details.rawOutput.slice(0, 500) + "..."
+					: details.rawOutput;
+			for (const line of preview.split("\n")) {
+				const styled = theme.fg("dim", line || " ");
+				for (const wrapped of wrapTextWithAnsi(styled, w)) {
+					c.addChild(new Text(wrapped, 1, 0));
+				}
+			}
+		}
+
 		return c;
 	};
 }

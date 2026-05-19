@@ -114,6 +114,10 @@ export interface SupervisorMessageDetails {
 	thinkingOutput?: string;
 	/** Whether thinking output is available */
 	hasThinking?: boolean;
+	/** Complete raw stdout+stderr from agent session (untruncated) */
+	rawOutput: string;
+	/** Whether raw output is available */
+	hasRawOutput?: boolean;
 }
 
 // ─── Dependency gate types ─────────────────────────────────────────
