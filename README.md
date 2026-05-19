@@ -69,6 +69,8 @@ Customize ruthlessly. Make it yours.
 
 ### 3. Preparation — What you need on your machine
 
+> **Quick start:** Run `make install` in the repo root. It auto-detects Ubuntu/Debian, installs all apt packages (Node.js 22.x via NodeSource, python3, jq, ripgrep, etc.), GitHub CLI, and npm global tools (`@earendil-works/pi-coding-agent`, `@ast-grep/cli`, `typescript`). Idempotent — safe to re-run.
+
 > **Platform:** WSL2 with Ubuntu 24.04 LTS (primary). macOS via Lima/Colima works with minor adjustments. Native Linux works directly.
 
 Clone the repo gives you the configuration and extensions. But you need these **system-level tools** installed once:
@@ -85,19 +87,13 @@ Clone the repo gives you the configuration and extensions. But you need these **
 | `~/.agent_env` file | API keys (Apify token, etc.) |
 | `~/.bashrc` auto-start block | Docker + env loading on WSL boot |
 
-#### Base Runtimes
+#### Automated Setup
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs python3 python3-pip python3-venv jq unzip universal-ctags ripgrep
-sudo npm install -g npm@latest
+make install
 ```
 
-#### Pi Agent + AST-grep + TypeScript
-
-```bash
-sudo npm install -g @earendil-works/pi-coding-agent @ast-grep/cli typescript
-```
+Installs all system dependencies (Node.js 22.x via NodeSource, python3, jq, ripgrep, etc.), GitHub CLI, and npm global tools (`@earendil-works/pi-coding-agent`, `@ast-grep/cli`, `typescript`). Handles EACCES recovery automatically. Idempotent — safe to re-run.
 
 Verify:
 
@@ -106,29 +102,15 @@ ast-grep --version   # expected: ast-grep ≥0.42
 pi --version         # expected: ≥0.74
 ```
 
-> **EACCES fix:** If `sudo npm install -g` fails, set a user-owned prefix:
-> ```bash
-> mkdir -p ~/.npm-global
-> npm config set prefix ~/.npm-global
-> echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.bashrc
-> source ~/.bashrc
-> npm install -g @earendil-works/pi-coding-agent @ast-grep/cli typescript
-> ```
-
 ---
 
 ### 4. Installation — How to set it up
 
 #### 4.1 GitHub CLI
 
-```bash
-(type -p wget >/dev/null || sudo apt-get install wget -y)
-sudo mkdir -p -m 755 /etc/apt/keyrings
-wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-sudo apt-get update
-sudo apt-get install gh -y
+`make install` installs gh. Then authenticate:
 
+```bash
 gh auth login
 ```
 
@@ -324,6 +306,8 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `AGENTS.md` | Caveman protocol (active every session) |
 | `scripts/setup-github-project.sh` | Create GitHub Project from settings |
 | `scripts/session-query.sh` | Query JSONL session logs with jq |
+| `Makefile` | Quick-start: `make install` for automated first-time setup |
+| `scripts/install.sh` | Setup logic: apt deps, NodeSource, GitHub CLI, npm globals |
 | `scripts/postinstall.sh` | Patch pi footer pipe separator |
 | `test/` | 27+ unit/integration test files |
 | `flask_blogs/` | Submodule: Flask blog apps |
