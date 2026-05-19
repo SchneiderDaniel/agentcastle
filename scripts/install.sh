@@ -201,8 +201,8 @@ install_npm_global "typescript"                       "tsc"
 # --- EACCES recovery: persist PATH to ~/.profile ---------------------------
 if [ "$EACCES_RECOVERED" = true ]; then
     step "Persisting npm global PATH"
-    local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
-    local profile_file="$HOME/.profile"
+    path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
+    profile_file="$HOME/.profile"
 
     if grep -q "npm-global/bin" "$profile_file" 2>/dev/null; then
         skip "PATH already configured in $profile_file"
