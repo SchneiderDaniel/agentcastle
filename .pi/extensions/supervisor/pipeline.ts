@@ -1,6 +1,9 @@
 // ─── Pipeline ──────────────────────────────────────────────────────
 // The /supervisor command handler: status loop, transitions, LSP hook wiring,
 // post-pipeline merge conflict resolution.
+//
+// Loop is config-driven — reads WORKFLOW config to determine transitions,
+// hooks, and rejection limits. No hardcoded agent-specific branching.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type {
@@ -26,7 +29,7 @@ import {
 import { parseAgentFile } from "./agent-loader";
 import { buildAgentTask } from "./agent-task";
 import { runAgent } from "./agent-runner";
-import { determineNextStatus } from "./status-transitions";
+import { resolveNextStatus, WORKFLOW } from "./workflow";
 import { countRejections } from "./formatting";
 import { runTscAndLspAudit } from "./pipeline-audit";
 import { handlePostPipelineMerge } from "./pipeline-merge";
@@ -150,8 +153,19 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				for (let i = 0; i < MAX_LOOPS; i++) {
 					ctx.ui.notify(`Issue #${issueNum}: "${issueTitle}" — Status: ${loopStatus}`, "info");
 
-					// BACKLOG → advance to Architecture
-					if (loopStatus.toLowerCase() === "backlog") {
+					// Look up workflow step for current status
+					const step = WORKFLOW.find((s) => s.status.toLowerCase() === loopStatus.toLowerCase());
+					if (!step) {
+						const available = WORKFLOW.map((s) => s.status).join(", ");
+						ctx.ui.notify(
+							`No workflow step for status '${loopStatus}'. Available: ${available}`,
+							"error",
+						);
+						break;
+					}
+
+					// ── Built-in: Backlog ──
+					if (step.builtIn === "backlog") {
 						const optId = findStatusOption(fields, statusField.id, "Architecture");
 						if (!optId) {
 							ctx.ui.notify("Cannot find 'Architecture' status option", "error");
@@ -163,14 +177,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						continue;
 					}
 
-					// DONE → complete
-					if (loopStatus.toLowerCase() === "done") {
+					// ── Built-in: Done ──
+					if (step.builtIn === "done") {
 						ctx.ui.notify(`Issue #${issueNum} is Done. Pipeline complete.`, "info");
 						break;
 					}
 
-					// Map status to agent
-					const agentName = config.statusMapping[loopStatus];
+					// Resolve agent name: prefer step.agentName, fallback to config.statusMapping
+					const agentName = step.agentName || config.statusMapping[loopStatus];
 					if (!agentName) {
 						const mapped = Object.keys(config.statusMapping).join(", ");
 						ctx.ui.notify(`No agent for status '${loopStatus}'. Mapped: ${mapped}`, "error");
@@ -196,14 +210,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					// Code-level security: filter issue body + comments to trusted codeowners only
 					const loopFilteredData = filterIssueData(freshData, config.codeowners);
 
-					// Rejection limit check
-					if (agentName === "auditor") {
+					// Rejection limit check (if step defines maxRejections)
+					if (step.maxRejections !== undefined && step.maxRejections > 0) {
 						const rejectionCount = countRejections(
 							loopFilteredData.comments.map((c) => ({ body: c.body })),
 						);
-						if (rejectionCount >= (config.maxRejections || 3)) {
+						if (rejectionCount >= step.maxRejections) {
 							ctx.ui.notify(
-								`Issue #${issueNum} rejected ${config.maxRejections} times. Human intervention required.`,
+								`Issue #${issueNum} rejected ${step.maxRejections} times. Human intervention required.`,
 								"error",
 							);
 							break;
@@ -277,7 +291,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						} satisfies SupervisorMessageDetails,
 					});
 
-					const nextStatus = determineNextStatus(agentName, result.textOnly);
+					// Resolve next status from agent output markers (config-driven)
+					const nextStatus = resolveNextStatus(step, result.textOnly);
 
 					if (!result.success && nextStatus !== "Audit") {
 						ctx.ui.notify(
@@ -294,9 +309,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						break;
 					}
 
-					// ── TSC Checkpoint + LSP Pre-Audit (Implementation → Audit only) ──
+					// Feedback loop notification
+					if (step.canLoopBackTo?.includes(nextStatus)) {
+						ctx.ui.notify(`Feedback loop: ${loopStatus} → ${nextStatus}`, "info");
+					}
+
+					// ── Hooks (TSC/LSP) — triggered when step defines hooks ──
 					let effectiveNextStatus = nextStatus;
-					if (nextStatus === "Audit") {
+					if (step.hooks?.includes("tsc") || step.hooks?.includes("lsp")) {
 						try {
 							const auditResult = await runTscAndLspAudit(
 								issueNum,
