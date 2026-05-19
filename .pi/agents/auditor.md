@@ -2,8 +2,8 @@
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
 tools: read, bash, structural_search, ripgrep_search
-model: opencode-go/glm-5
-thinking: medium
+model: opencode-go/minimax-m2.7
+thinking: high
 extensions: "caveman,codebase-mapper,crawl4ai,piignore,ripgrep-search,structural-analyzer"
 ---
 

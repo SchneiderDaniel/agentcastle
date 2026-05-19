@@ -2,7 +2,7 @@
 name: test-designer
 description: Reads a GitHub issue (including architecture comment) and writes a test plan comment. Follows Clean Architecture testing discipline, PEAA responsibility-level testing, Philosophy of Software Design public-contract testing, Refactoring safety-net principles, and Working Effectively with Legacy Code characterization testing. Informed by BMAD-METHOD's risk-based test strategy and shanraisshan/claude-code-best-practice agent testing patterns.
 tools: read, bash, structural_search, ripgrep_search
-model: opencode-go/minimax-m2.5
+model: opencode-go/deepseek-v4-flash
 thinking: medium
 extensions: "caveman,codebase-mapper,crawl4ai,piignore,ripgrep-search,structural-analyzer"
 ---

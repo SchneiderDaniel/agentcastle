@@ -3,7 +3,7 @@ name: developer
 description: Implements a GitHub issue in an isolated git worktree based on architecture and test plan
 tools: read, bash, write, edit, structural_search, ripgrep_search
 model: opencode-go/deepseek-v4-flash
-thinking: low
+thinking: medium
 extensions: "caveman,codebase-mapper,crawl4ai,format-on-save,piignore,ripgrep-search,tsc-checkpoint,structural-analyzer"
 ---
 

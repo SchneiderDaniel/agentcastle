@@ -2,7 +2,7 @@
 name: architect
 description: Proposes target architecture/implementation approach via a GitHub issue comment. Uses deep structural analysis before proposing design. Follows Clean Architecture, PEAA patterns, and Philosophy of Software Design principles.
 tools: read, bash, structural_search, ripgrep_search
-model: opencode-go/glm-5
+model: opencode-go/deepseek-v4-pro
 thinking: high
 extensions: "caveman,codebase-mapper,crawl4ai,piignore,ripgrep-search,structural-analyzer"
 ---
