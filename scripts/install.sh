@@ -47,28 +47,49 @@ sudo apt-get update
 ok "Package lists updated"
 
 # --- APT packages ----------------------------------------------------------
+# Install an apt package.
+# Usage: install_apt <package-name> <binary-name>
+# Skips if binary already on PATH. Verifies binary exists after install.
 install_apt() {
-    local name="$1"
+    local pkg="$1"
     local binary="$2"
-    shift 2
 
     if command -v "$binary" &>/dev/null; then
-        skip "$name already installed ($(command -v "$binary"))"
+        skip "$pkg already installed ($(command -v "$binary"))"
         return 0
     fi
 
-    step "apt: $name"
-    sudo apt-get install -y "$@" "$name"
+    step "apt: $pkg"
+    sudo apt-get install -y "$pkg"
     if command -v "$binary" &>/dev/null; then
-        ok "$name installed ($(command -v "$binary"))"
+        ok "$pkg installed ($(command -v "$binary"))"
     else
-        fail "$name — install succeeded but binary not found"
+        fail "$pkg — install succeeded but binary not found"
+    fi
+}
+
+# python3-venv has no standalone binary; check via dpkg instead of binary check
+# Using dpkg -l with 'ii' status = package is installed and configured
+install_apt_venv() {
+    local pkg="python3-venv"
+
+    if dpkg -l "$pkg" 2>/dev/null | grep -q '^ii'; then
+        skip "$pkg already installed (dpkg)"
+        return 0
+    fi
+
+    step "apt: $pkg"
+    sudo apt-get install -y "$pkg"
+    if dpkg -l "$pkg" 2>/dev/null | grep -q '^ii'; then
+        ok "$pkg installed"
+    else
+        fail "$pkg — install succeeded but package not found"
     fi
 }
 
 install_apt "python3"         "python3"
 install_apt "python3-pip"     "pip3"
-install_apt "python3-venv"    "python3"  # venv is a module, not a binary; just ensure package exists
+install_apt_venv
 install_apt "jq"              "jq"
 install_apt "unzip"           "unzip"
 install_apt "universal-ctags" "ctags"
@@ -116,6 +137,7 @@ fi
 
 # --- npm global tools ------------------------------------------------------
 NPM_GLOBAL_DIR="$HOME/.npm-global"
+EACCES_RECOVERED=false
 
 install_npm_global() {
     local pkg="$1"
@@ -128,34 +150,68 @@ install_npm_global() {
 
     step "npm: $pkg"
 
+    local npm_err
+    npm_err=$(mktemp)
+
     # Try with sudo first; fall back to user prefix on EACCES
-    if sudo npm install -g "$pkg" 2>/dev/null; then
+    if sudo npm install -g "$pkg" 2>"$npm_err"; then
+        rm -f "$npm_err"
         if command -v "$binary" &>/dev/null; then
             ok "$pkg installed ($(command -v "$binary"))"
             return 0
         fi
     fi
 
-    # EACCES fallback — configure user-owned prefix
-    info "Trying user prefix install for $pkg ..."
-    mkdir -p "$NPM_GLOBAL_DIR"
-    npm config set prefix "$NPM_GLOBAL_DIR"
-    # Ensure ~/.npm-global/bin is on PATH for the rest of this script
-    export PATH="$NPM_GLOBAL_DIR/bin:$PATH"
+    # Check if failure was EACCES — if not, print the error and fail
+    local err_content
+    err_content=$(cat "$npm_err")
+    rm -f "$npm_err"
 
-    if npm install -g "$pkg" 2>/dev/null; then
-        if command -v "$binary" &>/dev/null; then
-            ok "$pkg installed (user prefix, $(command -v "$binary"))"
-            return 0
+    if echo "$err_content" | grep -qi "eacces\|permission denied\|EACCES"; then
+        # EACCES fallback — configure user-owned prefix
+        info "EACCES detected — configuring user-level npm prefix ..."
+        mkdir -p "$NPM_GLOBAL_DIR"
+        npm config set prefix "$NPM_GLOBAL_DIR"
+        # Ensure ~/.npm-global/bin is on PATH for the rest of this script
+        export PATH="$NPM_GLOBAL_DIR/bin:$PATH"
+        EACCES_RECOVERED=true
+
+        local npm_err2
+        npm_err2=$(mktemp)
+        if npm install -g "$pkg" 2>"$npm_err2"; then
+            rm -f "$npm_err2"
+            if command -v "$binary" &>/dev/null; then
+                ok "$pkg installed (user prefix, $(command -v "$binary"))"
+                return 0
+            fi
         fi
+        local err2_content
+        err2_content=$(cat "$npm_err2")
+        rm -f "$npm_err2"
+        fail "$pkg — install failed (user prefix). npm output: $err2_content"
+    else
+        fail "$pkg — install failed. npm output: $err_content"
     fi
-
-    fail "$pkg — install failed (tried sudo and user prefix)"
 }
 
 install_npm_global "@earendil-works/pi-coding-agent" "pi"
 install_npm_global "@ast-grep/cli"                   "ast-grep"
 install_npm_global "typescript"                       "tsc"
+
+# --- EACCES recovery: persist PATH to ~/.profile ---------------------------
+if [ "$EACCES_RECOVERED" = true ]; then
+    step "Persisting npm global PATH"
+    local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
+    local profile_file="$HOME/.profile"
+
+    if grep -q "npm-global/bin" "$profile_file" 2>/dev/null; then
+        skip "PATH already configured in $profile_file"
+    else
+        echo "$path_line" >> "$profile_file"
+        ok "Added npm-global/bin to PATH in $profile_file"
+        info "Run 'source $profile_file' or open new terminal for changes to take effect"
+    fi
+fi
 
 # --- Version verification --------------------------------------------------
 step "Version verification"
