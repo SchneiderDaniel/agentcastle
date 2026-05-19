@@ -103,7 +103,10 @@ describe("resolveModel()", () => {
 
 // buildToolList — pure, only depends on ParsedAgent + cwd
 // We duplicate the core logic for unit testing
-function buildToolList(agent: { config: { tools?: string; extensions?: string } }, cwd: string): string[] {
+function buildToolList(
+	agent: { config: { tools?: string; extensions?: string } },
+	cwd: string,
+): string[] {
 	const rawTools = agent.config.tools || "read,bash,write,edit";
 	// Simplified resolveTools — just splits on comma
 	const tools = rawTools
@@ -111,12 +114,15 @@ function buildToolList(agent: { config: { tools?: string; extensions?: string } 
 		.map((s) => s.trim())
 		.filter(Boolean)
 		.join(",");
-	return tools.split(",").map((s) => s.trim()).filter(Boolean);
+	return tools
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
 }
 
 describe("buildToolList()", () => {
 	it("2.8: default tools when none specified", () => {
-		const agent = { config: { } };
+		const agent = { config: {} };
 		const tools = buildToolList(agent as any, "/tmp");
 		assert.deepStrictEqual(tools, ["read", "bash", "write", "edit"]);
 	});
@@ -141,29 +147,125 @@ describe("buildToolList()", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 2b: extensions.ts — resolveExtensionPaths
+// ---------------------------------------------------------------------------
+
+import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+
+// Duplicated from extensions.ts for unit testing (same pattern as other tests)
+function resolveExtensionPaths(extensionsRaw: string | undefined, cwd?: string): string[] {
+	if (!extensionsRaw || !extensionsRaw.trim()) return [];
+
+	const baseCwd = cwd || process.cwd();
+
+	const extensions = extensionsRaw
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0)
+		.filter((s) => s.toLowerCase() !== "supervisor");
+
+	const paths: string[] = [];
+	for (const ext of extensions) {
+		const filePath = resolvePath(baseCwd, `.pi/extensions/${ext}.ts`);
+		const dirPath = resolvePath(baseCwd, `.pi/extensions/${ext}/index.ts`);
+		if (existsSync(filePath)) {
+			paths.push(filePath);
+		} else if (existsSync(dirPath)) {
+			paths.push(dirPath);
+		} else {
+			paths.push(filePath);
+		}
+	}
+
+	return paths;
+}
+
+describe("resolveExtensionPaths()", () => {
+	it("2.12: empty extensions → empty array", () => {
+		const result = resolveExtensionPaths(undefined, "/tmp");
+		assert.deepStrictEqual(result, []);
+	});
+
+	it("2.13: empty string extensions → empty array", () => {
+		const result = resolveExtensionPaths("", "/tmp");
+		assert.deepStrictEqual(result, []);
+	});
+
+	it("2.14: supervisor filtered out → empty array", () => {
+		const result = resolveExtensionPaths("supervisor", "/tmp");
+		assert.deepStrictEqual(result, []);
+	});
+
+	it("2.15: whitespace-only → empty array", () => {
+		const result = resolveExtensionPaths("   ", "/tmp");
+		assert.deepStrictEqual(result, []);
+	});
+
+	it("2.16: non-existent extension returns default path", () => {
+		const result = resolveExtensionPaths("nonexistent", "/tmp");
+		assert.strictEqual(result.length, 1);
+		assert.ok(result[0]!.endsWith(".pi/extensions/nonexistent.ts"));
+		assert.ok(result[0]!.startsWith("/tmp/"));
+	});
+
+	it("2.17: supervisor filtered from multi-ext list, others remain", () => {
+		const result = resolveExtensionPaths("supervisor,mcp,browser", "/tmp");
+		assert.strictEqual(result.length, 2);
+		assert.ok(result[0]!.endsWith(".pi/extensions/mcp.ts"));
+		assert.ok(result[1]!.endsWith(".pi/extensions/browser.ts"));
+	});
+
+	it("2.18: multiple extensions all resolved", () => {
+		const result = resolveExtensionPaths("mcp,browser", "/tmp");
+		assert.strictEqual(result.length, 2);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Phase 3: agent-runner.ts dispatch — in-process attempted first
 // ---------------------------------------------------------------------------
 
-describe("agent-runner dispatch logic", () => {
-	it("3.1: in-process attempted first (verify try/catch wrapper)", () => {
-		// Check that agent-runner.ts exports runAgent and imports runAgentInProcess
-		// We verify by reading the module's import/export structure
-		const importStatement = 'import { runAgentInProcess } from "./agent-session-runner"';
-		const exportFunction = "export async function runAgent(";
-		const tryBlock = "try {";
-		const catchBlock = "} catch (err) {";
+import { readFileSync } from "node:fs";
 
-		// These assertions verify the structural pattern in agent-runner.ts
-		assert.ok(importStatement.length > 0, "agent-runner imports runAgentInProcess");
-		assert.ok(exportFunction.length > 0, "agent-runner exports runAgent");
-		assert.ok(tryBlock.length > 0, "agent-runner has try block for in-process");
-		assert.ok(catchBlock.length > 0, "agent-runner has catch block for fallback");
+describe("agent-runner dispatch logic", () => {
+	it("3.1: runAgent is exported and calls runAgentInProcess first", () => {
+		const source = readFileSync(".pi/extensions/supervisor/agent-runner.ts", "utf-8");
+		assert.ok(
+			source.includes("export async function runAgent("),
+			"agent-runner.ts exports runAgent function",
+		);
+		assert.ok(
+			source.includes("return await runAgentInProcess("),
+			"runAgent calls runAgentInProcess (in-process primary path)",
+		);
 	});
 
-	it("3.2: subprocess fallback logs warning on error", () => {
-		// Verify the fallback pattern logs a warning with [supervisor] prefix
-		const logPattern = "[supervisor] In-process runner failed, falling back to subprocess";
-		assert.ok(logPattern.length > 0, "fallback log warning exists");
+	it("3.2: runAgentSubprocess is exported as fallback", () => {
+		const source = readFileSync(".pi/extensions/supervisor/agent-runner.ts", "utf-8");
+		assert.ok(
+			source.includes("export async function runAgentSubprocess("),
+			"runAgentSubprocess is exported from agent-runner.ts",
+		);
+	});
+
+	it("3.3: dispatch uses try/catch with fallback to subprocess", () => {
+		const source = readFileSync(".pi/extensions/supervisor/agent-runner.ts", "utf-8");
+		assert.ok(
+			source.includes("try {") &&
+				source.includes("} catch (err) {") &&
+				source.includes("return await runAgentInProcess(") &&
+				source.includes("return runAgentSubprocess("),
+			"runAgent has try/catch dispatch (in-process → subprocess fallback)",
+		);
+	});
+
+	it("3.4: fallback logs warning with [supervisor] prefix", () => {
+		const source = readFileSync(".pi/extensions/supervisor/agent-runner.ts", "utf-8");
+		assert.ok(
+			source.includes("[supervisor] In-process runner failed, falling back to subprocess"),
+			"fallback path logs warning",
+		);
 	});
 });
 
@@ -188,7 +290,17 @@ describe("pipeline.ts rawOutput forwarding", () => {
 	});
 
 	it("4.2: details object includes rawOutput and hasRawOutput", () => {
-		const result = { output: "full raw output", agentName: "test", success: true, toolCount: 3, tokenCount: 500, durationMs: 2000, textOutput: "text", summaryLine: "summary", thinkingOutput: undefined };
+		const result = {
+			output: "full raw output",
+			agentName: "test",
+			success: true,
+			toolCount: 3,
+			tokenCount: 500,
+			durationMs: 2000,
+			textOutput: "text",
+			summaryLine: "summary",
+			thinkingOutput: undefined,
+		};
 		const details = {
 			agentName: result.agentName,
 			success: result.success,
@@ -214,7 +326,17 @@ describe("pipeline.ts rawOutput forwarding", () => {
 
 describe("pipeline-merge.ts rawOutput forwarding", () => {
 	it("5.1: dev conflict resolution includes rawOutput in details", () => {
-		const devResult = { output: "full dev output", agentName: "developer", success: true, toolCount: 5, tokenCount: 1000, durationMs: 30000, textOutput: "conflict resolved", summaryLine: "done", thinkingOutput: undefined };
+		const devResult = {
+			output: "full dev output",
+			agentName: "developer",
+			success: true,
+			toolCount: 5,
+			tokenCount: 1000,
+			durationMs: 30000,
+			textOutput: "conflict resolved",
+			summaryLine: "done",
+			thinkingOutput: undefined,
+		};
 		const details = {
 			agentName: devResult.agentName,
 			success: devResult.success,

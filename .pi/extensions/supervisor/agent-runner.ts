@@ -1,10 +1,9 @@
 // ─── Agent Runner ─────────────────────────────────────────────────
-// Dispatches agent execution: primary path is in-process via the pi SDK
-// (createAgentSession). Falls back to subprocess spawn if in-process fails.
+// Dispatcher: tries in-process SDK runner first, falls back to subprocess.
+// Subprocess path retained as backward-compatible fallback.
 //
-// Subprocess path spawns /usr/bin/pi --mode json, parses JSON event stream,
-// maintains live state, renders widgets. Subprocess lifecycle only —
-// parsing logic lives in agent-stream.ts.
+// In-process runner lives in agent-session-runner.ts
+// Subprocess lifecycle lives in this file (parsing in agent-stream.ts).
 
 import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./types";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -34,8 +33,7 @@ import { runAgentInProcess } from "./agent-session-runner";
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 
-// ─── runAgent ────────────────────────────────────────────────────────
-// Primary: in-process via SDK. Fallback: subprocess spawn.
+// ─── runAgent (Primary: in-process, Fallback: subprocess) ──────────
 
 export async function runAgent(
 	agent: ParsedAgent,
@@ -47,17 +45,15 @@ export async function runAgent(
 	try {
 		return await runAgentInProcess(agent, task, ctx, timeoutMs);
 	} catch (err) {
-		console.error(
-			`[supervisor] In-process runner failed, falling back to subprocess: ${err instanceof Error ? err.message : String(err)}`,
-		);
+		console.error(`[supervisor] In-process runner failed, falling back to subprocess: ${err}`);
 		// Fallback: subprocess (existing code)
 		return runAgentSubprocess(agent, task, ctx, timeoutMs);
 	}
 }
 
-// ─── runAgentSubprocess (fallback) ─────────────────────────────────
+// ─── runAgentSubprocess (Fallback) ─────────────────────────────────
 
-async function runAgentSubprocess(
+export async function runAgentSubprocess(
 	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,
@@ -90,7 +86,7 @@ async function runAgentSubprocess(
 
 	const widgetId = `agent-${agent.config.name}`;
 	const agentName = agent.config.name;
-	ctx.ui.notify(`Running agent (subprocess): ${agentName}...`, "info");
+	ctx.ui.notify(`Running agent: ${agentName}...`, "info");
 	ctx.ui.setStatus("supervisor", `Running ${agentName}...`);
 
 	const startedAt = Date.now();

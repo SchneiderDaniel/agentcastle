@@ -1,89 +1,440 @@
-// ─── Agent Session Runner (In-Process) ────────────────────────────
-// Runs an agent directly inside the supervisor process using createAgentSession()
-// from the pi SDK. Replaces the subprocess spawn as the primary execution path.
+// ─── Agent Session Runner (In-Process SDK) ────────────────────────
+// Runs agents in-process via createAgentSession() from the pi SDK.
+// Replaces subprocess spawn for complete output capture.
 //
 // Responsibilities:
-// 1. Resolve model from agent config via ModelRegistry + AuthStorage
-// 2. Build tool list (built-in + extension tools)
-// 3. Create AgentSession with SessionManager.inMemory()
-// 4. Subscribe to session events → TUI widget + collect all output
-// 5. Run session.prompt(task) with timeout
-// 6. Extract messages → build AgentRunResult (full untruncated output)
+//  1. Resolve model from agent config string via ModelRegistry + AuthStorage
+//  2. Build tool list: built-in + extension tools
+//  3. Create AgentSession with SessionManager.inMemory()
+//  4. Subscribe to session events → update TUI widget + collect output
+//  5. Run session.prompt(task) with timeout
+//  6. Extract complete messages → build AgentRunResult (untruncated)
+//  7. Always dispose session on completion
 
-import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./types";
+import type { ParsedAgent, AgentRunResult, AgentRunState, AgentPhase } from "./types";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
-	AuthStorage,
+	createAgentSession,
 	SessionManager,
 	SettingsManager,
-	ModelRegistry,
 	DefaultResourceLoader,
-	createAgentSession,
-	createBashTool,
-	createReadTool,
-	createWriteTool,
-	createEditTool,
+	ModelRegistry,
+	AuthStorage,
 } from "@earendil-works/pi-coding-agent";
-import { resolveTools, resolveExtensions } from "./extensions";
+import { resolveTools, resolveExtensionPaths } from "./extensions";
 import {
 	formatDuration,
 	extractSummaryLine,
 	formatTokens,
 	buildSubagentStatusLine,
+	extractTextFromContent,
 } from "./formatting";
+import { pushLog, buildWidgetLines, getWorkingMessage } from "./agent-stream";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
-import {
-	pushLog,
-	buildWidgetLines,
-	getWorkingMessage,
-	MAX_FULL_LOG,
-	WIDGET_LINES,
-	MAX_LIVE_THINKING,
-} from "./agent-stream";
 
 // Re-export for backward compatibility
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 
-// ─── Built-in tools ────────────────────────────────────────────────
-
-const BUILT_IN_TOOLS = [createReadTool(), createBashTool(), createWriteTool(), createEditTool()];
-
-// ─── resolveModel ──────────────────────────────────────────────────
+// ─── Model Resolution ───────────────────────────────────────────────
 
 /**
- * Resolve a model from agent config string (e.g. "opencode-go/deepseek-v4-flash").
- * Falls back to first available model if resolution fails.
+ * Parse a model string (e.g. "opencode-go/deepseek-v4-flash") into
+ * provider and modelId components. Returns null if invalid.
  */
-export function resolveModel(modelString: string): { provider: string; modelId: string } | null {
+export function resolveModelString(
+	modelString: string,
+): { provider: string; modelId: string } | null {
 	if (!modelString || !modelString.trim()) return null;
 	const parts = modelString.split("/");
 	if (parts.length !== 2) return null;
 	return { provider: parts[0]!, modelId: parts[1]! };
 }
 
-// ─── buildToolList ────────────────────────────────────────────────
+/**
+ * Resolve a model from agent config via ModelRegistry + AuthStorage.
+ * Falls back to first available model if the specified model is not found.
+ */
+export async function resolveModel(
+	modelString: string,
+): Promise<{ provider: string; modelId: string } | undefined> {
+	const parsed = resolveModelString(modelString);
+	if (!parsed) return undefined;
+
+	try {
+		const authStorage = AuthStorage.create();
+		const registry = ModelRegistry.create(authStorage);
+		const model = registry.find(parsed.provider, parsed.modelId);
+		if (model) {
+			return parsed;
+		}
+	} catch {
+		// Model not found or auth issue — fall back to first available
+	}
+
+	// Try to find first available model
+	try {
+		const authStorage = AuthStorage.create();
+		const registry = ModelRegistry.create(authStorage);
+		const models = registry.getAll();
+		if (models && models.length > 0) {
+			const first = models[0];
+			const id = first.id || first.model || "";
+			const prov = first.provider || "";
+			if (prov && id) {
+				return { provider: prov, modelId: id };
+			}
+		}
+	} catch {
+		// No models available
+	}
+
+	return undefined;
+}
+
+// ─── Tool List Building ─────────────────────────────────────────────
 
 /**
- * Build tool list for an agent session: built-in tools + extension tools
- * resolved from agent frontmatter.
+ * Build a deduplicated array of tool names from agent config.
+ * Uses resolveTools from extensions module for consistency.
  */
 export function buildToolList(agent: ParsedAgent, cwd: string): string[] {
 	const rawTools = agent.config.tools || "read,bash,write,edit";
 	const toolsStr = resolveTools(rawTools, agent.config.extensions, cwd);
-	// resolveTools returns comma-separated tool names
 	return toolsStr
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean);
 }
 
-// ─── runAgentInProcess ─────────────────────────────────────────────
+// ─── Event → State Mapping ─────────────────────────────────────────
 
 /**
- * Run an agent in-process using createAgentSession() from the pi SDK.
+ * Process a single session event — mirrors processJsonLine logic
+ * but receives typed SDK events instead of parsed JSON lines.
+ */
+function processSessionEvent(
+	ev: any,
+	state: AgentRunState,
+): { flush: boolean; workingChange: boolean } {
+	const prevPhase = state.phase;
+
+	switch (ev.type) {
+		case "context_info": {
+			const tokens = ev.contextTokens;
+			const window = ev.contextWindow;
+			if (typeof tokens === "number" && typeof window === "number" && window > 0) {
+				state.contextTokens = tokens;
+				state.contextWindow = window;
+				state.contextInfoReceived = true;
+				pushLog(state, `📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
+				return { flush: true, workingChange: false };
+			}
+			break;
+		}
+
+		case "tool_execution_start": {
+			state.currentTool = ev.toolName || "tool";
+			state.currentToolArgs = ev.args ? JSON.stringify(ev.args).slice(0, 200) : undefined;
+			state.lastToolName = ev.toolName;
+			state.phase = "tool";
+			const logArgs = ev.args ? JSON.stringify(ev.args).slice(0, 200) : "";
+			pushLog(state, `🔧 ${ev.toolName}${logArgs ? ` ${logArgs}` : ""}`);
+			return { flush: true, workingChange: prevPhase !== "tool" };
+		}
+
+		case "tool_execution_end": {
+			state.toolCount++;
+			state.currentTool = undefined;
+			state.currentToolArgs = undefined;
+			state.phase = "idle";
+			pushLog(state, `${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
+			return { flush: true, workingChange: true };
+		}
+
+		case "message_update": {
+			const delta = ev.delta;
+			if (!delta) break;
+
+			const eventPhase = getEventPhase(ev);
+			if (eventPhase !== "idle" && phasePriority(eventPhase) >= phasePriority(state.phase)) {
+				state.phase = eventPhase;
+			}
+
+			switch (delta.type) {
+				case "thinking_start": {
+					state.thinkingPushedThisTurn = false;
+					return { flush: true, workingChange: prevPhase !== "thinking" };
+				}
+				case "text_start": {
+					state.textPushedThisTurn = false;
+					return { flush: true, workingChange: prevPhase !== "text" };
+				}
+				case "thinking_delta": {
+					const td = delta.thinking_delta;
+					if (typeof td === "string" && td.length > 0) {
+						state.liveThinking += td;
+						if (state.liveThinking.length > 1000) {
+							state.liveThinking = state.liveThinking.slice(-1000);
+						}
+						return { flush: true, workingChange: prevPhase !== "thinking" };
+					}
+					break;
+				}
+				case "text_delta": {
+					const td = delta.text_delta;
+					if (typeof td === "string" && td.length > 0) {
+						state.liveText += td;
+						if (state.liveText.length > 10_000) {
+							state.liveText = state.liveText.slice(-8_000);
+						}
+						return { flush: true, workingChange: prevPhase !== "text" };
+					}
+					break;
+				}
+				case "thinking_end": {
+					if (state.liveThinking.trim()) {
+						state.thinkingOutputLines.push(state.liveThinking.trim());
+						for (const t of state.liveThinking.split("\n")) {
+							const trimmed = t.trim();
+							if (trimmed) pushLog(state, `💭 ${trimmed}`);
+						}
+						state.thinkingPushedThisTurn = true;
+					}
+					state.liveThinking = "";
+					state.phase = "idle";
+					return { flush: true, workingChange: true };
+				}
+				case "text_end": {
+					if (state.liveText.trim()) {
+						state.textOutputLines.push(state.liveText.trim());
+						for (const t of state.liveText.split("\n")) {
+							const trimmed = t.trim();
+							if (trimmed) pushLog(state, trimmed);
+						}
+						state.textPushedThisTurn = true;
+					}
+					if (ev.usage) {
+						state.tokenCount =
+							ev.usage.totalTokens || ev.usage.input + ev.usage.output || state.tokenCount;
+					}
+					state.liveText = "";
+					state.phase = "idle";
+					return { flush: true, workingChange: true };
+				}
+			}
+			break;
+		}
+
+		case "message_end": {
+			const msg = ev.message;
+			if (!msg) break;
+
+			if (msg.role === "assistant") {
+				if (!state.thinkingPushedThisTurn && Array.isArray(msg.content)) {
+					for (const block of msg.content) {
+						if (block.type === "thinking" && block.thinking) {
+							const thinkingText =
+								typeof block.thinking === "string"
+									? block.thinking
+									: JSON.stringify(block.thinking);
+							for (const t of thinkingText.split("\n")) {
+								if (t.trim()) pushLog(state, `💭 ${t.trim()}`);
+							}
+						}
+					}
+				}
+				if (!state.textPushedThisTurn) {
+					const text = extractTextFromContent(msg.content);
+					if (text && text.trim()) {
+						state.textOutputLines.push(text.trim());
+						for (const t of text.split("\n")) {
+							if (t.trim()) pushLog(state, t);
+						}
+					}
+				}
+				if (msg.usage) {
+					state.tokenCount = msg.usage.totalTokens || msg.usage.input + msg.usage.output;
+				}
+			} else if (msg.role === "toolResult") {
+				const resultText = extractTextFromContent(msg.content);
+				const label = msg.toolName || state.lastToolName || "tool";
+				if (resultText && resultText.trim()) {
+					const resultLines = resultText.split("\n");
+					pushLog(state, `📋 ${label}: ${resultLines[0]?.slice(0, 300) || "(no output)"}`);
+					for (let i = 1; i < Math.min(resultLines.length, 6); i++) {
+						if (resultLines[i].trim()) pushLog(state, `   ${resultLines[i].slice(0, 200)}`);
+					}
+				} else {
+					pushLog(state, `📋 ${label}: (no output)`);
+				}
+				state.lastToolName = undefined;
+			}
+			state.phase = "idle";
+			state.thinkingPushedThisTurn = false;
+			state.textPushedThisTurn = false;
+			return { flush: true, workingChange: true };
+		}
+
+		case "turn_start":
+		case "turn_end":
+		case "agent_start":
+		case "agent_end":
+			break;
+	}
+
+	return { flush: false, workingChange: false };
+}
+
+/** Numeric priority for phase ordering. Higher = more important. */
+function phasePriority(phase: AgentPhase): number {
+	switch (phase) {
+		case "tool":
+			return 3;
+		case "thinking":
+			return 2;
+		case "text":
+			return 1;
+		case "idle":
+			return 0;
+	}
+}
+
+/** Determine phase from an event */
+function getEventPhase(ev: any): AgentPhase {
+	if (!ev) return "idle";
+	if (ev.type === "tool_execution_start") return "tool";
+	if (ev.type === "tool_execution_end") return "idle";
+	if (ev.type === "message_update") {
+		const delta = ev.delta;
+		if (!delta) return "idle";
+		switch (delta.type) {
+			case "thinking_delta":
+				if (delta.thinking_delta) return "thinking";
+				break;
+			case "thinking_start":
+				return "thinking";
+			case "text_delta":
+				if (delta.text_delta) return "text";
+				break;
+			case "text_start":
+				return "text";
+			case "thinking_end":
+			case "text_end":
+				return "idle";
+		}
+	}
+	if (ev.type === "message_end") return "idle";
+	return "idle";
+}
+
+// ─── Result Assembly ────────────────────────────────────────────────
+
+/**
+ * Build complete raw output string from session message history.
+ * NO truncation — full message content is preserved.
+ */
+function buildRawOutputFromMessages(messages: any[]): string {
+	if (!Array.isArray(messages) || messages.length === 0) return "";
+
+	const parts: string[] = [];
+
+	for (const msg of messages) {
+		if (!msg) continue;
+
+		const role = msg.role || "unknown";
+		const toolName = msg.toolName || "";
+
+		if (msg.content && Array.isArray(msg.content)) {
+			for (const block of msg.content) {
+				if (!block || typeof block !== "object") continue;
+
+				switch (block.type) {
+					case "text": {
+						if (block.text) {
+							parts.push(`[${role.toUpperCase()}]`);
+							parts.push(block.text);
+						}
+						break;
+					}
+					case "thinking": {
+						if (block.thinking) {
+							const t =
+								typeof block.thinking === "string"
+									? block.thinking
+									: JSON.stringify(block.thinking);
+							parts.push(`[${role.toUpperCase()} THINKING]`);
+							parts.push(t);
+						}
+						break;
+					}
+					case "tool_use": {
+						if (block.name) {
+							parts.push(`[TOOL_USE: ${block.name}]`);
+							if (block.input) {
+								parts.push(JSON.stringify(block.input, null, 2));
+							}
+						}
+						break;
+					}
+					case "tool_result": {
+						parts.push(`[TOOL_RESULT${toolName ? `: ${toolName}` : ""}]`);
+						const text = extractTextFromContent(block.content || block.result || "");
+						if (text) parts.push(text);
+						break;
+					}
+				}
+			}
+		} else if (typeof msg.content === "string") {
+			parts.push(`[${role.toUpperCase()}]`);
+			parts.push(msg.content);
+		}
+	}
+
+	return parts.join("\n");
+}
+
+/**
+ * Build AgentRunResult from session state and messages.
+ * Uses full untruncated message content for rawOutput.
+ */
+function buildAgentRunResult(
+	state: AgentRunState,
+	agentName: string,
+	success: boolean,
+	durationMs: number,
+	messages: any[],
+): AgentRunResult {
+	const textOutput = state.fullLog.join("\n").trim();
+	const textOnly = state.textOutputLines.join("\n").trim();
+	const rawOutput = buildRawOutputFromMessages(messages);
+	const thinkingOutput =
+		state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined;
+	const summaryLine = extractSummaryLine(textOutput, success, agentName);
+
+	return {
+		output: rawOutput,
+		success,
+		agentName,
+		toolCount: state.toolCount,
+		tokenCount: state.tokenCount,
+		durationMs,
+		textOutput,
+		textOnly,
+		summaryLine,
+		errorOutput: "",
+		thinkingOutput,
+	};
+}
+
+// ─── Main: runAgentInProcess ────────────────────────────────────────
+
+/**
+ * Run an agent in-process via the pi SDK.
  *
- * Returns AgentRunResult matching the same shape as the subprocess path.
- * Throws on failure — caller (agent-runner.ts) catches and falls back to subprocess.
+ * Creates an ephemeral AgentSession, subscribes to events for live TUI updates,
+ * runs the prompt with timeout, and returns a complete untruncated AgentRunResult.
+ *
+ * Always disposes the session on completion (success, timeout, or error).
  */
 export async function runAgentInProcess(
 	agent: ParsedAgent,
@@ -100,7 +451,6 @@ export async function runAgentInProcess(
 
 	const startedAt = Date.now();
 
-	// ── State (same shape as subprocess path) ──
 	const state: AgentRunState = {
 		toolCount: 0,
 		tokenCount: 0,
@@ -116,312 +466,122 @@ export async function runAgentInProcess(
 		textPushedThisTurn: false,
 	};
 
-	// ── Flush widget helper ──
-	const flushWidget = () => {
-		ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName));
-		ctx.ui.setStatus(
-			"supervisor",
-			buildSubagentStatusLine(
-				agentName,
-				state.startedAt,
-				state.tokenCount,
-				state.toolCount,
-				state.contextInfoReceived,
-				state.contextWindow,
-				Date.now(),
-				ctx.ui.theme,
-			),
-		);
-	};
+	// Resolve model
+	const modelInfo = await resolveModel(agent.config.model || "");
 
-	let flushTimer: ReturnType<typeof setTimeout> | null = null;
-	const scheduleFlush = () => {
-		if (!flushTimer) {
-			flushTimer = setTimeout(() => {
-				flushTimer = null;
-				flushWidget();
-			}, 80);
-		}
-	};
+	// Build tool list
+	const tools = buildToolList(agent, cwd);
 
-	const setWorkingMessage = () => {
-		const wm = getWorkingMessage(state, agentName);
-		ctx.ui.setWorkingMessage(wm ?? undefined);
-	};
+	// Resolve extension paths for resource loader
+	const extPaths = resolveExtensionPaths(agent.config.extensions, cwd);
 
-	// ── Session reference for timeout ──
-	let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
-	let abortedByTimeout = false;
-	const timeoutTimer = setTimeout(() => {
-		abortedByTimeout = true;
-		// Attempt to abort the session prompt
-		session?.abort().catch(() => {});
-	}, timeoutMs);
+	let session;
+	let unsubscribe: (() => void) | undefined;
+	let abortController: AbortController | undefined;
+	let flushTimer: NodeJS.Timeout | null = null;
 
 	try {
-		// ── Resolve auth & model ──
-		const authStorage = AuthStorage.create();
-		const modelRegistry = ModelRegistry.create(authStorage);
-
-		let resolvedModel = undefined;
-		const modelParts = resolveModel(agent.config.model || "");
-		if (modelParts) {
-			resolvedModel = modelRegistry.find(modelParts.provider, modelParts.modelId);
-		}
-		// Fallback: first available model
-		if (!resolvedModel) {
-			const available = modelRegistry.getAvailable();
-			if (available.length > 0) resolvedModel = available[0]!;
-		}
-
-		// ── Build resource loader with system prompt override ──
+		// Create resource loader with system prompt override and extension paths
 		const resourceLoader = new DefaultResourceLoader({
 			cwd,
 			settingsManager: SettingsManager.inMemory(),
 			systemPromptOverride: () => agent.systemPrompt,
+			additionalExtensionPaths: extPaths.length > 0 ? extPaths : undefined,
 		});
-		await resourceLoader.reload();
 
-		// ── Load agent-specific extensions ──
-		const extFlags = resolveExtensions(agent.config.extensions);
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.inMemory();
 
-		// ── Create session ──
-		const sessionResult = await createAgentSession({
-			cwd,
-			authStorage,
-			modelRegistry,
-			model: resolvedModel,
+		session = await createAgentSession({
+			sessionManager,
 			resourceLoader,
-			sessionManager: SessionManager.inMemory(cwd),
-			settingsManager: SettingsManager.inMemory(),
-			tools: buildToolList(agent, cwd),
-			noTools: "builtin", // we provide explicit tool allowlist above
+			settingsManager,
+			tools: tools.length > 0 ? tools : undefined,
+			noTools: tools.length === 0 ? "builtin" : undefined,
+			model: modelInfo ? { provider: modelInfo.provider, model: modelInfo.modelId } : undefined,
 		});
-		session = sessionResult.session;
 
-		// Apply thinking level from agent config
-		if (agent.config.thinking && agent.config.thinking.trim()) {
-			try {
-				session.setThinkingLevel(agent.config.thinking.trim() as any);
-			} catch {
-				// ignore invalid thinking levels
+		// Subscribe to events for live TUI updates
+		const flushWidget = () => {
+			if (flushTimer) {
+				clearTimeout(flushTimer);
+				flushTimer = null;
 			}
+			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName));
+			ctx.ui.setStatus(
+				"supervisor",
+				buildSubagentStatusLine(
+					agentName,
+					state.startedAt,
+					state.tokenCount,
+					state.toolCount,
+					state.contextInfoReceived,
+					state.contextWindow,
+					Date.now(),
+					ctx.ui.theme,
+				),
+			);
+		};
+
+		const scheduleFlush = () => {
+			if (!flushTimer) {
+				flushTimer = setTimeout(flushWidget, 80);
+			}
+		};
+
+		unsubscribe = session.subscribe((event: any) => {
+			const result = processSessionEvent(event, state);
+			if (result.flush) scheduleFlush();
+			if (result.workingChange) {
+				const wm = getWorkingMessage(state, agentName);
+				ctx.ui.setWorkingMessage(wm ?? undefined);
+			}
+		});
+
+		// Run prompt with timeout via AbortSignal
+		abortController = new AbortController();
+		const timeoutId = setTimeout(() => abortController!.abort(), timeoutMs);
+
+		try {
+			await session.prompt(task, {
+				signal: abortController.signal,
+				streamingBehavior: "steer",
+			});
+		} catch (promptErr: unknown) {
+			// Check if this was a timeout
+			if (abortController.signal.aborted) {
+				const durationMs = Date.now() - startedAt;
+				pushLog(state, `[Timeout: ${agentName} killed after ${formatDuration(durationMs)}]`);
+
+				if (state.liveText.trim()) {
+					state.textOutputLines.push(state.liveText.trim());
+				}
+				if (state.liveThinking.trim()) {
+					state.thinkingOutputLines.push(state.liveThinking.trim());
+				}
+
+				// Cleanup
+				try {
+					session?.dispose();
+				} catch {}
+				try {
+					unsubscribe?.();
+				} catch {}
+				if (flushTimer) clearTimeout(flushTimer);
+				ctx.ui.setWidget(widgetId, undefined);
+				ctx.ui.setWorkingMessage(undefined);
+				ctx.ui.setStatus("supervisor", "");
+
+				const messages = session?.state?.messages || [];
+				return buildAgentRunResult(state, agentName, false, durationMs, messages);
+			}
+			// Re-throw other errors to be caught by outer catch
+			throw promptErr;
+		} finally {
+			clearTimeout(timeoutId);
 		}
 
-		// ── Subscribe to session events ──
-		const unsubscribe = session.subscribe((event) => {
-			let needsFlush = false;
-			let workingChanged = false;
-
-			switch (event.type) {
-				case "context_info": {
-					const tokens = (event as any).contextTokens;
-					const window = (event as any).contextWindow;
-					if (typeof tokens === "number" && typeof window === "number" && window > 0) {
-						state.contextTokens = tokens;
-						state.contextWindow = window;
-						state.contextInfoReceived = true;
-						pushLog(state, `📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
-						needsFlush = true;
-					}
-					break;
-				}
-
-				case "tool_execution_start": {
-					const prevPhase = state.phase;
-					state.currentTool = event.toolName || "tool";
-					state.currentToolArgs = event.args ? JSON.stringify(event.args).slice(0, 200) : undefined;
-					state.lastToolName = event.toolName;
-					state.phase = "tool";
-					const logArgs = event.args ? JSON.stringify(event.args).slice(0, 200) : "";
-					pushLog(state, `🔧 ${event.toolName}${logArgs ? ` ${logArgs}` : ""}`);
-					needsFlush = true;
-					if (prevPhase !== "tool") workingChanged = true;
-					break;
-				}
-
-				case "tool_execution_end": {
-					state.toolCount++;
-					state.currentTool = undefined;
-					state.currentToolArgs = undefined;
-					state.phase = "idle";
-					pushLog(state, `${event.isError ? "✗" : "✓"} ${event.toolName}`);
-					needsFlush = true;
-					workingChanged = true;
-					break;
-				}
-
-				case "message_update": {
-					const msg = event.message;
-					const assistantEvent = event.assistantMessageEvent;
-					if (!assistantEvent || !assistantEvent.delta) break;
-
-					const delta = assistantEvent.delta;
-					const prevPhase = state.phase;
-
-					switch (delta.type) {
-						case "thinking_start": {
-							state.thinkingPushedThisTurn = false;
-							if (prevPhase !== "thinking") {
-								state.phase = "thinking";
-								workingChanged = true;
-							}
-							needsFlush = true;
-							break;
-						}
-						case "text_start": {
-							state.textPushedThisTurn = false;
-							if (prevPhase !== "text") {
-								state.phase = "text";
-								workingChanged = true;
-							}
-							needsFlush = true;
-							break;
-						}
-						case "thinking_delta": {
-							const td = delta.thinking_delta;
-							if (typeof td === "string" && td.length > 0) {
-								state.liveThinking += td;
-								if (state.liveThinking.length > MAX_LIVE_THINKING * 2) {
-									state.liveThinking = state.liveThinking.slice(-MAX_LIVE_THINKING);
-								}
-								if (state.phase !== "thinking") {
-									state.phase = "thinking";
-									workingChanged = true;
-								}
-								needsFlush = true;
-							}
-							break;
-						}
-						case "text_delta": {
-							const td = delta.text_delta;
-							if (typeof td === "string" && td.length > 0) {
-								state.liveText += td;
-								if (state.liveText.length > 10_000) {
-									state.liveText = state.liveText.slice(-8_000);
-								}
-								if (state.phase !== "text") {
-									state.phase = "text";
-									workingChanged = true;
-								}
-								needsFlush = true;
-							}
-							break;
-						}
-						case "thinking_end": {
-							if (state.liveThinking.trim()) {
-								state.thinkingOutputLines.push(state.liveThinking.trim());
-								for (const t of state.liveThinking.split("\n")) {
-									const trimmed = t.trim();
-									if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 500)}`);
-								}
-								state.thinkingPushedThisTurn = true;
-							}
-							state.liveThinking = "";
-							state.phase = "idle";
-							needsFlush = true;
-							workingChanged = true;
-							break;
-						}
-						case "text_end": {
-							if (state.liveText.trim()) {
-								state.textOutputLines.push(state.liveText.trim());
-								for (const t of state.liveText.split("\n")) {
-									const trimmed = t.trim();
-									if (trimmed) pushLog(state, trimmed);
-								}
-								state.textPushedThisTurn = true;
-							}
-							if (assistantEvent.usage) {
-								state.tokenCount =
-									assistantEvent.usage.totalTokens ||
-									assistantEvent.usage.input + assistantEvent.usage.output ||
-									state.tokenCount;
-							}
-							state.liveText = "";
-							state.phase = "idle";
-							needsFlush = true;
-							workingChanged = true;
-							break;
-						}
-					}
-					break;
-				}
-
-				case "message_end": {
-					const msg = event.message;
-					if (!msg) break;
-
-					if (msg.role === "assistant") {
-						const content = Array.isArray(msg.content) ? msg.content : [];
-						if (!state.thinkingPushedThisTurn) {
-							for (const block of content) {
-								if ((block as any).type === "thinking" && (block as any).thinking) {
-									const thinkingText =
-										typeof (block as any).thinking === "string"
-											? (block as any).thinking
-											: JSON.stringify((block as any).thinking).slice(0, 500);
-									for (const t of thinkingText.split("\n")) {
-										if (t.trim()) pushLog(state, `💭 ${t.slice(0, 500)}`);
-									}
-								}
-							}
-						}
-						if (!state.textPushedThisTurn) {
-							const text = extractTextFromContent2(content);
-							if (text && text.trim()) {
-								state.textOutputLines.push(text.trim());
-								for (const t of text.split("\n")) {
-									if (t.trim()) pushLog(state, t);
-								}
-							}
-						}
-						if ((msg as any).usage) {
-							state.tokenCount =
-								(msg as any).usage.totalTokens ||
-								(msg as any).usage.input + (msg as any).usage.output;
-						}
-					} else if (msg.role === "toolResult") {
-						const resultText = extractTextFromContent2(
-							Array.isArray(msg.content) ? msg.content : [],
-						);
-						const label = (msg as any).toolName || state.lastToolName || "tool";
-						if (resultText && resultText.trim()) {
-							const resultLines = resultText.split("\n");
-							pushLog(state, `📋 ${label}: ${resultLines[0]?.slice(0, 300) || "(no output)"}`);
-							for (let i = 1; i < Math.min(resultLines.length, 6); i++) {
-								if (resultLines[i].trim()) pushLog(state, `   ${resultLines[i].slice(0, 200)}`);
-							}
-						} else {
-							pushLog(state, `📋 ${label}: (no output)`);
-						}
-						state.lastToolName = undefined;
-					}
-					state.phase = "idle";
-					state.thinkingPushedThisTurn = false;
-					state.textPushedThisTurn = false;
-					needsFlush = true;
-					workingChanged = true;
-					break;
-				}
-
-				case "agent_end":
-				case "turn_end":
-					break;
-			}
-
-			if (needsFlush) scheduleFlush();
-			if (workingChanged) setWorkingMessage();
-		});
-
-		// ── Run the prompt ──
-		if (!session) throw new Error("Session creation failed");
-		await session.prompt(task);
-
-		// ── Unsubscribe and finalize ──
-		unsubscribe();
-
-		// Flush remaining live state
+		// Success path
 		if (state.liveText.trim()) {
 			state.textOutputLines.push(state.liveText.trim());
 		}
@@ -429,127 +589,58 @@ export async function runAgentInProcess(
 			state.thinkingOutputLines.push(state.liveThinking.trim());
 		}
 
-		const durationMs = Date.now() - startedAt;
-		const textOutput = state.fullLog.join("\n").trim();
-		const textOnly = state.textOutputLines.join("\n").trim();
-
-		// Build rawOutput from all messages in the session
-		const messages = session.state?.messages || [];
-		const rawOutput = buildRawOutputFromMessages(messages, agentName);
-
-		const thinkingOutput =
-			state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined;
-
-		const summaryLine = extractSummaryLine(textOutput, true, agentName);
-
-		// Clean up
-		clearTimeout(timeoutTimer);
-		flushWidget();
-		ctx.ui.setWidget(widgetId, undefined);
-		ctx.ui.setWorkingMessage(undefined);
-		ctx.ui.setStatus("supervisor", "");
-
-		// Dispose session
-		try {
-			session.dispose();
-		} catch {
-			// Best-effort cleanup
-		}
-
-		return {
-			output: rawOutput,
-			success: true,
-			agentName,
-			toolCount: state.toolCount,
-			tokenCount: state.tokenCount,
-			durationMs,
-			textOutput,
-			textOnly,
-			summaryLine,
-			errorOutput: "",
-			thinkingOutput,
-		};
-	} catch (err: unknown) {
-		clearTimeout(timeoutTimer);
+		// Flush final widget
 		if (flushTimer) {
 			clearTimeout(flushTimer);
 			flushTimer = null;
 		}
 
-		const durationMs = Date.now() - startedAt;
-		const errorMsg = err instanceof Error ? err.message : String(err);
-		const isTimeout =
-			abortedByTimeout || errorMsg.includes("AbortError") || errorMsg.includes("aborted");
+		// Unsubscribe and dispose
+		try {
+			unsubscribe?.();
+		} catch {}
+		try {
+			session?.dispose();
+		} catch {}
 
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);
 		ctx.ui.setStatus("supervisor", "");
 
-		if (isTimeout) {
-			return {
-				output: `[Timeout: ${agentName} killed after ${formatDuration(durationMs)}]`,
-				success: false,
-				agentName,
-				toolCount: state.toolCount,
-				tokenCount: state.tokenCount,
-				durationMs,
-				textOutput: state.fullLog.join("\n").trim(),
-				textOnly: state.textOutputLines.join("\n").trim(),
-				summaryLine: `${agentName} timed out after ${formatDuration(durationMs)}`,
-				errorOutput: `Timeout after ${formatDuration(durationMs)}`,
-				thinkingOutput:
-					state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined,
-			};
-		}
+		const durationMs = Date.now() - startedAt;
+		const messages = session?.state?.messages || [];
 
-		// Re-throw so caller falls back to subprocess
-		throw err;
+		return buildAgentRunResult(state, agentName, true, durationMs, messages);
+	} catch (err: unknown) {
+		// Error path — always cleanup
+		try {
+			session?.dispose();
+		} catch {}
+		try {
+			unsubscribe?.();
+		} catch {}
+		if (flushTimer) clearTimeout(flushTimer);
+
+		ctx.ui.setWidget(widgetId, undefined);
+		ctx.ui.setWorkingMessage(undefined);
+		ctx.ui.setStatus("supervisor", "");
+
+		const durationMs = Date.now() - startedAt;
+		const errorMsg = err instanceof Error ? err.message : String(err);
+
+		return {
+			output: `In-process agent failed: ${errorMsg}`,
+			success: false,
+			agentName,
+			toolCount: state.toolCount,
+			tokenCount: state.tokenCount,
+			durationMs,
+			textOutput: state.fullLog.join("\n").trim(),
+			textOnly: state.textOutputLines.join("\n").trim(),
+			summaryLine: `Failed: ${errorMsg.slice(0, 120)}`,
+			errorOutput: errorMsg,
+			thinkingOutput:
+				state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined,
+		};
 	}
-}
-
-// ─── Helpers ───────────────────────────────────────────────────────
-
-function extractTextFromContent2(content: any[]): string {
-	if (!Array.isArray(content)) return "";
-	return content
-		.filter((b: any) => b.type === "text" && b.text)
-		.map((b: any) => b.text)
-		.join("\n");
-}
-
-/**
- * Build a complete raw output string from all session messages.
- * Captures every assistant response, tool call, and tool result.
- */
-function buildRawOutputFromMessages(messages: any[], agentName: string): string {
-	const parts: string[] = [];
-	for (const msg of messages) {
-		if (msg.role === "user") {
-			const text = extractTextFromContent2(Array.isArray(msg.content) ? msg.content : []);
-			if (text) parts.push(`[USER]\n${text}`);
-		} else if (msg.role === "assistant") {
-			const content = Array.isArray(msg.content) ? msg.content : [];
-			for (const block of content) {
-				if (block.type === "text" && block.text) {
-					parts.push(`[ASSISTANT]\n${block.text}`);
-				}
-				if (block.type === "thinking" && block.thinking) {
-					const thinking =
-						typeof block.thinking === "string" ? block.thinking : JSON.stringify(block.thinking);
-					if (thinking) parts.push(`[THINKING]\n${thinking}`);
-				}
-				if (block.type === "toolCall") {
-					parts.push(`[TOOL_CALL] ${block.toolName}(${JSON.stringify(block.args)})`);
-				}
-			}
-		} else if (msg.role === "toolResult") {
-			const text = extractTextFromContent2(Array.isArray(msg.content) ? msg.content : []);
-			if (text) {
-				parts.push(`[TOOL_RESULT] ${msg.toolName || "tool"}:\n${text.slice(0, 2000)}`);
-			}
-		} else if (msg.role === "custom") {
-			if (msg.content) parts.push(`[CUSTOM] ${msg.content}`);
-		}
-	}
-	return parts.join("\n\n");
 }

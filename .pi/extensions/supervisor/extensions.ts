@@ -122,6 +122,43 @@ export function discoverExtensionTools(cwd?: string): Map<string, string[]> {
  * Merge agent-declared tools with tools from agent's extensions.
  * Returns a comma-separated string for --tools flag.
  */
+/**
+ * Resolve extension names from agent frontmatter to absolute file paths
+ * suitable for DefaultResourceLoader.additionalExtensionPaths.
+ * Returns array of absolute file paths (not CLI flags).
+ */
+export function resolveExtensionPaths(extensionsRaw: string | undefined, cwd?: string): string[] {
+	if (!extensionsRaw || !extensionsRaw.trim()) return [];
+
+	const baseCwd = cwd || process.cwd();
+
+	const extensions = extensionsRaw
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0)
+		.filter((s) => s.toLowerCase() !== "supervisor");
+
+	const paths: string[] = [];
+	for (const ext of extensions) {
+		const filePath = resolvePath(baseCwd, `.pi/extensions/${ext}.ts`);
+		const dirPath = resolvePath(baseCwd, `.pi/extensions/${ext}/index.ts`);
+		if (existsSync(filePath)) {
+			paths.push(filePath);
+		} else if (existsSync(dirPath)) {
+			paths.push(dirPath);
+		} else {
+			// Default to single-file path (will fail at runtime, but preserves existing behavior)
+			paths.push(filePath);
+		}
+	}
+
+	return paths;
+}
+
+/**
+ * Merge agent-declared tools with tools from agent's extensions.
+ * Returns a comma-separated string for --tools flag.
+ */
 export function resolveTools(
 	agentTools: string,
 	extNamesRaw: string | undefined,
