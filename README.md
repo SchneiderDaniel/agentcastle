@@ -69,6 +69,8 @@ Customize ruthlessly. Make it yours.
 
 ### 3. Preparation — What you need on your machine
 
+> **Quick start:** Run `make install` in the repo root. It auto-detects Ubuntu/Debian, installs all apt packages (Node.js 22.x via NodeSource, python3, jq, ripgrep, etc.), GitHub CLI, and npm global tools (`@earendil-works/pi-coding-agent`, `@ast-grep/cli`, `typescript`). Idempotent — safe to re-run.
+
 > **Platform:** WSL2 with Ubuntu 24.04 LTS (primary). macOS via Lima/Colima works with minor adjustments. Native Linux works directly.
 
 Clone the repo gives you the configuration and extensions. But you need these **system-level tools** installed once:
@@ -324,6 +326,8 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `AGENTS.md` | Caveman protocol (active every session) |
 | `scripts/setup-github-project.sh` | Create GitHub Project from settings |
 | `scripts/session-query.sh` | Query JSONL session logs with jq |
+| `Makefile` | Quick-start: `make install` for automated first-time setup |
+| `scripts/install.sh` | Setup logic: apt deps, NodeSource, GitHub CLI, npm globals |
 | `scripts/postinstall.sh` | Patch pi footer pipe separator |
 | `test/` | 27+ unit/integration test files |
 | `flask_blogs/` | Submodule: Flask blog apps |
