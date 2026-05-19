@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ContextStatusBarConfig, TpsSample } from "./types.js";
 import { loadConfig, readPiSetting } from "./config.js";
 import { getWorktreeName } from "./git-helpers.js";
@@ -16,6 +16,7 @@ import { tryEmit } from "./telemetry.js";
 import { processStartTime, installFooter } from "./footer.js";
 import { showWelcomeBanner } from "./welcome.js";
 import { listLocalExtensions } from "./extensions.js";
+import { listLocalPrompts } from "./prompts.js";
 
 export default function contextInfo(pi: ExtensionAPI): void {
 	// State — enclosed in closure, not module scope
@@ -83,6 +84,81 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	}
 
 	// ── Commands ────────────────────────────────────────────────────
+
+	pi.registerCommand("explain-prompts", {
+		description: "List all project-local prompts with descriptions",
+		handler: async (_args, ctx) => {
+			const prompts = listLocalPrompts();
+			if (prompts.length === 0) {
+				ctx.ui.notify("No prompts found", "info");
+				return;
+			}
+
+			ctx.ui.setWidget("explain-prompts", (_tui, theme) => {
+				const accent = (s: string) => theme.fg("accent", s);
+				const dim = (s: string) => theme.fg("dim", s);
+
+				interface PromptLine {
+					name: string;
+					desc: string;
+				}
+
+				const items: PromptLine[] = prompts.map((pr) => ({
+					name: pr.name,
+					desc: (pr.description ?? "(no description)").split("\n")[0].trim(),
+				}));
+
+				function wordWrap(text: string, maxWidth: number): string[] {
+					if (visibleWidth(text) <= maxWidth) return [text];
+					const result: string[] = [];
+					let remaining = text;
+					while (remaining.length > 0) {
+						if (visibleWidth(remaining) <= maxWidth) {
+							result.push(remaining);
+							break;
+						}
+						// Find last space within maxWidth
+						let cut = maxWidth;
+						while (cut > 0 && remaining[cut] !== " " && remaining[cut] !== undefined) {
+							cut--;
+						}
+						if (cut <= 0) cut = maxWidth; // no space found, hard cut
+						result.push(remaining.slice(0, cut).trimEnd());
+						remaining = remaining.slice(cut).trimStart();
+					}
+					return result;
+				}
+
+				return {
+					render: (width: number) => {
+						const lines: string[] = [];
+						const descWidth = Math.max(20, width - 6);
+
+						for (const item of items) {
+							lines.push(accent("  " + item.name));
+							const wrapped = wordWrap(item.desc, descWidth);
+							for (const seg of wrapped) {
+								lines.push(dim("    " + seg));
+							}
+						}
+
+						lines.push("");
+						lines.push(
+							dim("  ─ ") +
+								dim(String(prompts.length)) +
+								dim(" prompts ─ disappears when you type"),
+						);
+
+						return lines.map((line) => {
+							if (line === "" || line.trim() === "") return "";
+							return line;
+						});
+					},
+					invalidate: () => {},
+				};
+			});
+		},
+	});
 
 	pi.registerCommand("explain-extensions", {
 		description: "List all project-local extensions with descriptions",
@@ -194,13 +270,14 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		showWelcomeBanner(ctx, startupWidgetActive);
 	});
 
-	// Clear welcome banner and explain-extensions on first user input
+	// Clear welcome banner and explain-* widgets on first user input
 	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
 		if (startupWidgetActive.value) {
 			ctx.ui.setWidget("agentcastle-welcome", undefined);
 			startupWidgetActive.value = false;
 		}
 		ctx.ui.setWidget("explain-extensions", undefined);
+		ctx.ui.setWidget("explain-prompts", undefined);
 	});
 
 	pi.on("thinking_level_select", async (event, ctx: ExtensionContext) => {

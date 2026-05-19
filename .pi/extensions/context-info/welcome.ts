@@ -131,7 +131,24 @@ export function showWelcomeBanner(
 							dim(" |")
 						);
 					})(),
-					statLine("📝 Prompts:    ", String(promptCount)),
+					// Prompts line with /explain-prompts hint
+					(() => {
+						const labelStr = muted("📝 Prompts:    ");
+						const valueStr = accent(String(promptCount));
+						const hintStr = dim(" (/explain-prompts)");
+						const rawLabelW = visibleWidth("📝 Prompts:    ");
+						const rawValueW =
+							visibleWidth(String(promptCount)) + visibleWidth(" (/explain-prompts)");
+						const padding = 60 - rawLabelW - rawValueW;
+						return (
+							dim("| ") +
+							labelStr +
+							valueStr +
+							hintStr +
+							" ".repeat(Math.max(0, padding)) +
+							dim(" |")
+						);
+					})(),
 					statLine("🎨 Themes:     ", String(themeCount)),
 					statLine("🔧 Skills:     ", String(skillCount)),
 				];
