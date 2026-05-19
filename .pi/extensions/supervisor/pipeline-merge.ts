@@ -104,7 +104,7 @@ export async function handlePostPipelineMerge(
 
 						pi.sendMessage({
 							customType: "supervisor",
-							content: `## Conflict Resolution: ${devResult.agentName} — ${devResult.success ? "SUCCESS" : "FAILED"}\n\n${devResult.textOutput || devResult.summaryLine}`,
+							content: `## Conflict Resolution: ${devResult.agentName} — ${devResult.success ? "SUCCESS" : "FAILED"}\n\n${devResult.output || devResult.textOutput || devResult.summaryLine}`,
 							display: true,
 							details: {
 								agentName: devResult.agentName,
@@ -117,6 +117,8 @@ export async function handlePostPipelineMerge(
 								summaryLine: devResult.summaryLine,
 								thinkingOutput: devResult.thinkingOutput,
 								hasThinking: !!devResult.thinkingOutput,
+								rawOutput: devResult.output,
+								hasRawOutput: true,
 							},
 						});
 

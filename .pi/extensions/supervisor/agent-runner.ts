@@ -1,7 +1,9 @@
 // ─── Agent Runner ─────────────────────────────────────────────────
-// Spawns pi subprocess, parses JSON event stream, maintains live state,
-// renders widgets. Subprocess lifecycle only — parsing lives in
-// agent-stream.ts.
+// Dispatcher: tries in-process SDK runner first, falls back to subprocess.
+// Subprocess path retained as backward-compatible fallback.
+//
+// In-process runner lives in agent-session-runner.ts
+// Subprocess lifecycle lives in this file (parsing in agent-stream.ts).
 
 import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./types";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -26,13 +28,32 @@ import {
 	WIDGET_LINES,
 	MAX_LIVE_THINKING,
 } from "./agent-stream";
+import { runAgentInProcess } from "./agent-session-runner";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 
-// ─── runAgent ────────────────────────────────────────────────────────
+// ─── runAgent (Primary: in-process, Fallback: subprocess) ──────────
 
 export async function runAgent(
+	agent: ParsedAgent,
+	task: string,
+	ctx: ExtensionCommandContext,
+	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
+): Promise<AgentRunResult> {
+	// Primary: in-process via SDK
+	try {
+		return await runAgentInProcess(agent, task, ctx, timeoutMs);
+	} catch (err) {
+		console.error(`[supervisor] In-process runner failed, falling back to subprocess: ${err}`);
+		// Fallback: subprocess (existing code)
+		return runAgentSubprocess(agent, task, ctx, timeoutMs);
+	}
+}
+
+// ─── runAgentSubprocess (Fallback) ─────────────────────────────────
+
+export async function runAgentSubprocess(
 	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,

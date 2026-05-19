@@ -275,7 +275,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 
 					pi.sendMessage({
 						customType: "supervisor",
-						content: `## Agent: ${result.agentName} — ${statusLabel}\n\n${result.textOutput || result.summaryLine}`,
+						content: `## Agent: ${result.agentName} — ${statusLabel}\n\n${result.output || result.textOutput || result.summaryLine}`,
 						display: true,
 						details: {
 							agentName: result.agentName,
@@ -288,6 +288,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							summaryLine: result.summaryLine,
 							thinkingOutput: result.thinkingOutput,
 							hasThinking: !!result.thinkingOutput,
+							rawOutput: result.output,
+							hasRawOutput: true,
 						} satisfies SupervisorMessageDetails,
 					});
 
