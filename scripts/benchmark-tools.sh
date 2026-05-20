@@ -1,5 +1,5 @@
 #!/bin/bash
-# Benchmark: measure token consumption of pi agent under 4 tool configs
+# Benchmark: measure token consumption of pi agent under 3 tool configs
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,7 +18,6 @@ CONFIGS=(
   "1-no-tools|--no-tools --no-extensions"
   "2-builtin-mapper|--no-extensions -e $PROJECT_DIR/.pi/extensions/codebase-mapper.ts"
   "3-builtin-mapper-structural|--no-extensions -e $PROJECT_DIR/.pi/extensions/codebase-mapper.ts -e $PROJECT_DIR/.pi/extensions/structural-analyzer.ts"
-  "4-builtin-mapper-structural-rg|--no-extensions -e $PROJECT_DIR/.pi/extensions/codebase-mapper.ts -e $PROJECT_DIR/.pi/extensions/structural-analyzer.ts -e $PROJECT_DIR/.pi/extensions/ripgrep-search.ts"
 )
 
 GREEN='\033[0;32m'
@@ -115,7 +114,7 @@ echo ""
 echo -e "${BLUE}=== Averages per Config ===${NC}"
 printf "%-30s %-12s %-12s %-12s %-12s\n" "Config" "Avg Input" "Avg Output" "Avg Total" "Avg Duration"
 printf "%-30s %-12s %-12s %-12s %-12s\n" "-----" "--------" "---------" "---------" "----------"
-for cfg_name in "1-no-tools" "2-builtin-mapper" "3-builtin-mapper-structural" "4-builtin-mapper-structural-rg"; do
+for cfg_name in "1-no-tools" "2-builtin-mapper" "3-builtin-mapper-structural"; do
   awk -F',' -v cfg="$cfg_name" '
     $1 == cfg { tin+=$3; tout+=$4; ttotal+=$5; dur+=$7; n++ }
     END {

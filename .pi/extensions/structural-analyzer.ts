@@ -46,7 +46,7 @@ export interface SgResult {
  * Collision rule:
  * - Empty or whitespace-only strings are rejected
  * - Single words without structural syntax (no `{`, `$`, `(`, `[`) are
- *   rejected — the agent should use ripgrep for text patterns like "TODO"
+ *   rejected — the agent should use bash with rg --vimgrep or grep -rn for text patterns like "TODO"
  *
  * Returns null if valid, or an error string if invalid.
  */
@@ -67,7 +67,7 @@ export function validatePattern(pattern: string): string | null {
 	const isSingleWord = /^\S+$/.test(trimmed);
 
 	if (isSingleWord && !structuralSyntax.test(trimmed)) {
-		return `Pattern "${trimmed}" is a single-word text pattern without structural syntax. Use ripgrep (ripgrep_search) for text-based search instead of ast-grep.`;
+		return `Pattern "${trimmed}" is a single-word text pattern without structural syntax. Use bash with rg --vimgrep or grep -rn for text-based search instead of ast-grep.`;
 	}
 
 	return null;
@@ -160,7 +160,7 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use structural_search for syntax-aware code searches where you need to find function calls, class definitions, try/catch blocks, or method invocations without text-match noise from comments or strings.",
 			"Pattern syntax uses $META_VAR for single AST node matching (e.g., console.log($A)) and $$$MULTI for zero-or-more nodes (e.g., try { $$$BODY } catch (e) { $A }).",
-			"Single-word text patterns like 'TODO' are rejected — use ripgrep_search for plain text searches instead of ast-grep.",
+			"Single-word text patterns like 'TODO' are rejected — use bash with rg --vimgrep or grep -rn for plain text searches instead of ast-grep.",
 			"Combine structural_search results with read to inspect specific matches by file path and line range.",
 		],
 		parameters: Type.Object({
