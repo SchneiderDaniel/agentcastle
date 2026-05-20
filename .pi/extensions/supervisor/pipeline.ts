@@ -258,12 +258,12 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 
 					const timeoutMs = resolveTimeoutMs(agentName, config.agentTimeoutsMin);
 
-					let result = await runAgent(agent, task, ctx, timeoutMs);
+					let result = await runAgent(agent, task, ctx, pi, timeoutMs);
 					let usedRetry = false;
 
 					if (!result.success) {
 						ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
-						result = await runAgent(agent, task, ctx, timeoutMs);
+						result = await runAgent(agent, task, ctx, pi, timeoutMs);
 						usedRetry = true;
 					}
 

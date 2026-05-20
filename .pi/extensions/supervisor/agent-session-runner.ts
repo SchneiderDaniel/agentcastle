@@ -12,7 +12,7 @@
 //  7. Always dispose session on completion
 
 import type { ParsedAgent, AgentRunResult, AgentRunState, AgentPhase } from "./types";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
 	SessionManager,
@@ -30,7 +30,7 @@ import {
 	buildSubagentStatusLine,
 	extractTextFromContent,
 } from "./formatting";
-import { pushLog, buildWidgetLines, getWorkingMessage } from "./agent-stream";
+import { pushLog, buildWidgetLines, buildWidgetComponent, getWorkingMessage } from "./agent-stream";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 
 // Re-export for backward compatibility
@@ -448,6 +448,7 @@ export async function runAgentInProcess(
 	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,
+	pi: ExtensionAPI,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 ): Promise<AgentRunResult> {
 	const cwd = ctx.cwd || process.cwd();
@@ -494,7 +495,6 @@ export async function runAgentInProcess(
 	let session;
 	let unsubscribe: (() => void) | undefined;
 	let abortController: AbortController | undefined;
-	let flushTimer: NodeJS.Timeout | null = null;
 
 	try {
 		// Create resource loader with system prompt override and extension paths
@@ -518,13 +518,23 @@ export async function runAgentInProcess(
 		});
 		session = sessionResult.session;
 
-		// Subscribe to events for live TUI updates
+		// ── Live widget via TUI Component factory ──
+		// Uses ctx.ui.setWidget() with a Component factory function that builds
+		// a Container from pi's TUI primitives (Container, Text, Spacer).
+		// The factory captures state by reference so each render picks up the
+		// latest fullLog, tool info, and stats. Styled with theme colors to
+		// match the message-renderer look.
+		let flushTimer: NodeJS.Timeout | null = null;
+
 		const flushWidget = () => {
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName));
+			// Pass Component factory: TUI calls it on each render
+			ctx.ui.setWidget(widgetId, (_tui, theme) => buildWidgetComponent(state, agentName, theme), {
+				placement: "aboveEditor",
+			});
 			ctx.ui.setStatus(
 				"supervisor",
 				buildSubagentStatusLine(
@@ -606,11 +616,12 @@ export async function runAgentInProcess(
 			state.thinkingOutputLines.push(state.liveThinking.trim());
 		}
 
-		// Flush final widget
+		// Flush final widget update then clear it
 		if (flushTimer) {
 			clearTimeout(flushTimer);
 			flushTimer = null;
 		}
+		flushWidget();
 
 		// Unsubscribe and dispose
 		try {

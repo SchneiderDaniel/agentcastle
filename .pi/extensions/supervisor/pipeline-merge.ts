@@ -100,7 +100,7 @@ export async function handlePostPipelineMerge(
 						].join("\n");
 
 						const devTimeoutMs = resolveTimeoutMs("developer", config.agentTimeoutsMin);
-						const devResult = await runAgent(devAgent, devTask, ctx, devTimeoutMs);
+						const devResult = await runAgent(devAgent, devTask, ctx, pi, devTimeoutMs);
 
 						pi.sendMessage({
 							customType: "supervisor",

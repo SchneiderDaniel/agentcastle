@@ -6,7 +6,7 @@
 // Subprocess lifecycle lives in this file (parsing in agent-stream.ts).
 
 import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./types";
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { resolveTools, resolveExtensions } from "./extensions";
 import {
@@ -39,11 +39,12 @@ export async function runAgent(
 	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,
+	pi: ExtensionAPI,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 ): Promise<AgentRunResult> {
 	// Primary: in-process via SDK
 	try {
-		return await runAgentInProcess(agent, task, ctx, timeoutMs);
+		return await runAgentInProcess(agent, task, ctx, pi, timeoutMs);
 	} catch (err) {
 		console.error(`[supervisor] In-process runner failed, falling back to subprocess: ${err}`);
 		// Fallback: subprocess (existing code)
