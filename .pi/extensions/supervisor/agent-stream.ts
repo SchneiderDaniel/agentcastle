@@ -8,7 +8,7 @@ import { formatTokens, formatDuration } from "./formatting";
 // ─── Constants ──────────────────────────────────────────────────────
 
 export const MAX_FULL_LOG = 500;
-export const WIDGET_LINES = 12;
+export const WIDGET_LINES = 20;
 export const MAX_LIVE_THINKING = 500;
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -167,6 +167,13 @@ export function processJsonLine(
 							if (state.liveThinking.length > MAX_LIVE_THINKING * 2) {
 								state.liveThinking = state.liveThinking.slice(-MAX_LIVE_THINKING);
 							}
+							// Push complete thinking lines to log immediately
+							let nlIdx;
+							while ((nlIdx = state.liveThinking.indexOf("\n")) !== -1) {
+								const line = state.liveThinking.slice(0, nlIdx);
+								state.liveThinking = state.liveThinking.slice(nlIdx + 1);
+								if (line.trim()) pushLog(state, `💭 ${line}`);
+							}
 							return { flush: true, workingChange: prevPhase !== "thinking" };
 						}
 						break;
@@ -178,6 +185,13 @@ export function processJsonLine(
 							state.liveText += td;
 							if (state.liveText.length > 10_000) {
 								state.liveText = state.liveText.slice(-8_000);
+							}
+							// Push complete lines to log immediately for persistent display
+							let nlIdx;
+							while ((nlIdx = state.liveText.indexOf("\n")) !== -1) {
+								const line = state.liveText.slice(0, nlIdx);
+								state.liveText = state.liveText.slice(nlIdx + 1);
+								if (line.trim()) pushLog(state, line);
 							}
 							return { flush: true, workingChange: prevPhase !== "text" };
 						}
@@ -308,18 +322,10 @@ export function buildWidgetLines(state: AgentRunState, agentName: string): strin
 		lines.push("  Context: computing...");
 	}
 
-	// Live thinking
+	// Live thinking (unconsumed part — stays in buffer until newline)
 	if (state.phase === "thinking" && state.liveThinking.trim()) {
-		const live = state.liveThinking.slice(-MAX_LIVE_THINKING);
-		const condensed = live.replace(/\s+/g, " ").trim().slice(-100);
-		if (condensed) lines.push(`  ... ${condensed}`);
-	}
-
-	// Live text
-	if (state.phase === "text" && state.liveText.trim()) {
-		const live = state.liveText.slice(-500);
-		const condensed = live.replace(/\s+/g, " ").trim().slice(-100);
-		if (condensed) lines.push(`  ${condensed}`);
+		const preview = state.liveThinking.trimEnd().slice(-200);
+		lines.push(`  💭 ${preview}`);
 	}
 
 	// Current tool display
@@ -330,14 +336,20 @@ export function buildWidgetLines(state: AgentRunState, agentName: string): strin
 		lines.push(`  🔧 ${toolLabel}`);
 	}
 
-	// Recent fullLog entries
+	// Recent fullLog entries (lines streamed in real-time)
 	const remaining = WIDGET_LINES - lines.length - 1;
 	if (remaining > 0 && state.fullLog.length > 0) {
 		const recent = state.fullLog.slice(-remaining);
 		for (const entry of recent) {
-			const display = entry.replace(/^[^\s]+\s/, "").slice(0, 90);
+			const display = entry.length > 200 ? entry.slice(0, 197) + "..." : entry;
 			lines.push(`  ${display}`);
 		}
+	}
+
+	// Live text (unconsumed part — partial line waiting for newline)
+	if (state.phase === "text" && state.liveText.trim()) {
+		const partial = state.liveText.trimEnd().slice(-200);
+		lines.push(`  ${partial}`);
 	}
 
 	// Stats footer

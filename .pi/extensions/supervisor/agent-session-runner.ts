@@ -21,6 +21,7 @@ import {
 	ModelRegistry,
 	AuthStorage,
 } from "@earendil-works/pi-coding-agent";
+import { getModel } from "@earendil-works/pi-ai";
 import { resolveTools, resolveExtensionPaths } from "./extensions";
 import {
 	formatDuration,
@@ -119,18 +120,9 @@ function processSessionEvent(
 	const prevPhase = state.phase;
 
 	switch (ev.type) {
-		case "context_info": {
-			const tokens = ev.contextTokens;
-			const window = ev.contextWindow;
-			if (typeof tokens === "number" && typeof window === "number" && window > 0) {
-				state.contextTokens = tokens;
-				state.contextWindow = window;
-				state.contextInfoReceived = true;
-				pushLog(state, `📊 Context: ${formatTokens(tokens)}/${formatTokens(window)} (initial)`);
-				return { flush: true, workingChange: false };
-			}
+		case "context_info":
+			// context_info event removed in new agent-core — skip
 			break;
-		}
 
 		case "tool_execution_start": {
 			state.currentTool = ev.toolName || "tool";
@@ -152,15 +144,15 @@ function processSessionEvent(
 		}
 
 		case "message_update": {
-			const delta = ev.delta;
-			if (!delta) break;
+			const ae = ev.assistantMessageEvent;
+			if (!ae) break;
 
 			const eventPhase = getEventPhase(ev);
 			if (eventPhase !== "idle" && phasePriority(eventPhase) >= phasePriority(state.phase)) {
 				state.phase = eventPhase;
 			}
 
-			switch (delta.type) {
+			switch (ae.type) {
 				case "thinking_start": {
 					state.thinkingPushedThisTurn = false;
 					return { flush: true, workingChange: prevPhase !== "thinking" };
@@ -170,22 +162,36 @@ function processSessionEvent(
 					return { flush: true, workingChange: prevPhase !== "text" };
 				}
 				case "thinking_delta": {
-					const td = delta.thinking_delta;
+					const td = ae.delta;
 					if (typeof td === "string" && td.length > 0) {
 						state.liveThinking += td;
 						if (state.liveThinking.length > 1000) {
 							state.liveThinking = state.liveThinking.slice(-1000);
+						}
+						// Push complete thinking lines to log immediately
+						let nlIdx;
+						while ((nlIdx = state.liveThinking.indexOf("\n")) !== -1) {
+							const line = state.liveThinking.slice(0, nlIdx);
+							state.liveThinking = state.liveThinking.slice(nlIdx + 1);
+							if (line.trim()) pushLog(state, `💭 ${line}`);
 						}
 						return { flush: true, workingChange: prevPhase !== "thinking" };
 					}
 					break;
 				}
 				case "text_delta": {
-					const td = delta.text_delta;
+					const td = ae.delta;
 					if (typeof td === "string" && td.length > 0) {
 						state.liveText += td;
 						if (state.liveText.length > 10_000) {
 							state.liveText = state.liveText.slice(-8_000);
+						}
+						// Push complete lines to log immediately for persistent display
+						let nlIdx;
+						while ((nlIdx = state.liveText.indexOf("\n")) !== -1) {
+							const line = state.liveText.slice(0, nlIdx);
+							state.liveText = state.liveText.slice(nlIdx + 1);
+							if (line.trim()) pushLog(state, line);
 						}
 						return { flush: true, workingChange: prevPhase !== "text" };
 					}
@@ -213,9 +219,11 @@ function processSessionEvent(
 						}
 						state.textPushedThisTurn = true;
 					}
-					if (ev.usage) {
+					if (ev.message?.usage) {
 						state.tokenCount =
-							ev.usage.totalTokens || ev.usage.input + ev.usage.output || state.tokenCount;
+							ev.message.usage.totalTokens ||
+							ev.message.usage.input + ev.message.usage.output ||
+							state.tokenCount;
 					}
 					state.liveText = "";
 					state.phase = "idle";
@@ -305,16 +313,16 @@ function getEventPhase(ev: any): AgentPhase {
 	if (ev.type === "tool_execution_start") return "tool";
 	if (ev.type === "tool_execution_end") return "idle";
 	if (ev.type === "message_update") {
-		const delta = ev.delta;
-		if (!delta) return "idle";
-		switch (delta.type) {
+		const ae = ev.assistantMessageEvent;
+		if (!ae) return "idle";
+		switch (ae.type) {
 			case "thinking_delta":
-				if (delta.thinking_delta) return "thinking";
+				if (ae.delta) return "thinking";
 				break;
 			case "thinking_start":
 				return "thinking";
 			case "text_delta":
-				if (delta.text_delta) return "text";
+				if (ae.delta) return "text";
 				break;
 			case "text_start":
 				return "text";
@@ -468,6 +476,14 @@ export async function runAgentInProcess(
 
 	// Resolve model
 	const modelInfo = await resolveModel(agent.config.model || "");
+	let resolvedModel: any;
+	if (modelInfo) {
+		try {
+			resolvedModel = getModel(modelInfo.provider, modelInfo.modelId);
+		} catch {
+			// getModel threw — try fallback
+		}
+	}
 
 	// Build tool list
 	const tools = buildToolList(agent, cwd);
@@ -492,14 +508,15 @@ export async function runAgentInProcess(
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.inMemory();
 
-		session = await createAgentSession({
+		const sessionResult = await createAgentSession({
 			sessionManager,
 			resourceLoader,
 			settingsManager,
 			tools: tools.length > 0 ? tools : undefined,
 			noTools: tools.length === 0 ? "builtin" : undefined,
-			model: modelInfo ? { provider: modelInfo.provider, model: modelInfo.modelId } : undefined,
+			model: resolvedModel,
 		});
+		session = sessionResult.session;
 
 		// Subscribe to events for live TUI updates
 		const flushWidget = () => {
