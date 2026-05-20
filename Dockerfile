@@ -43,7 +43,7 @@ RUN apt-get update && \
 # ---------------------------------------------------------------
 # Layer 4: npm global tools
 # ---------------------------------------------------------------
-RUN npm install -g \
+RUN npm install -g --force \
         @earendil-works/pi-coding-agent \
         @ast-grep/cli \
         typescript
