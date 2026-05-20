@@ -31,6 +31,82 @@ export interface RgResult {
 // Pure Functions (exported for unit testing)
 // ═══════════════════════════════════════════════════════════════════════
 
+/** Detect if ripgrep is available on PATH. */
+export async function ripgrepAvailable(exec: ExtensionAPI["exec"]): Promise<boolean> {
+	try {
+		const result = await exec("which", ["rg"], { timeout: 3_000 });
+		return result.code === 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Build grep command arguments as fallback when ripgrep unavailable.
+ * Emulates --vimgrep output (file:line:column:text) as closely as possible.
+ * Column is set to 1 since standard grep doesn't output column.
+ */
+export function buildGrepArgs(
+	query: string,
+	directory: string,
+	maxCount: number,
+): { command: string; args: string[] } {
+	const args = [
+		"-rnH", // recursive, line-number, with-filename
+		"-m",
+		`${maxCount}`, // max matches per file
+		"--color=never",
+		"-e",
+		query, // pattern (safe: separate arg, no injection)
+		directory,
+	];
+	return { command: "grep", args };
+}
+
+/**
+ * Parse generic grep -rnH output into RgResult.
+ * grep -rnH produces: file:line:text
+ * Since grep lacks column info,
+ * column defaults to 1.
+ */
+export function parseGrepOutput(raw: string | null | undefined): RgResult {
+	if (!raw) {
+		return { total_returned: 0, results: [] };
+	}
+
+	const lines = raw.split("\n");
+	const results: RgMatch[] = [];
+
+	// grep -rnH: file:line:text
+	// Text may contain colons, so match greedily from start
+	const grepRegex = /^(.+?):(\d+):(.*)$/;
+
+	for (const line of lines) {
+		if (!line.trim()) continue;
+
+		const match = line.match(grepRegex);
+		if (!match) continue;
+
+		const file = match[1]!;
+		const lineNum = parseInt(match[2]!, 10);
+		const text = match[3]!;
+
+		if (isNaN(lineNum)) continue;
+
+		results.push({
+			file,
+			line: lineNum,
+			column: 1,
+			text,
+		});
+	}
+
+	return {
+		total_returned: results.length,
+		results,
+	};
+}
+
 /**
  * Validate that a query is suitable for ripgrep (literal/regex text search)
  * rather than structural/syntax-aware search.
@@ -157,6 +233,9 @@ export function parseVimgrepOutput(raw: string | null | undefined): RgResult {
 // ═══════════════════════════════════════════════════════════════════════
 
 export default function ripgrepSearch(pi: ExtensionAPI): void {
+	// Cache whether ripgrep is available (lazy, set on first call)
+	let rgAvailable: boolean | null = null;
+
 	pi.registerTool({
 		name: "ripgrep_search",
 		label: "Ripgrep Search",
@@ -219,8 +298,18 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				};
 			}
 
-			// Build and run rg command
-			const { command, args } = buildRgArgs(query, directory, maxCount);
+			// Detect rg availability (cache after first check)
+			if (rgAvailable === null) {
+				rgAvailable = await ripgrepAvailable(pi.exec);
+			}
+
+			// Decide: ripgrep or grep fallback
+			const useRipgrep = rgAvailable;
+			const searcherName = useRipgrep ? "ripgrep" : "grep";
+
+			const { command, args } = useRipgrep
+				? buildRgArgs(query, directory, maxCount)
+				: buildGrepArgs(query, directory, maxCount);
 
 			const result = await pi.exec(command, args, {
 				cwd: ctx.cwd,
@@ -228,60 +317,71 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			});
 
 			if (result.code !== 0) {
-				// ripgrep exits with code 0 when matches found, code 1 when no matches,
-				// code 2 when error occurred (e.g., directory not found)
+				// rg/grep exit code 0 = matches found, 1 = no matches, 2+ = error
 				if (result.code === 1) {
-					// No matches found — not an error, just empty result
 					return {
 						content: [
 							{
 								type: "text" as const,
-								text: `No matches found for query "${query}" in "${directory}".`,
+								text: `No matches found for query "${query}" in "${directory}" (${searcherName}).`,
 							},
 						],
-						details: { success: true, total_returned: 0, results: [] } as Record<string, unknown>,
+						details: {
+							success: true,
+							total_returned: 0,
+							results: [],
+							searcher: searcherName,
+						} as Record<string, unknown>,
 					};
 				}
 
 				// Error (exit code 2+)
+				const engineStr = useRipgrep ? "ripgrep (`rg --version`)" : "grep";
 				return {
 					content: [
 						{
 							type: "text" as const,
 							text:
-								`ripgrep failed (exit code ${result.code}): ` +
+								`${searcherName} failed (exit code ${result.code}): ` +
 								(result.stderr || "unknown error") +
-								"\n\nEnsure ripgrep is installed (`rg --version`).",
+								`\n\nEnsure ${engineStr} installed.`,
 						},
 					],
-					details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<
-						string,
-						unknown
-					>,
+					details: {
+						success: false,
+						exitCode: result.code,
+						stderr: result.stderr,
+						searcher: searcherName,
+					} as Record<string, unknown>,
 					isError: true,
 				};
 			}
 
-			// Parse vimgrep output
-			const rgResult = parseVimgrepOutput(result.stdout);
+			// Parse output (vimgrep for rg, grep format for grep)
+			const searchResult = useRipgrep
+				? parseVimgrepOutput(result.stdout)
+				: parseGrepOutput(result.stdout);
 
-			// Format as pretty JSON for LLM consumption
-			const json = JSON.stringify(rgResult, null, 2);
+			const json = JSON.stringify(searchResult, null, 2);
 
 			return {
 				content: [
 					{
 						type: "text" as const,
 						text:
-							`Ripgrep search results for query: ${query}\n` +
+							`${searcherName} search results for query: ${query}\n` +
 							`Directory: ${directory}\n` +
-							`Matches returned: ${rgResult.total_returned}\n\n` +
+							`Matches returned: ${searchResult.total_returned}\n\n` +
 							"```json\n" +
 							json +
 							"\n```",
 					},
 				],
-				details: { success: true, ...rgResult } as Record<string, unknown>,
+				details: {
+					success: true,
+					searcher: searcherName,
+					...searchResult,
+				} as Record<string, unknown>,
 			};
 		},
 	});
