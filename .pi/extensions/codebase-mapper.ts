@@ -73,6 +73,10 @@ export function parseCtagsOutput(raw: string): CtagsTag[] {
 		if (typeof tag.kind !== "string" || !tag.kind) continue;
 		if (typeof tag.path !== "string" || !tag.path) continue;
 
+		// Filter out JSON-value kinds (defense-in-depth against data file noise)
+		const NON_CODE_KINDS = new Set(["number", "array", "object", "boolean", "string", "null"]);
+		if (NON_CODE_KINDS.has(tag.kind)) continue;
+
 		tags.push({
 			_type: "tag",
 			name: tag.name,
@@ -131,7 +135,7 @@ export function buildCtagsArgs(
 	targetDir: string,
 	maxDepth: number,
 ): { command: string; args: string[] } {
-	const args = ["-R", "--output-format=json", "--exclude=node_modules", "--exclude=.git"];
+	const args = ["-R", "--output-format=json", "--exclude=node_modules", "--exclude=.git", "--exclude=*.json", "--exclude=*.min.js", "--exclude=*.css", "--exclude=static"];
 
 	if (maxDepth > 0) {
 		args.push(`--maxdepth=${maxDepth}`);
@@ -162,7 +166,7 @@ export default function codebaseMapper(pi: ExtensionAPI): void {
 		promptSnippet: "Map a codebase directory by running ctags and returning symbol hierarchy",
 		promptGuidelines: [
 			"Use map_codebase at the start of a task to get a macro-level skeleton of the repository. This answers 'What files and functions exist?' without reading individual files.",
-			"Default target_directory is project root, default max_depth is 0 (unlimited). Pass max_depth=3 for a top-level overview only.",
+			"Default target_directory is project root, default max_depth is 3. Pass max_depth=0 for unlimited depth, or max_depth=1-3 for a top-level overview.",
 			"Combine map_codebase results with read to inspect specific functions by file path and line number.",
 			"Run map_codebase once and reuse the result — re-running is expensive for large codebases.",
 		],
@@ -175,16 +179,16 @@ export default function codebaseMapper(pi: ExtensionAPI): void {
 			),
 			max_depth: Type.Optional(
 				Type.Number({
-					default: 0,
+					default: 3,
 					description:
-						"Maximum directory recursion depth (0 = unlimited, default 0). " +
+						"Maximum directory recursion depth (default: 3 for a top-level overview, 0 for unlimited). " +
 						"Use small values (1-3) for a top-level overview to avoid overloading context.",
 				}),
 			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const targetDir = params.target_directory || ".";
-			const maxDepth = params.max_depth ?? 0;
+			const maxDepth = params.max_depth ?? 3;
 			const cwd = ctx.cwd;
 
 			// Build and run ctags command
@@ -220,11 +224,45 @@ export default function codebaseMapper(pi: ExtensionAPI): void {
 			// Parse and group
 			const map = buildCodebaseMap(result.stdout);
 
-			// Format as pretty JSON for LLM consumption
-			const json = JSON.stringify(map, null, 2);
+			// Apply output size cap (~50 KB / ~750 symbols)
+			const MAX_OUTPUT_SYMBOLS = 750;
+			const allEntries = Object.entries(map);
+			let includedEntries: [string, SymbolEntry[]][] = allEntries;
+			let truncated = false;
 
-			const symbolCount = Object.values(map).flat().length;
-			const fileCount = Object.keys(map).length;
+			const totalSymbols = allEntries.reduce((sum, [, entries]) => sum + entries.length, 0);
+			if (totalSymbols > MAX_OUTPUT_SYMBOLS) {
+				// Sort by symbol count descending, keep the most symbol-dense files
+				allEntries.sort((a, b) => b[1].length - a[1].length);
+				let count = 0;
+				const cutoff = allEntries.findIndex(([, entries]) => {
+					count += entries.length;
+					return count > MAX_OUTPUT_SYMBOLS;
+				});
+				includedEntries = allEntries.slice(0, cutoff === -1 ? allEntries.length : cutoff);
+				truncated = true;
+			}
+
+			const truncatedMap: CodebaseMap = Object.fromEntries(includedEntries);
+
+			// Format as pretty JSON for LLM consumption
+			const json = JSON.stringify(truncatedMap, null, 2);
+
+			const symbolCount = totalSymbols;
+			const fileCount = allEntries.length;
+			const includedSymbolCount = truncated
+				? Object.values(truncatedMap).flat().length
+				: symbolCount;
+			const includedFileCount = truncated
+				? Object.keys(truncatedMap).length
+				: fileCount;
+
+			const headerNote = truncated
+				? "⚠️ Output truncated: showing " +
+					`${includedSymbolCount} of ${symbolCount} symbols ` +
+					`(top ${includedFileCount} of ${fileCount} files by symbol count). ` +
+					"Retry with a smaller target_directory or max_depth for focused results.\n\n"
+				: "";
 
 			return {
 				content: [
@@ -232,7 +270,9 @@ export default function codebaseMapper(pi: ExtensionAPI): void {
 						type: "text" as const,
 						text:
 							`Codebase map for: ${targetDir}\n` +
-							`Files: ${fileCount}, Symbols: ${symbolCount}\n\n` +
+							`Files: ${includedFileCount}${truncated ? ` of ${fileCount}` : ""}, ` +
+							`Symbols: ${includedSymbolCount}${truncated ? ` of ${symbolCount}` : ""}\n\n` +
+							headerNote +
 							"```json\n" +
 							json +
 							"\n```",
