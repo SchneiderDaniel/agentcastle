@@ -149,6 +149,11 @@ export async function runAgentSubprocess(
 			}
 		};
 
+		// Heartbeat: ensure widget updates even during long idle periods (model cold start)
+		const heartbeat = setInterval(() => {
+			flushWidget();
+		}, 5000);
+
 		const handleLine = (line: string) => {
 			const result = processJsonLine(line, state);
 			if (result.flush) scheduleFlush();
@@ -185,6 +190,7 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
+			clearInterval(heartbeat);
 
 			if (state.liveText.trim()) {
 				state.textOutputLines.push(state.liveText.trim());
@@ -236,6 +242,7 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
+			clearInterval(heartbeat);
 			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setWorkingMessage(undefined);
 			ctx.ui.setStatus("supervisor", "");

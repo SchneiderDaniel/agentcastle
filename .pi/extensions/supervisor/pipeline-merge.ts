@@ -4,7 +4,6 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SupervisorConfig } from "./types";
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { generateBranchName } from "./agent-task";
 import { tryAutoMerge } from "./merge";
@@ -28,7 +27,7 @@ export async function handlePostPipelineMerge(
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 
 	ctx.ui.setStatus("supervisor", "Checking PR for merge conflicts...");
-	const conflictInfo = await checkPrConflicts(branch, config.repo);
+	const conflictInfo = await checkPrConflicts(pi, branch, config.repo);
 
 	if (!conflictInfo) {
 		ctx.ui.notify("No PR found for this branch — skipping conflict check.", "info");
@@ -54,11 +53,13 @@ export async function handlePostPipelineMerge(
 
 			if (mergeResult.success) {
 				try {
-					execFileSync("git", ["push", config.remote!, branch], {
+					const pushResult = await pi.exec("git", ["push", config.remote!, branch], {
 						cwd: wt,
-						encoding: "utf-8",
 						timeout: 30_000,
 					});
+					if (pushResult.code !== 0) {
+						throw new Error(pushResult.stderr || pushResult.stdout || "git push failed");
+					}
 					ctx.ui.notify("Merge conflicts resolved and pushed!", "info");
 					pi.sendMessage({
 						customType: "supervisor",

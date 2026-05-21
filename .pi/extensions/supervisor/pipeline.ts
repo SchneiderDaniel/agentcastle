@@ -51,7 +51,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
 				let issueData: any;
 				try {
-					issueData = ghJson([
+					issueData = await ghJson(pi, [
 						"issue",
 						"view",
 						String(issueNum),
@@ -84,9 +84,9 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				let projectId: string;
 
 				try {
-					fields = getProjectFields(config.projectNumber);
-					items = getProjectItems(config.projectNumber);
-					projectId = getProjectId(config.projectNumber);
+					fields = await getProjectFields(pi, config.projectNumber);
+					items = await getProjectItems(pi, config.projectNumber);
+					projectId = await getProjectId(pi, config.projectNumber);
 				} catch (err: unknown) {
 					const msg = err instanceof Error ? err.message : String(err);
 					if (msg.includes("missing required scopes")) {
@@ -126,7 +126,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				// ── Dependency gate ──
 				ctx.ui.setStatus("supervisor", "Checking dependencies...");
 				try {
-					const depsResult = await checkBlockedByDependencies(issueNum, config.repo);
+					const depsResult = await checkBlockedByDependencies(pi, issueNum, config.repo);
 					if (depsResult.blocked) {
 						const lines = depsResult.blockers.map((b) => {
 							const prefix = b.type === "pullrequest" ? "!" : "#";
@@ -171,7 +171,13 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							ctx.ui.notify("Cannot find 'Architecture' status option", "error");
 							break;
 						}
-						setItemStatus(loopItem.id, projectId, statusField.id, optId);
+						try {
+							await setItemStatus(pi, loopItem.id, projectId, statusField.id, optId);
+						} catch (err: unknown) {
+							const msg = err instanceof Error ? err.message : String(err);
+							ctx.ui.notify(`Failed to set status: ${msg}`, "error");
+							break;
+						}
 						ctx.ui.notify(`Issue #${issueNum} moved: Backlog → Architecture`, "info");
 						loopStatus = "Architecture";
 						continue;
@@ -194,7 +200,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					// Re-read issue for fresh comments
 					let freshData: any;
 					try {
-						freshData = ghJson([
+						freshData = await ghJson(pi, [
 							"issue",
 							"view",
 							String(issueNum),
@@ -344,7 +350,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					}
 
 					try {
-						setItemStatus(loopItem.id, projectId, statusField.id, nextOptId);
+						await setItemStatus(pi, loopItem.id, projectId, statusField.id, nextOptId);
 						ctx.ui.notify(
 							`Issue #${issueNum} moved: ${loopStatus} → ${effectiveNextStatus}`,
 							"info",

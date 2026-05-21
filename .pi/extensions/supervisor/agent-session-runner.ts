@@ -556,6 +556,11 @@ export async function runAgentInProcess(
 			}
 		};
 
+		// Heartbeat: ensure widget updates even during long idle periods (model cold start)
+		const heartbeat = setInterval(() => {
+			flushWidget();
+		}, 5000);
+
 		unsubscribe = session.subscribe((event: any) => {
 			const result = processSessionEvent(event, state);
 			if (result.flush) scheduleFlush();
@@ -595,6 +600,7 @@ export async function runAgentInProcess(
 					unsubscribe?.();
 				} catch {}
 				if (flushTimer) clearTimeout(flushTimer);
+				clearInterval(heartbeat);
 				ctx.ui.setWidget(widgetId, undefined);
 				ctx.ui.setWorkingMessage(undefined);
 				ctx.ui.setStatus("supervisor", "");
@@ -621,6 +627,7 @@ export async function runAgentInProcess(
 			clearTimeout(flushTimer);
 			flushTimer = null;
 		}
+		clearInterval(heartbeat);
 		flushWidget();
 
 		// Unsubscribe and dispose
@@ -648,6 +655,7 @@ export async function runAgentInProcess(
 			unsubscribe?.();
 		} catch {}
 		if (flushTimer) clearTimeout(flushTimer);
+		clearInterval(heartbeat);
 
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);
