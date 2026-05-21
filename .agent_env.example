@@ -1,0 +1,7 @@
+# AgentCastle API keys
+# Copy this file to .agent_env and fill in your keys.
+# .agent_env is gitignored — never commit real keys.
+
+export APIFY_TOKEN="apify_api_..."        # Required for web_crawl fallback
+# export OPENAI_API_KEY="sk-..."          # If using OpenAI provider
+# export ANTHROPIC_API_KEY="sk-ant-..."   # If using Anthropic provider
