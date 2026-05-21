@@ -30,6 +30,9 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	// ── Startup widget state ───────────────────────────────────────
 	const startupWidgetActive = { value: false };
 
+	// ── Tool call counter state ────────────────────────────────────
+	const toolCallCount = { value: 0 };
+
 	// ── TPS state ──────────────────────────────────────────────────
 	const tpsSamples: TpsSample[] = [];
 	const lastComputedTps: { value: number | null } = { value: null };
@@ -71,6 +74,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					lastComputedTps,
 					lastContextWindowRef,
 					{ value: lastSampledOutput },
+					toolCallCount,
 				);
 			}
 		}, 1000);
@@ -214,6 +218,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		tpsSamples.length = 0;
 		lastComputedTps.value = null;
 		lastSampledOutput = undefined;
+		toolCallCount.value = 0;
 
 		// Deferred I/O — detect worktree on first session
 		if (worktreeName === null) {
@@ -250,6 +255,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			lastComputedTps,
 			lastContextWindowRef,
 			{ value: lastSampledOutput },
+			toolCallCount,
 		);
 
 		// Start live timer
@@ -292,6 +298,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				lastComputedTps,
 				lastContextWindowRef,
 				{ value: lastSampledOutput },
+				toolCallCount,
 			);
 	});
 
@@ -312,6 +319,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				lastComputedTps,
 				lastContextWindowRef,
 				{ value: lastSampledOutput },
+				toolCallCount,
 			);
 		tryEmit(ctx, telemetryState);
 	});
@@ -327,6 +335,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				lastComputedTps,
 				lastContextWindowRef,
 				{ value: lastSampledOutput },
+				toolCallCount,
 			);
 	});
 
@@ -346,6 +355,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		if (typeof output === "number") {
 			sampleTps(output);
 		}
+	});
+
+	pi.on("tool_execution_end", async () => {
+		toolCallCount.value += 1;
 	});
 
 	pi.on("session_shutdown", async () => {

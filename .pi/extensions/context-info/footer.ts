@@ -31,6 +31,7 @@ export function installFooter(
 	lastComputedTps: { value: number | null },
 	lastContextWindow: { value: number | undefined },
 	lastSampledOutput: { value: number | undefined },
+	toolCallCount: { value: number },
 ): void {
 	if (!config || config.enabled === false) {
 		ctx.ui.setFooter(undefined);
@@ -84,6 +85,11 @@ export function installFooter(
 					const reasoningStr = theme.fg(tColor, `${tIcon} ${thinkingLevel}`);
 					centerStr += " " + theme.fg("dim", "·") + " " + reasoningStr;
 				}
+
+				// ── Tool call counter ─────────────────────────
+				const toolStr =
+					theme.fg("dim", "🔧") + " " + theme.fg("muted", String(toolCallCount.value));
+				centerStr += " " + theme.fg("dim", "·") + " " + toolStr;
 
 				// ── RIGHT: Session timer + token usage + percentage ──
 				let rightStr = "";
