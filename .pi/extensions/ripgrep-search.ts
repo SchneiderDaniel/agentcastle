@@ -8,6 +8,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -25,6 +27,72 @@ export interface RgMatch {
 export interface RgResult {
 	total_returned: number;
 	results: RgMatch[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Configuration
+// ═══════════════════════════════════════════════════════════════════════
+
+export interface SearchConfig {
+	searchBackend: "auto" | "ripgrep" | "grep";
+	maxLineLength: number;
+}
+
+const DEFAULT_CONFIG: SearchConfig = {
+	searchBackend: "auto",
+	maxLineLength: 200,
+};
+
+const MAX_LINE_LENGTH_MAX = 2000;
+const MAX_LINE_LENGTH_DEFAULT = 200;
+
+/**
+ * Load search configuration from .pi/settings.json.
+ * Falls back to defaults on missing file, parse errors, or missing keys.
+ */
+export function loadSearchConfig(cwd: string): SearchConfig {
+	try {
+		const settingsPath = join(cwd, ".pi", "settings.json");
+		const raw = readFileSync(settingsPath, "utf-8");
+		const settings = JSON.parse(raw);
+		const search = settings?.search;
+
+		if (!search) return { ...DEFAULT_CONFIG };
+
+		let searchBackend: SearchConfig["searchBackend"] = DEFAULT_CONFIG.searchBackend;
+		if (search.searchBackend === "ripgrep" || search.searchBackend === "grep" || search.searchBackend === "auto") {
+			searchBackend = search.searchBackend;
+		}
+
+		let maxLineLength = MAX_LINE_LENGTH_DEFAULT;
+		if (typeof search.maxLineLength === "number" && Number.isInteger(search.maxLineLength) && search.maxLineLength > 0) {
+			maxLineLength = Math.min(search.maxLineLength, MAX_LINE_LENGTH_MAX);
+		}
+
+		return { searchBackend, maxLineLength };
+	} catch {
+		return { ...DEFAULT_CONFIG };
+	}
+}
+
+/**
+ * Resolve the active search backend based on user config and rg availability.
+ * - "ripgrep": forces ripgrep (returns error string if rg not available)
+ * - "grep": forces grep (skips rg detection)
+ * - "auto": uses ripgrep if available, grep otherwise
+ */
+export function resolveBackend(config: SearchConfig, rgAvailable: boolean): { backend: "ripgrep" | "grep"; error?: string } {
+	if (config.searchBackend === "ripgrep") {
+		if (!rgAvailable) {
+			return { backend: "ripgrep", error: "ripgrep not found on PATH. Install rg or set searchBackend to 'auto' or 'grep' in .pi/settings.json." };
+		}
+		return { backend: "ripgrep" };
+	}
+	if (config.searchBackend === "grep") {
+		return { backend: "grep" };
+	}
+	// auto
+	return { backend: rgAvailable ? "ripgrep" : "grep" };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -51,11 +119,22 @@ export function buildGrepArgs(
 	directory: string,
 	maxCount: number,
 ): { command: string; args: string[] } {
+	const excludedDirs = [
+		"--exclude-dir=.git",
+		"--exclude-dir=node_modules",
+		"--exclude-dir=venv",
+		"--exclude-dir=__pycache__",
+		"--exclude-dir=.mypy_cache",
+		"--exclude-dir=.pytest_cache",
+		"--exclude-dir=dist",
+		"--exclude-dir=build",
+	];
 	const args = [
 		"-rnH", // recursive, line-number, with-filename
 		"-m",
 		`${maxCount}`, // max matches per file
 		"--color=never",
+		...excludedDirs,
 		"-e",
 		query, // pattern (safe: separate arg, no injection)
 		directory,
@@ -168,10 +247,11 @@ export function buildRgArgs(
 	query: string,
 	directory: string,
 	maxCount: number,
+	maxLineLength: number = 200,
 ): { command: string; args: string[] } {
 	const args = [
 		"--vimgrep",
-		"--max-columns=200",
+		`--max-columns=${maxLineLength}`,
 		`--max-count=${maxCount}`,
 		"--no-heading",
 		"-j1",
@@ -233,8 +313,44 @@ export function parseVimgrepOutput(raw: string | null | undefined): RgResult {
 // ═══════════════════════════════════════════════════════════════════════
 
 export default function ripgrepSearch(pi: ExtensionAPI): void {
-	// Cache whether ripgrep is available (lazy, set on first call)
+	// Module-level state
 	let rgAvailable: boolean | null = null;
+	let searchConfig: SearchConfig | null = null;
+	let backendNoteInjected = false;
+
+	// Eager detection on session start
+	pi.on("session_start", async (_event, ctx) => {
+		searchConfig = loadSearchConfig(ctx.cwd);
+		// Only detect rg if backend selection might need it
+		if (searchConfig.searchBackend !== "grep") {
+			rgAvailable = await ripgrepAvailable(pi.exec);
+		} else {
+			rgAvailable = false;
+		}
+		backendNoteInjected = false;
+	});
+
+	// Inject backend-status note into system prompt
+	pi.on("before_agent_start", async (event, _ctx) => {
+		// Only inject if ripgrep_search tool is active in this agent
+		if (!event.systemPromptOptions?.selectedTools?.includes("ripgrep_search")) return;
+		if (backendNoteInjected) return;
+
+		const config = searchConfig ?? DEFAULT_CONFIG;
+		const resolved = resolveBackend(config, rgAvailable ?? false);
+
+		let note: string;
+		if (resolved.backend === "ripgrep") {
+			const configured = config.searchBackend === "ripgrep" ? " (user-configured)" : "";
+			note = `\n[Search backend: ripgrep${configured} — .gitignore respected, column offsets available]`;
+		} else {
+			const configured = config.searchBackend === "grep" ? " (user-configured)" : " (fallback)";
+			note = `\n[Search backend: grep${configured} — .gitignore NOT respected, column always 1, excluded dirs: .git,node_modules,venv,__pycache__,.mypy_cache,.pytest_cache,dist,build]`;
+		}
+
+		backendNoteInjected = true;
+		return { systemPrompt: event.systemPrompt + note };
+	});
 
 	pi.registerTool({
 		name: "ripgrep_search",
@@ -298,17 +414,35 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				};
 			}
 
-			// Detect rg availability (cache after first check)
+			// Ensure config loaded (defensive — session_start should have set it)
+			const config = searchConfig ?? loadSearchConfig(ctx.cwd);
+			searchConfig = config;
+
+			// Ensure rgAvailable detected (defensive)
 			if (rgAvailable === null) {
 				rgAvailable = await ripgrepAvailable(pi.exec);
 			}
 
-			// Decide: ripgrep or grep fallback
-			const useRipgrep = rgAvailable;
+			// Resolve backend from config + detection
+			const resolved = resolveBackend(config, rgAvailable);
+			if (resolved.error) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: resolved.error,
+						},
+					],
+					details: { success: false, error: resolved.error } as Record<string, unknown>,
+					isError: true,
+				};
+			}
+
+			const useRipgrep = resolved.backend === "ripgrep";
 			const searcherName = useRipgrep ? "ripgrep" : "grep";
 
 			const { command, args } = useRipgrep
-				? buildRgArgs(query, directory, maxCount)
+				? buildRgArgs(query, directory, maxCount, config.maxLineLength)
 				: buildGrepArgs(query, directory, maxCount);
 
 			const result = await pi.exec(command, args, {

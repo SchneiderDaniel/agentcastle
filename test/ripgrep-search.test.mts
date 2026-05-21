@@ -1,7 +1,8 @@
 /**
  * Tests for Ripgrep Search (ripgrep literal text search)
  *
- * Pure function tests for validateQuery(), buildRgArgs(), parseVimgrepOutput().
+ * Pure function tests for validateQuery(), buildRgArgs(), parseVimgrepOutput(),
+ * buildGrepArgs(), parseGrepOutput(), loadSearchConfig(), resolveBackend().
  * Local copies match source at .pi/extensions/ripgrep-search.ts exactly.
  *
  * Run with:
@@ -13,9 +14,10 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
+import { tmpdir } from "node:os";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types (match source at .pi/extensions/ripgrep-search.ts)
@@ -35,9 +37,67 @@ interface RgResult {
 	results: RgMatch[];
 }
 
+interface SearchConfig {
+	searchBackend: "auto" | "ripgrep" | "grep";
+	maxLineLength: number;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Pure functions under test (match source exactly)
 // ═══════════════════════════════════════════════════════════════════════
+
+const DEFAULT_CONFIG: SearchConfig = {
+	searchBackend: "auto",
+	maxLineLength: 200,
+};
+
+const MAX_LINE_LENGTH_MAX = 2000;
+const MAX_LINE_LENGTH_DEFAULT = 200;
+
+/**
+ * Load search configuration from .pi/settings.json.
+ */
+function loadSearchConfig(cwd: string): SearchConfig {
+	try {
+		const settingsPath = join(cwd, ".pi", "settings.json");
+		const raw = readFileSync(settingsPath, "utf-8");
+		const settings = JSON.parse(raw);
+		const search = settings?.search;
+
+		if (!search) return { ...DEFAULT_CONFIG };
+
+		let searchBackend: SearchConfig["searchBackend"] = DEFAULT_CONFIG.searchBackend;
+		if (search.searchBackend === "ripgrep" || search.searchBackend === "grep" || search.searchBackend === "auto") {
+			searchBackend = search.searchBackend;
+		}
+
+		let maxLineLength = MAX_LINE_LENGTH_DEFAULT;
+		if (typeof search.maxLineLength === "number" && Number.isInteger(search.maxLineLength) && search.maxLineLength > 0) {
+			maxLineLength = Math.min(search.maxLineLength, MAX_LINE_LENGTH_MAX);
+		}
+
+		return { searchBackend, maxLineLength };
+	} catch {
+		return { ...DEFAULT_CONFIG };
+	}
+}
+
+/**
+ * Resolve the active search backend based on user config and rg availability.
+ */
+function resolveBackend(config: SearchConfig, rgAvailable: boolean): { backend: "ripgrep" | "grep"; error?: string } {
+	if (config.searchBackend === "ripgrep") {
+		if (!rgAvailable) {
+			return { backend: "ripgrep", error: "ripgrep not found on PATH. Install rg or set searchBackend to 'auto' or 'grep' in .pi/settings.json." };
+		}
+		return { backend: "ripgrep" };
+	}
+	if (config.searchBackend === "grep") {
+		return { backend: "grep" };
+	}
+	// auto
+	return { backend: rgAvailable ? "ripgrep" : "grep" };
+}
 
 /**
  * Validate that a query is suitable for ripgrep (literal/regex text search)
@@ -81,10 +141,11 @@ function buildRgArgs(
 	query: string,
 	directory: string,
 	maxCount: number,
+	maxLineLength: number = 200,
 ): { command: string; args: string[] } {
 	const args = [
 		"--vimgrep",
-		"--max-columns=200",
+		`--max-columns=${maxLineLength}`,
 		`--max-count=${maxCount}`,
 		"--no-heading",
 		"-j1",
@@ -92,6 +153,37 @@ function buildRgArgs(
 		directory,
 	];
 	return { command: "rg", args };
+}
+
+/**
+ * Build grep command arguments as fallback when ripgrep unavailable.
+ */
+function buildGrepArgs(
+	query: string,
+	directory: string,
+	maxCount: number,
+): { command: string; args: string[] } {
+	const excludedDirs = [
+		"--exclude-dir=.git",
+		"--exclude-dir=node_modules",
+		"--exclude-dir=venv",
+		"--exclude-dir=__pycache__",
+		"--exclude-dir=.mypy_cache",
+		"--exclude-dir=.pytest_cache",
+		"--exclude-dir=dist",
+		"--exclude-dir=build",
+	];
+	const args = [
+		"-rnH",
+		"-m",
+		`${maxCount}`,
+		"--color=never",
+		...excludedDirs,
+		"-e",
+		query,
+		directory,
+	];
+	return { command: "grep", args };
 }
 
 /**
@@ -124,6 +216,45 @@ function parseVimgrepOutput(raw: string | null | undefined): RgResult {
 			file,
 			line: lineNum,
 			column,
+			text,
+		});
+	}
+
+	return {
+		total_returned: results.length,
+		results,
+	};
+}
+
+/**
+ * Parse generic grep -rnH output into RgResult.
+ */
+function parseGrepOutput(raw: string | null | undefined): RgResult {
+	if (!raw) {
+		return { total_returned: 0, results: [] };
+	}
+
+	const lines = raw.split("\n");
+	const results: RgMatch[] = [];
+
+	const grepRegex = /^(.+?):(\d+):(.*)$/;
+
+	for (const line of lines) {
+		if (!line.trim()) continue;
+
+		const match = line.match(grepRegex);
+		if (!match) continue;
+
+		const file = match[1]!;
+		const lineNum = parseInt(match[2]!, 10);
+		const text = match[3]!;
+
+		if (isNaN(lineNum)) continue;
+
+		results.push({
+			file,
+			line: lineNum,
+			column: 1,
 			text,
 		});
 	}
@@ -167,6 +298,21 @@ const EMPTY_TEXT_LINE = "file:1:1:";
 
 /** Non-numeric line/column. */
 const INVALID_NUMBERS = "file:abc:def:text";
+
+/** Sample grep -rnH output. */
+const GREP_TWO_LINES = [
+	"src/app.ts:2:const TIMEOUT_MS = 5000;",
+	"config/settings.py:4:TIMEOUT_MS = 5000",
+].join("\n");
+
+/** Grep output with colons in text. */
+const GREP_TEXT_WITH_COLONS = "src/log.ts:10:ERROR: 5000: timeout";
+
+/** Grep output empty. */
+const GREP_EMPTY = "";
+
+/** Grep malformed line. */
+const GREP_MALFORMED = "no colons here";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Tests
@@ -274,7 +420,6 @@ describe("buildRgArgs", () => {
 
 	it("query with backticks passed as separate array element (not shell-escaped)", () => {
 		const { args } = buildRgArgs("rm -rf /", ".", 10);
-		// The query is its own array element
 		const queryIndex = args.indexOf("rm -rf /");
 		assert.ok(queryIndex >= 0, "Query should be a separate array element");
 	});
@@ -289,10 +434,171 @@ describe("buildRgArgs", () => {
 		const { command, args } = buildRgArgs("test", ".", 10);
 		assert.strictEqual(command, "rg");
 		assert.strictEqual(args[0], "--vimgrep");
-		assert.strictEqual(args[1], "--max-columns=200");
+		assert.ok(args[1]!.startsWith("--max-columns="));
 		assert.ok(args[2]!.startsWith("--max-count="));
 		assert.strictEqual(args[3], "--no-heading");
 		assert.strictEqual(args[4], "-j1");
+	});
+
+	it("respects custom maxLineLength", () => {
+		const { args } = buildRgArgs("query", ".", 10, 150);
+		assert.ok(args.includes("--max-columns=150"));
+	});
+
+	it("defaults maxLineLength to 200", () => {
+		const { args } = buildRgArgs("query", ".", 10);
+		assert.ok(args.includes("--max-columns=200"));
+	});
+});
+
+describe("buildGrepArgs", () => {
+	it("builds default grep args with max_count=10, directory='.'", () => {
+		const { command, args } = buildGrepArgs("TIMEOUT_MS = 5000", ".", 10);
+		assert.strictEqual(command, "grep");
+		assert.ok(args.includes("-rnH"));
+		assert.ok(args.includes("-m"));
+		assert.ok(args.includes("10"));
+		assert.ok(args.includes("--color=never"));
+		assert.ok(args.includes("TIMEOUT_MS = 5000"));
+		assert.ok(args.includes("."));
+	});
+
+	it("includes all --exclude-dir flags", () => {
+		const { args } = buildGrepArgs("query", ".", 10);
+		assert.ok(args.includes("--exclude-dir=.git"));
+		assert.ok(args.includes("--exclude-dir=node_modules"));
+		assert.ok(args.includes("--exclude-dir=venv"));
+		assert.ok(args.includes("--exclude-dir=__pycache__"));
+		assert.ok(args.includes("--exclude-dir=.mypy_cache"));
+		assert.ok(args.includes("--exclude-dir=.pytest_cache"));
+		assert.ok(args.includes("--exclude-dir=dist"));
+		assert.ok(args.includes("--exclude-dir=build"));
+	});
+
+	it("excluded dirs appear before -e flag", () => {
+		const { args } = buildGrepArgs("query", ".", 10);
+		const excludeIdx = args.indexOf("--exclude-dir=.git");
+		const eIdx = args.indexOf("-e");
+		assert.ok(excludeIdx >= 0, "--exclude-dir=.git should be present");
+		assert.ok(eIdx >= 0, "-e should be present");
+		assert.ok(excludeIdx < eIdx, "--exclude-dir flags should appear before -e");
+	});
+
+	it("uses custom max_count=5", () => {
+		const { args } = buildGrepArgs("query", ".", 5);
+		const mIdx = args.indexOf("-m");
+		assert.ok(mIdx >= 0);
+		assert.strictEqual(args[mIdx + 1], "5");
+	});
+
+	it("uses custom directory='src/'", () => {
+		const { args } = buildGrepArgs("query", "src/", 10);
+		assert.strictEqual(args[args.length - 1], "src/");
+	});
+
+	it("query is separate array element (no shell injection)", () => {
+		const { args } = buildGrepArgs("rm -rf /", ".", 10);
+		const queryIndex = args.indexOf("rm -rf /");
+		assert.ok(queryIndex >= 0, "Query should be a separate array element");
+	});
+
+	it("all flags in expected order", () => {
+		const { command, args } = buildGrepArgs("test", ".", 10);
+		assert.strictEqual(command, "grep");
+		assert.strictEqual(args[0], "-rnH");
+		assert.strictEqual(args[1], "-m");
+		assert.strictEqual(args[2], "10");
+		assert.strictEqual(args[3], "--color=never");
+		// Then exclusion dirs
+		const excludeStart = args.indexOf("--exclude-dir=.git");
+		assert.ok(excludeStart >= 4, "--exclude-dir should start after --color=never");
+		// -e comes after all --exclude-dir entries, then query, then directory
+		const eIdx = args.indexOf("-e");
+		assert.ok(eIdx > excludeStart, "-e should come after all --exclude-dir entries");
+		assert.strictEqual(args[eIdx + 1], "test", "query follows -e");
+		assert.strictEqual(args[args.length - 1], ".", "directory is last");
+	});
+});
+
+describe("parseGrepOutput", () => {
+	it("parses two valid grep lines", () => {
+		const result = parseGrepOutput(GREP_TWO_LINES);
+		assert.strictEqual(result.total_returned, 2);
+		assert.strictEqual(result.results.length, 2);
+		assert.strictEqual(result.results[0]!.file, "src/app.ts");
+		assert.strictEqual(result.results[0]!.line, 2);
+		assert.strictEqual(result.results[0]!.column, 1);
+		assert.strictEqual(result.results[0]!.text, "const TIMEOUT_MS = 5000;");
+		assert.strictEqual(result.results[1]!.file, "config/settings.py");
+		assert.strictEqual(result.results[1]!.line, 4);
+		assert.strictEqual(result.results[1]!.column, 1);
+		assert.strictEqual(result.results[1]!.text, "TIMEOUT_MS = 5000");
+	});
+
+	it("returns empty result for empty string", () => {
+		const result = parseGrepOutput("");
+		assert.strictEqual(result.total_returned, 0);
+		assert.deepStrictEqual(result.results, []);
+	});
+
+	it("returns empty result for null input", () => {
+		const result = parseGrepOutput(null);
+		assert.strictEqual(result.total_returned, 0);
+		assert.deepStrictEqual(result.results, []);
+	});
+
+	it("returns empty result for undefined input", () => {
+		const result = parseGrepOutput(undefined);
+		assert.strictEqual(result.total_returned, 0);
+		assert.deepStrictEqual(result.results, []);
+	});
+
+	it("sets column to 1 for all matches", () => {
+		const result = parseGrepOutput(GREP_TWO_LINES);
+		for (const r of result.results) {
+			assert.strictEqual(r.column, 1);
+		}
+	});
+
+	it("handles text with colons (greedy regex)", () => {
+		const result = parseGrepOutput(GREP_TEXT_WITH_COLONS);
+		assert.strictEqual(result.total_returned, 1);
+		assert.strictEqual(result.results[0]!.file, "src/log.ts");
+		assert.strictEqual(result.results[0]!.line, 10);
+		assert.strictEqual(result.results[0]!.text, "ERROR: 5000: timeout");
+	});
+
+	it("skips malformed line (no colons)", () => {
+		const result = parseGrepOutput(GREP_MALFORMED);
+		assert.strictEqual(result.total_returned, 0);
+	});
+
+	it("skips lines with non-numeric line number", () => {
+		const result = parseGrepOutput("file:abc:text");
+		assert.strictEqual(result.total_returned, 0);
+	});
+
+	it("newline-separated input produces multiple results", () => {
+		const input = "a:1:first\nb:2:second\nc:3:third";
+		const result = parseGrepOutput(input);
+		assert.strictEqual(result.total_returned, 3);
+		assert.strictEqual(result.results[0]!.file, "a");
+		assert.strictEqual(result.results[1]!.file, "b");
+		assert.strictEqual(result.results[2]!.file, "c");
+	});
+
+	it("preserves original order from grep output", () => {
+		const input = "z:3:last\na:1:first\nm:2:middle";
+		const result = parseGrepOutput(input);
+		assert.strictEqual(result.results[0]!.file, "z");
+		assert.strictEqual(result.results[1]!.file, "a");
+		assert.strictEqual(result.results[2]!.file, "m");
+	});
+
+	it("handles file paths with colons (Windows drive letter)", () => {
+		const result = parseGrepOutput("C:/src/file.ts:5:const x = 1");
+		assert.strictEqual(result.total_returned, 1);
+		assert.strictEqual(result.results[0]!.file, "C:/src/file.ts");
 	});
 });
 
@@ -397,6 +703,221 @@ describe("parseVimgrepOutput", () => {
 	it("skips lines with non-numeric line or column", () => {
 		const result = parseVimgrepOutput(INVALID_NUMBERS);
 		assert.strictEqual(result.total_returned, 0);
+	});
+});
+
+describe("loadSearchConfig", () => {
+	// We manage temp dirs per test instead of using beforeEach/afterEach
+	// since Node test runner doesn't support those in describe blocks directly.
+	function setupTmpDir(): string {
+		const dir = mkdtempSync(join(tmpdir(), "ripgrep-test-"));
+		// Create .pi directory
+		const piDir = join(dir, ".pi");
+		mkdirSync(piDir, { recursive: true });
+		return dir;
+	}
+
+	function cleanupTmpDir(dir: string) {
+		for (const d of [dir]) {
+			try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+		}
+	}
+
+	it("returns defaults when .pi/settings.json is missing entirely", () => {
+		const noPiDir = mkdtempSync(join(tmpdir(), "ripgrep-test-nopi-"));
+		try {
+			const result = loadSearchConfig(noPiDir);
+			assert.strictEqual(result.searchBackend, "auto");
+			assert.strictEqual(result.maxLineLength, 200);
+		} finally {
+			cleanupTmpDir(noPiDir);
+		}
+	});
+
+	it("returns defaults when .pi/settings.json exists but has no search key", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ other: true }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.searchBackend, "auto");
+			assert.strictEqual(result.maxLineLength, 200);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("returns defaults when .pi/settings.json is malformed JSON", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), "not json");
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.searchBackend, "auto");
+			assert.strictEqual(result.maxLineLength, 200);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("parses searchBackend: auto", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "auto" } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.searchBackend, "auto");
+			assert.strictEqual(result.maxLineLength, 200);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("parses searchBackend: ripgrep", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "ripgrep" } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.searchBackend, "ripgrep");
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("parses searchBackend: grep", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "grep" } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.searchBackend, "grep");
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("falls back to auto for invalid searchBackend", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "invalid" } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.searchBackend, "auto");
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("parses maxLineLength: 100", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: 100 } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.maxLineLength, 100);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("rejects maxLineLength: 0 (must be positive)", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: 0 } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.maxLineLength, 200);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("rejects maxLineLength: -50 (negative)", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: -50 } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.maxLineLength, 200);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("clamps maxLineLength: 5000 to 2000", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: 5000 } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.maxLineLength, 2000);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("rejects maxLineLength: 'abc' (non-numeric)", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: "abc" } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.maxLineLength, 200);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("accepts maxLineLength at upper bound: 2000", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: 2000 } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.maxLineLength, 2000);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+
+	it("handles both searchBackend and maxLineLength together", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "grep", maxLineLength: 150 } }));
+			const result = loadSearchConfig(dir);
+			assert.strictEqual(result.searchBackend, "grep");
+			assert.strictEqual(result.maxLineLength, 150);
+		} finally {
+			cleanupTmpDir(dir);
+		}
+	});
+});
+
+describe("resolveBackend", () => {
+	it("auto + rg available → ripgrep", () => {
+		const result = resolveBackend({ searchBackend: "auto", maxLineLength: 200 }, true);
+		assert.strictEqual(result.backend, "ripgrep");
+		assert.strictEqual(result.error, undefined);
+	});
+
+	it("auto + rg not available → grep", () => {
+		const result = resolveBackend({ searchBackend: "auto", maxLineLength: 200 }, false);
+		assert.strictEqual(result.backend, "grep");
+		assert.strictEqual(result.error, undefined);
+	});
+
+	it("ripgrep + rg available → ripgrep", () => {
+		const result = resolveBackend({ searchBackend: "ripgrep", maxLineLength: 200 }, true);
+		assert.strictEqual(result.backend, "ripgrep");
+		assert.strictEqual(result.error, undefined);
+	});
+
+	it("ripgrep + rg not available → error", () => {
+		const result = resolveBackend({ searchBackend: "ripgrep", maxLineLength: 200 }, false);
+		assert.strictEqual(result.backend, "ripgrep");
+		assert.ok(result.error !== undefined, "Should return an error message");
+		assert.ok(result.error!.includes("ripgrep not found"), "Error should mention ripgrep not found");
+	});
+
+	it("grep + rg available → grep (skips detection)", () => {
+		const result = resolveBackend({ searchBackend: "grep", maxLineLength: 200 }, true);
+		assert.strictEqual(result.backend, "grep");
+		assert.strictEqual(result.error, undefined);
+	});
+
+	it("grep + rg not available → grep (no error)", () => {
+		const result = resolveBackend({ searchBackend: "grep", maxLineLength: 200 }, false);
+		assert.strictEqual(result.backend, "grep");
+		assert.strictEqual(result.error, undefined);
 	});
 });
 
