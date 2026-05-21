@@ -5,6 +5,10 @@
 	"contextStatusBar": {
 		"showTps": true
 	},
+	"docker": {
+		"memory": "4G",
+		"cpus": "2.0"
+	},
 	"supervisor": {
 		"repo": "SchneiderDaniel/agentcastle",
 		"projectNumber": 3,
