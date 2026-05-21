@@ -1,0 +1,31 @@
+# AgentCastle — Docker Compose orchestration
+# ============================================
+# Builds and runs the agentcastle container with workspace mounts,
+# environment variables, and resource limits driven by .pi/settings.json.
+#
+# Usage (via wrapper):
+#   ./agent-castle.sh
+#
+# Direct usage (without wrapper — uses defaults):
+#   docker compose up -d --build
+#   docker exec -it agentcastle /bin/bash -c 'cd /workspaces/main && pi'
+
+services:
+  agentcastle:
+    build: .
+    container_name: agentcastle
+    env_file:
+      - ./.agent_env
+    environment:
+      - HOST_UID=${HOST_UID}
+      - HOST_GID=${HOST_GID}
+    volumes:
+      - ../:/workspaces
+    deploy:
+      resources:
+        limits:
+          memory: ${AGENTCASTLE_MEMORY:-4G}
+          cpus: ${AGENTCASTLE_CPUS:-2.0}
+    stdin_open: true
+    tty: true
+    command: ["sleep", "infinity"]
