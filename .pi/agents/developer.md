@@ -75,6 +75,13 @@ Follow the **Test First** rule:
 - Confirm green across the board
 - Address any regressions before proceeding
 
+**Step D — Update README if needed:**
+
+- Review your changes. Did you add, remove, or change any feature, config, CLI flag, env var, API endpoint, dependency, or user-facing behavior?
+- If yes: update README.md to reflect the change (new section, updated example, changed instructions)
+- If no: skip. Do not touch README for purely internal refactors or bug fixes with no user-facing impact.
+- Run `git diff --stat` to confirm README.md is either updated (if needed) or unchanged (if not needed).
+
 ### 6. Commit and push
 
 ```bash
@@ -101,5 +108,6 @@ bash .pi/scripts/dev-workflow.sh cleanup <original-repo-path>
 - **NEVER** merge to main or create pull requests
 - **NEVER** modify files outside the worktree
 - **NEVER** fetch the issue from GitHub — use ONLY the data provided in your task
+- **ALWAYS** update README.md when changes are user-facing (new features, changed behavior, config/env/CLI changes). Skip only for internal-only changes (refactors, bug fixes with no visible impact).
 - Follow the architecture and test plan from the trusted comments
 - When finished, output "IMPLEMENTATION_COMPLETE" on its own line followed by the branch name

@@ -163,6 +163,7 @@ Assess maintainability:
 - [ ] **Edge cases:** Empty, null, zero, negative, maximum — are guard clauses present?
 - [ ] **TODOs:** Are there unresolved TODO comments? Use `bash grep` with pattern `TODO|FIXME|HACK|XXX`
 - [ ] **Dead code:** Are there commented-out blocks or unreachable code paths?
+- [ ] **README update:** If the diff includes user-facing changes (new features, changed API/config/env/CLI, different behavior), was README.md updated accordingly? If changes are only internal (refactors, bug fixes, tests), verify README.md was intentionally left unchanged. Use `git diff main...origin/<branch-name> -- README.md` to check.
 
 ### 5. Decide: APPROVE or REJECT
 
