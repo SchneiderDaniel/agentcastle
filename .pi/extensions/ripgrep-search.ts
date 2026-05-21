@@ -7,8 +7,18 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	DEFAULT_MAX_BYTES,
+	DEFAULT_MAX_LINES,
+	formatSize,
+	truncateHead,
+	withFileMutationQueue,
+} from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -43,6 +53,7 @@ const DEFAULT_CONFIG: SearchConfig = {
 	maxLineLength: 200,
 };
 
+const MAX_TOTAL_RESULTS = 500;
 const MAX_LINE_LENGTH_MAX = 2000;
 const MAX_LINE_LENGTH_DEFAULT = 200;
 
@@ -394,7 +405,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const query = params.query;
 			const directory = params.directory ?? ".";
 			const maxCount = params.max_count ?? 10;
@@ -448,6 +459,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			const result = await pi.exec(command, args, {
 				cwd: ctx.cwd,
 				timeout: 30_000,
+				signal,
 			});
 
 			if (result.code !== 0) {
@@ -463,7 +475,6 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 						details: {
 							success: true,
 							total_returned: 0,
-							results: [],
 							searcher: searcherName,
 						} as Record<string, unknown>,
 					};
@@ -496,27 +507,160 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				? parseVimgrepOutput(result.stdout)
 				: parseGrepOutput(result.stdout);
 
-			const json = JSON.stringify(searchResult, null, 2);
+			// ── Bug 1 fix: Cap total results before serialization ──
+			const totalReturned = searchResult.total_returned;
+			let results = searchResult.results;
+			let resultsTruncated = false;
+
+			if (results.length > MAX_TOTAL_RESULTS) {
+				results = results.slice(0, MAX_TOTAL_RESULTS);
+				resultsTruncated = true;
+			}
+
+			const truncatedResult: RgResult = {
+				total_returned: totalReturned,
+				results,
+			};
+
+			let json = JSON.stringify(truncatedResult, null, 2);
+			let fullOutputPath: string | undefined;
+
+			// Apply byte-level truncation as safety net
+			const truncation = truncateHead(json, {
+				maxBytes: DEFAULT_MAX_BYTES,
+				maxLines: DEFAULT_MAX_LINES,
+			});
+
+			// If either results cap or byte truncation kicked in, save full output
+			if (resultsTruncated || truncation.truncated) {
+				const tempDir = await mkdtemp(join(tmpdir(), "pi-ripgrep-"));
+				fullOutputPath = join(tempDir, "full-output.json");
+				// Write the complete (un-truncated) JSON to temp file
+				const fullJson = JSON.stringify(searchResult, null, 2);
+				await withFileMutationQueue(fullOutputPath, async () => {
+					await writeFile(fullOutputPath, fullJson, "utf8");
+				});
+			}
+
+			// Build text content with truncation awareness
+			let contentText =
+				`${searcherName} search results for query: ${query}\n` +
+				`Directory: ${directory}\n` +
+				`Matches returned: ${totalReturned}\n\n`;
+
+			if (truncation.truncated) {
+				contentText += truncation.content;
+				const truncatedLines = truncation.totalLines - truncation.outputLines;
+				const truncatedBytes = truncation.totalBytes - truncation.outputBytes;
+				contentText += `\n\n[Output truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`;
+				contentText += ` (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).`;
+				contentText += ` ${truncatedLines} lines (${formatSize(truncatedBytes)}) omitted.`;
+				if (fullOutputPath) {
+					contentText += ` Full output saved to: ${fullOutputPath}]`;
+				} else {
+					contentText += "]";
+				}
+			} else if (resultsTruncated) {
+				contentText += truncation.content;
+				contentText += `\n\n[Showing first ${MAX_TOTAL_RESULTS} of ${totalReturned} results. Full output saved to: ${fullOutputPath}]`;
+			} else {
+				contentText += "```json\n" + json + "\n```";
+			}
+
+			const details: Record<string, unknown> = {
+				success: true,
+				searcher: searcherName,
+				total_returned: totalReturned,
+			};
+
+			if (resultsTruncated || truncation.truncated) {
+				details.truncated = true;
+				if (fullOutputPath) {
+					details.fullOutputPath = fullOutputPath;
+				}
+			}
 
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text:
-							`${searcherName} search results for query: ${query}\n` +
-							`Directory: ${directory}\n` +
-							`Matches returned: ${searchResult.total_returned}\n\n` +
-							"```json\n" +
-							json +
-							"\n```",
+						text: contentText,
 					},
 				],
-				details: {
-					success: true,
-					searcher: searcherName,
-					...searchResult,
-				} as Record<string, unknown>,
+				details,
 			};
+		},
+
+		// Custom rendering of the tool call (shown before/during execution)
+		renderCall(args, theme, _context) {
+			let text = theme.fg("toolTitle", theme.bold("rg "));
+			text += theme.fg("accent", `"${args.query}"`);
+			if (args.directory && args.directory !== ".") {
+				text += theme.fg("muted", ` in ${args.directory}`);
+			}
+			return new Text(text, 0, 0);
+		},
+
+		// Custom rendering of the tool result (Bug 4 fix)
+		renderResult(result, { expanded, isPartial }, theme, _context) {
+			const details = result.details as
+				| {
+						total_returned?: number;
+						searcher?: string;
+						truncated?: boolean;
+						fullOutputPath?: string;
+						success?: boolean;
+				  }
+				| undefined;
+
+			// Handle streaming/partial results
+			if (isPartial) {
+				return new Text(theme.fg("warning", "Searching..."), 0, 0);
+			}
+
+			// Error results
+			if (!details || details.success === false) {
+				const content = result.content[0];
+				if (content?.type === "text") {
+					return new Text(theme.fg("error", content.text), 0, 0);
+				}
+				return new Text(theme.fg("error", "Search failed"), 0, 0);
+			}
+
+			// No matches
+			if (!details.total_returned || details.total_returned === 0) {
+				return new Text(theme.fg("dim", "No matches found"), 0, 0);
+			}
+
+			// Build result display
+			let text = theme.fg("success", `${details.total_returned} matches`);
+			text += theme.fg("muted", ` (${details.searcher ?? "?"})`);
+
+			// Show truncation warning if applicable
+			if (details.truncated) {
+				text += theme.fg("warning", " [truncated]");
+			}
+
+			// In expanded view, show up to 20 lines of the JSON output
+			if (expanded && details.total_returned > 0) {
+				const content = result.content[0];
+				if (content?.type === "text") {
+					const lines = content.text.split("\n").slice(0, 20);
+					for (const line of lines) {
+						text += "\n" + theme.fg("dim", line);
+					}
+					if (content.text.split("\n").length > 20) {
+						text += "\n" + theme.fg("muted", "... (use read tool to see full output)");
+					}
+				}
+
+				// Show temp file path if truncated
+				if (details.fullOutputPath) {
+					text += "\n" + theme.fg("dim", `Full output: ${details.fullOutputPath}`);
+				}
+			}
+
+			return new Text(text, 0, 0);
 		},
 	});
 }
