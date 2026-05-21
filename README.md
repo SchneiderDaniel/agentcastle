@@ -260,6 +260,7 @@ Invocable via `/name` in Pi's editor:
 | **issue-refinement** | `/issue-refinement <number>` | Grill issue against codebase, Socratic interview via `ask_user` (≥3 MC options), replace body with concrete ACs. |
 | **extension-spec** | `/extension-spec <idea>` | Design new extension or refactor existing one. Researches pi docs, audits TypeScript, produces PRD. |
 | **handover** | `/handover` | Write handover doc summarizing conversation. Saves to `tmp/` with datetime prefix. |
+| **model-select** | `/model-select <objective>` | Research + recommend models per agent role. Crawls providers, benchmarks, pricing. Three objectives: cost-optimized, performance-optimized, balanced. Applies `model:` field in agent files. |
 | **quiz-master** | `/quiz-master` | List open PRs across repo + submodules, quiz reviewer on diff with MC questions, auto-merge if score ≥80%. |
 
 #### 5.7 Tool Benchmark
@@ -274,6 +275,8 @@ Empirical token consumption comparing tool configurations on a real audit task (
 | **4 — mapper + structural + rg** | **15,248** | **4,131** | **204,532** | **51,345ms** | **-27%** |
 
 Config 4 uses **27% fewer total tokens** and runs **33% faster** than mapper-only (config 2). The ripgrep fix resolved the earlier issue where ripgrep made token consumption worse.
+
+The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming, computed from a rolling 30s window, plus worktree name in brackets next to the branch when inside a git worktree.
 
 > Run with `scripts/benchmark-tools.sh` (2 runs per config). Results saved to `scripts/benchmark-results/`.
 
@@ -726,6 +729,8 @@ Supervisor moves issue → "Done"
 ── Done ─────────────────────────────────────────────────────────
 Issue #42 is complete with a PR ready for final review.
 ```
+
+> **Note:** The walkthrough above shows the updated pipeline: dependency gate, in-process agent execution (live TUI widget), architecture-before-research sequence, auditor summary file protocol, and post-pipeline merge conflict resolution.
 
 ---
 
