@@ -275,7 +275,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 
 					pi.sendMessage({
 						customType: "supervisor",
-						content: `## Agent: ${result.agentName} — ${statusLabel}\n\n${result.output || result.textOutput || result.summaryLine}`,
+						content: `## Agent: ${result.agentName} — ${statusLabel}\n\n${result.summaryLine}`,
+						// Full output stored in details — excluded from LLM context, rendered by message-renderer
 						display: true,
 						details: {
 							agentName: result.agentName,
