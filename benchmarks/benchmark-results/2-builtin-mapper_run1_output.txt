@@ -1,0 +1,92 @@
+Now I have all the data. Let me compile the final audit report.
+
+---
+
+## Audit: Test Coverage of Chart/Figure Generation in `app/services/`
+
+### Inventory of Services with `generate_*_figure()` Methods
+
+| # | Service File | Method(s) | Test File Exists? | Figure Test Exists? |
+|---|---|---|---|---|
+| 1 | `freezer_service.py` | `generate_comparison_figure()` | ✅ `test_freezer_service.py` | ✅ `test_generate_comparison_figure()` |
+| 2 | `washing_machine_service.py` | `generate_comparison_figure()` | ✅ `test_washing_machine_service.py` | ✅ `test_generate_comparison_figure()` |
+| 3 | `dashboard_service.py` | `generate_scenario_figure()`, `generate_depot_figure()`, `generate_monthly_category_flow_figure()`, `generate_monthly_income_expense_figure()`, `generate_priority_expense_pie_figure()` | ✅ `test_dashboard_service.py` | ✅ Covers 4 of 5 (missing: `generate_depot_figure`) |
+| 4 | `reading_service.py` | `generate_reading_figure()` | ✅ `test_reading_service.py` | ✅ `test_generate_reading_figure()` |
+| 5 | `caffeine_service.py` | `generate_decay_figure()` | ✅ `test_caffeine_service.py` | ❌ **Missing** |
+| 6 | `calorie_service.py` | `generate_comparison_figure()` | ⚠️ `test_calorie_routes.py` (route test only) | ❌ **Missing** — route test checks `graph_json` in API response but never unit-tests the figure generation |
+| 7 | `car_service.py` | `generate_comparison_figure()` | ✅ `test_many_vehicles.py` (E2E only) | ❌ **Missing** — `test_many_vehicles.py` is a Playwright E2E test that checks chart SVG visibility but has no unit test for figure logic |
+| 8 | `coffee_service.py` | `generate_comparison_figures()` (plural, returns 2 figs) | ✅ `test_coffee_service.py` | ❌ **Missing** — only tests costs, repair, and time, never calls the figure method |
+| 9 | `pc_service.py` | `generate_comparison_figure()` | ✅ `test_pc_service.py` | ❌ **Missing** — only tests cumulative costs |
+| 10 | `stove_service.py` | `generate_comparison_figure()` | ✅ `test_stove_service.py` | ❌ **Missing** |
+| 11 | `tv_service.py` | `generate_comparison_figure()` | ✅ `test_tv_service.py` | ❌ **Missing** |
+| 12 | `inflation_service.py` | `generate_inflation_figure()` | ✅ `test_inflation_service.py` | ❌ **Missing** |
+| 13 | `kettle_service.py` | `generate_waste_figure()` | ✅ `test_kettle_service.py` | ❌ **Missing** |
+| 14 | `oven_service.py` | `generate_comparison_figure()` | ✅ `test_oven_service.py` | ❌ **Missing** |
+| 15 | `lighting_service.py` | `generate_comparison_figure()` | ❌ **No test file at all** | ❌ **Missing** |
+| 16 | `dishwasher_service.py` | `generate_comparison_figure()` | ⚠️ `test_appliance_services.py` | ❌ **Missing** — only tests cumulative costs |
+| 17 | `dryer_service.py` | `generate_comparison_figure()` | ⚠️ `test_appliance_services.py` | ❌ **Missing** — only tests cumulative costs |
+| 18 | `fitness_service.py` | `generate_comparison_figures()` (plural) | ❌ **No test file at all** | ❌ **Missing** |
+
+### Fully Covered (3 / 18)
+- **`freezer_service`** — `test_generate_comparison_figure()` asserts `fig.data[0].name`
+- **`washing_machine_service`** — same pattern as freezer
+- **`reading_service`** — `test_generate_reading_figure()` checks type, data presence, x/y lengths
+- **`dashboard_service`** — 4 of 5 figure methods covered with detailed assertions on trace names, labels, values. `generate_depot_figure()` is the lone gap.
+
+### Partially Covered (1 / 18)
+- **`dashboard_service`** — `generate_depot_figure()` on line 112 has **no test** while the other 4 figure methods do.
+
+### Not Covered — No Unit Figure Tests (13 / 18)
+For these, the test file exists but contains zero tests that call or assert on `generate_*_figure()`:
+
+| Service | Test File | What the test file covers | What's missing |
+|---|---|---|---|
+| `caffeine_service` | `test_caffeine_service.py` | Decay calculations, bedtime level | `generate_decay_figure()` |
+| `calorie_service` | `test_calorie_routes.py` | Route returns `graph_json` key | No direct test of `generate_comparison_figure()` |
+| `car_service` | `test_many_vehicles.py` | Playwright E2E only | No unit-level `generate_comparison_figure()` test |
+| `coffee_service` | `test_coffee_service.py` | Costs, repair, time | `generate_comparison_figures()` (2 figures) |
+| `pc_service` | `test_pc_service.py` | Cumulative costs, refresh cost | `generate_comparison_figure()` |
+| `stove_service` | `test_stove_service.py` | Cumulative costs, efficiency | `generate_comparison_figure()` |
+| `tv_service` | `test_tv_service.py` | Cumulative costs, standby | `generate_comparison_figure()` |
+| `inflation_service` | `test_inflation_service.py` | Value calc, era comparison, invalid year | `generate_inflation_figure()` |
+| `kettle_service` | `test_kettle_service.py` | Thermodynamics, waste %, time to boil | `generate_waste_figure()` |
+| `oven_service` | `test_oven_service.py` | Single meal, annual savings, cumulative costs | `generate_comparison_figure()` |
+| `dryer_service` | `test_appliance_services.py` | Cumulative costs only | `generate_comparison_figure()` |
+| `dishwasher_service` | `test_appliance_services.py` | Cumulative costs only | `generate_comparison_figure()` |
+
+### Not Covered — No Test File At All (2 / 18)
+- **`lighting_service`** — No test file. Has `GeneralInputs`/`LightingScenario`/`LightingService`. Most complex: LED vs CFL vs Halogen comparison.
+- **`fitness_service`** — No test file. Has `generate_comparison_figures()` (returns 2 figures: cost + time). Most complex: gym setup comparisons with membership, travel time.
+
+### Recommendations (Priority Order)
+
+**High Priority** — Services with no test file at all:
+1. **Create `test_lighting_service.py`** — test `calculate_cumulative_costs()` and `generate_comparison_figure()`
+2. **Create `test_fitness_service.py`** — test `calculate_cumulative_costs()`, `calculate_cumulative_time()`, and the dual `generate_comparison_figures()` (cost + time)
+
+**Medium Priority** — Existing test files missing figure tests (low-hanging fruit, follow existing patterns):
+3. **`test_caffeine_service.py`** — add `test_generate_decay_figure()` with mock `data_points` and a `bedtime` string, assert figure structure (data traces, layout)
+4. **`test_inflation_service.py`** — add `test_generate_inflation_figure()` with known CPI inputs
+5. **`test_kettle_service.py`** — add `test_generate_waste_figure()` — calls `calculate()` internally
+6. **`test_coffee_service.py`** — add `test_generate_comparison_figures()` (returns 2 figures: cost + time)
+7. **`test_pc_service.py`** — add `test_generate_comparison_figure()`
+8. **`test_stove_service.py`** — add `test_generate_comparison_figure()`
+9. **`test_tv_service.py`** — add `test_generate_comparison_figure()`
+10. **`test_oven_service.py`** — add `test_generate_comparison_figure()`
+
+**Low Priority** — Services covered indirectly or by E2E:
+11. **`test_calorie_routes.py`** — extract figure assertions from the route test into a dedicated service-level test in a new `test_calorie_service.py`, testing `generate_comparison_figure()` directly with known calorie/weight values
+12. **`test_many_vehicles.py`** — add a unit test file `test_car_service.py` with a `test_generate_comparison_figure()` method
+13. **`test_appliance_services.py`** — add `test_dryer_generate_comparison_figure()` and `test_dishwasher_generate_comparison_figure()`
+14. **`test_dashboard_service.py`** — add `test_generate_depot_figure()` (the one missing dashboard figure method)
+
+### Summary
+
+| Coverage Level | Count | Services |
+|---|---|---|
+| **Fully covered** | 3 | freezer, washing_machine, reading |
+| **Partially covered** | 1 | dashboard (4/5 figures tested) |
+| **No figure test** | 12 | caffeine, calorie, car, coffee, pc, stove, tv, inflation, kettle, oven, dryer, dishwasher |
+| **No test file at all** | 2 | **lighting_service**, **fitness_service** |
+
+**Bottom line:** Only 3 of 18 figure-generating services have adequate test coverage of their `generate_*_figure()` methods. The recommended priority for new test work is `lighting_service` and `fitness_service` first (zero coverage, complex logic), then the 12 existing test files that need figure assertions added.

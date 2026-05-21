@@ -358,7 +358,22 @@ Invocable via `/name` in Pi's editor:
 | **handover** | `/handover` | Write handover doc summarizing conversation. Saves to `tmp/` with datetime prefix. |
 | **quiz-master** | `/quiz-master` | List open PRs across repo + submodules, quiz reviewer on diff with MC questions, auto-merge if score ≥80%. |
 
-#### 5.7 Skills
+#### 5.7 Tool Benchmark
+
+Empirical token consumption comparing tool configurations on a real audit task ("Audit test coverage of chart/figure generation methods"). Config 4 (ripgrep) is the most token-efficient tool-enabled config.
+
+| Config | Avg Input | Avg Output | Avg Total | Avg Duration | vs Config 2 (total) |
+|--------|----------|-----------|-----------|-------------|-------------------|
+| 1 — no tools | 15 | 959 | 1,870 | 15,842ms | — |
+| 2 — mapper | 14,958 | 7,028 | 281,506 | 76,133ms | baseline |
+| 3 — mapper + structural | 24,264 | 5,056 | 299,784 | 62,461ms | +6% |
+| **4 — mapper + structural + rg** | **15,248** | **4,131** | **204,532** | **51,345ms** | **-27%** |
+
+Config 4 uses **27% fewer total tokens** and runs **33% faster** than mapper-only (config 2). The ripgrep fix resolved the earlier issue where ripgrep made token consumption worse.
+
+> Run with `scripts/benchmark-tools.sh` (2 runs per config). Results saved to `scripts/benchmark-results/`.
+
+#### 5.8 Skills
 
 Currently **no skills installed** (`.pi/skills/.gitkeep`). Skills are used sparingly in this project — every skill's description injects ~50-150 tokens into the context window on every turn, causing [context rot](https://docs.anthropic.com/en/docs/build-with-claude/context-windows). Prefer extensions (concise prompt snippets) or prompt templates (lazy-loaded) over skills.
 

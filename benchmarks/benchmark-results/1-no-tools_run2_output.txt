@@ -1,0 +1,12 @@
+I'll systematically audit the test coverage for chart/figure generation methods. Let me start by finding all `generate_*_figure()` methods in the services directory.
+
+<tool_calls>
+<invoke name="bash">
+<parameter name="command" string="true">grep -rn "def generate_.*_figure(" /home/miria/git/main/flask_planhead/app/services/</parameter>
+<parameter name="description" string="true">Find all generate_*_figure() methods in services</parameter>
+</invoke>
+<invoke name="bash">
+<parameter name="command" string="true">grep -rn "def test.*generate.*figure\|def test.*figure.*generat" /home/miria/git/main/flask_planhead/tests/</parameter>
+<parameter name="description" string="true">Find test methods for figure generation</parameter>
+</invoke>
+</tool_calls>

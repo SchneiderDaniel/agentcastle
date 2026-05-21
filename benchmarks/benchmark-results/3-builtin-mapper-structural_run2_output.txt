@@ -1,0 +1,104 @@
+Now I have a complete picture. Here's my report:
+
+---
+
+## Test Coverage Audit: `generate_*_figure()` Methods
+
+### Services with figure methods — 18 services, 22 figure methods
+
+#### ✅ Covered by dedicated figure tests
+
+| Service | Figure Method(s) | Test File | Assertions |
+|---|---|---|---|
+| `dashboard_service.py` | `generate_scenario_figure()` | `test_dashboard_service.py` | Full — trace names, data values, edge cases (no events) |
+| `dashboard_service.py` | `generate_monthly_category_flow_figure()` | `test_dashboard_service.py` | Full — traces per category, data values, no-events edge case |
+| `dashboard_service.py` | `generate_monthly_income_expense_figure()` | `test_dashboard_service.py` | Full — Income & Expense traces, values, no-events |
+| `dashboard_service.py` | `generate_priority_expense_pie_figure()` | `test_dashboard_service.py` | Full — Pie type, labels, values, no-events |
+| `freezer_service.py` | `generate_comparison_figure()` | `test_freezer_service.py` | Basic — trace count, trace name |
+| `reading_service.py` | `generate_reading_figure()` | `test_reading_service.py` | Medium — figure type, trace type (bar), data length |
+| `washing_machine_service.py` | `generate_comparison_figure()` | `test_washing_machine_service.py` | Basic — trace count, trace name |
+
+#### ❌ Missing figure tests entirely
+
+| Service | Figure Method(s) | Recommended Test File to Create |
+|---|---|---|
+| `inflation_service.py` | `generate_inflation_figure()` | `test_inflation_service.py` |
+| `caffeine_service.py` | `generate_decay_figure()` | `test_caffeine_service.py` |
+| `kettle_service.py` | `generate_waste_figure()` | `test_kettle_service.py` |
+| `tv_service.py` | `generate_comparison_figure()` | `test_tv_service.py` |
+| `fitness_service.py` | `generate_comparison_figures()` (returns 2 figures) | `test_fitness_service.py` |
+| `coffee_service.py` | `generate_comparison_figures()` (returns 2 figures) | `test_coffee_service.py` |
+| `calorie_service.py` | `generate_comparison_figure()` | `test_calorie_service.py` |
+| `car_service.py` | `generate_comparison_figure()` | `test_car_service.py` (existing file has edge cases but no figure tests) |
+| `dishwasher_service.py` | `generate_comparison_figure()` | `test_dishwasher_service.py` |
+| `stove_service.py` | `generate_comparison_figure()` | `test_stove_service.py` |
+| `lighting_service.py` | `generate_comparison_figure()` | `test_lighting_service.py` |
+| `pc_service.py` | `generate_comparison_figure()` | `test_pc_service.py` |
+| `dryer_service.py` | `generate_comparison_figure()` | `test_dryer_service.py` |
+| `oven_service.py` | `generate_comparison_figure()` | `test_oven_service.py` |
+
+#### 🟡 Only mocked in route tests (not testing figure logic)
+
+| Service | Figure Method(s) | Notes |
+|---|---|---|
+| `dashboard_service.py` (all 5) | All dashboard figures | These ARE tested directly in `test_dashboard_service.py`. The route test mocks are fine — they test routing, not figure logic. |
+
+---
+
+### Detailed Gap Analysis
+
+**14 of 18 services (78%) have zero direct test coverage for their figure generation methods.** Only 4 services have dedicated figure tests:
+- `dashboard_service` — excellent coverage (5 methods, edge cases, value assertions)
+- `freezer_service` — minimal coverage (trace count + name only)
+- `reading_service` — moderate coverage (type, bar chart, data length)
+- `washing_machine_service` — minimal coverage (trace count + name only)
+
+### Priority Recommendations (ordered by complexity/impact)
+
+1. **High Priority — Unique figure types** (non-generic `generate_comparison_figure` style):
+   - **`inflation_service.py`** → `test_inflation_service.py` — line chart with CPI calculations, needs value assertion testing
+   - **`caffeine_service.py`** → `test_caffeine_service.py` — decay curve with half-life math, complex datetime logic
+   - **`kettle_service.py`** → `test_kettle_service.py` — pie chart with volume ratio, unique chart type
+   - **`calorie_service.py`** → `test_calorie_service.py` — bar chart with distance comparison, simple but uncovered
+
+2. **Medium Priority — Multi-figure returns**:
+   - **`fitness_service.py`** → `test_fitness_service.py` — returns 2 figures (cost + time), dual-tuple structure
+   - **`coffee_service.py`** → `test_coffee_service.py` — returns 2 figures (cost + time), same pattern
+
+3. **Standard Priority — `generate_comparison_figure` + `add_vline` patterns** (these share a common pattern with guarantee/year markers):
+   - **`tv_service.py`**, **`car_service.py`**, **`dishwasher_service.py`**, **`stove_service.py`**, **`dryer_service.py`** — line charts with `add_vline` guarantee markers
+   - **`lighting_service.py`**, **`pc_service.py`** — line charts without guarantee markers (PC has refresh markers)
+   - **`oven_service.py`** — comparison of 2 traces (oven vs air fryer), simplest case
+
+### Existing test files that need extension
+
+| Existing File | Missing Figure Coverage | What to Add |
+|---|---|---|
+| `test_car_service.py` | `generate_comparison_figure()` | Figure trace count, name, data, vline for guarantee |
+| `test_calorie_service.py` | `generate_comparison_figure()` | Bar chart type, trace count, data values |
+| `test_coffee_service.py` | `generate_comparison_figures()` | Dual figure return, cost + time traces |
+| `test_pc_service.py` | `generate_comparison_figure()` | Figure structure, refresh markers |
+| `test_tv_service.py` | `generate_comparison_figure()` | Figure structure, guarantee vlines |
+| `test_oven_service.py` | `generate_comparison_figure()` | Two-traces (oven vs air fryer) |
+| `test_stove_service.py` | `generate_comparison_figure()` | Figure structure, guarantee vlines |
+| `test_dishwasher_service.py` | `generate_comparison_figure()` | Figure structure, guarantee vlines |
+| `test_dryer_service.py` | `generate_comparison_figure()` | Figure structure, guarantee vlines |
+| `test_lighting_service.py` | `generate_comparison_figure()` | Figure structure, no vlines (simpler) |
+
+### Test pattern to follow
+
+The existing tests in `test_freezer_service.py` and `test_washing_machine_service.py` show a minimal but effective pattern:
+
+```python
+def test_generate_comparison_figure():
+    service = Service(...)
+    fig = service.generate_comparison_figure([item])
+    assert len(fig.data) == 1
+    assert fig.data[0].name == "Item Name"
+```
+
+For better coverage, follow the `test_dashboard_service.py` pattern of also asserting:
+- `isinstance(fig, go.Figure)`
+- Trace types (Scatter, Bar, Pie)
+- Specific x/y data values
+- Edge cases (empty lists, single items, boundary years)

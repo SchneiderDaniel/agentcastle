@@ -1,0 +1,96 @@
+Here's the complete audit.
+
+---
+
+## 📊 Chart/Figure Generation Test Coverage Audit
+
+### Files Scanned
+- **Services dir**: `flask_planhead/app/services/` (38 service files)
+- **Tests dir**: `flask_planhead/tests/` (85+ test files)
+
+### 🔍 All Figure/Chart Methods Found (29 methods across 23 service files)
+
+| # | Service File | Method(s) | Test File Exists? | Figure Cover? |
+|---|-------------|-----------|-------------------|---------------|
+| 1 | `dashboard_service.py` | `generate_scenario_figure` | ✅ `test_dashboard_service.py` | ✅ |
+| 2 | `dashboard_service.py` | `generate_depot_figure` | ✅ `test_dashboard_service.py` | ❌ No direct test (only mocked in routes) |
+| 3 | `dashboard_service.py` | `generate_monthly_category_flow_figure` | ✅ `test_dashboard_service.py` | ✅ |
+| 4 | `dashboard_service.py` | `generate_monthly_income_expense_figure` | ✅ `test_dashboard_service.py` | ✅ |
+| 5 | `dashboard_service.py` | `generate_priority_expense_pie_figure` | ✅ `test_dashboard_service.py` | ✅ |
+| 6 | `washing_machine_service.py` | `generate_comparison_figure` | ✅ `test_washing_machine_service.py` | ✅ |
+| 7 | `freezer_service.py` | `generate_comparison_figure` | ✅ `test_freezer_service.py` | ✅ |
+| 8 | `reading_service.py` | `generate_reading_figure` | ✅ `test_reading_service.py` | ✅ |
+| 9 | `bauspar_service.py` | `create_comparison_charts` | ✅ `test_bauspar_service.py` | ✅ |
+| 10 | `car_service.py` | `generate_comparison_figure` | ❌ No test file | **GAP** |
+| 11 | `oven_service.py` | `generate_comparison_figure` | ✅ `test_oven_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 12 | `pc_service.py` | `generate_comparison_figure` | ✅ `test_pc_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 13 | `coffee_service.py` | `generate_comparison_figures` | ✅ `test_coffee_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 14 | `fitness_service.py` | `generate_comparison_figures` | ❌ No test file | **GAP** |
+| 15 | `lighting_service.py` | `generate_comparison_figure` | ❌ No test file | **GAP** |
+| 16 | `dryer_service.py` | `generate_comparison_figure` | ❌ No test file | **GAP** |
+| 17 | `stove_service.py` | `generate_comparison_figure` | ✅ `test_stove_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 18 | `dishwasher_service.py` | `generate_comparison_figure` | ❌ No test file | **GAP** |
+| 19 | `tv_service.py` | `generate_comparison_figure` | ✅ `test_tv_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 20 | `kettle_service.py` | `generate_waste_figure` | ✅ `test_kettle_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 21 | `caffeine_service.py` | `generate_decay_figure` | ✅ `test_caffeine_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 22 | `inflation_service.py` | `generate_inflation_figure` | ✅ `test_inflation_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 23 | `calorie_service.py` | `generate_comparison_figure` | ✅ `test_calorie_service.py` | ❌ **GAP** (file exists, no figure tests) |
+| 24 | `protein_service.py` | `generate_chart` | ✅ `test_protein_service.py` | ❌ **GAP** (file exists, no chart tests) |
+| 25 | `qng_service.py` | `create_amortization_chart` | ✅ `test_qng_service.py` | ❌ **GAP** (file exists, no chart tests) |
+| 26 | `mortgage_service.py` | `create_debt_progression_chart` | ✅ multiple test files | ❌ **GAP** (not referenced in any test) |
+| 27 | `mortgage_service.py` | `create_payment_structure_chart` | ✅ multiple test files | ❌ **GAP** (not referenced in any test) |
+| 28 | `spider_diagram_service.py` | `generate_pdf` (embeds chart) | ✅ `test_spider_diagram.py` | ❌ **GAP** (not referenced in test) |
+
+### ✅ Fully Covered (figure methods with direct tests)
+
+| Service | Methods | Test File |
+|---------|---------|-----------|
+| `dashboard_service` | `generate_scenario_figure`, `generate_monthly_category_flow_figure`, `generate_monthly_income_expense_figure`, `generate_priority_expense_pie_figure` | `test_dashboard_service.py` |
+| `washing_machine_service` | `generate_comparison_figure` | `test_washing_machine_service.py` |
+| `freezer_service` | `generate_comparison_figure` | `test_freezer_service.py` |
+| `reading_service` | `generate_reading_figure` | `test_reading_service.py` |
+| `bauspar_service` | `create_comparison_charts` | `test_bauspar_service.py` |
+
+### ⚠️ Partially Covered — `generate_depot_figure`
+Only tested via mocked route tests (`test_routes.py`), not as a direct service unit test.
+
+### 🔴 Coverage Gaps — 17 methods in need of tests
+
+| Priority | Gap | Test File to Extend |
+|----------|-----|---------------------|
+| 🔴 HIGH | `car_service.generate_comparison_figure` | **Create** `test_car_service.py` (no test file exists) |
+| 🔴 HIGH | `fitness_service.generate_comparison_figures` | **Create** `test_fitness_service.py` (no test file exists) |
+| 🔴 HIGH | `lighting_service.generate_comparison_figure` | **Create** `test_lighting_service.py` (no test file exists) |
+| 🔴 HIGH | `dryer_service.generate_comparison_figure` | **Create** `test_dryer_service.py` (no test file exists) |
+| 🔴 HIGH | `dishwasher_service.generate_comparison_figure` | **Create** `test_dishwasher_service.py` (no test file exists) |
+| 🟡 MEDIUM | `stove_service.generate_comparison_figure` | Extend `test_stove_service.py` |
+| 🟡 MEDIUM | `oven_service.generate_comparison_figure` | Extend `test_oven_service.py` |
+| 🟡 MEDIUM | `pc_service.generate_comparison_figure` | Extend `test_pc_service.py` |
+| 🟡 MEDIUM | `coffee_service.generate_comparison_figures` | Extend `test_coffee_service.py` |
+| 🟡 MEDIUM | `tv_service.generate_comparison_figure` | Extend `test_tv_service.py` |
+| 🟡 MEDIUM | `kettle_service.generate_waste_figure` | Extend `test_kettle_service.py` |
+| 🟡 MEDIUM | `caffeine_service.generate_decay_figure` | Extend `test_caffeine_service.py` |
+| 🟡 MEDIUM | `inflation_service.generate_inflation_figure` | Extend `test_inflation_service.py` |
+| 🟡 MEDIUM | `calorie_service.generate_comparison_figure` | Extend `test_calorie_service.py` |
+| 🟢 LOW | `protein_service.generate_chart` | Extend `test_protein_service.py` |
+| 🟢 LOW | `qng_service.create_amortization_chart` | Extend `test_qng_service.py` |
+| 🟢 LOW | `mortgage_service.create_debt_progression_chart` / `create_payment_structure_chart` | Extend any mortgage test file |
+| 🟢 LOW | `spider_diagram_service.generate_pdf` | Extend `test_spider_diagram.py` |
+| 🟢 LOW | `dashboard_service.generate_depot_figure` | Extend `test_dashboard_service.py` (add unit test alongside other figure tests) |
+
+### Summary Statistics
+
+| Metric | Count |
+|--------|-------|
+| Total figure/chart methods | 29 |
+| Directly unit-tested | 9 (31%) |
+| Mocked-only coverage | 1 (3%) |
+| **Not tested at all** | **19 (66%)** |
+| Missing test files (need creation) | 5 |
+| Existing test files needing extension | 14 |
+
+### Recommended Next Steps
+
+1. **Create test files** for: `car_service`, `fitness_service`, `lighting_service`, `dryer_service`, `dishwasher_service`
+2. **Extend existing test files** for: `stove_service`, `oven_service`, `pc_service`, `coffee_service`, `tv_service`, `kettle_service`, `caffeine_service`, `inflation_service`, `calorie_service`, `protein_service`, `qng_service`, `mortgage_service`, `spider_diagram_service`, `dashboard_service` (depot)
+3. **Priority order**: Start with appliance services (stove, oven, washer/dryer, dishwasher, fridge, kettle, PC, TV, coffee) since they share a common `generate_comparison_figure(entities, years)` pattern that can use a shared test pattern. Then tackle the unique figures (decay, waste, inflation, spider diagram).
