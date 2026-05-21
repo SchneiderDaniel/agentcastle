@@ -1,0 +1,10 @@
+# AgentCastle environment variables
+# Copy this file to .agent_env and fill in your values:
+#   cp .agent_env.example .agent_env
+
+# Apify API token for actor/API usage
+export APIFY_TOKEN=""
+
+# Add other optional environment variables below:
+# export OPENAI_API_KEY=""
+# export ANTHROPIC_API_KEY=""
