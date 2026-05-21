@@ -1,5 +1,6 @@
-# Makefile for AgentCastle first-time setup
-# Thin entry point — delegates all logic to scripts/install.sh
+# Makefile for AgentCastle first-time setup (DEPRECATED)
+# Use Docker instead: ./agent-castle.sh
+# Legacy scripts preserved at scripts/legacy/install.sh
 # See: https://tech.davis-hansson.com/p/make/
 
 SHELL := bash
@@ -11,4 +12,6 @@ MAKEFLAGS += --no-builtin-rules
 
 .PHONY: install
 install:
-	bash scripts/install.sh
+	@echo "The host-level install is deprecated."
+	@echo "Use Docker instead: ./agent-castle.sh"
+	@echo "Legacy scripts preserved at scripts/legacy/install.sh"

@@ -4,7 +4,7 @@
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.74.0-6e3bf0)](https://pi.dev)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-**Kanban-centred Pi agent with token-efficient tools, security guardrails, and efficient workflow enhancements.** WSL (Ubuntu) + Zed + Git Worktrees + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback.
+**Kanban-centred Pi agent with token-efficient tools, security guardrails, and efficient workflow enhancements.** Docker + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback.
 
 ---
 
@@ -25,6 +25,7 @@
   - [SBOM — Software Bill of Materials](#sbom--software-bill-of-materials)
   - [Security](#security)
   - [License](#license)
+  - [Legacy Installation (host-level)](#legacy-installation-host-level)
   - [Acknowledgments](#acknowledgments)
 
 ---
@@ -69,162 +70,67 @@ Customize ruthlessly. Make it yours.
 
 ### 3. Preparation — What you need on your machine
 
-> **Quick start:** Run `make install` in the repo root. It auto-detects Ubuntu/Debian, installs all apt packages (Node.js 22.x via NodeSource, python3, jq, ripgrep, etc.), GitHub CLI, and npm global tools (`@earendil-works/pi-coding-agent`, `@ast-grep/cli`, `typescript`). Idempotent — safe to re-run.
+**One dependency:** Docker Engine ≥24.0 with Compose V2.
 
-> **Platform:** WSL2 with Ubuntu 24.04 LTS (primary). macOS via Lima/Colima works with minor adjustments. Native Linux works directly.
+| Platform | Install Link |
+|----------|-------------|
+| **Linux** | [Docker Engine](https://docs.docker.com/engine/install/) + [Compose V2](https://docs.docker.com/compose/install/linux/) |
+| **macOS** | [Docker Desktop](https://docs.docker.com/desktop/setup/install/mac/) (includes Engine + Compose V2) |
+| **Windows** | WSL2 + [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows/) |
 
-Clone the repo gives you the configuration and extensions. But you need these **system-level tools** installed once:
+**Platform:** Docker-only. Linux native, macOS via Docker Desktop, Windows via WSL2 + Docker Desktop.
 
-| Tool | Why you need it |
-|------|----------------|
-| Node.js ≥22 + npm | Pi runtime |
-| Python 3.10+ + venv + pip | crawl4ai local web crawler |
-| GitHub CLI (gh) | Git operations from Pi |
-| `@earendil-works/pi-coding-agent` | The agent itself (global npm install) |
-| `@ast-grep/cli` | AST-based code search (`structural_search`) |
-| `universal-ctags` | Codebase symbol indexing (`map_codebase`) |
-| `ripgrep` (rg) | Fast code text search (`ripgrep_search`) |
-| `~/.agent_env` file | API keys (Apify token, etc.) |
-| `~/.bashrc` auto-start block | Docker + env loading on WSL boot |
-
-#### Automated Setup
-
-```bash
-make install
-```
-
-Installs all system dependencies (Node.js 22.x via NodeSource, python3, jq, ripgrep, etc.), GitHub CLI, and npm global tools (`@earendil-works/pi-coding-agent`, `@ast-grep/cli`, `typescript`). Handles EACCES recovery automatically. Idempotent — safe to re-run.
-
-Verify:
-
-```bash
-ast-grep --version   # expected: ast-grep ≥0.42
-pi --version         # expected: ≥0.74
-```
+**API keys:** Copy `.agent_env.example` to `.agent_env` and fill in your keys. The container loads this file automatically.
 
 ---
 
 ### 4. Installation — How to set it up
 
-#### 4.1 GitHub CLI
-
-`make install` installs gh. Then authenticate:
+#### Quick-start
 
 ```bash
-gh auth login
+git clone git@github.com:SchneiderDaniel/agentcastle.git
+cd agentcastle
+./agent-castle.sh
 ```
 
-**Answer these prompts:**
+That's it. The wrapper script:
+1. Builds the OCI image from `Dockerfile` (first run, ~2 min; cached thereafter)
+2. Starts the container with your repo bind-mounted, API keys loaded, and UID/GID mapped
+3. Drops you into the Pi TUI inside the container
 
-| Prompt | Your answer |
-|--------|-------------|
-| What account do you want to log into? | **GitHub.com** |
-| What is your preferred protocol for Git operations? | **SSH** |
-| Upload your SSH public key to your GitHub account? | **Skip** (key already on GitHub) |
-| How would you like to authenticate GitHub CLI? | **Login with a web browser** |
+#### Step-by-step
 
-Verify: `gh auth status`
-
-> `gh` stores an OAuth token for API operations (issues, PRs, repo management). Your SSH key in `~/.ssh/id_ed25519` handles `git push/pull` — separate, already working.
-
-#### 4.2 Environment Variables
-
-Pi's tools inherit environment variables from your terminal. Create `~/.agent_env` in your **home directory**:
-
+**1. Clone the repo**
 ```bash
-export APIFY_TOKEN="apify_api_..."
+git clone git@github.com:SchneiderDaniel/agentcastle.git && cd agentcastle
 ```
 
-> **How `web_crawl` uses APIFY_TOKEN:** The tool tries local crawl4ai first (auto-installs venv + Chromium deps). If that fails, falls back to Apify's cloud actor. Last resort: direct HTTP fetch with regex HTML→markdown.
->
-> **Local crawl4ai requirements:** The extension auto-creates Python venv at `.pi/crawl4ai-venv/` and downloads Chromium system libs to `.pi/chromium-deps/` (no sudo). Requires: `python3`, `python3-venv`, `python3-pip`, `dpkg`, `apt-get`.
-
-#### 4.3 Auto-Start (WSL only)
-
-WSL doesn't auto-start background services. Append to `~/.bashrc`:
-
+**2. Configure API keys**
 ```bash
-cat << 'EOF' >> ~/.bashrc
-
-# ==========================================
-# AGENTCASTLE AUTO-START
-# ==========================================
-if [ -f "$HOME/.agent_env" ]; then
-    source "$HOME/.agent_env"
-fi
-# ==========================================
-EOF
-
-source ~/.bashrc
+cp .agent_env.example .agent_env
+# Edit .agent_env with your keys (e.g., APIFY_TOKEN)
 ```
 
-#### 4.4 AI Provider Setup
-
-OpenCode Go is natively supported. Authenticate once:
-
+**3. Launch**
 ```bash
-pi --provider opencode-go --api-key "your-actual-api-key-here"
+./agent-castle.sh
 ```
 
-_(Exit with `Ctrl+C` twice after Pi launches.)_
-
-Set the default provider in `.pi/settings.json`:
-
-```json
-{
-  "defaultProvider": "opencode-go"
-}
-```
-
-#### 4.5 Theme Install
-
+**4. Set provider (first session only)**
 ```bash
-pi install --theme .pi/themes/agentcastle.json
+pi --provider opencode-go --api-key "your-key"
 ```
+Exit with `Ctrl+C` twice. The provider is persisted in `.pi/settings.json`.
 
-#### 4.6 Workspace & Git
+#### What happens under the hood
 
-**Golden Rule:** All code lives in the Linux filesystem (`~/...`). Never use `/mnt/c/` for active dev work. Use SSH keys, not HTTPS, for GitHub access.
-
-##### Bare Worktree Workflow (recommended)
-
-Run isolated Pi agents simultaneously in different Zed windows:
-
-```bash
-mkdir my-project && cd my-project
-git clone --bare git@github.com:Username/repo.git .bare
-echo "gitdir: ./.bare" > .git
-echo ".env" >> .gitignore
-
-# Add a feature branch worktree
-git worktree add -b feature/logic feature-logic
-cd feature-logic
-```
-
-##### Submodule Configuration
-
-This repo uses git submodules. Configure these in the bare repo (shared across worktrees):
-
-```bash
-git config submodule.recurse true
-git config push.recurseSubmodules check
-git config diff.submodule log
-git config status.submoduleSummary true
-```
-
-These prevent submodule changes from being lost during multi-worktree workflows.
-
-##### Editor
-
-Pi lives in Zed's integrated terminal (`Ctrl + ~`). Set terminal profile to **WSL Ubuntu**.
-
-#### 4.7 Start Coding
-
-```bash
-pi
-```
-
-**Expected output:** Pi TUI opens in your terminal. Type a prompt, press Enter. The agent thinks, uses tools, and responds.
+`./agent-castle.sh` runs `docker compose up` with:
+- Image built from `Dockerfile` (Debian 12-slim, Node.js 22, Python 3, ctags, ripgrep, ast-grep, pi, gosu)
+- Repo root bind-mounted to `/workspaces/main` inside the container
+- `.agent_env` file mounted and sourced automatically
+- Host UID/GID mapped to container user `agentuser` (no permission issues with bind mounts)
+- Interactive TTY for the Pi TUI
 
 ---
 
@@ -234,7 +140,7 @@ pi
 
 ```
 ┌────────────────────────────────────────────────────┐
-│  Zed Editor (WSL)                                  │
+│  Terminal (Docker)                                  │
 │  ┌──────────────────────────────────────────────┐  │
 │  │  Pi TUI (Terminal) — agentcastle theme       │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │  │
@@ -306,9 +212,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `AGENTS.md` | Caveman protocol (active every session) |
 | `scripts/setup-github-project.sh` | Create GitHub Project from settings |
 | `scripts/session-query.sh` | Query JSONL session logs with jq |
-| `Makefile` | Quick-start: `make install` for automated first-time setup |
-| `scripts/install.sh` | Setup logic: apt deps, NodeSource, GitHub CLI, npm globals |
-| `scripts/postinstall.sh` | Patch pi footer pipe separator |
+| `Makefile` | Deprecated — see `./agent-castle.sh` for Docker-based launch |
 | `test/` | 27+ unit/integration test files |
 | `flask_blogs/` | Submodule: Flask blog apps |
 
@@ -381,7 +285,7 @@ Currently **no skills installed** (`.pi/skills/.gitkeep`). Skills are used spari
 
 ### 6. Verification — Does everything work?
 
-Run these checks before your first real session.
+All checks run inside the container (after `./agent-castle.sh`).
 
 #### 6.1 Environment
 
@@ -411,10 +315,10 @@ pi "Respond with exactly one word: 'Operational'."
 #### 6.4 Execution Routing (Acid Test)
 
 ```bash
-pi -p "Create a file named '.pi/test-file.txt' with the content 'host works', then tell me the absolute path where it was created."
+pi -p "Create a file named '.pi/test-file.txt' with the content 'container works', then tell me the absolute path where it was created."
 ```
 
-**Expected:** File appears on host at `<project-root>/.pi/test-file.txt`.
+**Expected:** `/workspaces/main/.pi/test-file.txt`
 
 ---
 
@@ -827,65 +731,40 @@ Issue #42 is complete with a PR ready for final review.
 
 ### 9. Troubleshooting — Something broke
 
-#### `pi: command not found`
+#### Container doesn't start
+
+Rebuild the image without cache:
 
 ```bash
-sudo npm install -g @earendil-works/pi-coding-agent
-# If still missing: echo $PATH | grep npm
+docker compose build --no-cache
+./agent-castle.sh
 ```
 
 #### Web crawl fails with Chromium errors
 
-The extension auto-installs system libraries. If it fails:
+The extension auto-installs system libraries inside the container. If it persists:
 
 ```bash
-.pi/crawl4ai-venv/bin/python3 -c "import crawl4ai; print('ok')"
-ls .pi/chromium-deps/usr/lib/x86_64-linux-gnu/
 rm -rf .pi/crawl4ai-venv .pi/chromium-deps    # Next call auto-recreates
 ```
 
-#### WSL networking issues (can't reach API)
+#### Permission errors on bind-mounted files
+
+UID/GID mapping is automatic via `agent-castle.sh`. If you need to run manually:
 
 ```bash
-echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up
 ```
 
 #### `gh auth status` shows "not logged in"
 
-Run `gh auth login` with **Login with a web browser** (not Paste token, not SSH key). If web browser fails:
+Inside the container, run:
 
 ```bash
-cat ~/my-pat-token.txt | gh auth login --with-token
-# PAT scopes needed: repo, read:org
+gh auth login
 ```
 
-#### `map_codebase` fails — "ctags not found"
-
-```bash
-sudo apt-get install -y universal-ctags
-ctags --list-output-formats   # should include 'json'
-```
-
-#### `structural_search` fails — "ast-grep not found"
-
-```bash
-sudo npm install -g @ast-grep/cli
-ast-grep --version   # expected: ≥0.42
-```
-
-#### `ripgrep_search` fails — "rg not found"
-
-```bash
-sudo apt-get install -y ripgrep
-rg --version
-```
-
-#### `/check` fails — "tsc not found"
-
-```bash
-sudo npm install -g typescript
-tsc --version
-```
+Authenticate with **Login with a web browser**.
 
 #### `.piignore` blocking legitimate paths
 
@@ -979,7 +858,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 **Security properties:**
 
 - ✅ No MCP servers — only pi extensions (no network-exposed tool servers)
-- ✅ API keys loaded from `~/.agent_env`, never committed
+- ✅ API keys loaded from `.agent_env` (repo root), never committed
 - ✅ `.piignore` path blocking — block sensitive files from agent read/write/edit/bash
 
 ### License
@@ -987,6 +866,17 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 MIT © 2025. See [LICENSE](./LICENSE) for full text.
 
 All third-party components are OSI-approved open source (see [SBOM](#sbom--software-bill-of-materials)).
+
+### Legacy Installation (host-level)
+
+For users who prefer a host-level install (Node.js, apt packages, Pi on bare metal), the original install scripts are preserved in `scripts/legacy/`:
+
+| File | Purpose |
+|------|---------|
+| `scripts/legacy/install.sh` | Automated apt + npm install for Ubuntu/Debian hosts |
+| `scripts/legacy/postinstall.sh` | Patch Pi footer pipe separator |
+
+These scripts are **deprecated** — the Docker workflow is the supported path. They remain for reference and for users who cannot run Docker.
 
 ### Acknowledgments
 
