@@ -4,7 +4,6 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SupervisorConfig } from "./types";
-import { execFileSync } from "node:child_process";
 import { resolve as resolvePath } from "node:path";
 import { generateBranchName } from "./agent-task";
 import { determineTscCheckpointDecision, getRunTscCheckpoint } from "./tsc-decisions";
@@ -73,12 +72,11 @@ async function runLspPreAudit(
 
 	if (runPreAuditFn) {
 		try {
-			const diffOut = execFileSync("git", ["diff", config.defaultBranch!, "--name-only"], {
+			const diffResult = await pi.exec("git", ["diff", config.defaultBranch!, "--name-only"], {
 				cwd: resolvePath(wt),
-				encoding: "utf-8",
 				timeout: 10_000,
-			}).trim();
-			hasModifiedFiles = diffOut.length > 0;
+			});
+			hasModifiedFiles = (diffResult.stdout || "").trim().length > 0;
 		} catch {
 			hasModifiedFiles = false;
 		}

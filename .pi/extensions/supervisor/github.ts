@@ -2,6 +2,7 @@
 // All gh/ghJson/ghGraphQL, project board ops, dependency checks,
 // PR conflict detection.
 
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type {
 	ProjectField,
 	ProjectItem,
@@ -10,49 +11,58 @@ import type {
 	PrConflictInfo,
 	GhTimelineResponse,
 } from "./types";
-import { execFileSync } from "node:child_process";
 
 // ─── Low-level gh CLI wrappers ──────────────────────────────────────
 
-export function gh(args: string[]): string {
-	try {
-		return execFileSync("gh", args, {
-			encoding: "utf-8",
-			timeout: 30_000,
-		}).trim();
-	} catch (err: unknown) {
-		const msg = err instanceof Error ? err.message : String(err);
-		const stderr =
-			err instanceof Error && "stderr" in err && typeof (err as any).stderr?.toString === "function"
-				? (err as any).stderr.toString()
-				: msg;
-		throw new Error(`gh ${args[0]} failed: ${stderr}`);
+export async function gh(
+	pi: ExtensionAPI,
+	args: string[],
+	opts?: { signal?: AbortSignal; timeout?: number },
+): Promise<string> {
+	const result = await pi.exec("gh", args, {
+		signal: opts?.signal,
+		timeout: opts?.timeout ?? 30_000,
+	});
+	if (result.code !== 0) {
+		throw new Error(`gh ${args[0]} failed: ${result.stderr || result.stdout}`);
 	}
+	return (result.stdout || "").trim();
 }
 
-export function ghJson(args: string[]): any {
-	const output = gh(args);
+export async function ghJson(
+	pi: ExtensionAPI,
+	args: string[],
+	opts?: { signal?: AbortSignal; timeout?: number },
+): Promise<any> {
+	const output = await gh(pi, args, opts);
 	if (!output) return null;
 	return JSON.parse(output);
 }
 
-export function ghGraphQL(query: string): any {
-	const result = gh([
+export async function ghGraphQL(
+	pi: ExtensionAPI,
+	query: string,
+	opts?: { signal?: AbortSignal; timeout?: number },
+): Promise<any> {
+	const result = await gh(pi, [
 		"api",
 		"graphql",
 		"--header",
 		"Accept: application/vnd.github+json",
 		"-f",
 		`query=${query}`,
-	]);
+	], opts);
 	if (!result) return null;
 	return JSON.parse(result);
 }
 
 // ─── Project Board Operations ───────────────────────────────────────
 
-export function getProjectFields(projectNumber: number): ProjectField[] {
-	const resp = ghGraphQL(`{
+export async function getProjectFields(
+	pi: ExtensionAPI,
+	projectNumber: number,
+): Promise<ProjectField[]> {
+	const resp = await ghGraphQL(pi, `{
 		viewer {
 			projectV2(number: ${projectNumber}) {
 				fields(first: 10) {
@@ -74,8 +84,11 @@ export function getProjectFields(projectNumber: number): ProjectField[] {
 	}));
 }
 
-export function getProjectItems(projectNumber: number): ProjectItem[] {
-	const resp = ghGraphQL(`{
+export async function getProjectItems(
+	pi: ExtensionAPI,
+	projectNumber: number,
+): Promise<ProjectItem[]> {
+	const resp = await ghGraphQL(pi, `{
 		viewer {
 			projectV2(number: ${projectNumber}) {
 				items(first: 100) {
@@ -133,8 +146,11 @@ export function getProjectItems(projectNumber: number): ProjectItem[] {
 	});
 }
 
-export function getProjectId(projectNumber: number): string {
-	const resp = ghGraphQL(`{
+export async function getProjectId(
+	pi: ExtensionAPI,
+	projectNumber: number,
+): Promise<string> {
+	const resp = await ghGraphQL(pi, `{
 		viewer {
 			projectV2(number: ${projectNumber}) {
 				id
@@ -168,13 +184,14 @@ export function findStatusOption(
 	return option?.id || null;
 }
 
-export function setItemStatus(
+export async function setItemStatus(
+	pi: ExtensionAPI,
 	itemId: string,
 	projectId: string,
 	fieldId: string,
 	optionId: string,
-): void {
-	gh([
+): Promise<void> {
+	await gh(pi, [
 		"project",
 		"item-edit",
 		"--id",
@@ -236,6 +253,7 @@ function parseTimelineResponse(response: GhTimelineResponse | null): DepsResult 
 }
 
 export async function checkBlockedByDependencies(
+	pi: ExtensionAPI,
 	issueNumber: number,
 	repo: string,
 ): Promise<DepsResult> {
@@ -275,7 +293,7 @@ export async function checkBlockedByDependencies(
 
 	let response: GhTimelineResponse;
 	try {
-		response = ghGraphQL(query) as GhTimelineResponse;
+		response = (await ghGraphQL(pi, query)) as GhTimelineResponse;
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
 		throw new Error(`Failed to query GitHub for dependencies: ${msg}`);
@@ -287,11 +305,12 @@ export async function checkBlockedByDependencies(
 // ─── PR Conflict Detection ──────────────────────────────────────────
 
 export async function checkPrConflicts(
+	pi: ExtensionAPI,
 	branch: string,
 	repo: string,
 ): Promise<PrConflictInfo | null> {
 	try {
-		const result = ghJson([
+		const result = await ghJson(pi, [
 			"pr",
 			"list",
 			"--repo",
