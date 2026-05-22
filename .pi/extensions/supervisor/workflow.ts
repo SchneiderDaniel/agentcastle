@@ -11,7 +11,7 @@ export interface WorkflowStep {
 	/** Statuses this step can send back to (feedback loop) */
 	canLoopBackTo?: string[];
 	/** Hooks to run before transition */
-	hooks?: ("tsc" | "lsp")[];
+	hooks?: ("tsc" | "lsp" | "ci")[];
 	/** Max rejections before forcing human intervention */
 	maxRejections?: number;
 	/** Built-in handler */
@@ -47,15 +47,15 @@ export const WORKFLOW: WorkflowStep[] = [
 		markerMap: { TEST_PLAN_COMPLETE: "Implementation" },
 	},
 
-	// Implementation → Audit (with TSC + LSP hooks)
+	// Implementation → Audit (with CI + TSC + LSP hooks)
 	{
 		status: "Implementation",
 		agentName: "developer",
 		markerMap: { IMPLEMENTATION_COMPLETE: "Audit" },
-		hooks: ["tsc", "lsp"],
+		hooks: ["ci", "tsc", "lsp"],
 	},
 
-	// Audit → Done (approve) or Implementation (reject)
+	// Audit → Done (approve) or Implementation (reject/loop back)
 	{
 		status: "Audit",
 		agentName: "auditor",
@@ -63,6 +63,7 @@ export const WORKFLOW: WorkflowStep[] = [
 			AUDIT_APPROVED: "Done",
 			AUDIT_REJECTED: "Implementation",
 		},
+		canLoopBackTo: ["Implementation"],
 		maxRejections: 5,
 	},
 
@@ -87,4 +88,28 @@ export function resolveNextStatus(step: WorkflowStep, agentOutput: string): stri
 		}
 	}
 	return bestStatus;
+}
+
+/**
+ * Extract audit score from agent output.
+ * Looks for `AUDIT_SCORE: N/M` pattern (last occurrence wins).
+ * Returns null if no score marker is found.
+ */
+export interface AuditScore {
+	passing: number;
+	total: number;
+}
+
+export function extractAuditScore(agentOutput: string): AuditScore | null {
+	const regex = /AUDIT_SCORE:\s*(\d+)\s*\/\s*(\d+)/g;
+	let match: RegExpExecArray | null;
+	let lastMatch: RegExpExecArray | null = null;
+	while ((match = regex.exec(agentOutput)) !== null) {
+		lastMatch = match;
+	}
+	if (!lastMatch) return null;
+	return {
+		passing: parseInt(lastMatch[1], 10),
+		total: parseInt(lastMatch[2], 10),
+	};
 }
