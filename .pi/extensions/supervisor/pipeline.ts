@@ -29,7 +29,7 @@ import {
 import { parseAgentFile } from "./agent-loader";
 import { buildAgentTask } from "./agent-task";
 import { runAgent } from "./agent-runner";
-import { resolveNextStatus, WORKFLOW } from "./workflow";
+import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "./workflow";
 import { countRejections } from "./formatting";
 import { runTscAndLspAudit } from "./pipeline-audit";
 import { handlePostPipelineMerge } from "./pipeline-merge";
@@ -149,6 +149,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				// ── Pipeline loop ──
 				let loopStatus = getItemStatusName(loopItem);
 				const MAX_LOOPS = 20;
+				let lastAuditScore: AuditScore | null = null;
+				let auditCycleCount = 0;
 
 				for (let i = 0; i < MAX_LOOPS; i++) {
 					ctx.ui.notify(`Issue #${issueNum}: "${issueTitle}" — Status: ${loopStatus}`, "info");
@@ -279,6 +281,12 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							? "SUCCESS (after retry)"
 							: "SUCCESS";
 
+					// Extract audit score for confidence tracking
+					const currentAuditScore = extractAuditScore(result.textOnly);
+					if (currentAuditScore) {
+						auditCycleCount++;
+					}
+
 					pi.sendMessage({
 						customType: "supervisor",
 						content: `## Agent: ${result.agentName} — ${statusLabel}\n\n${result.summaryLine}`,
@@ -297,6 +305,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							hasThinking: !!result.thinkingOutput,
 							rawOutput: result.output,
 							hasRawOutput: true,
+							auditScore: currentAuditScore ? `${currentAuditScore.passing}/${currentAuditScore.total}` : undefined,
 						} satisfies SupervisorMessageDetails,
 					});
 
@@ -323,9 +332,34 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						ctx.ui.notify(`Feedback loop: ${loopStatus} → ${nextStatus}`, "info");
 					}
 
-					// ── Hooks (TSC/LSP) — triggered when step defines hooks ──
+					// ── Audit score trend notification ──
+					if (currentAuditScore && nextStatus && step.canLoopBackTo?.includes(nextStatus)) {
+						if (auditCycleCount === 1) {
+							ctx.ui.notify(
+								`Audit #${auditCycleCount} score: ${currentAuditScore.passing}/${currentAuditScore.total}`,
+								"info",
+							);
+						} else if (lastAuditScore) {
+							const diff = currentAuditScore.passing - lastAuditScore.passing;
+							let arrow: string;
+							if (diff > 0) {
+								arrow = "↑ improving";
+							} else if (diff < 0) {
+								arrow = "↓ declining";
+							} else {
+								arrow = "→ stable";
+							}
+							ctx.ui.notify(
+								`Audit score: ${lastAuditScore.passing}/${lastAuditScore.total} → ${currentAuditScore.passing}/${currentAuditScore.total} (${arrow})`,
+								"info",
+							);
+						}
+						lastAuditScore = currentAuditScore;
+					}
+
+					// ── Hooks (CI/TSC/LSP) — triggered when step defines hooks ──
 					let effectiveNextStatus = nextStatus;
-					if (step.hooks?.includes("tsc") || step.hooks?.includes("lsp")) {
+					if (step.hooks?.includes("ci") || step.hooks?.includes("tsc") || step.hooks?.includes("lsp")) {
 						try {
 							const auditResult = await runTscAndLspAudit(
 								issueNum,
@@ -339,7 +373,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							effectiveNextStatus = auditResult.nextStatus;
 						} catch (auditErr: unknown) {
 							const msg = auditErr instanceof Error ? auditErr.message : String(auditErr);
-							ctx.ui.notify(`TSC/LSP pre-audit error: ${msg}`, "warning");
+							ctx.ui.notify(`Pre-audit error: ${msg}`, "warning");
 						}
 					}
 

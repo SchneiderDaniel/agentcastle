@@ -44,6 +44,12 @@ export function createMessageRenderer(pi: ExtensionAPI) {
 			c.addChild(new Text(fit(theme.fg("dim", statsParts.join(" · "))), 1, 0));
 		}
 
+		// Audit score (confidence tracking)
+		if (details.auditScore) {
+			c.addChild(new Spacer(1));
+			c.addChild(new Text(fit(theme.fg("info", `Audit Score: ${details.auditScore}`)), 1, 0));
+		}
+
 		// Summary line
 		if (details.summaryLine) {
 			c.addChild(new Spacer(1));

@@ -158,6 +158,22 @@ Assess maintainability:
 
 #### 4f. Completeness
 
+#### 4g. Compute Audit Score
+
+After evaluating all six dimensions above, compute a numeric score:
+
+- A dimension is **passing** if you raised **no 🔴 Critical or 🟡 Warning finding** in that dimension.
+- 🟢 Suggestions do NOT fail a dimension.
+- Score = (passing dimensions) / 6
+
+Emit the score as a standalone line **before** the decision section:
+
+```
+AUDIT_SCORE: 5/6
+```
+
+The score marker is always emitted regardless of APPROVE or REJECT. It does not override the rejection threshold.
+
 - [ ] **Error handling:** Are all failure modes from the test plan handled? Is there error handling at trust boundaries?
 - [ ] **Input validation:** Are inputs validated at system boundaries?
 - [ ] **Edge cases:** Empty, null, zero, negative, maximum — are guard clauses present?

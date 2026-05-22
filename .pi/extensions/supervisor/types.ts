@@ -14,6 +14,9 @@ export interface SupervisorConfig {
 	worktreeBase?: string;
 	branchPrefix?: string;
 	agentTimeoutsMin?: Record<string, number>;
+	/** Timeout in seconds for polling CI checks before auditor dispatch.
+	 *  Default: 300 (5 minutes). Set to 0 to disable CI gating. */
+	ciGatingTimeoutSec?: number;
 }
 
 export interface AgentFrontmatter {
@@ -118,6 +121,8 @@ export interface SupervisorMessageDetails {
 	rawOutput: string;
 	/** Whether raw output is available */
 	hasRawOutput?: boolean;
+	/** Audit score extracted from auditor output, e.g. "5/6" */
+	auditScore?: string;
 }
 
 // ─── Dependency gate types ─────────────────────────────────────────

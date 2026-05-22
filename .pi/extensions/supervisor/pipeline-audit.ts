@@ -8,6 +8,7 @@ import { resolve as resolvePath } from "node:path";
 import { generateBranchName } from "./agent-task";
 import { determineTscCheckpointDecision, getRunTscCheckpoint } from "./tsc-decisions";
 import { determineLspPreAuditDecision, getRunPreAudit } from "./lsp-decisions";
+import { pollCiChecks } from "./ci-gating";
 
 /**
  * Run TSC checkpoint and LSP pre-audit during Implementation → Audit transition.
@@ -24,6 +25,42 @@ export async function runTscAndLspAudit(
 ): Promise<{ nextStatus: string; note: string }> {
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 	const wt = `${config.worktreeBase!}${branch}`;
+
+	// Step 0: CI gating — poll check runs before running local hooks
+	if (config.ciGatingTimeoutSec && config.ciGatingTimeoutSec > 0) {
+		ctx.ui.setStatus("supervisor", "Polling CI checks...");
+		const ciResult = await pollCiChecks(pi, branch, config.repo, config.ciGatingTimeoutSec);
+
+		if (ciResult.status === "failing") {
+			const failedNames = ciResult.checks
+				.filter((c) => c.conclusion === "failure" || c.conclusion === "cancelled" || c.conclusion === "action_required" || c.conclusion === "timed_out" || c.conclusion === "stale")
+				.map((c) => c.name)
+				.join(", ");
+			ctx.ui.notify(
+				`CI checks failing: ${failedNames}. Skipping audit — returning to Implementation.`,
+				"warning",
+			);
+			pi.sendUserMessage?.(
+				`CI failed: ${ciResult.message}. Fix and re-trigger.`,
+				{ deliverAs: "followUp" },
+			);
+			return { nextStatus: "Implementation", note: `CI_FAILED: ${ciResult.message}` };
+		}
+
+		if (ciResult.status === "pending") {
+			ctx.ui.notify(
+				`CI checks still pending after ${config.ciGatingTimeoutSec}s. Proceeding to audit.`,
+				"warning",
+			);
+		}
+
+		if (ciResult.status === "error") {
+			ctx.ui.notify(
+				`CI check polling issue: ${ciResult.message}. Proceeding to audit.`,
+				"warning",
+			);
+		}
+	}
 
 	// Step 1: TSC checkpoint (Tier 2)
 	const runTscCheckpointFn = await getRunTscCheckpoint();

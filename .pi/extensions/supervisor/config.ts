@@ -77,6 +77,7 @@ export function loadConfig(): SupervisorConfig {
 		worktreeBase: cfg.worktreeBase || "../",
 		branchPrefix: cfg.branchPrefix || "worktree-git-issue-",
 		agentTimeoutsMin,
+		ciGatingTimeoutSec: cfg.ciGatingTimeoutSec ?? 300,
 	};
 }
 
