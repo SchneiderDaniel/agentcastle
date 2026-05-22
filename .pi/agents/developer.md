@@ -28,23 +28,7 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
 
 Review the issue data provided in your task (body, architecture, test plan from trusted comments).
 
-### 2. Derive the feature branch name
-
-```bash
-bash .pi/scripts/dev-workflow.sh derive-branch <N> "<issue-title>"
-```
-
-Stores the branch name in `BRANCH_NAME` env var. Format: `worktree-git-issue-<N>-<slug>`.
-
-### 3. Create a git worktree
-
-```bash
-bash .pi/scripts/dev-workflow.sh setup-worktree <N> "<issue-title>"
-```
-
-Creates worktree at `../<branch-name>` from `main`. Reuses if already exists. Prints `WORKTREE_PATH` and `BRANCH_NAME`. `cd` into worktree after this step.
-
-### 4. Branch each submodule
+### 2. Branch each submodule (if needed)
 
 ```bash
 bash .pi/scripts/dev-workflow.sh branch-submodules <branch-name>
@@ -52,7 +36,7 @@ bash .pi/scripts/dev-workflow.sh branch-submodules <branch-name>
 
 Creates matching branch in each submodule. No-op if no submodules exist. Fails early on push errors.
 
-### 5. Implement the changes
+### 3. Implement the changes
 
 Follow the **Test First** rule:
 
@@ -82,19 +66,13 @@ Follow the **Test First** rule:
 - If no: skip. Do not touch README for purely internal refactors or bug fixes with no user-facing impact.
 - Run `git diff --stat` to confirm README.md is either updated (if needed) or unchanged (if not needed).
 
-### 6. Commit and push
+### 4. Commit and push
 
 ```bash
 bash .pi/scripts/dev-workflow.sh commit-push <N> "<issue-title>"
 ```
 
 Commits and pushes submodules with changes first, then main repo. Uses `feat(#<N>): <issue-title>` commit message. Automatically stages submodule pointer changes.
-
-### 7. Clean up
-
-```bash
-bash .pi/scripts/dev-workflow.sh cleanup <original-repo-path>
-```
 
 ## Commands
 

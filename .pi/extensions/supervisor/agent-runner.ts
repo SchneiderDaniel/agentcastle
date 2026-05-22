@@ -36,14 +36,15 @@ export async function runAgent(
 	ctx: ExtensionCommandContext,
 	pi: ExtensionAPI,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
+	cwd?: string,
 ): Promise<AgentRunResult> {
 	// Primary: in-process via SDK
 	try {
-		return await runAgentInProcess(agent, task, ctx, pi, timeoutMs);
+		return await runAgentInProcess(agent, task, ctx, pi, timeoutMs, cwd);
 	} catch (err) {
 		console.error(`[supervisor] In-process runner failed, falling back to subprocess: ${err}`);
 		// Fallback: subprocess (existing code)
-		return runAgentSubprocess(agent, task, ctx, timeoutMs);
+		return runAgentSubprocess(agent, task, ctx, timeoutMs, cwd);
 	}
 }
 
@@ -54,11 +55,12 @@ export async function runAgentSubprocess(
 	task: string,
 	ctx: ExtensionCommandContext,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
+	cwd?: string,
 ): Promise<AgentRunResult> {
-	const cwd = ctx.cwd || process.cwd();
+	const effectiveCwd = cwd || ctx.cwd || process.cwd();
 
 	const rawTools = agent.config.tools || "read,bash,write,edit";
-	const tools = resolveTools(rawTools, agent.config.extensions, cwd);
+	const tools = resolveTools(rawTools, agent.config.extensions, effectiveCwd);
 	const model = agent.config.model || "";
 	const extFlags = resolveExtensions(agent.config.extensions);
 
@@ -104,7 +106,7 @@ export async function runAgentSubprocess(
 
 	return new Promise((resolve) => {
 		const child = spawn("/usr/bin/pi", args, {
-			cwd,
+			cwd: effectiveCwd,
 			env: { ...process.env, PI_NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
 			timeout: timeoutMs,
