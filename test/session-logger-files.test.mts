@@ -75,12 +75,13 @@ describe("createFileOps", () => {
 		assert.ok(fs.lstatSync(latestLink).isSymbolicLink());
 	});
 
-	it("writeMetadata creates metadata.json with correct content", async () => {
-		const sessionDir = path.join(tmpDir, ".pi", "sessions", "test-session");
+	it("writeMetadata writes <sessionId>.metadata.json with correct content", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
 		fs.mkdirSync(sessionDir, { recursive: true });
+		const sessionId = "test-session-123";
 
 		const meta: Metadata = {
-			sessionId: "test-session",
+			sessionId,
 			name: "Test Session",
 			messages: 5,
 			tokens: { input: 100, output: 50, cacheRead: 10, cacheWrite: 5, total: 165 },
@@ -91,13 +92,13 @@ describe("createFileOps", () => {
 		};
 
 		const files = createFileOps();
-		await files.writeMetadata(sessionDir, meta);
+		await files.writeMetadata(sessionDir, sessionId, meta);
 
-		const metaPath = path.join(sessionDir, "metadata.json");
-		assert.ok(fs.existsSync(metaPath));
+		const metaPath = path.join(sessionDir, `${sessionId}.metadata.json`);
+		assert.ok(fs.existsSync(metaPath), `Expected ${metaPath} to exist`);
 
 		const loaded: Metadata = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-		assert.strictEqual(loaded.sessionId, "test-session");
+		assert.strictEqual(loaded.sessionId, sessionId);
 		assert.strictEqual(loaded.name, "Test Session");
 		assert.strictEqual(loaded.messages, 5);
 		assert.strictEqual(loaded.tokens.total, 165);
@@ -108,11 +109,12 @@ describe("createFileOps", () => {
 	});
 
 	it("writeMetadata works without optional name", async () => {
-		const sessionDir = path.join(tmpDir, ".pi", "sessions", "test-session-2");
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
 		fs.mkdirSync(sessionDir, { recursive: true });
+		const sessionId = "test-session-2";
 
 		const meta: Metadata = {
-			sessionId: "test-session-2",
+			sessionId,
 			messages: 0,
 			tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			cost: 0,
@@ -122,20 +124,21 @@ describe("createFileOps", () => {
 		};
 
 		const files = createFileOps();
-		await files.writeMetadata(sessionDir, meta);
+		await files.writeMetadata(sessionDir, sessionId, meta);
 
-		const metaPath = path.join(sessionDir, "metadata.json");
+		const metaPath = path.join(sessionDir, `${sessionId}.metadata.json`);
 		const loaded: Metadata = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-		assert.strictEqual(loaded.sessionId, "test-session-2");
+		assert.strictEqual(loaded.sessionId, sessionId);
 		assert.strictEqual(loaded.name, undefined);
 	});
 
 	it("writeMetadata formats JSON with indentation", async () => {
-		const sessionDir = path.join(tmpDir, ".pi", "sessions", "fmt-test");
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
 		fs.mkdirSync(sessionDir, { recursive: true });
+		const sessionId = "fmt-test";
 
 		const meta: Metadata = {
-			sessionId: "fmt-test",
+			sessionId,
 			messages: 1,
 			tokens: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15 },
 			cost: 0.0001,
@@ -145,9 +148,9 @@ describe("createFileOps", () => {
 		};
 
 		const files = createFileOps();
-		await files.writeMetadata(sessionDir, meta);
+		await files.writeMetadata(sessionDir, sessionId, meta);
 
-		const metaPath = path.join(sessionDir, "metadata.json");
+		const metaPath = path.join(sessionDir, `${sessionId}.metadata.json`);
 		const content = fs.readFileSync(metaPath, "utf-8");
 		// Verify pretty-printed: first line should be `{`, last `}`
 		const lines = content.trim().split("\n");
@@ -155,5 +158,185 @@ describe("createFileOps", () => {
 		assert.strictEqual(lines[lines.length - 1], "}");
 		// Should have indentation (leading space on non-first/last lines)
 		assert.ok(lines.length > 2, "JSON should span multiple lines with indentation");
+	});
+
+	// ---------------------------------------------------------------------------
+	// writeSessionReport tests
+	// ---------------------------------------------------------------------------
+
+	it("writeSessionReport writes <sessionId>.md with correct content", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionDir, { recursive: true });
+		const sessionId = "test-session-md-456";
+		const markdown = "# Session Report\n\nHello world";
+
+		const files = createFileOps();
+		await files.writeSessionReport(sessionDir, sessionId, markdown);
+
+		const mdPath = path.join(sessionDir, `${sessionId}.md`);
+		assert.ok(fs.existsSync(mdPath), `Expected ${mdPath} to exist`);
+		const content = fs.readFileSync(mdPath, "utf-8");
+		assert.strictEqual(content, markdown);
+	});
+
+	it("writeSessionReport with different sessionIds produces separate .md files", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionDir, { recursive: true });
+
+		const files = createFileOps();
+		await files.writeSessionReport(sessionDir, "sid-1", "md1");
+		await files.writeSessionReport(sessionDir, "sid-2", "md2");
+
+		const md1Path = path.join(sessionDir, "sid-1.md");
+		const md2Path = path.join(sessionDir, "sid-2.md");
+		assert.ok(fs.existsSync(md1Path), "First .md should exist");
+		assert.ok(fs.existsSync(md2Path), "Second .md should exist");
+		assert.strictEqual(fs.readFileSync(md1Path, "utf-8"), "md1");
+		assert.strictEqual(fs.readFileSync(md2Path, "utf-8"), "md2");
+	});
+
+	it("writeMetadata with different sessionIds produces separate .metadata.json files", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionDir, { recursive: true });
+
+		const files = createFileOps();
+		const meta1: Metadata = {
+			sessionId: "sid-a",
+			messages: 1,
+			tokens: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15 },
+			cost: 0,
+			compactions: 0,
+			modelChanges: [],
+			thinkingChanges: [],
+		};
+		const meta2: Metadata = {
+			sessionId: "sid-b",
+			messages: 2,
+			tokens: { input: 20, output: 10, cacheRead: 0, cacheWrite: 0, total: 30 },
+			cost: 0.001,
+			compactions: 1,
+			modelChanges: [],
+			thinkingChanges: [],
+		};
+
+		await files.writeMetadata(sessionDir, "sid-a", meta1);
+		await files.writeMetadata(sessionDir, "sid-b", meta2);
+
+		const meta1Path = path.join(sessionDir, "sid-a.metadata.json");
+		const meta2Path = path.join(sessionDir, "sid-b.metadata.json");
+		assert.ok(fs.existsSync(meta1Path), "First metadata should exist");
+		assert.ok(fs.existsSync(meta2Path), "Second metadata should exist");
+		const loaded1: Metadata = JSON.parse(fs.readFileSync(meta1Path, "utf-8"));
+		const loaded2: Metadata = JSON.parse(fs.readFileSync(meta2Path, "utf-8"));
+		assert.strictEqual(loaded1.messages, 1);
+		assert.strictEqual(loaded2.messages, 2);
+	});
+
+	it("old stale metadata.json (no sessionId prefix) is NOT created", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionDir, { recursive: true });
+
+		const meta: Metadata = {
+			sessionId: "sid-c",
+			messages: 0,
+			tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			cost: 0,
+			compactions: 0,
+			modelChanges: [],
+			thinkingChanges: [],
+		};
+
+		const files = createFileOps();
+		await files.writeMetadata(sessionDir, "sid-c", meta);
+
+		const stalePath = path.join(sessionDir, "metadata.json");
+		assert.ok(!fs.existsSync(stalePath), "metadata.json without sessionId prefix should NOT exist");
+	});
+
+	it("old stale sessions.md (derived from dir basename) is NOT created", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionDir, { recursive: true });
+		// sessionDir basename is "sessions" — old code would create "sessions.md"
+
+		const files = createFileOps();
+		await files.writeSessionReport(sessionDir, "sid-d", "markdown content");
+
+		const stalePath = path.join(sessionDir, "sessions.md");
+		assert.ok(!fs.existsSync(stalePath), "sessions.md (from dir basename) should NOT exist");
+	});
+
+	it("writeMetadata with empty-string sessionId produces .metadata.json", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionDir, { recursive: true });
+
+		const meta: Metadata = {
+			sessionId: "",
+			messages: 0,
+			tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			cost: 0,
+			compactions: 0,
+			modelChanges: [],
+			thinkingChanges: [],
+		};
+
+		const files = createFileOps();
+		await files.writeMetadata(sessionDir, "", meta);
+
+		const metaPath = path.join(sessionDir, ".metadata.json");
+		assert.ok(fs.existsSync(metaPath), "Empty sessionId should produce .metadata.json");
+	});
+
+	it("writeSessionReport with empty-string sessionId produces .md", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionDir, { recursive: true });
+
+		const files = createFileOps();
+		await files.writeSessionReport(sessionDir, "", "empty-id");
+
+		const mdPath = path.join(sessionDir, ".md");
+		assert.ok(fs.existsSync(mdPath), "Empty sessionId should produce .md");
+		assert.strictEqual(fs.readFileSync(mdPath, "utf-8"), "empty-id");
+	});
+
+	it("writeMetadata JSON roundtrips with full Metadata object", async () => {
+		const sessionDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionDir, { recursive: true });
+		const sessionId = "roundtrip-test";
+
+		const meta: Metadata = {
+			sessionId,
+			name: "Round Trip",
+			messages: 42,
+			tokens: { input: 1000, output: 500, cacheRead: 100, cacheWrite: 50, total: 1650 },
+			cost: 0.025,
+			compactions: 3,
+			modelChanges: [
+				{ time: "2025-01-01T00:00:00Z", model: "openai/gpt-4" },
+				{ time: "2025-01-01T01:00:00Z", model: "anthropic/claude-3" },
+			],
+			thinkingChanges: [
+				{ time: "2025-01-01T00:00:00Z", level: "low" },
+				{ time: "2025-01-01T01:00:00Z", level: "high" },
+			],
+			perTurnTokens: [
+				{ turnIndex: 0, tokens: 500, cost: 0.005, toolCount: 2, errorCount: 0 },
+				{ turnIndex: 1, tokens: 1000, cost: 0.015, toolCount: 3, errorCount: 1 },
+			],
+			toolStats: {
+				read: { calls: 5, errors: 0, totalDurationMs: 1200 },
+				write: { calls: 3, errors: 1, totalDurationMs: 800 },
+			},
+			fileModifications: [
+				{ action: "read", path: "/file1", timestamp: "2025-01-01T00:00:00Z" },
+				{ action: "write", path: "/file2", timestamp: "2025-01-01T00:01:00Z", size: 500 },
+			],
+		};
+
+		const files = createFileOps();
+		await files.writeMetadata(sessionDir, sessionId, meta);
+
+		const metaPath = path.join(sessionDir, `${sessionId}.metadata.json`);
+		const loaded: Metadata = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+		assert.deepStrictEqual(loaded, meta);
 	});
 });
