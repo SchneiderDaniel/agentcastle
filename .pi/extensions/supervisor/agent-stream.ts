@@ -303,7 +303,11 @@ export function processJsonLine(
  * Build widget lines from state. Pure function — no side effects.
  * Returns at most WIDGET_LINES (20) lines. Kept for backward compat (subprocess path).
  */
-export function buildWidgetLines(state: AgentRunState, agentName: string): string[] {
+export function buildWidgetLines(
+	state: AgentRunState,
+	agentName: string,
+	model?: string,
+): string[] {
 	const lines: string[] = [];
 	const now = Date.now();
 
@@ -355,6 +359,9 @@ export function buildWidgetLines(state: AgentRunState, agentName: string): strin
 
 	// Stats footer
 	const statsParts: string[] = [];
+	const shortModel = model ? model.split("/").pop() || model : undefined;
+	statsParts.push(`subagent:${agentName}`);
+	if (shortModel) statsParts.push(`🧠 ${shortModel}`);
 	if (state.tokenCount > 0) statsParts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
 	if (state.toolCount > 0) statsParts.push(`🔧 ${state.toolCount} tools`);
 	const elapsed = formatDuration(now - state.startedAt);
@@ -379,6 +386,7 @@ export function buildWidgetLines(state: AgentRunState, agentName: string): strin
 export function buildWidgetComponent(
 	state: AgentRunState,
 	agentName: string,
+	model: string | undefined,
 	theme: any,
 ): Container {
 	const now = Date.now();
@@ -461,6 +469,9 @@ export function buildWidgetComponent(
 
 	// ── Stats footer ──
 	const statsParts: string[] = [];
+	const shortModel = model ? model.split("/").pop() || model : undefined;
+	statsParts.push(`subagent:${agentName}`);
+	if (shortModel) statsParts.push(`🧠 ${shortModel}`);
 	if (state.tokenCount > 0) statsParts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
 	if (state.toolCount > 0) statsParts.push(`🔧 ${state.toolCount} tools`);
 	const elapsed = formatDuration(now - state.startedAt);

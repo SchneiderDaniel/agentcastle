@@ -122,7 +122,7 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName));
+			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName, model));
 			ctx.ui.setStatus("supervisor", undefined);
 		};
 

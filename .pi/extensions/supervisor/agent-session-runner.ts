@@ -534,9 +534,13 @@ export async function runAgentInProcess(
 				flushTimer = null;
 			}
 			// Pass Component factory: TUI calls it on each render
-			ctx.ui.setWidget(widgetId, (_tui, theme) => buildWidgetComponent(state, agentName, theme), {
-				placement: "aboveEditor",
-			});
+			ctx.ui.setWidget(
+				widgetId,
+				(_tui, theme) => buildWidgetComponent(state, agentName, agent.config.model, theme),
+				{
+					placement: "aboveEditor",
+				},
+			);
 			ctx.ui.setStatus("supervisor", undefined);
 		};
 
