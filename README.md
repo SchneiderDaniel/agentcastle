@@ -910,3 +910,4 @@ Built on top of these excellent projects:
 - [ast-grep](https://ast-grep.github.io) — Structural code search via Tree-sitter AST
 - [ripgrep](https://github.com/BurntSushi/ripgrep) — Ultra-fast literal/regex code search
 - [universal-ctags](https://ctags.io) — Codebase symbol indexing
+test change

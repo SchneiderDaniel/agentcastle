@@ -20,6 +20,7 @@ import {
 	DefaultResourceLoader,
 	ModelRegistry,
 	AuthStorage,
+	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai";
 import { resolveTools, resolveExtensionPaths } from "./extensions";
@@ -500,10 +501,12 @@ export async function runAgentInProcess(
 		// Create resource loader with system prompt override and extension paths
 		const resourceLoader = new DefaultResourceLoader({
 			cwd,
+			agentDir: getAgentDir(),
 			settingsManager: SettingsManager.inMemory(),
 			systemPromptOverride: () => agent.systemPrompt,
 			additionalExtensionPaths: extPaths.length > 0 ? extPaths : undefined,
 		});
+		await resourceLoader.reload();
 
 		const sessionManager = SessionManager.inMemory();
 		const settingsManager = SettingsManager.inMemory();
