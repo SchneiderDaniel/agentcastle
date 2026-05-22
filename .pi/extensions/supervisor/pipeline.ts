@@ -400,7 +400,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					});
 
 					// Resolve next status from agent output markers (config-driven)
-					const nextStatus = resolveNextStatus(step, result.textOnly);
+					// Check all output sources: textOnly may miss marker if it was consumed
+					// from liveText by newline splitting in text_delta and not picked up
+					// by text_end (empty liveText) or message_end (missing msg.content).
+					// Fall back to textOutput (fullLog) and output (raw messages).
+					const nextStatus =
+						resolveNextStatus(step, result.textOnly) ??
+						resolveNextStatus(step, result.textOutput) ??
+						resolveNextStatus(step, result.output);
 
 					if (!result.success && nextStatus !== "Audit") {
 						ctx.ui.notify(
