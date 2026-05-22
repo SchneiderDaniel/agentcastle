@@ -10,6 +10,7 @@ import { join as joinPath } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { countExtensions } from "./extensions.js";
+import { countSkills } from "./skills.js";
 
 function listNames(dir: string, suffix: string): string[] {
 	try {
@@ -32,27 +33,6 @@ function listNames(dir: string, suffix: string): string[] {
 		return results.sort();
 	} catch {
 		return [];
-	}
-}
-
-function countSkills(): number {
-	try {
-		const skillsDir = ".pi/skills";
-		if (!existsSync(skillsDir)) return 0;
-		const entries = readdirSync(skillsDir, { withFileTypes: true });
-		let count = 0;
-		for (const entry of entries) {
-			if (entry.name === ".gitkeep") continue;
-			if (entry.isFile() && entry.name.endsWith(".md")) {
-				count++;
-			} else if (entry.isDirectory() && entry.name !== "." && entry.name !== "..") {
-				const skillMdPath = joinPath(skillsDir, entry.name, "SKILL.md");
-				if (existsSync(skillMdPath)) count++;
-			}
-		}
-		return count;
-	} catch {
-		return 0;
 	}
 }
 
@@ -150,7 +130,23 @@ export function showWelcomeBanner(
 						);
 					})(),
 					statLine("🎨 Themes:     ", String(themeCount)),
-					statLine("🔧 Skills:     ", String(skillCount)),
+					// Skills line with /explain-skills hint
+					(() => {
+						const labelStr = muted("🔧 Skills:     ");
+						const valueStr = accent(String(skillCount));
+						const hintStr = dim(" (/explain-skills)");
+						const rawLabelW = visibleWidth("🔧 Skills:     ");
+						const rawValueW = visibleWidth(String(skillCount)) + visibleWidth(" (/explain-skills)");
+						const padding = 60 - rawLabelW - rawValueW;
+						return (
+							dim("| ") +
+							labelStr +
+							valueStr +
+							hintStr +
+							" ".repeat(Math.max(0, padding)) +
+							dim(" |")
+						);
+					})(),
 				];
 
 				// Bottom wall
