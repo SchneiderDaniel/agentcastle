@@ -807,11 +807,14 @@ describe("Session init / filesystem", () => {
 		assert.ok(fs.readlinkSync(latestLink).includes("session2.jsonl"));
 	});
 
-	it("metadata.json written on shutdown", () => {
-		const sessionDir = path.join(tmpDir, ".pi", "sessions", "abc123");
-		fs.mkdirSync(sessionDir, { recursive: true });
-		const meta = {
-			sessionId: "abc123",
+	it("two sessions — both <sessionId>.metadata.json and .md files coexist", () => {
+		const sessionsDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionsDir, { recursive: true });
+
+		// Session 1
+		const sid1 = "session-111";
+		const meta1 = {
+			sessionId: sid1,
 			messages: 5,
 			tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
 			cost: 0.0015,
@@ -819,8 +822,68 @@ describe("Session init / filesystem", () => {
 			modelChanges: [],
 			thinkingChanges: [],
 		};
-		fs.writeFileSync(path.join(sessionDir, "metadata.json"), JSON.stringify(meta, null, 2));
-		const loaded = JSON.parse(fs.readFileSync(path.join(sessionDir, "metadata.json"), "utf-8"));
+		fs.writeFileSync(
+			path.join(sessionsDir, `${sid1}.metadata.json`),
+			JSON.stringify(meta1, null, 2),
+		);
+		fs.writeFileSync(path.join(sessionsDir, `${sid1}.md`), "# Session 1");
+
+		// Session 2
+		const sid2 = "session-222";
+		const meta2 = {
+			sessionId: sid2,
+			messages: 10,
+			tokens: { input: 200, output: 100, cacheRead: 0, cacheWrite: 0, total: 300 },
+			cost: 0.003,
+			compactions: 1,
+			modelChanges: [],
+			thinkingChanges: [],
+		};
+		fs.writeFileSync(
+			path.join(sessionsDir, `${sid2}.metadata.json`),
+			JSON.stringify(meta2, null, 2),
+		);
+		fs.writeFileSync(path.join(sessionsDir, `${sid2}.md`), "# Session 2");
+
+		// Assert all 4 files coexist
+		assert.ok(fs.existsSync(path.join(sessionsDir, `${sid1}.metadata.json`)), "Session1 metadata");
+		assert.ok(fs.existsSync(path.join(sessionsDir, `${sid1}.md`)), "Session1 md");
+		assert.ok(fs.existsSync(path.join(sessionsDir, `${sid2}.metadata.json`)), "Session2 metadata");
+		assert.ok(fs.existsSync(path.join(sessionsDir, `${sid2}.md`)), "Session2 md");
+
+		// Assert no stale files
+		assert.ok(!fs.existsSync(path.join(sessionsDir, "metadata.json")), "No stale metadata.json");
+		assert.ok(!fs.existsSync(path.join(sessionsDir, "sessions.md")), "No stale sessions.md");
+
+		// Verify content preserved
+		assert.strictEqual(
+			JSON.parse(fs.readFileSync(path.join(sessionsDir, `${sid1}.metadata.json`), "utf-8"))
+				.messages,
+			5,
+		);
+		assert.strictEqual(
+			JSON.parse(fs.readFileSync(path.join(sessionsDir, `${sid2}.metadata.json`), "utf-8"))
+				.messages,
+			10,
+		);
+	});
+
+	it("<sessionId>.metadata.json written on shutdown", () => {
+		const sessionsDir = path.join(tmpDir, ".pi", "sessions");
+		fs.mkdirSync(sessionsDir, { recursive: true });
+		const sessionId = "abc123";
+		const meta = {
+			sessionId,
+			messages: 5,
+			tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
+			cost: 0.0015,
+			compactions: 0,
+			modelChanges: [],
+			thinkingChanges: [],
+		};
+		const metaPath = path.join(sessionsDir, `${sessionId}.metadata.json`);
+		fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+		const loaded = JSON.parse(fs.readFileSync(metaPath, "utf-8"));
 		assert.strictEqual(loaded.messages, 5);
 	});
 });

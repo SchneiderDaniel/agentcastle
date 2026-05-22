@@ -359,16 +359,20 @@ Switch the project to **Board** layout in the browser and change **Group by** to
 
 Commands: `/session-logger`, `/session-logger on`, `/session-logger off`
 
-Output format (JSONL): `.pi/sessions/<datetime>_<uuid>.jsonl`
+Output formats:
 
-Each line is a JSON event: messages, thinking blocks, tool calls, compactions.
+- **JSONL log**: `.pi/sessions/<datetime>_<uuid>.jsonl` — event stream per session
+- **Markdown report**: `.pi/sessions/<sessionId>.md` — human-readable session summary
+- **Metadata**: `.pi/sessions/<sessionId>.metadata.json` — structured session metadata
+
+Each session produces uniquely-named `.md` and `.metadata.json` files (keyed by `sessionId`), so no data is overwritten between sessions.
+
+The JSONL log is a newline-delimited JSON event stream: messages, thinking blocks, tool calls, compactions.
 
 ```bash
 ./scripts/session-query.sh 'select(.role == "user")'
 cat .pi/sessions/latest.jsonl | ./scripts/session-query.sh 'select(.tool == "bash")'
 ```
-
-Metadata stored in `.pi/sessions/metadata.json`.
 
 #### 7.4 Context & Templates
 

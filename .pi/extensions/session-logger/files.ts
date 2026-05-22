@@ -5,8 +5,8 @@ import type { Metadata } from "./types.js";
 export interface FileOps {
 	ensureSymlink(sessionFile: string, sessionsDir: string): Promise<void>;
 	ensureMdSymlink(sessionDir: string, mdFile: string): Promise<void>;
-	writeMetadata(sessionDir: string, metadata: Metadata): Promise<void>;
-	writeSessionReport(sessionDir: string, markdown: string): Promise<void>;
+	writeMetadata(sessionDir: string, sessionId: string, metadata: Metadata): Promise<void>;
+	writeSessionReport(sessionDir: string, sessionId: string, markdown: string): Promise<void>;
 }
 
 export function createFileOps(): FileOps {
@@ -47,13 +47,19 @@ export function createFileOps(): FileOps {
 			}
 		},
 
-		async writeMetadata(sessionDir: string, metadata: Metadata): Promise<void> {
-			await fs.writeFile(path.join(sessionDir, "metadata.json"), JSON.stringify(metadata, null, 2));
+		async writeMetadata(sessionDir: string, sessionId: string, metadata: Metadata): Promise<void> {
+			await fs.writeFile(
+				path.join(sessionDir, `${sessionId}.metadata.json`),
+				JSON.stringify(metadata, null, 2),
+			);
 		},
 
-		async writeSessionReport(sessionDir: string, markdown: string): Promise<void> {
-			const mdName = path.basename(sessionDir) + ".md";
-			const mdPath = path.join(sessionDir, mdName);
+		async writeSessionReport(
+			sessionDir: string,
+			sessionId: string,
+			markdown: string,
+		): Promise<void> {
+			const mdPath = path.join(sessionDir, `${sessionId}.md`);
 			await fs.writeFile(mdPath, markdown, "utf-8");
 		},
 	};
