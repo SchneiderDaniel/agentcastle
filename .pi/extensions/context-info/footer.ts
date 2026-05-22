@@ -65,6 +65,9 @@ export function installFooter(
 					leftStr = theme.fg("dim", "⋄ no git");
 				}
 
+				// ── Separator character ──────────────────────
+				const sep = theme.fg("dim", "│");
+
 				// ── Extension statuses ───────────────────────
 				const extStatuses = footerData.getExtensionStatuses();
 				let extStr = "";
@@ -73,7 +76,7 @@ export function installFooter(
 					for (const [, text] of extStatuses) {
 						if (text) parts.push(text);
 					}
-					if (parts.length > 0) extStr = parts.join(" ");
+					if (parts.length > 0) extStr = parts.join(" " + sep + " ");
 				}
 
 				// ── CENTER: Model + reasoning ────────────────
@@ -141,9 +144,6 @@ export function installFooter(
 				if (computed !== null) {
 					lastComputedTps.value = computed;
 				}
-
-				// ── Separator character ──────────────────────
-				const sep = theme.fg("dim", "│");
 
 				// ── Left side only (git info) ─────────────
 				const fullLeft = leftStr;
