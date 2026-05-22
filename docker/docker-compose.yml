@@ -7,20 +7,22 @@
 #   ./agent-castle.sh
 #
 # Direct usage (without wrapper — uses defaults):
-#   docker compose up -d --build
+#   docker compose -f docker/docker-compose.yml up -d --build
 #   docker exec -it agentcastle /bin/bash -c 'cd /workspaces/main && pi'
 
 services:
   agentcastle:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: agentcastle
     env_file:
-      - ./.agent_env
+      - ../.agent_env
     environment:
       - HOST_UID=${HOST_UID}
       - HOST_GID=${HOST_GID}
     volumes:
-      - ../:/workspaces
+      - ../../:/workspaces
     deploy:
       resources:
         limits:

@@ -27,7 +27,7 @@ if [ ! -f ".agent_env" ]; then
     echo "Warning: .agent_env not found."
     echo ""
     echo "Copy the example file and fill in your API tokens:"
-    echo "  cp .agent_env.example .agent_env"
+    echo "  cp docker/agent_env.example .agent_env"
     echo "  nano .agent_env   # (or your editor of choice)"
     echo ""
     echo "Creating an empty .agent_env as fallback (compose will proceed without env vars)."
@@ -55,7 +55,7 @@ HOST_GID=$(id -g)
 
 # --- Step 5: Start (or rebuild) the container -------------------------
 echo "Starting agentcastle container..."
-docker compose up -d --build
+docker compose -f docker/docker-compose.yml up -d --build
 
 # --- Step 6: Launch interactive pi session ----------------------------
 echo "Entering pi agent inside container..."

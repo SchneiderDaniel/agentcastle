@@ -80,7 +80,7 @@ Customize ruthlessly. Make it yours.
 
 **Platform:** Docker-only. Linux native, macOS via Docker Desktop, Windows via WSL2 + Docker Desktop.
 
-**API keys:** Copy `.agent_env.example` to `.agent_env` and fill in your keys. The container loads this file automatically.
+**API keys:** Copy `docker/agent_env.example` to `.agent_env` and fill in your keys. The container loads this file automatically.
 
 ---
 
@@ -95,7 +95,7 @@ cd agentcastle
 ```
 
 That's it. The wrapper script:
-1. Builds the OCI image from `Dockerfile` (first run, ~2 min; cached thereafter)
+1. Builds the OCI image from `docker/Dockerfile` (first run, ~2 min; cached thereafter)
 2. Starts the container with your repo bind-mounted, API keys loaded, and UID/GID mapped
 3. Drops you into the Pi TUI inside the container
 
@@ -108,7 +108,7 @@ git clone git@github.com:SchneiderDaniel/agentcastle.git && cd agentcastle
 
 **2. Configure API keys**
 ```bash
-cp .agent_env.example .agent_env
+cp docker/agent_env.example .agent_env
 # Edit .agent_env with your keys (e.g., APIFY_TOKEN)
 ```
 
@@ -126,7 +126,7 @@ Exit with `Ctrl+C` twice. The provider is persisted in `.pi/settings.json`.
 #### What happens under the hood
 
 `./agent-castle.sh` runs `docker compose up` with:
-- Image built from `Dockerfile` (Debian 12-slim, Node.js 22, Python 3, ctags, ripgrep, ast-grep, pi, gosu)
+- Image built from `docker/Dockerfile` (Debian 12-slim, Node.js 22, Python 3, ctags, ripgrep, ast-grep, pi, gosu)
 - Repo root bind-mounted to `/workspaces/main` inside the container
 - `.agent_env` file mounted and sourced automatically
 - Host UID/GID mapped to container user `agentuser` (no permission issues with bind mounts)
