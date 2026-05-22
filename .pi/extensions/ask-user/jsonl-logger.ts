@@ -22,6 +22,19 @@ const QNA_JSONL = "qna.jsonl";
 const QNA_CSV = "qna.csv";
 
 // ---------------------------------------------------------------------------
+// Rotation constants
+// ---------------------------------------------------------------------------
+
+/** Max JSONL entries per file before rotation triggers. */
+const MAX_LINES_PER_FILE = 100;
+
+/** Zero-padded width for archive index in filename. */
+const ARCHIVE_DIGITS = 4;
+
+/** Prefix for archive files: qna_0001.jsonl, qna_0002.jsonl, … */
+const ARCHIVE_PREFIX = "qna_";
+
+// ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
 
@@ -106,6 +119,88 @@ function contextDir(projectDir: string): string {
 	return path.join(projectDir, QNA_DIR, QNA_CONTEXT);
 }
 
+/** Path for a rotated archive file (e.g. qna_0001.jsonl, qna_0002.jsonl). */
+function rotatedJsonlPath(projectDir: string, index: number): string {
+	const padded = String(index).padStart(ARCHIVE_DIGITS, "0");
+	return path.join(projectDir, QNA_DIR, QNA_CONTEXT, `${ARCHIVE_PREFIX}${padded}.jsonl`);
+}
+
+/** Regex to match archive filenames like qna_0001.jsonl and extract the index. */
+const ARCHIVE_RE = /^qna_(\d+)\.jsonl$/;
+
+/**
+ * Scan context dir for all qna_XXXX.jsonl archives, return sorted indices.
+ * Returns empty array if dir doesn't exist.
+ */
+function listArchiveIndices(projectDir: string): number[] {
+	const dir = contextDir(projectDir);
+	let entries: string[];
+	try {
+		entries = fsSync.readdirSync(dir);
+	} catch {
+		return [];
+	}
+
+	const indices: number[] = [];
+	for (const name of entries) {
+		const m = name.match(ARCHIVE_RE);
+		if (m) {
+			indices.push(parseInt(m[1]!, 10));
+		}
+	}
+	indices.sort((a, b) => a - b);
+	return indices;
+}
+
+// ---------------------------------------------------------------------------
+// Write
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Rotation
+// ---------------------------------------------------------------------------
+
+/**
+ * Count lines in a file. Returns 0 if file doesn't exist.
+ * Treats a trailing newline as a line terminator, not an extra line.
+ */
+function countLines(filePath: string): number {
+	try {
+		const content = fsSync.readFileSync(filePath, "utf-8");
+		if (content.length === 0) return 0;
+		// Split, then drop trailing empty from terminal newline
+		const lines = content.split("\n");
+		if (lines.length > 0 && lines[lines.length - 1] === "") {
+			return lines.length - 1;
+		}
+		return lines.length;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * Rotate Q&A log files.
+ *
+ * Finds next unused archive index, then renames active qna.jsonl →
+ * qna_NNNN.jsonl. Archives accumulate indefinitely with no max limit.
+ */
+async function rotateQnaFile(projectDir: string): Promise<void> {
+	const dir = contextDir(projectDir);
+	await fs.mkdir(dir, { recursive: true });
+
+	// Find next unused index
+	const existing = listArchiveIndices(projectDir);
+	const nextIdx = existing.length > 0 ? existing[existing.length - 1]! + 1 : 1;
+
+	// Rename active → qna_NNNN.jsonl
+	try {
+		await fs.rename(jsonlPath(projectDir), rotatedJsonlPath(projectDir, nextIdx));
+	} catch {
+		/* no-op */
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Write
 // ---------------------------------------------------------------------------
@@ -113,6 +208,7 @@ function contextDir(projectDir: string): string {
 /**
  * Append one Q&A entry to .pi/context/qna.jsonl.
  * Validates the entry before writing.
+ * Rotates automatically when active file reaches MAX_LINES_PER_FILE lines.
  * Returns the entry on success, or throws an error with validation/IO message.
  */
 export async function appendQnaEntry(
@@ -132,6 +228,12 @@ export async function appendQnaEntry(
 	const filePath = jsonlPath(projectDir);
 
 	await fs.mkdir(dir, { recursive: true });
+
+	// Rotate if active file at or above threshold
+	if (countLines(filePath) >= MAX_LINES_PER_FILE) {
+		await rotateQnaFile(projectDir);
+	}
+
 	await fs.appendFile(filePath, toJsonlLine(entry), "utf-8");
 
 	return entry;
@@ -141,14 +243,16 @@ export async function appendQnaEntry(
 // Read
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Read helpers
+// ---------------------------------------------------------------------------
+
 /**
- * Read all Q&A entries from the JSONL file.
- * Skips empty lines and corrupted lines (logs warning via console.warn).
+ * Read and parse a single JSONL file.
+ * Skips empty/corrupted lines (logs warnings).
  * Returns empty array if file doesn't exist.
  */
-export async function readQnaEntries(projectDir: string): Promise<QnaEntry[]> {
-	const filePath = jsonlPath(projectDir);
-
+async function readOneJsonlFile(filePath: string): Promise<QnaEntry[]> {
 	let content: string;
 	try {
 		content = await fs.readFile(filePath, "utf-8");
@@ -164,14 +268,36 @@ export async function readQnaEntries(projectDir: string): Promise<QnaEntry[]> {
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i]!;
-		if (line.trim() === "") continue; // skip empty lines
+		if (line.trim() === "") continue;
 		const entry = parseJsonlLine(line);
 		if (entry === null) {
-			console.warn(`Warning: Skipping corrupted JSONL line ${i + 1}`);
+			console.warn(`Warning: Skipping corrupted JSONL line ${i + 1} in ${path.basename(filePath)}`);
 			continue;
 		}
 		entries.push(entry);
 	}
+
+	return entries;
+}
+
+/**
+ * Read ALL Q&A entries across rotated archives + active file.
+ * Merges in chronological order (oldest archive first, active last).
+ * Returns empty array if no files exist.
+ */
+export async function readQnaEntries(projectDir: string): Promise<QnaEntry[]> {
+	const entries: QnaEntry[] = [];
+
+	// Read rotated archives in index order (oldest first)
+	const indices = listArchiveIndices(projectDir);
+	for (const idx of indices) {
+		const archived = await readOneJsonlFile(rotatedJsonlPath(projectDir, idx));
+		entries.push(...archived);
+	}
+
+	// Read active file (most recent entries)
+	const active = await readOneJsonlFile(jsonlPath(projectDir));
+	entries.push(...active);
 
 	return entries;
 }
