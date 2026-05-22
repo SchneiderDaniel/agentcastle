@@ -879,6 +879,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 - ✅ No MCP servers — only pi extensions (no network-exposed tool servers)
 - ✅ API keys loaded from `.agent_env` (repo root), never committed
 - ✅ `.piignore` path blocking — block sensitive files from agent read/write/edit/bash
+- ✅ **npm package age gate** — agent refuses to install npm packages < 14 days old (typosquatting protection)
 
 ### License
 

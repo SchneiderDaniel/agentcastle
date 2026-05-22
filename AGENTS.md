@@ -29,3 +29,14 @@ Use to discover what files and symbols exist. Returns function/class/variable de
 
 ### bash (fallback only for search)
 Do NOT use bash+grep manually. The ripgrep_search tool handles this with proper output parsing and error handling.
+
+## Package Safety
+
+### npm Package Age Check
+Before installing any npm package from the public registry, run:
+`npm view <pkg> time.created`
+If first-publish date is less than 14 days old, block install with:
+"Package <name> is <X> days old — below 14-day safety threshold. Cannot install."
+If the command fails or field is missing, block (fail closed).
+This does NOT apply to git URLs, tarballs, or local paths.
+No override mechanism exists. The block is absolute.

@@ -40,6 +40,14 @@ Creates matching branch in each submodule. No-op if no submodules exist. Fails e
 
 Follow the **Test First** rule:
 
+**Package Safety Check (npm):** Before any `npm install <pkg>` call, verify package age:
+1. Run: `npm view <pkg> time.created`
+2. If date is < 14 days ago, refuse with: "Package <name> is <X> days old — below 14-day safety threshold. Cannot install."
+3. If command fails or field missing, refuse (safety-first, fail closed).
+4. Scoped packages work same (`npm view @scope/pkg time.created`).
+5. git URLs, tarballs, local paths are exempt.
+6. No override. Block is absolute.
+
 **Step A — Write tests first:**
 
 - Read the test plan from the TestDesigner comment
