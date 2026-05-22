@@ -346,8 +346,17 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			intervalMs: 150,
 		});
 
+		// ── Session ID ────────────────────────────────────────
+		let sessionId = "unknown";
+		const sessionFile = ctx.sessionManager.getSessionFile();
+		if (sessionFile) {
+			// Filename format: <timestamp>_<uuid>.jsonl
+			const match = sessionFile.match(/_([0-9a-f-]+)\.jsonl$/i);
+			if (match) sessionId = match[1]!;
+		}
+
 		// ── Startup welcome banner ──────────────────────────────
-		showWelcomeBanner(ctx, startupWidgetActive);
+		showWelcomeBanner(ctx, startupWidgetActive, sessionId);
 	});
 
 	// Clear welcome banner and explain-* widgets on first user input

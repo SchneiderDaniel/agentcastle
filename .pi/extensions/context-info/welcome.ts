@@ -39,6 +39,7 @@ function listNames(dir: string, suffix: string): string[] {
 export function showWelcomeBanner(
 	ctx: ExtensionContext,
 	startupWidgetActive: { value: boolean },
+	sessionId: string,
 ): void {
 	const extCount = countExtensions();
 	const promptCount = listNames(".pi/prompts", ".md").length;
@@ -62,6 +63,17 @@ export function showWelcomeBanner(
 				const titlePad = Math.max(0, Math.floor((baseW - titleVis) / 2));
 				const titleLine =
 					" ".repeat(titlePad) + accent(titleText) + " ".repeat(baseW - titlePad - titleVis);
+
+				// ── Session ID line ─────────────────────────
+				const sidLabel = muted("SessionID: ");
+				const sidValue = accent(sessionId);
+				const sidRawW = visibleWidth("SessionID: ") + visibleWidth(sessionId);
+				const sidPad = Math.max(0, Math.floor((baseW - sidRawW) / 2));
+				const sidLine =
+					" ".repeat(sidPad) +
+					sidLabel +
+					sidValue +
+					" ".repeat(Math.max(0, baseW - sidPad - sidRawW));
 
 				// ── Castle art (towers + walls) ────────────
 				const castle: string[] = [
@@ -152,7 +164,7 @@ export function showWelcomeBanner(
 				// Bottom wall
 				const bottom = dim("|" + "_".repeat(62) + "|");
 
-				return [titleLine, "", ...castleLines, ...statLines, bottom];
+				return [titleLine, sidLine, "", ...castleLines, ...statLines, bottom];
 			},
 		};
 	});
