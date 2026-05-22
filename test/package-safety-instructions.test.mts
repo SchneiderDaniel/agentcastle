@@ -77,7 +77,7 @@ describe("AGENTS.md — Package Safety section", () => {
 describe("developer.md — Package Safety Check instructions", () => {
 	const content = readFile(".pi/agents/developer.md");
 
-	it("contains 'Package Safety' reference", () => {
+	it("contains 'Package Safety Check' reference", () => {
 		assert.ok(content.includes("Package Safety"));
 	});
 
