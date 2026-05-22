@@ -186,6 +186,8 @@ export interface PipelineAgentResult {
 	durationMs: number;
 	tokenCount: number;
 	toolCount: number;
+	/** Model identifier from agent frontmatter, e.g. "anthropic/claude-sonnet-4-20250514" */
+	model?: string;
 }
 
 export interface MergeResult {

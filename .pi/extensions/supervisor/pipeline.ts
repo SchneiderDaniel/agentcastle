@@ -58,26 +58,30 @@ function buildPipelineSummary(
 	lines.push(`## ${headerEmoji} ${headerText} — Issue #${issueNum}`);
 	lines.push("");
 
+	// Helper to extract short model name (after slash)
+	const shortModel = (m?: string) => (m ? m.split("/").pop() || m : "—");
+
 	// Agent table
-	lines.push("| Agent | Status | Duration |");
-	lines.push("|-------|--------|----------|");
+	lines.push("| Agent | Status | Duration | Tokens | Tools | Model |");
+	lines.push("|-------|--------|----------|--------|-------|-------|");
 	if (agentResults.length > 0) {
 		for (const ar of agentResults) {
 			const statusIcon = ar.status === "FAILED" ? "✗" : "✓";
 			lines.push(
-				`| ${ar.agentName} | ${statusIcon} ${ar.status} | ${formatDuration(ar.durationMs)} |`,
+				`| ${ar.agentName} | ${statusIcon} ${ar.status} | ${formatDuration(ar.durationMs)} | ${formatTokens(ar.tokenCount)} | ${ar.toolCount} | ${shortModel(ar.model)} |`,
 			);
 		}
 	} else {
-		lines.push("| (none) | — | — |");
+		lines.push("| (none) | — | — | — | — | — |");
 	}
 	lines.push("");
 
 	// Total stats
 	const totalTokens = agentResults.reduce((sum, a) => sum + a.tokenCount, 0);
 	const totalDurationMs = agentResults.reduce((sum, a) => sum + a.durationMs, 0);
+	const totalToolCalls = agentResults.reduce((sum, a) => sum + a.toolCount, 0);
 	lines.push(
-		`**Total:** ${agentResults.length} agents · ${formatDuration(totalDurationMs)} · ${formatTokens(totalTokens)} tokens`,
+		`**Total:** ${agentResults.length} agents · ${formatDuration(totalDurationMs)} · ${formatTokens(totalTokens)} tokens · ${totalToolCalls} tool calls`,
 	);
 
 	// Issue link
@@ -397,6 +401,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						durationMs: result.durationMs,
 						tokenCount: result.tokenCount,
 						toolCount: result.toolCount,
+						model: agent?.config?.model,
 					});
 
 					// Resolve next status from agent output markers (config-driven)
