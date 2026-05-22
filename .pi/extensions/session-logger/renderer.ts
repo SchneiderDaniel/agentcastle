@@ -10,6 +10,37 @@ import { readFileSync } from "node:fs";
 const TRUNCATE_RESULT_LINES = 8;
 const THINKING_PREVIEW_CHARS = 120;
 
+// ── Parsed session data (used by metadata + markdown) ──
+
+export interface ParsedSessionStats {
+	sessionId: string;
+	timestamp: string;
+	cwd: string;
+	version: number;
+	parentSession?: string;
+	entryCount: number;
+	tokens: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		total: number;
+	};
+	cost: number;
+	models: string[];
+	thinkingLevels: string[];
+	compactions: number;
+	toolStats: Record<string, { calls: number; errors: number; totalDurationMs: number }>;
+	fileModifications: Array<{ action: string; path: string; timestamp: string; size?: number }>;
+	perTurnTokens: Array<{
+		turnIndex: number;
+		tokens: number;
+		cost: number;
+		toolCount: number;
+		errorCount: number;
+	}>;
+}
+
 function fmtTokens(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 	if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
@@ -141,6 +172,149 @@ function renderSupervisorDetails(details: Record<string, unknown>): string[] {
 
 	lines.push(``);
 	return lines;
+}
+
+/** Parse a .jsonl session file and extract statistics for metadata. */
+export function parseSessionStats(filepath: string): ParsedSessionStats | null {
+	const raw = readFileSync(filepath, "utf-8").trim();
+	if (!raw) return null;
+
+	const entries = raw
+		.split("\n")
+		.filter(Boolean)
+		.map((l) => JSON.parse(l));
+	if (entries.length === 0) return null;
+
+	const header = entries[0];
+
+	const models = new Set<string>();
+	const thinkLevels = new Set<string>();
+	let inputTokens = 0;
+	let outputTokens = 0;
+	let cacheRead = 0;
+	let cacheWrite = 0;
+	let totalTokens = 0;
+	let totalCost = 0;
+	let compactions = 0;
+	const toolCounts: Record<string, { calls: number; errors: number; totalDurationMs: number }> = {};
+	const fileMods: Array<{ action: string; path: string; timestamp: string; size?: number }> = [];
+
+	// Per-turn tracking
+	let currentTurnIndex = -1;
+	let currentTurnTokens = 0;
+	let currentTurnCost = 0;
+	let currentTurnToolCount = 0;
+	let currentTurnErrorCount = 0;
+	const perTurnTokens: ParsedSessionStats["perTurnTokens"] = [];
+
+	function flushTurn() {
+		if (currentTurnIndex >= 0) {
+			perTurnTokens.push({
+				turnIndex: currentTurnIndex,
+				tokens: currentTurnTokens,
+				cost: currentTurnCost,
+				toolCount: currentTurnToolCount,
+				errorCount: currentTurnErrorCount,
+			});
+		}
+		currentTurnTokens = 0;
+		currentTurnCost = 0;
+		currentTurnToolCount = 0;
+		currentTurnErrorCount = 0;
+	}
+
+	for (const entry of entries) {
+		if (entry.type === "model_change") {
+			models.add(`${entry.provider}/${entry.modelId}`);
+		} else if (entry.type === "thinking_level_change") {
+			thinkLevels.add(entry.thinkingLevel);
+		} else if (entry.type === "compaction") {
+			compactions++;
+		} else if (entry.type === "message") {
+			const msg = entry.message ?? {};
+			const role = msg.role;
+
+			// Token tracking from assistant messages
+			if (role === "assistant") {
+				const usage = msg.usage;
+				if (usage) {
+					inputTokens += usage.input ?? 0;
+					outputTokens += usage.output ?? 0;
+					cacheRead += usage.cacheRead ?? 0;
+					cacheWrite += usage.cacheWrite ?? 0;
+					totalTokens += usage.totalTokens ?? 0;
+					const cost = usage.cost?.total ?? 0;
+					totalCost += cost;
+					currentTurnTokens += usage.totalTokens ?? 0;
+					currentTurnCost += cost;
+				}
+
+				// File modifications from tool calls
+				for (const c of msg.content ?? []) {
+					if (c.type === "toolCall") {
+						const action =
+							c.name === "read"
+								? "read"
+								: c.name === "write"
+									? "write"
+									: c.name === "edit"
+										? "edit"
+										: null;
+						if (action) {
+							fileMods.push({
+								action,
+								path: c.arguments?.path ?? "?",
+								timestamp: entry.timestamp ?? new Date().toISOString(),
+								size: action === "write" ? c.arguments?.content?.length : undefined,
+							});
+						}
+					}
+				}
+			}
+
+			// Tool result tracking
+			if (role === "toolResult") {
+				const tn = msg.toolName ?? "?";
+				if (!toolCounts[tn]) toolCounts[tn] = { calls: 0, errors: 0, totalDurationMs: 0 };
+				toolCounts[tn].calls++;
+				if (msg.isError) toolCounts[tn].errors++;
+				currentTurnToolCount++;
+				if (msg.isError) currentTurnErrorCount++;
+			}
+
+			// Turn boundaries
+			if (role === "user") {
+				flushTurn();
+				currentTurnIndex++;
+			} else if (role === "assistant" && currentTurnIndex < 0) {
+				currentTurnIndex = 0;
+			}
+		}
+	}
+	flushTurn();
+
+	return {
+		sessionId: header.id ?? "?",
+		timestamp: header.timestamp ?? "?",
+		cwd: header.cwd ?? "?",
+		version: header.version ?? 0,
+		parentSession: header.parentSession,
+		entryCount: entries.length,
+		tokens: {
+			input: inputTokens,
+			output: outputTokens,
+			cacheRead,
+			cacheWrite,
+			total: totalTokens,
+		},
+		cost: totalCost,
+		models: [...models],
+		thinkingLevels: [...thinkLevels],
+		compactions,
+		toolStats: toolCounts,
+		fileModifications: fileMods,
+		perTurnTokens,
+	};
 }
 
 /** Render a .jsonl session file to Markdown. */

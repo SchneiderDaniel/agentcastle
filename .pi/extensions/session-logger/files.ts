@@ -6,8 +6,10 @@ export interface FileOps {
 	ensureSymlink(sessionFile: string, sessionsDir: string): Promise<void>;
 	ensureMdSymlink(sessionDir: string, mdFile: string): Promise<void>;
 	ensureLatestMetadataSymlink(sessionDir: string, metaFile: string): Promise<void>;
-	writeMetadata(sessionDir: string, sessionId: string, metadata: Metadata): Promise<void>;
-	writeSessionReport(sessionDir: string, sessionId: string, markdown: string): Promise<void>;
+	/** Write metadata using sessionPrefix as filename prefix (same as JSONL basename). */
+	writeMetadata(sessionDir: string, sessionPrefix: string, metadata: Metadata): Promise<void>;
+	/** Write markdown report using sessionPrefix as filename prefix. */
+	writeSessionReport(sessionDir: string, sessionPrefix: string, markdown: string): Promise<void>;
 }
 
 /**
@@ -88,19 +90,23 @@ export function createFileOps(): FileOps {
 			await ensureLatestLink(sessionDir, metaFile, "latest.metadata.json");
 		},
 
-		async writeMetadata(sessionDir: string, sessionId: string, metadata: Metadata): Promise<void> {
+		async writeMetadata(
+			sessionDir: string,
+			sessionPrefix: string,
+			metadata: Metadata,
+		): Promise<void> {
 			await fs.writeFile(
-				path.join(sessionDir, `${sessionId}.metadata.json`),
+				path.join(sessionDir, `${sessionPrefix}.metadata.json`),
 				JSON.stringify(metadata, null, 2),
 			);
 		},
 
 		async writeSessionReport(
 			sessionDir: string,
-			sessionId: string,
+			sessionPrefix: string,
 			markdown: string,
 		): Promise<void> {
-			const mdPath = path.join(sessionDir, `${sessionId}.md`);
+			const mdPath = path.join(sessionDir, `${sessionPrefix}.md`);
 			await fs.writeFile(mdPath, markdown, "utf-8");
 		},
 	};

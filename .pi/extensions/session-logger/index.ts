@@ -12,7 +12,8 @@ import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createSessionStats } from "./stats.js";
 import { createFileOps } from "./files.js";
-import { renderSessionToMarkdown } from "./renderer.js";
+import { renderSessionToMarkdown, parseSessionStats } from "./renderer.js";
+import type { ParsedSessionStats } from "./renderer.js";
 import type { Metadata } from "./types.js";
 
 export default function (pi: ExtensionAPI): void {
@@ -50,16 +51,36 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		if (!enabled || !sessionFile) return;
+		if (!enabled) return;
 
 		const sm = ctx.sessionManager;
+		// Use session manager's own file reference — more reliable than module-level state
+		// which can be stale after pi restarts or concurrent sessions.
+		const sf = sm.getSessionFile();
+		if (!sf) return;
+
+		const sessionDir = path.dirname(sf);
+		// Derive filename prefix from JSONL basename so metadata/MD share
+		// the same prefix: {timestamp}_{uuid}.{metadata.json|md}
+		const sessionPrefix = path.basename(sf, ".jsonl");
+
+		// Parse stats directly from the JSONL file — source of truth,
+		// not dependent on event handlers that may not have fired.
+		let parsed: ParsedSessionStats | null = null;
+		try {
+			parsed = parseSessionStats(sf);
+		} catch (err) {
+			console.error(`[session-logger] Failed to parse session: ${(err as Error).message}`);
+		}
+
+		// Fall back to in-memory stats if JSONL parsing fails
 		const snap = stats.getSnapshot();
 
 		const meta: Metadata = {
 			sessionId: sm.getSessionId(),
 			name: sm.getSessionName() || undefined,
 			messages: sm.getEntries().length,
-			tokens: {
+			tokens: parsed?.tokens ?? {
 				input: snap.totalInputTokens,
 				output: snap.totalOutputTokens,
 				cacheRead: snap.totalCacheRead,
@@ -70,27 +91,25 @@ export default function (pi: ExtensionAPI): void {
 					snap.totalCacheRead +
 					snap.totalCacheWrite,
 			},
-			cost: snap.totalCost,
-			compactions: snap.compactionCount,
+			cost: parsed?.cost ?? snap.totalCost,
+			compactions: parsed?.compactions ?? snap.compactionCount,
 			modelChanges: snap.modelChanges,
 			thinkingChanges: snap.thinkingChanges,
-			perTurnTokens: snap.perTurnTokens,
-			toolStats: computeToolStats(snap.toolExecutions),
-			fileModifications: snap.fileModifications,
+			perTurnTokens: parsed?.perTurnTokens ?? snap.perTurnTokens,
+			toolStats: parsed?.toolStats ?? computeToolStats(snap.toolExecutions),
+			fileModifications: parsed?.fileModifications ?? snap.fileModifications,
 		};
 
-		const sessionDir = path.dirname(sessionFile);
-
-		// Write metadata
-		const metaPath = path.join(sessionDir, `${meta.sessionId}.metadata.json`);
-		await files.writeMetadata(sessionDir, meta.sessionId, meta);
+		// Write metadata (uses sessionPrefix for consistent naming with JSONL)
+		const metaPath = path.join(sessionDir, `${sessionPrefix}.metadata.json`);
+		await files.writeMetadata(sessionDir, sessionPrefix, meta);
 		await files.ensureLatestMetadataSymlink(sessionDir, metaPath);
 
 		// Generate .md report
 		try {
-			const md = renderSessionToMarkdown(sessionFile);
-			const mdPath = path.join(sessionDir, `${meta.sessionId}.md`);
-			await files.writeSessionReport(sessionDir, meta.sessionId, md);
+			const md = renderSessionToMarkdown(sf);
+			const mdPath = path.join(sessionDir, `${sessionPrefix}.md`);
+			await files.writeSessionReport(sessionDir, sessionPrefix, md);
 			await files.ensureMdSymlink(sessionDir, mdPath);
 		} catch (err) {
 			console.error(`[session-logger] Failed to generate report: ${(err as Error).message}`);
