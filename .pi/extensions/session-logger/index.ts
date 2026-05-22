@@ -80,12 +80,18 @@ export default function (pi: ExtensionAPI): void {
 		};
 
 		const sessionDir = path.dirname(sessionFile);
+
+		// Write metadata
+		const metaPath = path.join(sessionDir, `${meta.sessionId}.metadata.json`);
 		await files.writeMetadata(sessionDir, meta.sessionId, meta);
+		await files.ensureLatestMetadataSymlink(sessionDir, metaPath);
 
 		// Generate .md report
 		try {
 			const md = renderSessionToMarkdown(sessionFile);
+			const mdPath = path.join(sessionDir, `${meta.sessionId}.md`);
 			await files.writeSessionReport(sessionDir, meta.sessionId, md);
+			await files.ensureMdSymlink(sessionDir, mdPath);
 		} catch (err) {
 			console.error(`[session-logger] Failed to generate report: ${(err as Error).message}`);
 		}

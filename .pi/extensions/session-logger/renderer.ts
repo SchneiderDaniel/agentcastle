@@ -41,6 +41,108 @@ function escMd(s: string): string {
 	return s.replace(/\|/g, "\\|").replace(/`/g, "\\`");
 }
 
+/** Format duration from milliseconds to human-readable string. */
+function fmtDuration(ms: number): string {
+	if (ms < 1000) return `${ms}ms`;
+	if (ms < 60000) return `${(ms / 1000).toFixed(0)}s`;
+	const min = Math.floor(ms / 60000);
+	const sec = Math.round((ms % 60000) / 1000);
+	return `${min}m ${sec}s`;
+}
+
+/**
+ * Render sub-agent details from a supervisor custom message.
+ *
+ * Expects `details` shape:
+ * {
+ *   agentName?: string;
+ *   statusLabel?: string;
+ *   toolCount?: number;
+ *   tokenCount?: number;
+ *   durationMs?: number;
+ *   thinkingOutput?: string;
+ *   hasThinking?: boolean;
+ *   textOutput?: string;
+ *   rawOutput?: string;
+ *   hasRawOutput?: boolean;
+ *   auditScore?: number;
+ * }
+ *
+ * All fields optional — degrades gracefully via `?.` optional chaining.
+ */
+function renderSupervisorDetails(details: Record<string, unknown>): string[] {
+	const lines: string[] = [];
+
+	const agentName = details?.agentName ?? "unknown-agent";
+	const statusLabel = details?.statusLabel ?? "";
+	const toolCount = details?.toolCount;
+	const tokenCount = details?.tokenCount;
+	const durationMs = details?.durationMs;
+	const thinkingOutput = details?.thinkingOutput;
+	const hasThinking = details?.hasThinking;
+	const textOutput = details?.textOutput;
+	const rawOutput = details?.rawOutput;
+	const hasRawOutput = details?.hasRawOutput;
+	const auditScore = details?.auditScore;
+
+	// Agent header
+	const statusPart = statusLabel ? ` -- ${statusLabel}` : "";
+	lines.push(`### Agent: ${agentName}${statusPart}`);
+
+	// Stats line
+	const stats: string[] = [];
+	if (toolCount != null) stats.push(`${toolCount} tools`);
+	if (tokenCount != null) stats.push(`${fmtTokens(tokenCount)} tokens`);
+	if (durationMs != null) stats.push(fmtDuration(durationMs));
+	if (stats.length > 0) {
+		lines.push(``);
+		lines.push(stats.join(", "));
+	}
+
+	// Thinking blocks
+	if (
+		hasThinking &&
+		thinkingOutput &&
+		typeof thinkingOutput === "string" &&
+		thinkingOutput.trim()
+	) {
+		lines.push(``);
+		lines.push(`Thinking:`);
+		for (const para of thinkingOutput.split("\n")) {
+			lines.push(`  ${para}`);
+		}
+	}
+
+	// Tool calls and results (textOutput)
+	if (textOutput && typeof textOutput === "string" && textOutput.trim()) {
+		lines.push(``);
+		for (const line of textOutput.split("\n")) {
+			lines.push(`  ${line}`);
+		}
+	}
+
+	// Raw output — collapsed section
+	if (hasRawOutput && rawOutput && typeof rawOutput === "string" && rawOutput.trim()) {
+		lines.push(``);
+		lines.push(`<details>`);
+		lines.push(`<summary>Raw output (collapsed)</summary>`);
+		lines.push(``);
+		lines.push("```");
+		lines.push(rawOutput);
+		lines.push("```");
+		lines.push(`</details>`);
+	}
+
+	// Audit score
+	if (auditScore != null) {
+		lines.push(``);
+		lines.push(`Audit score: ${auditScore}`);
+	}
+
+	lines.push(``);
+	return lines;
+}
+
 /** Render a .jsonl session file to Markdown. */
 export function renderSessionToMarkdown(filepath: string): string {
 	const raw = readFileSync(filepath, "utf-8").trim();
@@ -198,9 +300,19 @@ export function renderSessionToMarkdown(filepath: string): string {
 			continue;
 		}
 		if (l.type === "custom") {
-			const data = JSON.stringify(l.data ?? {});
-			sections.push(`> *${l.customType}* ${data !== "{}" ? `— ${data}` : ""}`);
-			sections.push(``);
+			// Supervisor custom messages with details get expanded rendering
+			if (
+				l.customType === "supervisor" &&
+				l.details &&
+				typeof l.details === "object" &&
+				Object.keys(l.details as Record<string, unknown>).length > 0
+			) {
+				sections.push(...renderSupervisorDetails(l.details as Record<string, unknown>));
+			} else {
+				const data = JSON.stringify(l.data ?? {});
+				sections.push(`> *${l.customType}* ${data !== "{}" ? `— ${data}` : ""}`);
+				sections.push(``);
+			}
 			continue;
 		}
 		if (l.type === "compaction") {
