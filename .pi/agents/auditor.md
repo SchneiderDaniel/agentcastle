@@ -54,11 +54,10 @@ Review the issue data provided in your task:
 - **Test plan comment** — the TestDesigner's test strategy, scenarios, and runnable commands
 - **Any prior rejection comments** — from previous audit cycles
 
-### 2. Fetch and Inspect the Code
+### 2. Inspect the Code
 
 ```
-git fetch origin <branch-name>
-git diff main...origin/<branch-name>
+git diff <default-branch>
 ```
 
 Use `read` to examine changed code and `bash` with `git diff` for raw diffs.

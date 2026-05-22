@@ -473,7 +473,7 @@ The supervisor (`/supervisor <issue-number>`) is the heart of this harness. It t
 | 1 | **Researcher** | `Research` | `RESEARCH_COMPLETE` | read, bash, structural_search, ripgrep_search | medium | Crawls 3-5 web pages on issue topic, synthesizes findings. Posts `## Research Findings`. Never makes recommendations. |
 | 2 | **Architect** | `Architecture` | `ARCHITECTURE_COMPLETE` | read, bash, structural_search, ripgrep_search | high | Applies Clean Architecture, PEAA, Philosophy of Software Design principles. Proposes target architecture. |
 | 3 | **TestDesigner** | `TestDesign` | `TEST_PLAN_COMPLETE` | read, bash, structural_search, ripgrep_search | medium | Writes test plan: unit, integration, characterization tests. |
-| 4 | **Developer** | `Implementation` | `IMPLEMENTATION_COMPLETE` | read, bash, write, edit, structural_search, ripgrep_search | low | Creates worktree, implements code, commits, pushes. Handles submodule changes. |
+| 4 | **Developer** | `Implementation` | `IMPLEMENTATION_COMPLETE` | read, bash, write, edit, structural_search, ripgrep_search | low | Implements code in pre-created worktree, commits, pushes. Handles submodule changes. |
 | 5 | **Auditor** | `Audit` | `AUDIT_APPROVED` or `AUDIT_REJECTED` | read, bash, structural_search, ripgrep_search | medium | Reviews code against architecture + test plan. Creates PR if approved, or rejects with specifics. |
 
 #### 8.3 Git Worktree Lifecycle
@@ -484,34 +484,38 @@ Each issue gets an **isolated git worktree**. This prevents agents from interfer
 
 **Worktree path:** `../worktree-git-issue-<number>-<title-slug>/`
 
-**Lifecycle:**
+**Lifecycle (supervisor-owned):**
 
 ```
-1. Developer enters stage
-   ├── git worktree add ../<branch> <defaultBranch>
-   └── cd ../<branch>
+1. Supervisor creates worktree before Developer dispatch
+   └── git worktree add -b <branch> ../<branch> <defaultBranch>
 
-2. Implement + commit (inside worktree)
+2. Supervisor dispatches Developer agent with cwd=<worktree-path>
+   └── Agent tools (write, edit, bash, read) resolve against worktree
+
+3. Developer implements, commits, pushes (inside worktree via cwd)
    ├── git add -A
    ├── git commit -m "feat(#42): Add user auth"
    └── git push origin <branch>
 
-3. Auditor reviews (inside same worktree)
+4. Supervisor dispatches Auditor agent with same cwd=<worktree-path>
    └── git diff <defaultBranch>
 
-4. On approval: Auditor creates PR
+5. On approval: Auditor creates PR
    └── gh pr create --repo owner/repo --base <defaultBranch> --head <branch> --title "feat(#42): ..." --body "Closes #42"
 
-5. Post-pipeline: merge conflict check
-   ├── gh pr view <branch> --json mergeable
-   ├── If conflicted → ask user → auto-merge attempt
-   └── If auto-merge fails → dispatch Developer to resolve
+6. Post-pipeline: supervisor cleans up worktree
+   ├── git worktree remove --force ../<branch>
+   ├── git worktree prune
+   └── git branch -D <branch>
 ```
 
 **Key rules:**
-- Developer MUST `cd` into worktree before any write/edit/bash — never work in project root
-- All Git operations happen inside the worktree
-- The worktree persists after approval — cleanup is manual (`git worktree remove`)
+- Worktree is created and owned by the supervisor pipeline — agents never create or remove worktrees
+- Agent cwd is set to worktree path automatically — no `cd` needed in agent tasks
+- All Git operations happen inside the worktree (tools resolve against cwd)
+- Worktree persists across feedback loops (auditor reject → re-implement)
+- Supervisor cleans up worktree after pipeline completes (success, failure, or stop)
 - Configurable via `supervisor.worktreeBase` and `supervisor.branchPrefix` in `.pi/settings.json`
 
 #### 8.4 Submodule Strategy
@@ -707,9 +711,8 @@ Outputs: TEST_PLAN_COMPLETE
 Supervisor moves issue → "Implementation"
 
 ── Step 5: Developer ────────────────────────────────────────────
-Spins up agent with developer prompt + issue + arch + test plan
-  Creates worktree:  git worktree add ../<branch> main
-  cd ../<branch>
+Supervisor creates worktree:  git worktree add -b <branch> ../<branch> main
+Spins up agent with developer prompt + issue + arch + test plan, cwd=<worktree-path>
   Implements feature, runs tests, formats code
   git add -A && git commit -m "feat(#42): ..."
   git push origin <branch>
@@ -721,8 +724,7 @@ Outputs: IMPLEMENTATION_COMPLETE
 Supervisor moves issue → "Audit"
 
 ── Step 7: Auditor ──────────────────────────────────────────────
-Spins up agent with auditor prompt + all previous data
-  cd ../<branch>
+Spins up agent with auditor prompt + all previous data, cwd=<worktree-path>
   git diff main (reviews changes)
   Reviews against architecture + test plan
   Decision: APPROVED ✔

@@ -14,6 +14,8 @@ import type {
 	PipelineAgentResult,
 } from "./types";
 import { existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { execSync } from "node:child_process";
 import { loadConfig, resolveTimeoutMs } from "./config";
 import {
 	ghJson,
@@ -28,7 +30,7 @@ import {
 	filterIssueData,
 } from "./github";
 import { parseAgentFile } from "./agent-loader";
-import { buildAgentTask } from "./agent-task";
+import { buildAgentTask, generateBranchName } from "./agent-task";
 import { runAgent } from "./agent-runner";
 import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "./workflow";
 import { countRejections, formatDuration, formatTokens } from "./formatting";
@@ -120,6 +122,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 			let stopReason: string | undefined;
 			let config!: SupervisorConfig;
 			let issueTitle = "";
+			let worktreePath: string | undefined;
+			let worktreeBranch: string | undefined;
 
 			try {
 				config = loadConfig();
@@ -350,12 +354,42 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 
 					const timeoutMs = resolveTimeoutMs(agentName, config.agentTimeoutsMin);
 
-					let result = await runAgent(agent, task, ctx, pi, timeoutMs);
+					// ── Supervisor-owned worktree lifecycle ──
+					// Create worktree before dispatching developer or auditor agents.
+					// Agent cwd is set to worktree path so tools (write/edit/read/bash)
+					// naturally target the isolated worktree, not the main checkout.
+					if ((agentName === "developer" || agentName === "auditor") && !worktreePath) {
+						worktreeBranch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+						const wt = resolvePath(ctx.cwd, config.worktreeBase!, worktreeBranch);
+						try {
+							execSync(
+								`git worktree add -b "${worktreeBranch}" "${wt}" "${config.defaultBranch!}"`,
+								{ cwd: ctx.cwd, timeout: 15000 },
+							);
+						} catch {
+							// Branch or worktree may already exist — try add without -b
+							try {
+								execSync(`git worktree add "${wt}" "${worktreeBranch}"`, {
+									cwd: ctx.cwd,
+									timeout: 15000,
+								});
+							} catch {
+								// Worktree already exists — idempotent, just use it
+							}
+						}
+						worktreePath = wt;
+					}
+
+					// Pass worktree path as cwd so agent tools resolve against isolated worktree
+					const agentCwd =
+						agentName === "developer" || agentName === "auditor" ? worktreePath : undefined;
+
+					let result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
 					let usedRetry = false;
 
 					if (!result.success) {
 						ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
-						result = await runAgent(agent, task, ctx, pi, timeoutMs);
+						result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
 						usedRetry = true;
 					}
 
@@ -609,6 +643,28 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					}
 				} else {
 					ctx.ui.setStatus("supervisor", "");
+				}
+			}
+
+			// ── Supervisor-owned worktree cleanup ──
+			// Remove worktree after pipeline completes (success, failure, or stop).
+			// Uses --force in case agent left uncommitted changes.
+			if (worktreePath) {
+				try {
+					execSync(
+						`git worktree remove --force "${worktreePath}" 2>/dev/null; ` +
+							`git worktree prune 2>/dev/null`,
+						{ cwd: ctx.cwd, timeout: 15000 },
+					);
+				} catch {
+					console.warn(`[supervisor] Failed to remove worktree at ${worktreePath}`);
+				}
+				if (worktreeBranch) {
+					try {
+						execSync(`git branch -D "${worktreeBranch}"`, { cwd: ctx.cwd, timeout: 10000 });
+					} catch {
+						console.warn(`[supervisor] Failed to delete branch ${worktreeBranch}`);
+					}
 				}
 			}
 		},

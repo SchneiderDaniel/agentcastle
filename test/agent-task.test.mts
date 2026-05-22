@@ -316,7 +316,7 @@ describe("buildAgentTask — auditor summary file flow", () => {
 // Phase 3: other agent types unchanged (regression)
 // ---------------------------------------------------------------------------
 
-describe("buildAgentTask — other agents unchanged", () => {
+describe("buildAgentTask — other agents unchanged or adjusted", () => {
 	it("architect task unchanged: contains gh issue comment with body", () => {
 		const task = buildAgentTask(
 			"architect",
@@ -334,7 +334,7 @@ describe("buildAgentTask — other agents unchanged", () => {
 		assert.ok(task.includes('--body "...your architecture..."'));
 	});
 
-	it("developer task unchanged: contains worktree setup + git commit instructions", () => {
+	it("developer task: no worktree setup, has commit + branch info + work-from-cwd note", () => {
 		const task = buildAgentTask(
 			"developer",
 			42,
@@ -347,9 +347,18 @@ describe("buildAgentTask — other agents unchanged", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("git worktree add"));
+		// Worktree is created by supervisor — no longer in agent task
+		assert.ok(!task.includes("git worktree add"), "Should NOT contain git worktree add");
+		// Commit instructions preserved (without cd prefix)
 		assert.ok(task.includes("git add -A"));
 		assert.ok(task.includes('git commit -m "feat(#42): Fix bug"'));
+		// Branch info still present
+		assert.ok(task.includes("worktree-git-issue-42-fix-bug"), "Should contain branch name");
+		// Should mention current-directory workflow
+		assert.ok(
+			task.includes("Work from current directory") || task.includes("worktree already set up"),
+			"Should mention worktree is pre-setup",
+		);
 	});
 
 	it("researcher task unchanged: contains web_crawl + research format", () => {

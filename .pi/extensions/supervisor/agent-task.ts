@@ -63,13 +63,11 @@ export function buildAgentTask(
 
 		case "developer": {
 			const branch = generateBranchName(issueNum, title, branchPrefix);
-			const wt = `${worktreeBase}${branch}`;
-			return `${issueBlock}\n\n## Task\nImplement the code changes in a git worktree.\n\n### Setup\n1. Create worktree: \`git worktree add ${wt} ${defaultBranch}\`\n2. For ALL implementation work, use: \`cd ${wt} && <your commands>\`\n   (Never run write/edit/bash in the project root — always cd into worktree first!)\n3. Implement the feature following the architecture and test plan from the trusted comments above.\n\n### Commit\n\`\`\`\ncd ${wt}\ngit add -A\ngit commit -m "feat(#${issueNum}): ${title}"\ngit push ${remote} ${branch}\n\`\`\`\n\n**Branch name:** ${branch}\n**Worktree path:** ${wt}\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.\n\nWhen done, output IMPLEMENTATION_COMPLETE on its own line.`;
+			return `${issueBlock}\n\n## Task\nImplement the code changes. Worktree already set up — current directory is the worktree.\n\n### Setup\nWork from current directory — worktree already set up by supervisor. Branch already created.\n\n### Implementation\nFollow the **Test First** rule:\n\n**Step A — Write tests first:**\n- Read the test plan from the TestDesigner comment\n- Write tests that fail because the implementation doesn't exist yet\n- Run tests to confirm they fail (red)\n\n**Step B — Implement:**\n- Read relevant source files using \`read\`\n- Write the minimal code to make tests pass (green)\n- Keep changes focused\n- Edit files in BOTH main repo and any submodule\n\n**Step C — Verify:**\n- Run all tests — new ones AND existing ones\n- Confirm green across the board\n\n**Step D — Update README if needed**\n\n### Commit\n\`\`\`\ngit add -A\ngit commit -m "feat(#${issueNum}): ${title}"\ngit push ${remote} ${branch}\n\`\`\`\n\n**Branch name:** ${branch}\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.\n\nWhen done, output IMPLEMENTATION_COMPLETE on its own line.`;
 		}
 
 		case "auditor": {
 			const branch = generateBranchName(issueNum, title, branchPrefix);
-			const wt = `${worktreeBase}${branch}`;
 			const summaryFile = `/tmp/audit-summary-${issueNum}.md`;
 
 			// --- Write audit summary to temp file (shared by PR body + comment) ---
@@ -179,7 +177,7 @@ export function buildAgentTask(
 				`fi\n` +
 				"```\n";
 
-			return `${issueBlock}\n\n## Task\nReview the implementation in the developer's worktree at ${wt} and decide APPROVE or REJECT.\n\n### Steps\n1. Enter worktree: \`cd ${wt}\`\n2. Review the code: \`git diff ${defaultBranch}\` (shows all changes on this branch vs ${defaultBranch})\n3. Run tests if any exist\n4. Evaluate against the architecture and test plan from the trusted comments above.\n\n### Decision\n\n**IF APPROVE:**\n\n${writeSummaryBlock}${submodulePrSection}${prCreationBlock}Output AUDIT_APPROVED on its own line.\n\n**IF REJECT:**\n\`\`\`\ngh issue comment ${issueNum} --repo ${repo} --body "## Audit Rejected\n\n[list specific issues]"\n\`\`\`\nOutput AUDIT_REJECTED on its own line.\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.`;
+			return `${issueBlock}\n\n## Task\nReview the implementation in the developer's worktree and decide APPROVE or REJECT.\n\n### Steps\n1. Review the code: \`git diff ${defaultBranch}\` (shows all changes on this branch vs ${defaultBranch})\n2. Run tests if any exist\n3. Evaluate against the architecture and test plan from the trusted comments above.\n\n### Decision\n\n**IF APPROVE:**\n\n${writeSummaryBlock}${submodulePrSection}${prCreationBlock}Output AUDIT_APPROVED on its own line.\n\n**IF REJECT:**\n\`\`\`\ngh issue comment ${issueNum} --repo ${repo} --body "## Audit Rejected\n\n[list specific issues]"\n\`\`\`\nOutput AUDIT_REJECTED on its own line.\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.`;
 		}
 
 		case "researcher":

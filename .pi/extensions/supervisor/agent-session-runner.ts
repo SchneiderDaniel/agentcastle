@@ -450,8 +450,9 @@ export async function runAgentInProcess(
 	ctx: ExtensionCommandContext,
 	pi: ExtensionAPI,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
+	cwd?: string,
 ): Promise<AgentRunResult> {
-	const cwd = ctx.cwd || process.cwd();
+	const effectiveCwd = cwd || ctx.cwd || process.cwd();
 	const agentName = agent.config.name;
 	const widgetId = `agent-${agentName}`;
 
@@ -487,10 +488,10 @@ export async function runAgentInProcess(
 	}
 
 	// Build tool list
-	const tools = buildToolList(agent, cwd);
+	const tools = buildToolList(agent, effectiveCwd);
 
 	// Resolve extension paths for resource loader
-	const extPaths = resolveExtensionPaths(agent.config.extensions, cwd);
+	const extPaths = resolveExtensionPaths(agent.config.extensions, effectiveCwd);
 
 	let session;
 	let unsubscribe: (() => void) | undefined;
@@ -499,7 +500,7 @@ export async function runAgentInProcess(
 	try {
 		// Create resource loader with system prompt override and extension paths
 		const resourceLoader = new DefaultResourceLoader({
-			cwd,
+			cwd: effectiveCwd,
 			agentDir: getAgentDir(),
 			settingsManager: SettingsManager.inMemory(),
 			systemPromptOverride: () => agent.systemPrompt,
