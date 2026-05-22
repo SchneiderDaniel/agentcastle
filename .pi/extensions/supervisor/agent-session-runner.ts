@@ -28,7 +28,6 @@ import {
 	formatDuration,
 	extractSummaryLine,
 	formatTokens,
-	buildSubagentStatusLine,
 	extractTextFromContent,
 } from "./formatting";
 import { pushLog, buildWidgetLines, buildWidgetComponent, getWorkingMessage } from "./agent-stream";
@@ -538,20 +537,7 @@ export async function runAgentInProcess(
 			ctx.ui.setWidget(widgetId, (_tui, theme) => buildWidgetComponent(state, agentName, theme), {
 				placement: "aboveEditor",
 			});
-			ctx.ui.setStatus(
-				"supervisor",
-				buildSubagentStatusLine(
-					agentName,
-					state.startedAt,
-					state.tokenCount,
-					state.toolCount,
-					state.contextInfoReceived,
-					state.contextWindow,
-					Date.now(),
-					agent.config.model,
-					ctx.ui.theme,
-				),
-			);
+			ctx.ui.setStatus("supervisor", undefined);
 		};
 
 		const scheduleFlush = () => {

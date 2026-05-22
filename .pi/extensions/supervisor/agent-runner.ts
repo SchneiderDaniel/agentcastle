@@ -9,12 +9,7 @@ import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./t
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { resolveTools, resolveExtensions } from "./extensions";
-import {
-	formatDuration,
-	extractSummaryLine,
-	formatTokens,
-	buildSubagentStatusLine,
-} from "./formatting";
+import { formatDuration, extractSummaryLine, formatTokens } from "./formatting";
 import { resolveTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import {
 	processJsonLine,
@@ -128,20 +123,7 @@ export async function runAgentSubprocess(
 				flushTimer = null;
 			}
 			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName));
-			ctx.ui.setStatus(
-				"supervisor",
-				buildSubagentStatusLine(
-					agentName,
-					state.startedAt,
-					state.tokenCount,
-					state.toolCount,
-					state.contextInfoReceived,
-					state.contextWindow,
-					Date.now(),
-					agent.config.model,
-					ctx.ui.theme,
-				),
-			);
+			ctx.ui.setStatus("supervisor", undefined);
 		};
 
 		const scheduleFlush = () => {
