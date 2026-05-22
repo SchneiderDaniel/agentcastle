@@ -17,6 +17,8 @@ You are the first agent invoked in the pipeline. You research the issue's topic 
 
 When invoked, you will receive pre-filtered issue data (body + trusted comments including architecture) in your task. You must:
 
+- **Package age (npm):** When researching npm dependencies, check `npm view <pkg> time.created`. Flag any package below 14-day age threshold as a security concern (typosquatting/dependency confusion risk). Fail-closed: missing or unparseable date = flag.
+
 ### 1. Deduplication Scan
 Scan the provided issue data for an existing comment containing `## Research Findings`. If one exists, skip all research and immediately output `RESEARCH_COMPLETE` on its own line. Do nothing else.
 
