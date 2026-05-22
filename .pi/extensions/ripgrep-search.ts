@@ -17,9 +17,9 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, stat, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -37,6 +37,7 @@ export interface RgMatch {
 export interface RgResult {
 	total_returned: number;
 	results: RgMatch[];
+	truncated?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -113,7 +114,7 @@ export function resolveBackend(config: SearchConfig, rgAvailable: boolean): { ba
 /** Detect if ripgrep is available on PATH. */
 export async function ripgrepAvailable(exec: ExtensionAPI["exec"]): Promise<boolean> {
 	try {
-		const result = await exec("which", ["rg"], { timeout: 3_000 });
+		const result = await exec("rg", ["--version"], { timeout: 3_000 });
 		return result.code === 0;
 	} catch {
 		return false;
@@ -159,13 +160,14 @@ export function buildGrepArgs(
  * Since grep lacks column info,
  * column defaults to 1.
  */
-export function parseGrepOutput(raw: string | null | undefined): RgResult {
+export function parseGrepOutput(raw: string | null | undefined, maxResults: number = Infinity): RgResult {
 	if (!raw) {
 		return { total_returned: 0, results: [] };
 	}
 
 	const lines = raw.split("\n");
 	const results: RgMatch[] = [];
+	let totalMatches = 0;
 
 	// grep -rnH: file:line:text
 	// Text may contain colons, so match greedily from start
@@ -177,23 +179,27 @@ export function parseGrepOutput(raw: string | null | undefined): RgResult {
 		const match = line.match(grepRegex);
 		if (!match) continue;
 
-		const file = match[1]!;
 		const lineNum = parseInt(match[2]!, 10);
-		const text = match[3]!;
-
 		if (isNaN(lineNum)) continue;
 
-		results.push({
-			file,
-			line: lineNum,
-			column: 1,
-			text,
-		});
+		totalMatches++;
+
+		if (results.length < maxResults) {
+			const file = match[1]!;
+			const text = match[3]!;
+			results.push({
+				file,
+				line: lineNum,
+				column: 1,
+				text,
+			});
+		}
 	}
 
 	return {
-		total_returned: results.length,
+		total_returned: totalMatches,
 		results,
+		truncated: totalMatches > maxResults,
 	};
 }
 
@@ -282,13 +288,14 @@ export function buildRgArgs(
  * Malformed lines (missing colons, non-numeric line/column) → skipped.
  * Lines with colons in the text portion → text is everything after third colon.
  */
-export function parseVimgrepOutput(raw: string | null | undefined): RgResult {
+export function parseVimgrepOutput(raw: string | null | undefined, maxResults: number = Infinity): RgResult {
 	if (!raw) {
 		return { total_returned: 0, results: [] };
 	}
 
 	const lines = raw.split("\n");
 	const results: RgMatch[] = [];
+	let totalMatches = 0;
 
 	const vimgrepRegex = /^(.+?):(\d+):(\d+):(.*)$/;
 
@@ -298,24 +305,28 @@ export function parseVimgrepOutput(raw: string | null | undefined): RgResult {
 		const match = line.match(vimgrepRegex);
 		if (!match) continue;
 
-		const file = match[1]!;
 		const lineNum = parseInt(match[2]!, 10);
 		const column = parseInt(match[3]!, 10);
-		const text = match[4]!;
-
 		if (isNaN(lineNum) || isNaN(column)) continue;
 
-		results.push({
-			file,
-			line: lineNum,
-			column,
-			text,
-		});
+		totalMatches++;
+
+		if (results.length < maxResults) {
+			const file = match[1]!;
+			const text = match[4]!;
+			results.push({
+				file,
+				line: lineNum,
+				column,
+				text,
+			});
+		}
 	}
 
 	return {
-		total_returned: results.length,
+		total_returned: totalMatches,
 		results,
+		truncated: totalMatches > maxResults,
 	};
 }
 
@@ -425,6 +436,68 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				};
 			}
 
+			// ── Pre-flight: verify directory exists before spawning subprocess ──
+			const resolvedDir = resolve(ctx.cwd, directory);
+			try {
+				const dirStat = await stat(resolvedDir);
+				if (!dirStat.isDirectory()) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `"${directory}" is a file, not a directory.`,
+							},
+						],
+						details: { success: false, error: `"${directory}" is a file, not a directory.` } as Record<string, unknown>,
+						isError: true,
+					};
+				}
+			} catch (err: unknown) {
+				const nodeErr = err as { code?: string };
+				if (nodeErr.code === "ENOENT") {
+					// Directory not found — list valid directories
+					let validDirs: string[] = [];
+					try {
+						const entries = await readdir(ctx.cwd, { withFileTypes: true });
+						validDirs = entries
+							.filter(e => e.isDirectory())
+							.map(e => e.name + "/")
+							.sort();
+					} catch {
+						// ignore readdir errors
+					}
+					const dirList = validDirs.length > 0
+						? ` Valid directories: ${validDirs.join(", ")}`
+						: "";
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Directory "${directory}" not found in project root.${dirList}`,
+							},
+						],
+						details: {
+							success: false,
+							error: `Directory "${directory}" not found.${dirList}`,
+						} as Record<string, unknown>,
+						isError: true,
+					};
+				}
+				if (nodeErr.code === "ENOTDIR") {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `"${directory}" is a file, not a directory.`,
+							},
+						],
+						details: { success: false, error: `"${directory}" is a file, not a directory.` } as Record<string, unknown>,
+						isError: true,
+					};
+				}
+				// Other stat errors (permission, etc.) — let the subprocess handle it
+			}
+
 			// Ensure config loaded (defensive — session_start should have set it)
 			const config = searchConfig ?? loadSearchConfig(ctx.cwd);
 			searchConfig = config;
@@ -481,15 +554,41 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				}
 
 				// Error (exit code 2+)
+				const stderr = result.stderr || "";
 				const engineStr = useRipgrep ? "ripgrep (`rg --version`)" : "grep";
+
+				// Check for path-related errors in stderr
+				const pathErrorPatterns = [
+					/No such file or directory/i,
+					/ENOENT/i,
+					/not found/i,
+				];
+				const isPathError = pathErrorPatterns.some(p => p.test(stderr));
+
+				// Check for tool-missing errors
+				const missingToolPatterns = [
+					/command not found/i,
+					/not recognized/i,
+					/internal error/i,
+				];
+				const isMissingTool = missingToolPatterns.some(p => p.test(stderr)) || !stderr.trim();
+
+				let errorText: string;
+				if (isPathError) {
+					errorText = `${searcherName} failed (exit code ${result.code}): ${stderr}` +
+						`\nDirectory "${directory}" not found or inaccessible.`;
+				} else if (isMissingTool) {
+					errorText = `${searcherName} failed (exit code ${result.code}): ${stderr || "unknown error"}` +
+						`\n\nEnsure ${engineStr} installed.`;
+				} else {
+					errorText = `${searcherName} failed (exit code ${result.code}): ${stderr}`;
+				}
+
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text:
-								`${searcherName} failed (exit code ${result.code}): ` +
-								(result.stderr || "unknown error") +
-								`\n\nEnsure ${engineStr} installed.`,
+							text: errorText,
 						},
 					],
 					details: {
@@ -502,27 +601,15 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				};
 			}
 
-			// Parse output (vimgrep for rg, grep format for grep)
+			// Parse output (vimgrep for rg, grep format for grep), capping at MAX_TOTAL_RESULTS
 			const searchResult = useRipgrep
-				? parseVimgrepOutput(result.stdout)
-				: parseGrepOutput(result.stdout);
+				? parseVimgrepOutput(result.stdout, MAX_TOTAL_RESULTS)
+				: parseGrepOutput(result.stdout, MAX_TOTAL_RESULTS);
 
-			// ── Bug 1 fix: Cap total results before serialization ──
 			const totalReturned = searchResult.total_returned;
-			let results = searchResult.results;
-			let resultsTruncated = false;
+			const resultsTruncated = searchResult.truncated ?? false;
 
-			if (results.length > MAX_TOTAL_RESULTS) {
-				results = results.slice(0, MAX_TOTAL_RESULTS);
-				resultsTruncated = true;
-			}
-
-			const truncatedResult: RgResult = {
-				total_returned: totalReturned,
-				results,
-			};
-
-			let json = JSON.stringify(truncatedResult, null, 2);
+			let json = JSON.stringify(searchResult, null, 2);
 			let fullOutputPath: string | undefined;
 
 			// Apply byte-level truncation as safety net
@@ -531,14 +618,13 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				maxLines: DEFAULT_MAX_LINES,
 			});
 
-			// If either results cap or byte truncation kicked in, save full output
+			// If either results cap or byte truncation kicked in, save full output (raw stdout)
 			if (resultsTruncated || truncation.truncated) {
 				const tempDir = await mkdtemp(join(tmpdir(), "pi-ripgrep-"));
-				fullOutputPath = join(tempDir, "full-output.json");
-				// Write the complete (un-truncated) JSON to temp file
-				const fullJson = JSON.stringify(searchResult, null, 2);
+				fullOutputPath = join(tempDir, "full-output.txt");
+				// Write raw stdout (vimgrep/grep format) — compact, avoids JSON re-serialization
 				await withFileMutationQueue(fullOutputPath, async () => {
-					await writeFile(fullOutputPath, fullJson, "utf8");
+					await writeFile(fullOutputPath, result.stdout ?? "", "utf8");
 				});
 			}
 
@@ -561,7 +647,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 					contentText += "]";
 				}
 			} else if (resultsTruncated) {
-				contentText += truncation.content;
+				contentText += json;
 				contentText += `\n\n[Showing first ${MAX_TOTAL_RESULTS} of ${totalReturned} results. Full output saved to: ${fullOutputPath}]`;
 			} else {
 				contentText += "```json\n" + json + "\n```";
