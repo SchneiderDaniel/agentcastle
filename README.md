@@ -228,7 +228,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **Supervisor** | Kanban-driven multi-agent pipeline. Reads issue from GitHub project, dispatches agents in loop. Registers `/supervisor <issue-number>` command. |
 | **Web Crawler** | `web_crawl`: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps. |
 | **Context Info** | Rich TUI status bar (branch, model, tokens, TPS), welcome banner, animated working indicator. |
-| **Session Logger** | Logs sessions to `.pi/sessions/<id>.jsonl`. Toggle with `/session-logger`. Query with `scripts/session-query.sh`. |
+| **Session Logger** | Logs sessions to `.pi/sessions/<id>.jsonl`. Generates `.md` reports with sub-agent output from supervisor pipeline. Toggle with `/session-logger`. Query with `scripts/session-query.sh`. |
 | **Caveman Protocol** | Token-efficient communication. Active via `AGENTS.md`. Configurable intensity levels. |
 | **Ask User** | Interactive MC picker for AI-to-user questions. Uses arrow-key navigation + CSV logging. |
 | **Format on Save** | Auto-formats TS/JS with Prettier + ESLint --fix after write/edit. Non-blocking lint warnings. |
@@ -364,8 +364,16 @@ Output formats:
 - **JSONL log**: `.pi/sessions/<datetime>_<uuid>.jsonl` — event stream per session
 - **Markdown report**: `.pi/sessions/<sessionId>.md` — human-readable session summary
 - **Metadata**: `.pi/sessions/<sessionId>.metadata.json` — structured session metadata
+- **Latest symlinks**: `.pi/sessions/latest.md` and `.pi/sessions/latest.metadata.json` — convenience symlinks to most recent report/metadata
 
 Each session produces uniquely-named `.md` and `.metadata.json` files (keyed by `sessionId`), so no data is overwritten between sessions.
+
+The markdown report includes sub-agent output from supervisor pipeline agents
+(developer, auditor, researcher, test-designer). Each sub-agent turn is rendered
+with agent header, status, tool count, token count, duration, thinking blocks,
+tool calls and results, raw output (collapsed), and audit score. Failed sub-agents
+show error output. Sub-agent entries are clearly distinguished from primary
+turns via `### Agent:` heading level.
 
 The JSONL log is a newline-delimited JSON event stream: messages, thinking blocks, tool calls, compactions.
 
