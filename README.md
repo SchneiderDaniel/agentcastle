@@ -903,7 +903,7 @@ Built on top of these excellent projects:
 **Communication & Workflow:**
 - [Caveman](https://github.com/JuliusBrussee/caveman) — Token-efficient AI communication protocol
 - [pi-caveman](https://github.com/jonjonrankin/pi-caveman) — Multi-level caveman mode for Pi
-- [Matt Pocock's Skills](https://github.com/mattpocock/skills) — Inspiration for the `issue-refinement` prompt pattern
+- [Matt Pocock's Skills — improve-codebase-architecture](https://github.com/mattpocock/skills/tree/main/skills/engineering/improve-codebase-architecture) — Architecture deepening methodology integrated as `.pi/skills/improve-codebase-architecture/`. Also inspiration for `issue-refinement` prompt pattern.
 
 **Extensions & Tools:**
 - [Pi SDK & Extensions Documentation](https://pi.dev/docs/latest) — Extension API, commands, hooks, theme system
