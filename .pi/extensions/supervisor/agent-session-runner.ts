@@ -548,6 +548,7 @@ export async function runAgentInProcess(
 					state.contextInfoReceived,
 					state.contextWindow,
 					Date.now(),
+					agent.config.model,
 					ctx.ui.theme,
 				),
 			);

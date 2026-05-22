@@ -76,7 +76,32 @@ export function extractSummaryLine(
 
 // ─── Subagent status line builder ──────────────────────────────────
 // Builds the status string for ctx.ui.setStatus("supervisor", ...) with
-// subagent prefix and token count colored by context window % thresholds.
+// subagent prefix, model, and token count colored by context window %.
+// Uses hex truecolor thresholds (borrowed from context-info styling).
+
+const THRESHOLD_HEX_COLORS = [
+	"#50fa7b",
+	"#ff6d00",
+	"#ff5252",
+];
+
+function thresholdHex(tokens: number, cw?: number): string | undefined {
+	if (!cw || cw <= 0) return undefined;
+	const pct = (tokens / cw) * 100;
+	if (pct > 90) return THRESHOLD_HEX_COLORS[2];
+	if (pct > 70) return THRESHOLD_HEX_COLORS[1];
+	return THRESHOLD_HEX_COLORS[0];
+}
+
+export function fgHex(hex: string, text: string): string {
+	const cleaned = hex.replace("#", "");
+	if (cleaned.length !== 6) return text;
+	const r = parseInt(cleaned.substring(0, 2), 16);
+	const g = parseInt(cleaned.substring(2, 4), 16);
+	const b = parseInt(cleaned.substring(4, 6), 16);
+	if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return text;
+	return `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
+}
 
 export function buildSubagentStatusLine(
 	agentName: string,
@@ -86,22 +111,26 @@ export function buildSubagentStatusLine(
 	contextInfoReceived: boolean,
 	contextWindow: number | undefined,
 	now: number,
+	model?: string,
 	theme?: { fg: (color: string, text: string) => string },
 ): string {
 	const parts: string[] = [];
 	const durationMs = now - startedAt;
+
+	const shortModel = model ? model.split("/").pop() || model : undefined;
+	if (shortModel) parts.push(`\ud83e\udde0 ${shortModel}`);
+
 	parts.push(`\u23f1 ${formatDuration(durationMs)}`);
 
 	if (tokenCount > 0) {
 		let tokenStr = `${formatTokens(tokenCount)} tokens`;
-		// Color token count based on context window % thresholds (same as main footer)
 		if (contextInfoReceived && contextWindow !== undefined && contextWindow > 0) {
-			const pct = (tokenCount / contextWindow) * 100;
-			if (pct > 90 && theme) {
-				tokenStr = `${theme.fg("error", formatTokens(tokenCount))} tokens`;
-			} else if (pct > 70 && theme) {
-				tokenStr = `${theme.fg("warning", formatTokens(tokenCount))} tokens`;
+			const hex = thresholdHex(tokenCount, contextWindow);
+			if (hex) {
+				tokenStr = fgHex(hex, formatTokens(tokenCount)) + ` tokens`;
 			}
+		} else if (theme) {
+			tokenStr = `${theme.fg("dim", formatTokens(tokenCount))} tokens`;
 		}
 		parts.push(`\ud83d\udcca ${tokenStr}`);
 	}

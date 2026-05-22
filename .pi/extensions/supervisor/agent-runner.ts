@@ -138,6 +138,7 @@ export async function runAgentSubprocess(
 					state.contextInfoReceived,
 					state.contextWindow,
 					Date.now(),
+					agent.config.model,
 					ctx.ui.theme,
 				),
 			);
