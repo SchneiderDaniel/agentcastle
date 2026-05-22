@@ -17,6 +17,8 @@ export interface SupervisorConfig {
 	/** Timeout in seconds for polling CI checks before auditor dispatch.
 	 *  Default: 300 (5 minutes). Set to 0 to disable CI gating. */
 	ciGatingTimeoutSec?: number;
+	/** Emit terminal bell (\x07) on pipeline completion */
+	bellOnComplete?: boolean;
 }
 
 export interface AgentFrontmatter {
@@ -176,6 +178,15 @@ export interface PrConflictInfo {
 }
 
 // ─── Merge result ────────────────────────────────────────────────────
+
+/** Track per-agent outcome for final summary */
+export interface PipelineAgentResult {
+	agentName: string;
+	status: "SUCCESS" | "SUCCESS (after retry)" | "FAILED";
+	durationMs: number;
+	tokenCount: number;
+	toolCount: number;
+}
 
 export interface MergeResult {
 	success: boolean;

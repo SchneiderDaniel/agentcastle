@@ -11,6 +11,7 @@ import type {
 	ProjectField,
 	ProjectItem,
 	SupervisorMessageDetails,
+	PipelineAgentResult,
 } from "./types";
 import { existsSync } from "node:fs";
 import { loadConfig, resolveTimeoutMs } from "./config";
@@ -30,9 +31,76 @@ import { parseAgentFile } from "./agent-loader";
 import { buildAgentTask } from "./agent-task";
 import { runAgent } from "./agent-runner";
 import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "./workflow";
-import { countRejections } from "./formatting";
+import { countRejections, formatDuration, formatTokens } from "./formatting";
 import { runTscAndLspAudit } from "./pipeline-audit";
 import { handlePostPipelineMerge } from "./pipeline-merge";
+
+// ─── Pipeline summary builder ───────────────────────────────────────
+
+function buildPipelineSummary(
+	agentResults: PipelineAgentResult[],
+	overallStatus: "success" | "failed" | "stopped",
+	issueNum: number,
+	issueTitle: string,
+	config: SupervisorConfig,
+	stopReason?: string,
+): string {
+	const lines: string[] = [];
+
+	// Header
+	const headerEmoji = overallStatus === "success" ? "✅" : overallStatus === "failed" ? "❌" : "⏹";
+	const headerText =
+		overallStatus === "success"
+			? "Pipeline Complete"
+			: overallStatus === "failed"
+				? "Pipeline Failed"
+				: "Pipeline Stopped";
+	lines.push(`## ${headerEmoji} ${headerText} — Issue #${issueNum}`);
+	lines.push("");
+
+	// Agent table
+	lines.push("| Agent | Status | Duration |");
+	lines.push("|-------|--------|----------|");
+	if (agentResults.length > 0) {
+		for (const ar of agentResults) {
+			const statusIcon = ar.status === "FAILED" ? "✗" : "✓";
+			lines.push(
+				`| ${ar.agentName} | ${statusIcon} ${ar.status} | ${formatDuration(ar.durationMs)} |`,
+			);
+		}
+	} else {
+		lines.push("| (none) | — | — |");
+	}
+	lines.push("");
+
+	// Total stats
+	const totalTokens = agentResults.reduce((sum, a) => sum + a.tokenCount, 0);
+	const totalDurationMs = agentResults.reduce((sum, a) => sum + a.durationMs, 0);
+	lines.push(
+		`**Total:** ${agentResults.length} agents · ${formatDuration(totalDurationMs)} · ${formatTokens(totalTokens)} tokens`,
+	);
+
+	// Issue link
+	lines.push(`**Issue:** https://github.com/${config.repo}/issues/${issueNum}`);
+
+	// Stop reason for stopped pipelines
+	if (overallStatus === "stopped" && stopReason) {
+		lines.push("");
+		lines.push(`**Stopped at:** ${stopReason}`);
+	}
+
+	// Failure info
+	if (overallStatus === "failed") {
+		const failedAgent = [...agentResults].reverse().find((a) => a.status === "FAILED");
+		if (failedAgent) {
+			lines.push("");
+			lines.push(`**Stopped at:** ${failedAgent.agentName} — agent failed`);
+		}
+		lines.push("**Manual intervention required.**");
+	}
+
+	return lines.join("\n");
+}
 
 export function registerSupervisorCommand(pi: ExtensionAPI): void {
 	pi.registerCommand("supervisor", {
@@ -44,8 +112,13 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				return;
 			}
 
+			const agentResults: PipelineAgentResult[] = [];
+			let stopReason: string | undefined;
+			let config!: SupervisorConfig;
+			let issueTitle = "";
+
 			try {
-				const config = loadConfig();
+				config = loadConfig();
 
 				// Initial fetch
 				ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
@@ -65,7 +138,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					return;
 				}
 
-				const issueTitle: string = issueData?.title || `Issue #${issueNum}`;
+				issueTitle = issueData?.title || `Issue #${issueNum}`;
 
 				// Print issue header
 				pi.sendMessage({
@@ -163,6 +236,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							`No workflow step for status '${loopStatus}'. Available: ${available}`,
 							"error",
 						);
+						stopReason = `No workflow step for status '${loopStatus}'`;
 						break;
 					}
 
@@ -171,6 +245,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						const optId = findStatusOption(fields, statusField.id, "Architecture");
 						if (!optId) {
 							ctx.ui.notify("Cannot find 'Architecture' status option", "error");
+							stopReason = "Backlog transition failed: cannot find 'Architecture' status option";
 							break;
 						}
 						try {
@@ -178,6 +253,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						} catch (err: unknown) {
 							const msg = err instanceof Error ? err.message : String(err);
 							ctx.ui.notify(`Failed to set status: ${msg}`, "error");
+							stopReason = `Backlog transition failed: ${msg}`;
 							break;
 						}
 						ctx.ui.notify(`Issue #${issueNum} moved: Backlog → Architecture`, "info");
@@ -196,6 +272,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					if (!agentName) {
 						const mapped = Object.keys(config.statusMapping).join(", ");
 						ctx.ui.notify(`No agent for status '${loopStatus}'. Mapped: ${mapped}`, "error");
+						stopReason = `No agent for status '${loopStatus}'`;
 						break;
 					}
 
@@ -228,6 +305,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								`Issue #${issueNum} rejected ${step.maxRejections} times. Human intervention required.`,
 								"error",
 							);
+							stopReason = `Rejection limit reached (${step.maxRejections})`;
 							break;
 						}
 					}
@@ -236,6 +314,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					const agentPath = `.pi/agents/${agentName}.md`;
 					if (!existsSync(agentPath)) {
 						ctx.ui.notify(`Agent file not found: ${agentPath}`, "error");
+						stopReason = `Agent file not found: ${agentPath}`;
 						break;
 					}
 
@@ -245,6 +324,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					} catch (err: unknown) {
 						const msg = err instanceof Error ? err.message : String(err);
 						ctx.ui.notify(`Failed to parse agent: ${msg}`, "error");
+						stopReason = `Failed to parse agent: ${msg}`;
 						break;
 					}
 
@@ -305,8 +385,18 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							hasThinking: !!result.thinkingOutput,
 							rawOutput: result.output,
 							hasRawOutput: true,
-							auditScore: currentAuditScore ? `${currentAuditScore.passing}/${currentAuditScore.total}` : undefined,
+							auditScore: currentAuditScore
+								? `${currentAuditScore.passing}/${currentAuditScore.total}`
+								: undefined,
 						} satisfies SupervisorMessageDetails,
+					});
+
+					agentResults.push({
+						agentName: result.agentName,
+						status: statusLabel as PipelineAgentResult["status"],
+						durationMs: result.durationMs,
+						tokenCount: result.tokenCount,
+						toolCount: result.toolCount,
 					});
 
 					// Resolve next status from agent output markers (config-driven)
@@ -317,6 +407,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							`Agent ${agent.config.name} failed. Pipeline stops before ${nextStatus || "next stage"}.`,
 							"warning",
 						);
+						stopReason = `Agent ${agent.config.name} failed`;
 						break;
 					}
 					if (!nextStatus) {
@@ -324,6 +415,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							? `Agent ${agent.config.name} output unclear. Stderr: ${result.errorOutput.slice(0, 200)}. Pipeline stopped.`
 							: `Agent ${agent.config.name} output unclear. Pipeline stopped.`;
 						ctx.ui.notify(unclearNote, "warning");
+						stopReason = `Agent ${agent.config.name} output unclear`;
 						break;
 					}
 
@@ -359,7 +451,11 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 
 					// ── Hooks (CI/TSC/LSP) — triggered when step defines hooks ──
 					let effectiveNextStatus = nextStatus;
-					if (step.hooks?.includes("ci") || step.hooks?.includes("tsc") || step.hooks?.includes("lsp")) {
+					if (
+						step.hooks?.includes("ci") ||
+						step.hooks?.includes("tsc") ||
+						step.hooks?.includes("lsp")
+					) {
 						try {
 							const auditResult = await runTscAndLspAudit(
 								issueNum,
@@ -380,6 +476,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					const nextOptId = findStatusOption(fields, statusField.id, effectiveNextStatus);
 					if (!nextOptId) {
 						ctx.ui.notify(`Cannot find '${effectiveNextStatus}' option on board.`, "warning");
+						stopReason = `Cannot find '${effectiveNextStatus}' option on board.`;
 						break;
 					}
 
@@ -392,6 +489,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					} catch (err: unknown) {
 						const msg = err instanceof Error ? err.message : String(err);
 						ctx.ui.notify(`Failed to update status: ${msg}`, "error");
+						stopReason = `Failed to update status: ${msg}`;
 						break;
 					}
 
@@ -399,15 +497,107 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				}
 
 				// ── Post-pipeline: check for PR merge conflicts ──
-				if (loopStatus.toLowerCase() === "done") {
+				if (loopStatus.toLowerCase() === "done" && agentResults.length > 0) {
 					await handlePostPipelineMerge(issueNum, issueTitle, loopStatus, config, pi, ctx);
 				}
 
-				ctx.ui.setStatus("supervisor", "");
+				// ── Pipeline completion signal ──
+				if (agentResults.length > 0 || stopReason !== undefined) {
+					let overallStatus: "success" | "failed" | "stopped";
+					if (loopStatus.toLowerCase() === "done") {
+						overallStatus = "success";
+					} else if (agentResults.some((a) => a.status === "FAILED")) {
+						overallStatus = "failed";
+					} else {
+						overallStatus = "stopped";
+					}
+
+					const summaryMarkdown = buildPipelineSummary(
+						agentResults,
+						overallStatus,
+						issueNum,
+						issueTitle,
+						config,
+						overallStatus === "stopped" ? stopReason : undefined,
+					);
+
+					pi.sendMessage({
+						customType: "supervisor-summary",
+						content: summaryMarkdown,
+						display: true,
+					});
+
+					ctx.ui.notify("Pipeline complete.", "info");
+
+					// Status bar with result
+					if (overallStatus === "success") {
+						const totalDurationMs = agentResults.reduce((sum, a) => sum + a.durationMs, 0);
+						ctx.ui.setStatus(
+							"supervisor",
+							ctx.ui.theme.fg(
+								"success",
+								`✅ Done · ${agentResults.length} agents · ${formatDuration(totalDurationMs)}`,
+							),
+						);
+					} else if (overallStatus === "failed") {
+						const lastFailed = [...agentResults].reverse().find((a) => a.status === "FAILED");
+						ctx.ui.setStatus(
+							"supervisor",
+							ctx.ui.theme.fg(
+								"error",
+								`❌ Failed at ${lastFailed?.agentName || "unknown"} · ${agentResults.length} agents`,
+							),
+						);
+					} else {
+						ctx.ui.setStatus(
+							"supervisor",
+							ctx.ui.theme.fg("warning", `⏹ Stopped: ${stopReason || "unknown reason"}`),
+						);
+					}
+
+					// Optional terminal bell
+					if (config.bellOnComplete) {
+						process.stdout.write("\x07");
+					}
+				} else {
+					ctx.ui.setStatus("supervisor", "");
+				}
 			} catch (err: unknown) {
 				const msg = err instanceof Error ? err.message : String(err);
 				ctx.ui.notify(`Supervisor error: ${msg}`, "error");
-				ctx.ui.setStatus("supervisor", "");
+
+				// Build summary from partial results if available
+				if (agentResults.length > 0) {
+					const overallStatus: "failed" = "failed";
+					const summaryMarkdown = buildPipelineSummary(
+						agentResults,
+						overallStatus,
+						issueNum,
+						issueTitle,
+						config,
+					);
+
+					pi.sendMessage({
+						customType: "supervisor-summary",
+						content: summaryMarkdown,
+						display: true,
+					});
+
+					const lastFailed = [...agentResults].reverse().find((a) => a.status === "FAILED");
+					ctx.ui.setStatus(
+						"supervisor",
+						ctx.ui.theme.fg(
+							"error",
+							`❌ Failed at ${lastFailed?.agentName || "unknown"} · ${agentResults.length} agents`,
+						),
+					);
+
+					if (config?.bellOnComplete) {
+						process.stdout.write("\x07");
+					}
+				} else {
+					ctx.ui.setStatus("supervisor", "");
+				}
 			}
 		},
 	});

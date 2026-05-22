@@ -114,3 +114,46 @@ export function createMessageRenderer(pi: ExtensionAPI) {
 		return c;
 	};
 }
+
+export function createSummaryRenderer(pi: ExtensionAPI) {
+	return (message: any, _options: any, theme: any) => {
+		const content = typeof message.content === "string" ? message.content : "";
+		const w = Math.max(40, getTermWidth() - 4);
+		const fit = (s: string) => truncateToWidth(s, w);
+
+		const c = new Container();
+
+		// Determine status color from header emoji
+		const firstLine = content.split("\n")[0] || "";
+		let statusColor = "dim";
+		if (firstLine.includes("✅")) {
+			statusColor = "success";
+		} else if (firstLine.includes("❌")) {
+			statusColor = "error";
+		} else if (firstLine.includes("⏹")) {
+			statusColor = "warning";
+		}
+
+		const lines = content.split("\n");
+		for (const line of lines) {
+			let styledLine: string;
+			// Color the header line
+			if (line.startsWith("## ")) {
+				styledLine = theme.fg(statusColor, line);
+			} else if (line.startsWith("| ")) {
+				// Table rows — dim but readable
+				styledLine = theme.fg("dim", line);
+			} else if (line.startsWith("**")) {
+				// Bold lines — subtle highlight
+				styledLine = theme.fg("dim", line);
+			} else {
+				styledLine = line;
+			}
+			for (const wrapped of wrapTextWithAnsi(styledLine || " ", w)) {
+				c.addChild(new Text(wrapped, 1, 0));
+			}
+		}
+
+		return c;
+	};
+}
