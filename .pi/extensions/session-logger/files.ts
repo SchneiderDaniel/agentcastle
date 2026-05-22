@@ -13,6 +13,8 @@ export function createFileOps(): FileOps {
 	return {
 		async ensureSymlink(sessionFile: string, sessionsDir: string): Promise<void> {
 			const latestLink = path.join(sessionsDir, "latest.jsonl");
+			// Compute path relative to symlink directory so link resolves correctly
+			const linkTarget = path.relative(sessionsDir, sessionFile);
 			try {
 				await fs.unlink(latestLink);
 			} catch (err: unknown) {
@@ -21,7 +23,7 @@ export function createFileOps(): FileOps {
 				}
 			}
 			try {
-				await fs.symlink(sessionFile, latestLink);
+				await fs.symlink(linkTarget, latestLink);
 			} catch (err: unknown) {
 				console.error(`[session-logger] Failed to create symlink: ${(err as Error).message}`);
 			}
@@ -29,6 +31,8 @@ export function createFileOps(): FileOps {
 
 		async ensureMdSymlink(sessionDir: string, mdFile: string): Promise<void> {
 			const latestLink = path.join(sessionDir, "latest.md");
+			// Compute path relative to symlink directory so link resolves correctly
+			const linkTarget = path.relative(sessionDir, mdFile);
 			try {
 				await fs.unlink(latestLink);
 			} catch (err: unknown) {
@@ -37,7 +41,7 @@ export function createFileOps(): FileOps {
 				}
 			}
 			try {
-				await fs.symlink(mdFile, latestLink);
+				await fs.symlink(linkTarget, latestLink);
 			} catch (err: unknown) {
 				console.error(`[session-logger] Failed to create md symlink: ${(err as Error).message}`);
 			}
@@ -51,8 +55,6 @@ export function createFileOps(): FileOps {
 			const mdName = path.basename(sessionDir) + ".md";
 			const mdPath = path.join(sessionDir, mdName);
 			await fs.writeFile(mdPath, markdown, "utf-8");
-			// Update latest.md symlink
-			await this.ensureMdSymlink(path.dirname(sessionDir), mdPath);
 		},
 	};
 }
