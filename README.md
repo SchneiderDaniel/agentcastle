@@ -232,7 +232,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **Web Crawler** | `web_crawl`: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps. |
 | **Context Info** | Rich TUI status bar (branch, model, tokens, TPS), welcome banner, animated working indicator. |
 | **Session Logger** | Logs sessions to `.pi/sessions/<id>.jsonl`. Generates `.md` reports with sub-agent output from supervisor pipeline. Toggle with `/session-logger`. Query with `scripts/session-query.sh`. |
-| **Session Advice** | Analyzes each session after shutdown for inefficient patterns. Generates `.advice.md` with fix recommendations. Injects top 3 past-session findings as "⚠️ Past Session Lessons" into agent system prompt at start of each new prompt via `before_agent_start` hook. Post-hoc batch analysis via `scripts/session-advice.ts`. Report with `/session-advice report`. |
+| **Session Advice** | Analyzes each session after shutdown for inefficient patterns. Generates `.advice.md` with fix recommendations. Post-hoc batch analysis via `scripts/session-advice.ts`. Report with `/session-advice report`. |
 | **Caveman Protocol** | Token-efficient communication. Active via `AGENTS.md`. Configurable intensity levels. |
 | **Ask User** | Interactive MC picker for AI-to-user questions. Uses arrow-key navigation + CSV logging. |
 | **Format on Save** | Auto-formats TS/JS with Prettier + ESLint --fix after write/edit. Non-blocking lint warnings. |
@@ -253,8 +253,6 @@ Agents are Markdown files in `.pi/agents/` with YAML frontmatter. The supervisor
 | **Auditor** | `auditor.md` | read, bash, structural_search, ripgrep_search |
 
 All agents use `opencode-go/deepseek-v4-flash` model. Developer additionally uses format-on-save and tsc-checkpoint extensions.
-
-Each agent definition includes a **🛠 Tool Discipline** section with role-specific DO/DON'T pairs, batching triggers, error recovery rules, and read-once guidance. These sections reduce tool-mismatch errors by mapping task types to correct tools upfront. See `AGENTS.md` for the shared Tool Discipline reference (mandatory pre-call checklist, Tool Choice Rules table, Golden Rules).
 
 #### 5.6 Prompt Templates
 
@@ -407,13 +405,18 @@ Detects inefficient patterns in each session and writes `.advice.md` alongside t
 | Identical call loop | error | Same tool+args 3x in last 12 calls |
 | Same-tool cascade | warning | `bash` called 12x consecutively |
 | Tool coverage gap | warning | Code files present but `structural_search` unused |
+| Structural-search underuse | warning | 3+ code files read/edited, `structural_search` never called |
 | Redundant reads | warning | Same file read 3x within 2 turns |
+| Immediate redundant read | warning | Same file read again within 1 turn |
 | Excessive turns | warning | 20+ tool calls with no file changes |
+
+**Feedback loop (before_agent_start):** On next session start, reads `latest.advice.md` and injects top 3 past findings as `⚠️ Past Session Lessons` into system prompt — agent learns from its own mistakes without manual intervention.
 
 **Per-session advice** — automatic on session shutdown:
 - `session_shutdown` hook generates `.advice.md` for the closing session
 - `session_start` recovery generates advice for any past sessions missing it
 - `latest.advice.md` symlink points to most recent advice
+- `before_agent_start` injects past lessons into next session's system prompt
 
 **Cross-session report** — manual, run via:
 ```
@@ -440,7 +443,7 @@ npx tsx scripts/session-advice.ts 2026-05-23   # by prefix
 | **Always-on** | `AGENTS.md` in project root | Concatenated and appended to system prompt every turn |
 | **On-demand** | `.pi/prompts/*.md` | Invoked manually via `/prompt-name` in Pi's editor |
 
-`AGENTS.md` contains the caveman protocol (communication style + tool routing). Active automatically every session.
+`AGENTS.md` contains the caveman protocol (communication style + tool routing) and **🛠 Tool Discipline** section (pre-call checklist, DO/DON'T table, error recovery procedure, batching triggers). Each agent `.md` in `.pi/agents/` also has a role-specific Tool Discipline box at top. Active automatically every session.
 
 ---
 

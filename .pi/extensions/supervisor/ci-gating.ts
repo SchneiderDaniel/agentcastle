@@ -40,20 +40,21 @@ export async function pollCiChecks(
 
 	// Resolve branch SHA
 	let sha: string;
-	const revResult = await pi.exec("git", ["rev-parse", `origin/${branch}`], { timeout: 10_000 });
-	if (revResult.code !== 0) {
+	try {
+		const result = await pi.exec("git", ["rev-parse", `origin/${branch}`], { timeout: 10_000 });
+		sha = (result.stdout || "").trim();
+		if (!sha) {
+			return {
+				status: "error",
+				checks: [],
+				message: `Could not resolve branch '${branch}' SHA.`,
+			};
+		}
+	} catch {
 		return {
 			status: "error",
 			checks: [],
 			message: `Branch '${branch}' not found or not pushed to remote.`,
-		};
-	}
-	sha = (revResult.stdout || "").trim();
-	if (!sha) {
-		return {
-			status: "error",
-			checks: [],
-			message: `Could not resolve branch '${branch}' SHA.`,
 		};
 	}
 
@@ -67,7 +68,7 @@ export async function pollCiChecks(
 					"api",
 					`repos/${repo}/commits/${sha}/check-runs`,
 					"--jq",
-					".check_runs[] | {name, status, conclusion}",
+					'.check_runs[] | {name, status, conclusion}',
 				],
 				{ timeout: 15_000 },
 			);
@@ -96,15 +97,6 @@ export async function pollCiChecks(
 				.filter((c): c is CiCheckInfo => c !== null);
 
 			lastChecks = checks;
-
-			// If gh API returned content but no valid checks parsed — unexpected response
-			if (checks.length === 0) {
-				return {
-					status: "error",
-					checks: [],
-					message: "Unexpected GitHub API response (no valid check runs). Proceeding to audit.",
-				};
-			}
 
 			// Classify check conclusions
 			const terminalConclusions = new Set([
@@ -139,7 +131,9 @@ export async function pollCiChecks(
 
 			// If any check failed — short-circuit immediately
 			if (anyFailure) {
-				const failingChecks = checks.filter((c) => failureConclusions.has(c.conclusion || ""));
+				const failingChecks = checks.filter((c) =>
+					failureConclusions.has(c.conclusion || ""),
+				);
 				const failedNames = failingChecks.map((c) => c.name).join(", ");
 				return {
 					status: "failing",
