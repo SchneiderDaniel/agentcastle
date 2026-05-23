@@ -319,11 +319,11 @@ export function generateAdviceReport(sessionsDir: string): string {
 				{ sev: "info" as string, w: 0 },
 			).sev;
 
-			const reach = sessions.length * g.issues.length;
-			const priority = reach >= 50 ? "High" : reach >= 10 ? "Medium" : "Low";
-
 			// Unique sessions this category appeared in
 			const sessions = [...new Set(g.issues.map((i) => i.session))];
+
+			const reach = sessions.length * g.issues.length;
+			const priority = reach >= 50 ? "High" : reach >= 10 ? "Medium" : "Low";
 			const fix = FIXES[g.category] ?? DEFAULT_FIX;
 
 			// Unique details for display
