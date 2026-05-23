@@ -333,6 +333,73 @@ function detectToolCoverageGap(data: SessionData): AdviceEntry[] {
 	];
 }
 
+/**
+ * Rule 5b: Structural-search underuse — ≥3 code files read/edited, structural_search never called.
+ * Separate from tool-coverage-gap (which fires with any code file + bash grep).
+ * Higher threshold (≥3 files) for dedicated flag.
+ */
+function detectStructuralSearchUnderuse(data: SessionData): AdviceEntry[] {
+	const toolsUsed = new Set(data.entries.filter((e) => e.toolName).map((e) => e.toolName));
+	const hasStructural = [...SEARCH_TOOLS].some((t) => toolsUsed.has(t));
+	if (hasStructural) return [];
+
+	// Count unique code files touched by read/edit/write
+	const codeFiles = new Set(
+		data.entries
+			.filter((e) => e.toolName === "read" || e.toolName === "edit" || e.toolName === "write")
+			.map((e) => (e.args?.path ?? "") as string)
+			.filter((p) => /\.(ts|js|tsx|jsx|py|rs|go)$/i.test(p)),
+	);
+
+	if (codeFiles.size >= 3) {
+		return [
+			{
+				severity: "warning",
+				category: "structural-search-underuse",
+				detail: `${codeFiles.size} code files read/edited, \`structural_search\` never used`,
+				recommendation:
+					"Use `structural_search` for AST-aware code queries (function defs, class declarations, method calls, try/catch blocks). More precise than text grep.",
+			},
+		];
+	}
+
+	return [];
+}
+
+/**
+ * Rule 3b: Immediate redundant read — same file path read within 1 turn.
+ * Tighter window than existing redundant-read (2 turns). Separate category.
+ */
+function detectImmediateRedundantRead(data: SessionData): AdviceEntry[] {
+	const results: AdviceEntry[] = [];
+	const reads: Array<{ path: string; turnIndex: number }> = [];
+
+	for (const entry of data.entries) {
+		if (entry.toolName !== "read") continue;
+
+		const p = (entry.args?.path ?? entry.text ?? "") as string;
+		if (!p) continue;
+		const ti = entry.turnIndex;
+
+		const recent = reads.filter(
+			(r) => r.path === p && Math.abs(r.turnIndex - ti) <= 1 && r.turnIndex !== ti,
+		);
+		if (recent.length > 0) {
+			results.push({
+				severity: "warning",
+				category: "immediate-redundant-read",
+				detail: `\`${shortPath(p)}\` read again within 1 turn (turn ${ti})`,
+				recommendation: `For \`${shortPath(p)}\`, use \`read(path, offset, limit)\` to page. Read once, cache results.`,
+				turns: [Math.min(...recent.map((r) => r.turnIndex), ti), ti],
+			});
+		}
+
+		reads.push({ path: p, turnIndex: ti });
+	}
+
+	return results;
+}
+
 function grepLike(s: string): boolean {
 	const low = s.toLowerCase();
 	return low.includes("grep") || low.includes("| rg") || low.includes("`rg");
@@ -431,8 +498,10 @@ export function analyzeSession(data: SessionData): AdviceResult {
 		...detectSameToolCascade(data),
 		...detectToolMismatch(data),
 		...detectRedundantReads(data),
+		...detectImmediateRedundantRead(data),
 		...detectErrorNotActioned(data),
 		...detectToolCoverageGap(data),
+		...detectStructuralSearchUnderuse(data),
 		...detectExcessiveTurns(data),
 		...detectIdenticalCallLoop(data),
 	];
@@ -447,15 +516,18 @@ export function analyzeSession(data: SessionData): AdviceResult {
 	});
 
 	// Score: weighted by category severity
+	// Weights updated per architecture (#171): tool-mismatch 0.35→0.40, added new categories
 	const weights: Record<string, number> = {
-		"tool-mismatch": 0.35,
+		"tool-mismatch": 0.4,
 		"error-not-actioned": 0.35,
 		"identical-call-loop": 0.35,
 		"same-tool-cascade": 0.2,
 		"redundant-read": 0.15,
+		"immediate-redundant-read": 0.15,
 		"high-error-rate": 0.3,
 		"excessive-turns": 0.15,
 		"tool-coverage-gap": 0.1,
+		"structural-search-underuse": 0.25,
 	};
 
 	const severityMultiplier: Record<string, number> = {
@@ -473,8 +545,8 @@ export function analyzeSession(data: SessionData): AdviceResult {
 		weightedSum += w * s;
 	}
 
-	// Cap at realistic max (all 8 categories as errors)
-	maxWeight = Object.keys(weights).length * 0.35 * 1.0;
+	// Cap at realistic max (all categories as errors)
+	maxWeight = Object.keys(weights).length * 0.4 * 1.0;
 	const rawScore = maxWeight > 0 ? Math.min(1, weightedSum / maxWeight) : 0;
 	const score = Math.round(rawScore * 100) / 100;
 

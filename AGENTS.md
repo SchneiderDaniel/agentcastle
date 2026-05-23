@@ -83,6 +83,44 @@ Every session produces up to 4 files in `.pi/sessions/`:
 
 Symlinks `latest.*` point to most recently closed session.
 
+## 🛠 Tool Discipline
+
+Mandatory pre-call checklist for every tool invocation:
+
+1. **Identify task type** — search, read, write, edit, execute?
+2. **Pick correct tool** from Tool Choice Rules table above
+3. **If tool errors**, do NOT retry same tool+args. Change approach: different args, different tool, or ask user.
+4. **Batch same-tool calls**: if 3+ consecutive same tool, merge into one (combine bash with `&&`, read larger chunk)
+5. **Read once, use offset to page**: do not re-read same file within 3 turns
+6. **Prefer structural_search** for code structure queries (function defs, classes, try/catch) over `bash | grep`
+
+### DO / DON'T
+
+| Task | DO | DON'T |
+|------|----|-------|
+| Find literal text | `ripgrep_search` | `bash \| grep`, `bash \| rg`, `bash \| find` |
+| Find function/class defs | `map_codebase` | `bash \| grep`, `ripgrep_search` |
+| Find AST patterns | `structural_search` | `ripgrep_search`, `bash \| grep` |
+| Read file contents | `read(path, offset?, limit?)` | `bash cat`, `bash head`, `bash tail` |
+| Write new file | `write` | `bash cat >`, `bash echo >` |
+| Edit existing file | `edit` (precise text replacement) | `bash sed`, `write` (full overwrite) |
+| Execute command | `bash` | none — bash is correct here |
+| List directory | `bash ls` | none — ls is acceptable |
+
+### Error Recovery
+
+```
+Tool error → STOP retrying same call → change args, tool, or ask user
+```
+
+If same tool errors twice in a row, force strategy switch. Do not retry more than once with same args.
+
+### Batching Triggers
+
+- 3+ consecutive `bash` → combine with `&&` or use script file
+- 3+ consecutive `read` → read larger portion with higher limit or use `offset` to page
+- 3+ consecutive `write` or `edit` → batch into one larger write
+
 ## Package Safety
 
 ### npm Package Age Check

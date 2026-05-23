@@ -55,6 +55,14 @@ const FIXES: Record<string, FixSuggestion> = {
 		idea: "Add auto-detection: when code files are read/edited but structural_search never called in first 3 turns, add a reminder to use it. Mention in AGENTS.md.",
 		effort: "Low",
 	},
+	"immediate-redundant-read": {
+		idea: "Flag same-file reads within 1 turn — use read(path, offset, limit) to page through files in one call instead of re-reading.",
+		effort: "Low",
+	},
+	"structural-search-underuse": {
+		idea: "When 3+ code files are read/edited and structural_search is never called, remind agent to use it for AST-aware queries over text grep.",
+		effort: "Low",
+	},
 };
 
 const DEFAULT_FIX: FixSuggestion = {
@@ -243,6 +251,48 @@ export default function (pi: ExtensionAPI): void {
 
 		writeAdvice(sessionFile, advicePath, sessionDir);
 	});
+
+	// ── before_agent_start: inject past session lessons into system prompt ──
+
+	pi.on("before_agent_start", async (event, _ctx) => {
+		if (!enabled) return;
+
+		// Read latest.advice.md for past lessons
+		const cwd = process.cwd();
+		const latestAdvicePath = path.resolve(cwd, ".pi", "sessions", "latest.advice.md");
+		if (!fs.existsSync(latestAdvicePath)) return;
+
+		try {
+			const adviceContent = fs.readFileSync(latestAdvicePath, "utf-8");
+			if (!adviceContent || adviceContent.includes("No issues")) return;
+
+			// Extract top 3 findings by scanning for ### entries with severity icons
+			const findings: string[] = [];
+			const lines = adviceContent.split("\n");
+			let currentCategory = "";
+
+			for (const line of lines) {
+				if (/^### [⚠️⚡ℹ️]/.test(line)) {
+					currentCategory = line.replace(/^### [⚠️⚡ℹ️] /, "").trim();
+				} else if (currentCategory && line.startsWith("- **Detail:**")) {
+					const detail = line.replace("- **Detail:** ", "").trim().slice(0, 200);
+					findings.push(`- [${currentCategory}] ${detail}`);
+					currentCategory = "";
+				}
+			}
+
+			if (findings.length === 0) return;
+
+			const top3 = findings.slice(0, 3).map((f) => `  ${f}`).join("\n");
+			const lessonsBlock = `\n\n⚠️ Past Session Lessons\n${top3}\n`;
+
+			return {
+				systemPrompt: event.systemPrompt + lessonsBlock,
+			};
+		} catch {
+			// Silently fail — do not block agent start
+		}
+	});
 }
 
 /**
@@ -308,8 +358,16 @@ export function generateAdviceReport(sessionsDir: string): string {
 		});
 	}
 
+	// Sort sessions by recency (newest first) for recency decay weighting
+	// Recent sessions contribute more to priority calculation
+	const sessionRecency = new Map<string, number>();
+	jsonlFiles.forEach((f, i) => {
+		// Assume files are sorted lexicographically (timestamp-based IDs)
+		const id = f.replace(/\.jsonl$/, "");
+		sessionRecency.set(id, i / Math.max(jsonlFiles.length - 1, 1));
+	});
+
 	// Compute per-category severity + pick an example
-	const categories = Object.values(byCategory)
 		.map((g) => {
 			const maxSev = g.issues.reduce(
 				(acc, i) => {
@@ -322,7 +380,12 @@ export function generateAdviceReport(sessionsDir: string): string {
 			// Unique sessions this category appeared in
 			const sessions = [...new Set(g.issues.map((i) => i.session))];
 
-			const reach = sessions.length * g.issues.length;
+				// Recency-weighted reach: recent sessions contribute 2x
+			const recencyWeightedIssues = g.issues.reduce((sum, i) => {
+				const recencyFactor = sessionRecency.get(i.session) ?? 0.5;
+				return sum + (0.5 + recencyFactor * 0.5); // range: 0.5 to 1.0
+			}, 0);
+			const reach = sessions.length * recencyWeightedIssues;
 			const priority = reach >= 50 ? "High" : reach >= 10 ? "Medium" : "Low";
 			const fix = FIXES[g.category] ?? DEFAULT_FIX;
 
