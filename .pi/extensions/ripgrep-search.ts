@@ -72,12 +72,20 @@ export function loadSearchConfig(cwd: string): SearchConfig {
 		if (!search) return { ...DEFAULT_CONFIG };
 
 		let searchBackend: SearchConfig["searchBackend"] = DEFAULT_CONFIG.searchBackend;
-		if (search.searchBackend === "ripgrep" || search.searchBackend === "grep" || search.searchBackend === "auto") {
+		if (
+			search.searchBackend === "ripgrep" ||
+			search.searchBackend === "grep" ||
+			search.searchBackend === "auto"
+		) {
 			searchBackend = search.searchBackend;
 		}
 
 		let maxLineLength = MAX_LINE_LENGTH_DEFAULT;
-		if (typeof search.maxLineLength === "number" && Number.isInteger(search.maxLineLength) && search.maxLineLength > 0) {
+		if (
+			typeof search.maxLineLength === "number" &&
+			Number.isInteger(search.maxLineLength) &&
+			search.maxLineLength > 0
+		) {
 			maxLineLength = Math.min(search.maxLineLength, MAX_LINE_LENGTH_MAX);
 		}
 
@@ -93,10 +101,17 @@ export function loadSearchConfig(cwd: string): SearchConfig {
  * - "grep": forces grep (skips rg detection)
  * - "auto": uses ripgrep if available, grep otherwise
  */
-export function resolveBackend(config: SearchConfig, rgAvailable: boolean): { backend: "ripgrep" | "grep"; error?: string } {
+export function resolveBackend(
+	config: SearchConfig,
+	rgAvailable: boolean,
+): { backend: "ripgrep" | "grep"; error?: string } {
 	if (config.searchBackend === "ripgrep") {
 		if (!rgAvailable) {
-			return { backend: "ripgrep", error: "ripgrep not found on PATH. Install rg or set searchBackend to 'auto' or 'grep' in .pi/settings.json." };
+			return {
+				backend: "ripgrep",
+				error:
+					"ripgrep not found on PATH. Install rg or set searchBackend to 'auto' or 'grep' in .pi/settings.json.",
+			};
 		}
 		return { backend: "ripgrep" };
 	}
@@ -160,7 +175,10 @@ export function buildGrepArgs(
  * Since grep lacks column info,
  * column defaults to 1.
  */
-export function parseGrepOutput(raw: string | null | undefined, maxResults: number = Infinity): RgResult {
+export function parseGrepOutput(
+	raw: string | null | undefined,
+	maxResults: number = Infinity,
+): RgResult {
 	if (!raw) {
 		return { total_returned: 0, results: [] };
 	}
@@ -210,7 +228,7 @@ export function parseGrepOutput(raw: string | null | undefined, maxResults: numb
  * Collision rule:
  * - Empty or whitespace-only strings are rejected
  * - Patterns starting with `class `, `def `, `function ` are rejected —
- *   agent should use map_codebase (ctags) for class/def searches
+ *   agent should use ranked_map (ctags) for class/def searches
  * - Patterns containing `$` or `{` (structural AST syntax) are rejected —
  *   agent should use structural_search (ast-grep) for structural searches
  *
@@ -228,15 +246,15 @@ export function validateQuery(query: string): string | null {
 
 	// Reject patterns that look like structural/symbol searches
 	if (trimmed.startsWith("class ")) {
-		return `Query "${trimmed}" looks like a class definition search. Use map_codebase (ctags) to find class definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a class definition search. Use ranked_map (ctags) to find class definitions, not ripgrep_search.`;
 	}
 
 	if (trimmed.startsWith("def ")) {
-		return `Query "${trimmed}" looks like a function definition search. Use map_codebase (ctags) to find function definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a function definition search. Use ranked_map (ctags) to find function definitions, not ripgrep_search.`;
 	}
 
 	if (trimmed.startsWith("function ")) {
-		return `Query "${trimmed}" looks like a function definition search. Use map_codebase (ctags) to find function definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a function definition search. Use ranked_map (ctags) to find function definitions, not ripgrep_search.`;
 	}
 
 	// Reject patterns with structural AST syntax ($ or {)
@@ -288,7 +306,10 @@ export function buildRgArgs(
  * Malformed lines (missing colons, non-numeric line/column) → skipped.
  * Lines with colons in the text portion → text is everything after third colon.
  */
-export function parseVimgrepOutput(raw: string | null | undefined, maxResults: number = Infinity): RgResult {
+export function parseVimgrepOutput(
+	raw: string | null | undefined,
+	maxResults: number = Infinity,
+): RgResult {
 	if (!raw) {
 		return { total_returned: 0, results: [] };
 	}
@@ -389,7 +410,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 		promptSnippet: "Search codebase for literal text or regex using ripgrep",
 		promptGuidelines: [
 			"Use ripgrep_search for literal text searches — magic numbers, hardcoded strings, error messages, TODOs, configuration values.",
-			"Do NOT use ripgrep_search to find function definitions, class declarations, or structural code patterns. For those, use map_codebase (ctags) for symbol lookup or structural_search (ast-grep) for AST-aware pattern matching.",
+			"Do NOT use ripgrep_search to find function definitions, class declarations, or structural code patterns. For those, use ranked_map (ctags) for symbol lookup or structural_search (ast-grep) for AST-aware pattern matching.",
 			"ripgrep_search respects .gitignore natively — no extra config needed to skip ignored files.",
 			"Default max_count is 10 (limited per file). Override for targeted searches with fewer results needed.",
 			"Default directory is current working directory ('.'). Pass an explicit path to scope the search.",
@@ -399,7 +420,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				description:
 					"The literal text or regex to find. Supports regex patterns (e.g., 'TODO|FIXME'). " +
 					"Collision rule: patterns starting with 'class ', 'def ', 'function ', or containing " +
-					"'$' or '{' are rejected — use structural_search or map_codebase instead.",
+					"'$' or '{' are rejected — use structural_search or ranked_map instead.",
 			}),
 			directory: Type.Optional(
 				Type.String({
@@ -448,7 +469,10 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 								text: `"${directory}" is a file, not a directory.`,
 							},
 						],
-						details: { success: false, error: `"${directory}" is a file, not a directory.` } as Record<string, unknown>,
+						details: {
+							success: false,
+							error: `"${directory}" is a file, not a directory.`,
+						} as Record<string, unknown>,
 						isError: true,
 					};
 				}
@@ -460,15 +484,13 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 					try {
 						const entries = await readdir(ctx.cwd, { withFileTypes: true });
 						validDirs = entries
-							.filter(e => e.isDirectory())
-							.map(e => e.name + "/")
+							.filter((e) => e.isDirectory())
+							.map((e) => e.name + "/")
 							.sort();
 					} catch {
 						// ignore readdir errors
 					}
-					const dirList = validDirs.length > 0
-						? ` Valid directories: ${validDirs.join(", ")}`
-						: "";
+					const dirList = validDirs.length > 0 ? ` Valid directories: ${validDirs.join(", ")}` : "";
 					return {
 						content: [
 							{
@@ -491,7 +513,10 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 								text: `"${directory}" is a file, not a directory.`,
 							},
 						],
-						details: { success: false, error: `"${directory}" is a file, not a directory.` } as Record<string, unknown>,
+						details: {
+							success: false,
+							error: `"${directory}" is a file, not a directory.`,
+						} as Record<string, unknown>,
 						isError: true,
 					};
 				}
@@ -558,27 +583,21 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				const engineStr = useRipgrep ? "ripgrep (`rg --version`)" : "grep";
 
 				// Check for path-related errors in stderr
-				const pathErrorPatterns = [
-					/No such file or directory/i,
-					/ENOENT/i,
-					/not found/i,
-				];
-				const isPathError = pathErrorPatterns.some(p => p.test(stderr));
+				const pathErrorPatterns = [/No such file or directory/i, /ENOENT/i, /not found/i];
+				const isPathError = pathErrorPatterns.some((p) => p.test(stderr));
 
 				// Check for tool-missing errors
-				const missingToolPatterns = [
-					/command not found/i,
-					/not recognized/i,
-					/internal error/i,
-				];
-				const isMissingTool = missingToolPatterns.some(p => p.test(stderr)) || !stderr.trim();
+				const missingToolPatterns = [/command not found/i, /not recognized/i, /internal error/i];
+				const isMissingTool = missingToolPatterns.some((p) => p.test(stderr)) || !stderr.trim();
 
 				let errorText: string;
 				if (isPathError) {
-					errorText = `${searcherName} failed (exit code ${result.code}): ${stderr}` +
+					errorText =
+						`${searcherName} failed (exit code ${result.code}): ${stderr}` +
 						`\nDirectory "${directory}" not found or inaccessible.`;
 				} else if (isMissingTool) {
-					errorText = `${searcherName} failed (exit code ${result.code}): ${stderr || "unknown error"}` +
+					errorText =
+						`${searcherName} failed (exit code ${result.code}): ${stderr || "unknown error"}` +
 						`\n\nEnsure ${engineStr} installed.`;
 				} else {
 					errorText = `${searcherName} failed (exit code ${result.code}): ${stderr}`;

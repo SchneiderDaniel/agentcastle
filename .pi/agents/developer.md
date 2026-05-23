@@ -4,7 +4,7 @@ description: Implements a GitHub issue in an isolated git worktree based on arch
 tools: read, bash, write, edit, structural_search, ripgrep_search
 model: opencode-go/deepseek-v4-flash
 thinking: medium
-extensions: "caveman,codebase-mapper,crawl4ai,format-on-save,piignore,ripgrep-search,tsc-checkpoint,structural-analyzer"
+extensions: "caveman,crawl4ai,format-on-save,piignore,ripgrep-search,tsc-checkpoint,structural-analyzer"
 ---
 
 🛠 Tool Discipline — Developer

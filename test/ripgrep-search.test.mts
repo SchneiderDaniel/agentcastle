@@ -67,12 +67,20 @@ function loadSearchConfig(cwd: string): SearchConfig {
 		if (!search) return { ...DEFAULT_CONFIG };
 
 		let searchBackend: SearchConfig["searchBackend"] = DEFAULT_CONFIG.searchBackend;
-		if (search.searchBackend === "ripgrep" || search.searchBackend === "grep" || search.searchBackend === "auto") {
+		if (
+			search.searchBackend === "ripgrep" ||
+			search.searchBackend === "grep" ||
+			search.searchBackend === "auto"
+		) {
 			searchBackend = search.searchBackend;
 		}
 
 		let maxLineLength = MAX_LINE_LENGTH_DEFAULT;
-		if (typeof search.maxLineLength === "number" && Number.isInteger(search.maxLineLength) && search.maxLineLength > 0) {
+		if (
+			typeof search.maxLineLength === "number" &&
+			Number.isInteger(search.maxLineLength) &&
+			search.maxLineLength > 0
+		) {
 			maxLineLength = Math.min(search.maxLineLength, MAX_LINE_LENGTH_MAX);
 		}
 
@@ -85,10 +93,17 @@ function loadSearchConfig(cwd: string): SearchConfig {
 /**
  * Resolve the active search backend based on user config and rg availability.
  */
-function resolveBackend(config: SearchConfig, rgAvailable: boolean): { backend: "ripgrep" | "grep"; error?: string } {
+function resolveBackend(
+	config: SearchConfig,
+	rgAvailable: boolean,
+): { backend: "ripgrep" | "grep"; error?: string } {
 	if (config.searchBackend === "ripgrep") {
 		if (!rgAvailable) {
-			return { backend: "ripgrep", error: "ripgrep not found on PATH. Install rg or set searchBackend to 'auto' or 'grep' in .pi/settings.json." };
+			return {
+				backend: "ripgrep",
+				error:
+					"ripgrep not found on PATH. Install rg or set searchBackend to 'auto' or 'grep' in .pi/settings.json.",
+			};
 		}
 		return { backend: "ripgrep" };
 	}
@@ -115,15 +130,15 @@ function validateQuery(query: string): string | null {
 
 	// Reject patterns that look like structural/symbol searches
 	if (trimmed.startsWith("class ")) {
-		return `Query "${trimmed}" looks like a class definition search. Use map_codebase (ctags) to find class definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a class definition search. Use ranked_map (ctags) to find class definitions, not ripgrep_search.`;
 	}
 
 	if (trimmed.startsWith("def ")) {
-		return `Query "${trimmed}" looks like a function definition search. Use map_codebase (ctags) to find function definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a function definition search. Use ranked_map (ctags) to find function definitions, not ripgrep_search.`;
 	}
 
 	if (trimmed.startsWith("function ")) {
-		return `Query "${trimmed}" looks like a function definition search. Use map_codebase (ctags) to find function definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a function definition search. Use ranked_map (ctags) to find function definitions, not ripgrep_search.`;
 	}
 
 	// Reject patterns with structural AST syntax ($ or {)
@@ -322,19 +337,19 @@ describe("validateQuery", () => {
 	it("rejects 'class User' (collision rule)", () => {
 		const result = validateQuery("class User");
 		assert.ok(result !== null, "Expected error for class definition pattern");
-		assert.ok(result!.includes("map_codebase"), "Error should mention map_codebase");
+		assert.ok(result!.includes("ranked_map"), "Error should mention ranked_map");
 	});
 
 	it("rejects 'def verify_token' (collision rule)", () => {
 		const result = validateQuery("def verify_token");
 		assert.ok(result !== null);
-		assert.ok(result!.includes("map_codebase"));
+		assert.ok(result!.includes("ranked_map"));
 	});
 
 	it("rejects 'function bootstrap' (collision rule)", () => {
 		const result = validateQuery("function bootstrap");
 		assert.ok(result !== null);
-		assert.ok(result!.includes("map_codebase"));
+		assert.ok(result!.includes("ranked_map"));
 	});
 
 	it("rejects pattern with $ (structural syntax)", () => {
@@ -719,7 +734,11 @@ describe("loadSearchConfig", () => {
 
 	function cleanupTmpDir(dir: string) {
 		for (const d of [dir]) {
-			try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ }
+			try {
+				rmSync(d, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
 		}
 	}
 
@@ -761,7 +780,10 @@ describe("loadSearchConfig", () => {
 	it("parses searchBackend: auto", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "auto" } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { searchBackend: "auto" } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.searchBackend, "auto");
 			assert.strictEqual(result.maxLineLength, 200);
@@ -773,7 +795,10 @@ describe("loadSearchConfig", () => {
 	it("parses searchBackend: ripgrep", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "ripgrep" } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { searchBackend: "ripgrep" } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.searchBackend, "ripgrep");
 		} finally {
@@ -784,7 +809,10 @@ describe("loadSearchConfig", () => {
 	it("parses searchBackend: grep", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "grep" } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { searchBackend: "grep" } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.searchBackend, "grep");
 		} finally {
@@ -795,7 +823,10 @@ describe("loadSearchConfig", () => {
 	it("falls back to auto for invalid searchBackend", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "invalid" } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { searchBackend: "invalid" } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.searchBackend, "auto");
 		} finally {
@@ -806,7 +837,10 @@ describe("loadSearchConfig", () => {
 	it("parses maxLineLength: 100", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: 100 } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { maxLineLength: 100 } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.maxLineLength, 100);
 		} finally {
@@ -817,7 +851,10 @@ describe("loadSearchConfig", () => {
 	it("rejects maxLineLength: 0 (must be positive)", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: 0 } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { maxLineLength: 0 } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.maxLineLength, 200);
 		} finally {
@@ -828,7 +865,10 @@ describe("loadSearchConfig", () => {
 	it("rejects maxLineLength: -50 (negative)", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: -50 } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { maxLineLength: -50 } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.maxLineLength, 200);
 		} finally {
@@ -839,7 +879,10 @@ describe("loadSearchConfig", () => {
 	it("clamps maxLineLength: 5000 to 2000", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: 5000 } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { maxLineLength: 5000 } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.maxLineLength, 2000);
 		} finally {
@@ -850,7 +893,10 @@ describe("loadSearchConfig", () => {
 	it("rejects maxLineLength: 'abc' (non-numeric)", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: "abc" } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { maxLineLength: "abc" } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.maxLineLength, 200);
 		} finally {
@@ -861,7 +907,10 @@ describe("loadSearchConfig", () => {
 	it("accepts maxLineLength at upper bound: 2000", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { maxLineLength: 2000 } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { maxLineLength: 2000 } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.maxLineLength, 2000);
 		} finally {
@@ -872,7 +921,10 @@ describe("loadSearchConfig", () => {
 	it("handles both searchBackend and maxLineLength together", () => {
 		const dir = setupTmpDir();
 		try {
-			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ search: { searchBackend: "grep", maxLineLength: 150 } }));
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ search: { searchBackend: "grep", maxLineLength: 150 } }),
+			);
 			const result = loadSearchConfig(dir);
 			assert.strictEqual(result.searchBackend, "grep");
 			assert.strictEqual(result.maxLineLength, 150);
@@ -905,7 +957,10 @@ describe("resolveBackend", () => {
 		const result = resolveBackend({ searchBackend: "ripgrep", maxLineLength: 200 }, false);
 		assert.strictEqual(result.backend, "ripgrep");
 		assert.ok(result.error !== undefined, "Should return an error message");
-		assert.ok(result.error!.includes("ripgrep not found"), "Error should mention ripgrep not found");
+		assert.ok(
+			result.error!.includes("ripgrep not found"),
+			"Error should mention ripgrep not found",
+		);
 	});
 
 	it("grep + rg available → grep (skips detection)", () => {
@@ -935,117 +990,168 @@ describe("integration: rg binary", () => {
 		}
 	})();
 
-	const skipMsg = "rg binary not installed — skip integration test (install with: apt install ripgrep or brew install ripgrep)";
+	const skipMsg =
+		"rg binary not installed — skip integration test (install with: apt install ripgrep or brew install ripgrep)";
 
-it('searches "5000" on fixture dir and returns 2 results', { skip: !hasRg ? skipMsg : false, timeout: 15_000 }, () => {
-		const sampleDir = resolve("test/fixtures/ripgrep-sample");
-		if (!existsSync(sampleDir)) {
-			throw new Error("test/fixtures/ripgrep-sample/ not found");
-		}
+	it(
+		'searches "5000" on fixture dir and returns 2 results',
+		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
+		() => {
+			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			if (!existsSync(sampleDir)) {
+				throw new Error("test/fixtures/ripgrep-sample/ not found");
+			}
 
-		const stdout = execSync("rg --vimgrep --max-columns=200 --max-count=10 --no-heading -j1 5000 .", {
-			cwd: sampleDir,
-			encoding: "utf-8",
-			stdio: "pipe",
-			timeout: 10_000,
-		});
+			const stdout = execSync(
+				"rg --vimgrep --max-columns=200 --max-count=10 --no-heading -j1 5000 .",
+				{
+					cwd: sampleDir,
+					encoding: "utf-8",
+					stdio: "pipe",
+					timeout: 10_000,
+				},
+			);
 
-		const result = parseVimgrepOutput(stdout);
-		assert.strictEqual(result.total_returned, 2, `Expected 2 results, got ${result.total_returned}`);
+			const result = parseVimgrepOutput(stdout);
+			assert.strictEqual(
+				result.total_returned,
+				2,
+				`Expected 2 results, got ${result.total_returned}`,
+			);
 
-		// Normalize file paths (rg may include ./ prefix when cwd matches search dir)
-		const files = result.results.map((r) => r.file.replace(/^\.\//, "")).sort();
-		assert.ok(files.includes("config/settings.py"), "Should find config/settings.py");
-		assert.ok(files.includes("src/app.ts"), "Should find src/app.ts");
+			// Normalize file paths (rg may include ./ prefix when cwd matches search dir)
+			const files = result.results.map((r) => r.file.replace(/^\.\//, "")).sort();
+			assert.ok(files.includes("config/settings.py"), "Should find config/settings.py");
+			assert.ok(files.includes("src/app.ts"), "Should find src/app.ts");
 
-		// Each result has proper types
-		for (const entry of result.results) {
-			assert.ok(typeof entry.file === "string" && entry.file.length > 0);
-			assert.ok(typeof entry.line === "number" && entry.line > 0);
-			assert.ok(typeof entry.column === "number" && entry.column > 0);
-			assert.ok(typeof entry.text === "string");
-		}
-	});
+			// Each result has proper types
+			for (const entry of result.results) {
+				assert.ok(typeof entry.file === "string" && entry.file.length > 0);
+				assert.ok(typeof entry.line === "number" && entry.line > 0);
+				assert.ok(typeof entry.column === "number" && entry.column > 0);
+				assert.ok(typeof entry.text === "string");
+			}
+		},
+	);
 
-	it('searches "TODO" on fixture dir and returns 0 results', { skip: !hasRg ? skipMsg : false, timeout: 15_000 }, () => {
-		const sampleDir = resolve("test/fixtures/ripgrep-sample");
-		if (!existsSync(sampleDir)) {
-			throw new Error("test/fixtures/ripgrep-sample/ not found");
-		}
+	it(
+		'searches "TODO" on fixture dir and returns 0 results',
+		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
+		() => {
+			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			if (!existsSync(sampleDir)) {
+				throw new Error("test/fixtures/ripgrep-sample/ not found");
+			}
 
-		// rg exits with code 1 when no matches found — execSync throws on non-zero
-		// We catch the exception and parse stdout for empty result
-		let stdout = "";
-		try {
-			stdout = execSync("rg --vimgrep --max-columns=200 --max-count=10 --no-heading -j1 TODO .", {
-				cwd: sampleDir,
-				encoding: "utf-8",
-				stdio: "pipe",
-				timeout: 10_000,
-			});
-		} catch (e: unknown) {
-			const err = e as { stdout?: string; stderr?: string; status?: number };
-			// rg exit code 1 = no matches — stdout should be empty
-			stdout = err.stdout || "";
-		}
+			// rg exits with code 1 when no matches found — execSync throws on non-zero
+			// We catch the exception and parse stdout for empty result
+			let stdout = "";
+			try {
+				stdout = execSync("rg --vimgrep --max-columns=200 --max-count=10 --no-heading -j1 TODO .", {
+					cwd: sampleDir,
+					encoding: "utf-8",
+					stdio: "pipe",
+					timeout: 10_000,
+				});
+			} catch (e: unknown) {
+				const err = e as { stdout?: string; stderr?: string; status?: number };
+				// rg exit code 1 = no matches — stdout should be empty
+				stdout = err.stdout || "";
+			}
 
-		const result = parseVimgrepOutput(stdout);
-		assert.strictEqual(result.total_returned, 0, `Expected 0 results for TODO, got ${result.total_returned}`);
-	});
+			const result = parseVimgrepOutput(stdout);
+			assert.strictEqual(
+				result.total_returned,
+				0,
+				`Expected 0 results for TODO, got ${result.total_returned}`,
+			);
+		},
+	);
 
-	it('searches "TIMEOUT_MS" with max_count=1 and respects per-file limit', { skip: !hasRg ? skipMsg : false, timeout: 15_000 }, () => {
-		const sampleDir = resolve("test/fixtures/ripgrep-sample");
-		if (!existsSync(sampleDir)) {
-			throw new Error("test/fixtures/ripgrep-sample/ not found");
-		}
+	it(
+		'searches "TIMEOUT_MS" with max_count=1 and respects per-file limit',
+		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
+		() => {
+			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			if (!existsSync(sampleDir)) {
+				throw new Error("test/fixtures/ripgrep-sample/ not found");
+			}
 
-		// TIMEOUT_MS appears once per file, so max_count=1 should still return 2
-		const stdout = execSync("rg --vimgrep --max-columns=200 --max-count=1 --no-heading -j1 TIMEOUT_MS .", {
-			cwd: sampleDir,
-			encoding: "utf-8",
-			stdio: "pipe",
-			timeout: 10_000,
-		});
+			// TIMEOUT_MS appears once per file, so max_count=1 should still return 2
+			const stdout = execSync(
+				"rg --vimgrep --max-columns=200 --max-count=1 --no-heading -j1 TIMEOUT_MS .",
+				{
+					cwd: sampleDir,
+					encoding: "utf-8",
+					stdio: "pipe",
+					timeout: 10_000,
+				},
+			);
 
-		const result = parseVimgrepOutput(stdout);
-		assert.strictEqual(result.total_returned, 2, `Expected 2 results for TIMEOUT_MS, got ${result.total_returned}`);
-	});
+			const result = parseVimgrepOutput(stdout);
+			assert.strictEqual(
+				result.total_returned,
+				2,
+				`Expected 2 results for TIMEOUT_MS, got ${result.total_returned}`,
+			);
+		},
+	);
 
-	it("column values are 1-indexed character positions", { skip: !hasRg ? skipMsg : false, timeout: 15_000 }, () => {
-		const sampleDir = resolve("test/fixtures/ripgrep-sample");
-		if (!existsSync(sampleDir)) {
-			throw new Error("test/fixtures/ripgrep-sample/ not found");
-		}
+	it(
+		"column values are 1-indexed character positions",
+		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
+		() => {
+			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			if (!existsSync(sampleDir)) {
+				throw new Error("test/fixtures/ripgrep-sample/ not found");
+			}
 
-		const stdout = execSync("rg --vimgrep --max-columns=200 --max-count=10 --no-heading -j1 5000 .", {
-			cwd: sampleDir,
-			encoding: "utf-8",
-			stdio: "pipe",
-			timeout: 10_000,
-		});
+			const stdout = execSync(
+				"rg --vimgrep --max-columns=200 --max-count=10 --no-heading -j1 5000 .",
+				{
+					cwd: sampleDir,
+					encoding: "utf-8",
+					stdio: "pipe",
+					timeout: 10_000,
+				},
+			);
 
-		const result = parseVimgrepOutput(stdout);
-		for (const entry of result.results) {
-			assert.ok(typeof entry.column === "number" && entry.column > 0, `Column should be positive number, got ${entry.column}`);
-		}
-	});
+			const result = parseVimgrepOutput(stdout);
+			for (const entry of result.results) {
+				assert.ok(
+					typeof entry.column === "number" && entry.column > 0,
+					`Column should be positive number, got ${entry.column}`,
+				);
+			}
+		},
+	);
 
-	it("--max-columns=200 enforced (lines over 200 chars truncated)", { skip: !hasRg ? skipMsg : false, timeout: 15_000 }, () => {
-		const sampleDir = resolve("test/fixtures/ripgrep-sample");
-		if (!existsSync(sampleDir)) {
-			throw new Error("test/fixtures/ripgrep-sample/ not found");
-		}
+	it(
+		"--max-columns=200 enforced (lines over 200 chars truncated)",
+		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
+		() => {
+			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			if (!existsSync(sampleDir)) {
+				throw new Error("test/fixtures/ripgrep-sample/ not found");
+			}
 
-		const stdout = execSync("rg --vimgrep --max-columns=200 --max-count=10 --no-heading -j1 '[\\s\\S]' .", {
-			cwd: sampleDir,
-			encoding: "utf-8",
-			stdio: "pipe",
-			timeout: 10_000,
-		});
+			const stdout = execSync(
+				"rg --vimgrep --max-columns=200 --max-count=10 --no-heading -j1 '[\\s\\S]' .",
+				{
+					cwd: sampleDir,
+					encoding: "utf-8",
+					stdio: "pipe",
+					timeout: 10_000,
+				},
+			);
 
-		const result = parseVimgrepOutput(stdout);
-		for (const entry of result.results) {
-			assert.ok(entry.text.length <= 200, `Text should be <= 200 chars with --max-columns=200, got ${entry.text.length}`);
-		}
-	});
+			const result = parseVimgrepOutput(stdout);
+			for (const entry of result.results) {
+				assert.ok(
+					entry.text.length <= 200,
+					`Text should be <= 200 chars with --max-columns=200, got ${entry.text.length}`,
+				);
+			}
+		},
+	);
 });
