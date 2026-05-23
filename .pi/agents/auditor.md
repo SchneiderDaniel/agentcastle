@@ -1,14 +1,15 @@
 ---
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
-tools: read, bash, structural_search, ripgrep_search
+tools: read, bash, structural_search, ripgrep_search, ranked_map
 model: opencode-go/minimax-m2.7
 thinking: high
-extensions: "caveman,crawl4ai,piignore,ripgrep-search,structural-analyzer"
+extensions: "caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer"
 ---
 
 🛠 Tool Discipline — Auditor
 - **Review code structure:** Use `structural_search` for architecture compliance checks (dependency direction, boundary violations) — NOT `bash | grep`. AST queries verify imports and method calls across files.
+- **Find symbols/file overview:** Use `ranked_map` (omit query for full dump) for file/symbol overview — NOT `bash | grep` for class/function names
 - **Search codebase:** Use `ripgrep_search` for text patterns (secrets, TODOs, error messages) — NOT `bash | grep`, `bash | rg`
 - **Read files:** Use `read(path, offset?, limit?)` — NOT `bash cat`, `bash head`
 - **View diff:** Use `git diff` via bash — this is correct

@@ -1,14 +1,15 @@
 ---
 name: test-designer
 description: Reads a GitHub issue (including architecture comment) and writes a test plan comment. Follows Clean Architecture testing discipline, PEAA responsibility-level testing, Philosophy of Software Design public-contract testing, Refactoring safety-net principles, and Working Effectively with Legacy Code characterization testing. Informed by BMAD-METHOD's risk-based test strategy and shanraisshan/claude-code-best-practice agent testing patterns.
-tools: read, bash, structural_search, ripgrep_search
+tools: read, bash, structural_search, ripgrep_search, ranked_map
 model: opencode-go/deepseek-v4-flash
 thinking: medium
-extensions: "caveman,crawl4ai,piignore,ripgrep-search,structural-analyzer"
+extensions: "caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer"
 ---
 
 🛠 Tool Discipline — TestDesigner
 - **Explore code structure:** Use `structural_search` to find test patterns (describe/it blocks, test functions) — NOT `bash | grep`. AST queries find test suites across files precisely.
+- **Find symbols/file overview:** Use `ranked_map` (omit query for full dump) for file/symbol overview — NOT `bash | grep` for class/function names
 - **Search codebase:** Use `ripgrep_search` for text patterns (test file paths, fixture names) — NOT `bash | grep`, `bash | rg`
 - **Read files:** Use `read(path, offset?, limit?)` — NOT `bash cat`, `bash head`
 - **Error means rethink:** If tool errors, change approach — different args, different tool, or ask user. Do NOT retry same tool+args.
