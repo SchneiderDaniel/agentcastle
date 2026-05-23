@@ -283,7 +283,10 @@ export default function (pi: ExtensionAPI): void {
 
 			if (findings.length === 0) return;
 
-			const top3 = findings.slice(0, 3).map((f) => `  ${f}`).join("\n");
+			const top3 = findings
+				.slice(0, 3)
+				.map((f) => `  ${f}`)
+				.join("\n");
 			const lessonsBlock = `\n\n⚠️ Past Session Lessons\n${top3}\n`;
 
 			return {
@@ -368,6 +371,7 @@ export function generateAdviceReport(sessionsDir: string): string {
 	});
 
 	// Compute per-category severity + pick an example
+	const categories = Object.values(byCategory)
 		.map((g) => {
 			const maxSev = g.issues.reduce(
 				(acc, i) => {
@@ -380,7 +384,7 @@ export function generateAdviceReport(sessionsDir: string): string {
 			// Unique sessions this category appeared in
 			const sessions = [...new Set(g.issues.map((i) => i.session))];
 
-				// Recency-weighted reach: recent sessions contribute 2x
+			// Recency-weighted reach: recent sessions contribute 2x
 			const recencyWeightedIssues = g.issues.reduce((sum, i) => {
 				const recencyFactor = sessionRecency.get(i.session) ?? 0.5;
 				return sum + (0.5 + recencyFactor * 0.5); // range: 0.5 to 1.0
