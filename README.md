@@ -197,6 +197,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/piignore.ts` | `.piignore` path blocking |
 | `.pi/extensions/tsc-checkpoint.ts` | `/check` command: `tsc --noEmit` |
 | `.pi/extensions/session-advice/` | Session advice — improvement recommendations per session |
+| `.pi/extensions/check-extensions/` | `/check-extensions` — audit extensions against pi CHANGELOG API changes |
 | `.pi/agents/researcher.md` | Researcher agent (pipeline step 1) |
 | `.pi/agents/architect.md` | Architect agent (pipeline step 2) |
 | `.pi/agents/test-designer.md` | TestDesigner agent (pipeline step 3) |
@@ -238,6 +239,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **Format on Save** | Auto-formats TS/JS with Prettier + ESLint --fix after write/edit. Non-blocking lint warnings. |
 | **PiIgnore** | Blocks paths matching `.piignore` patterns from read/write/edit/bash. Supports negation (`!`). |
 | **TSC Checkpoint** | `/check` command runs `tsc --noEmit` on worktree. Used in pipeline Implementation→Audit. |
+| **Check Extensions** | `/check-extensions` parses pi CHANGELOG.md, scans `.pi/extensions/` for affected API usage, creates GitHub issues with `extension-audit` label for each extension needing updates. Skips duplicates. |
 | **LSP Auditor** | Runs real LSP diagnostics on modified files before merge. Groups by server, auto-retry (max 3). Called by supervisor. |
 
 #### 5.5 Agent Definitions
