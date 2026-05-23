@@ -247,16 +247,16 @@ options:
 
 ⚠️ HARD STOP. Wait for the answer.
 
-- If user selects **"No"** → if `frontend_flag` is `true`, proceed to PHASE 1.5 (frontend refinement); otherwise proceed directly to PHASE 2 (write & update).
+- If user selects **"No"** → if `frontend_flag` is `true`, proceed to PHASE 1.5 (frontend refinement); otherwise proceed directly to PHASE 1.7 (Complexity Assessment).
 - If user selects **"Yes"** and types details → treat this as a new topic. Ask follow-up questions until it's concrete and resolved, then re-present the completion summary and ask the final question again.
 
 ---
 
 ## PHASE 1.5: FRONTEND REFINEMENT (conditional)
 
-**Only execute this phase if `frontend_flag` is `true`.** When `frontend_flag` is `false`, skip this entire section and proceed directly to PHASE 2.
+**Only execute this phase if `frontend_flag` is `true`.** When `frontend_flag` is `false`, skip this entire section and proceed directly to PHASE 1.7 (Complexity Assessment).
 
-This phase runs between PHASE 1 (core interview) and PHASE 2 (write & update). Its purpose is to gather UI design decisions before writing the refined issue, so implementation does not need to re-ask design questions.
+This phase runs between PHASE 1 (core interview) and PHASE 1.7 (Complexity Assessment). Its purpose is to gather UI design decisions before writing the refined issue, so implementation does not need to re-ask design questions.
 
 ### Rules
 
@@ -281,7 +281,47 @@ This phase runs between PHASE 1 (core interview) and PHASE 2 (write & update). I
 4. If the answer is vague, follow up on the SAME aspect.
 5. If the user says "I don't know" / "I don't care", pick a default, document it, proceed.
 6. If you skip an aspect, record: "[Aspect]: SKIPPED — [brief justification]".
-7. After all 5 aspects are addressed, announce completion and proceed to PHASE 2.
+7. After all 5 aspects are addressed, announce completion and proceed to PHASE 1.7 (Complexity Assessment).
+
+---
+
+## PHASE 1.7: COMPLEXITY ASSESSMENT
+
+Before writing the refined issue, assess the complexity of the agreed scope.
+
+### Step 1 — Analyze
+
+Review the agreed topics:
+- Number of requirements and acceptance criteria
+- Breadth of codebase changes (files, modules, layers affected)
+- Cross-cutting concerns (frontend + backend, infrastructure, design)
+- External dependencies or blocked-on issues
+- Error handling and edge case surface area
+
+### Step 2 — Classify
+
+| Classification | Criteria | Recommendation |
+|---|---|---|
+| **Simple** | 1 requirement, ≤3 ACs, single file/module, no external deps | Can be done in one go — no sub-tasks needed |
+| **Medium** | 1–3 requirements, 2–5 files, few edge cases, clear scope | Can be done in one go, but consider 2 sub-tasks if work touches separate areas |
+| **Complex** | ≥3 requirements, cross-module, many edge cases, frontend + backend | Split into 2–4 sub-tasks, one per logical requirement |
+
+### Step 3 — State Recommendation
+
+Present the assessment as a declarative output (not a question):
+
+```
+🧠 **Complexity Assessment for Issue #$1**
+
+**Rating:** [Simple | Medium | Complex]
+**Rationale:** [1–2 sentences explaining the reasoning]
+
+**Recommendation:**
+- [Simple/Medium] → This is a simple to medium task and can be done in one go.
+- [Complex] → Consider splitting into N sub-tasks: [list each logical sub-task]
+```
+
+Then proceed to PHASE 2.
 
 ---
 
