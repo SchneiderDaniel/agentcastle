@@ -44,14 +44,11 @@ export async function ghGraphQL(
 	query: string,
 	opts?: { signal?: AbortSignal; timeout?: number },
 ): Promise<any> {
-	const result = await gh(pi, [
-		"api",
-		"graphql",
-		"--header",
-		"Accept: application/vnd.github+json",
-		"-f",
-		`query=${query}`,
-	], opts);
+	const result = await gh(
+		pi,
+		["api", "graphql", "--header", "Accept: application/vnd.github+json", "-f", `query=${query}`],
+		opts,
+	);
 	if (!result) return null;
 	return JSON.parse(result);
 }
@@ -62,7 +59,9 @@ export async function getProjectFields(
 	pi: ExtensionAPI,
 	projectNumber: number,
 ): Promise<ProjectField[]> {
-	const resp = await ghGraphQL(pi, `{
+	const resp = await ghGraphQL(
+		pi,
+		`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
 				fields(first: 10) {
@@ -74,7 +73,8 @@ export async function getProjectFields(
 				}
 			}
 		}
-	}`);
+	}`,
+	);
 	const nodes = resp?.data?.viewer?.projectV2?.fields?.nodes || [];
 	return nodes.map((n: any) => ({
 		id: n.id,
@@ -88,75 +88,94 @@ export async function getProjectItems(
 	pi: ExtensionAPI,
 	projectNumber: number,
 ): Promise<ProjectItem[]> {
-	const resp = await ghGraphQL(pi, `{
-		viewer {
-			projectV2(number: ${projectNumber}) {
-				items(first: 100) {
-					nodes {
-						id
-						content {
-							... on Issue { number url }
-							... on PullRequest { number url }
+	const allItems: ProjectItem[] = [];
+	let after: string | null = null;
+	let hasNextPage = true;
+
+	while (hasNextPage) {
+		const afterArg = after ? `, after: "${after}"` : "";
+		const resp = await ghGraphQL(
+			pi,
+			`{
+			viewer {
+				projectV2(number: ${projectNumber}) {
+					items(first: 100${afterArg}) {
+						pageInfo {
+							hasNextPage
+							endCursor
 						}
-						fieldValues(first: 20) {
-							nodes {
-								... on ProjectV2ItemFieldSingleSelectValue {
-									name
-									field { ... on ProjectV2FieldCommon { id name } }
-								}
-								... on ProjectV2ItemFieldTextValue {
-									text
-									field { ... on ProjectV2FieldCommon { id name } }
+						nodes {
+							id
+							content {
+								... on Issue { number url }
+								... on PullRequest { number url }
+							}
+							fieldValues(first: 20) {
+								nodes {
+									... on ProjectV2ItemFieldSingleSelectValue {
+										name
+										field { ... on ProjectV2FieldCommon { id name } }
+									}
+									... on ProjectV2ItemFieldTextValue {
+										text
+										field { ... on ProjectV2FieldCommon { id name } }
+									}
 								}
 							}
 						}
 					}
 				}
 			}
-		}
-	}`);
-	const nodes = resp?.data?.viewer?.projectV2?.items?.nodes || [];
-	return nodes.map((n: any) => {
-		const fieldNodes: any[] = n.fieldValues?.nodes || [];
-		let status: string | undefined;
-		const fv: Array<{ fieldId: string; value: string; optionId?: string }> = [];
-		for (const f of fieldNodes) {
-			if (f.name && f.field?.name?.toLowerCase() === "status") {
-				status = f.name;
+		}`,
+		);
+		const page = resp?.data?.viewer?.projectV2?.items;
+		const nodes = page?.nodes || [];
+		for (const n of nodes) {
+			const fieldNodes: any[] = n.fieldValues?.nodes || [];
+			let status: string | undefined;
+			const fv: Array<{ fieldId: string; value: string; optionId?: string }> = [];
+			for (const f of fieldNodes) {
+				if (f.name && f.field?.name?.toLowerCase() === "status") {
+					status = f.name;
+				}
+				if (f.field?.id) {
+					fv.push({
+						fieldId: f.field.id,
+						value: f.name || f.text || "",
+						optionId: undefined,
+					});
+				}
 			}
-			if (f.field?.id) {
-				fv.push({
-					fieldId: f.field.id,
-					value: f.name || f.text || "",
-					optionId: undefined,
-				});
-			}
+			allItems.push({
+				id: n.id,
+				status,
+				content: n.content
+					? {
+							url: n.content.url,
+							number: n.content.number,
+						}
+					: undefined,
+				fieldValues: fv.length > 0 ? fv : undefined,
+			});
 		}
-		return {
-			id: n.id,
-			status,
-			content: n.content
-				? {
-						url: n.content.url,
-						number: n.content.number,
-					}
-				: undefined,
-			fieldValues: fv.length > 0 ? fv : undefined,
-		};
-	});
+		hasNextPage = page?.pageInfo?.hasNextPage ?? false;
+		after = page?.pageInfo?.endCursor ?? null;
+	}
+
+	return allItems;
 }
 
-export async function getProjectId(
-	pi: ExtensionAPI,
-	projectNumber: number,
-): Promise<string> {
-	const resp = await ghGraphQL(pi, `{
+export async function getProjectId(pi: ExtensionAPI, projectNumber: number): Promise<string> {
+	const resp = await ghGraphQL(
+		pi,
+		`{
 		viewer {
 			projectV2(number: ${projectNumber}) {
 				id
 			}
 		}
-	}`);
+	}`,
+	);
 	return resp?.data?.viewer?.projectV2?.id || "";
 }
 
