@@ -6,7 +6,7 @@
  * configurable token budget. Phase 1: keyword + recency only.
  * Co-change scoring deferred to Phase 2.
  *
- * Reuses parseCtagsOutput / buildCtagsArgs from codebase-mapper.ts.
+ * Includes inline ctags parsing (parseCtagsOutput) and command building (buildCtagsArgs).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -15,7 +15,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, join, relative } from "node:path";
 
-import { parseCtagsOutput, buildCtagsArgs } from "./codebase-mapper";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -69,6 +68,104 @@ const DEFAULT_CONFIG: RankedMapConfig = {
 };
 
 const MAX_RECENCY_WINDOW_DAYS = 365;
+
+// ═══════════════════════════════════════════════════════════════════════
+// Ctags parsing (migrated from codebase-mapper.ts)
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Raw ctags JSONL tag object (only fields we care about). */
+interface CtagsTag {
+	_type: string;
+	name: string;
+	kind: string;
+	path: string;
+	pattern: string;
+	line?: number;
+}
+
+/**
+ * Parse raw ctags JSONL output into CtagsTag[].
+ *
+ * ctags --output-format=json emits one JSON object per line.
+ * Lines with _type: "ptag" are metadata pseudo-tags — skip them.
+ * Lines that are empty, malformed, or missing required fields are skipped.
+ */
+function parseCtagsOutput(raw: string): CtagsTag[] {
+	if (!raw || typeof raw !== "string") return [];
+
+	const lines = raw.split("\n");
+	const tags: CtagsTag[] = [];
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(trimmed);
+		} catch {
+			continue; // skip malformed lines
+		}
+
+		if (typeof parsed !== "object" || parsed === null) continue;
+
+		const tag = parsed as Record<string, unknown>;
+
+		// Skip pseudo-tags (metadata like JSON_OUTPUT_VERSION)
+		if (tag._type === "ptag") continue;
+
+		// Must have _type: "tag" and required fields
+		if (tag._type !== "tag") continue;
+		if (typeof tag.name !== "string" || !tag.name) continue;
+		if (typeof tag.kind !== "string" || !tag.kind) continue;
+		if (typeof tag.path !== "string" || !tag.path) continue;
+
+		// Filter out JSON-value kinds (defense-in-depth against data file noise)
+		const NON_CODE_KINDS = new Set(["number", "array", "object", "boolean", "string", "null"]);
+		if (NON_CODE_KINDS.has(tag.kind)) continue;
+
+		tags.push({
+			_type: "tag",
+			name: tag.name,
+			kind: tag.kind,
+			path: tag.path,
+			pattern: typeof tag.pattern === "string" ? tag.pattern : "",
+			line: typeof tag.line === "number" ? tag.line : undefined,
+		});
+	}
+
+	return tags;
+}
+
+/**
+ * Build ctags command arguments.
+ *
+ * Default excludes: node_modules, .git (common sources of noise).
+ * max_depth: 0 = unlimited (ctags default).
+ */
+function buildCtagsArgs(
+	targetDir: string,
+	maxDepth: number,
+): { command: string; args: string[] } {
+	const args = [
+		"-R",
+		"--output-format=json",
+		"--exclude=node_modules",
+		"--exclude=.git",
+		"--exclude=*.json",
+		"--exclude=*.min.js",
+		"--exclude=*.css",
+		"--exclude=static",
+	];
+
+	if (maxDepth > 0) {
+		args.push(`--maxdepth=${maxDepth}`);
+	}
+
+	args.push(targetDir);
+
+	return { command: "ctags", args };
+}
 
 // ═══════════════════════════════════════════════════════════════════════
 // Pure Functions (exported for testing)
@@ -746,7 +843,7 @@ export default function rankedMap(pi: ExtensionAPI): void {
 			const symbolCount = Object.values(index.symbols).flat().length;
 			const fileCount = Object.keys(index.symbols).length;
 
-			const modeLabel =
+			const displayMode =
 				output.mode === "full_dump"
 					? "full dump"
 					: `ranked${query ? ` (query="${query}")` : " (recency-only)"}`;
@@ -760,7 +857,7 @@ export default function rankedMap(pi: ExtensionAPI): void {
 						type: "text" as const,
 						text:
 							`${output.mode === "full_dump" ? "Codebase map" : "Ranked repo map"} for: ${targetDir}\n` +
-							`Mode: ${modeLabel}, ${output.total_tokens} of ${budget} tokens used${truncatedInfo}\n` +
+							`Mode: ${displayMode}, ${output.total_tokens} of ${budget} tokens used${truncatedInfo}\n` +
 							`Index: ${fileCount} files, ${symbolCount} symbols\n\n` +
 							"```json\n" +
 							JSON.stringify(output, null, 2) +
