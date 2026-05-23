@@ -5,6 +5,9 @@
  */
 
 import type { Finding } from "./extension-scanner.ts";
+import type { ASTFinding } from "./ast-scanner.ts";
+import type { MigrationSnippet } from "./migration-generator.ts";
+import type { ImpactScore } from "./impact-scorer.ts";
 
 /** Exec function signature matching pi.exec */
 export type ExecFn = (
@@ -215,4 +218,194 @@ export async function createIssue(
 	}
 
 	return result.stdout.trim();
+}
+
+// ── Extended Issue Building (Phase 3: Rich output) ───────────────────
+
+/**
+ * Build a Migration Guide section for an issue body.
+ *
+ * @param snippets - Array of migration snippets
+ * @returns Markdown section string, or empty string if no snippets
+ */
+export function buildMigrationSection(snippets: MigrationSnippet[]): string {
+	if (snippets.length === 0) return "";
+
+	const lines: string[] = [];
+	lines.push("## Migration Guide");
+	lines.push("");
+	lines.push("The following code snippets show how to update affected API calls:");
+	lines.push("");
+
+	for (const snippet of snippets) {
+		const confidenceLabel =
+			snippet.confidence >= 0.7
+				? "✅ High confidence"
+				: snippet.confidence >= 0.3
+					? "⚠️ Medium confidence — review required"
+					: "❌ Low confidence — manual migration needed";
+
+		lines.push(`### \`${snippet.apiName}\` — ${confidenceLabel}`);
+		lines.push("");
+		lines.push("**Before:**");
+		lines.push("");
+		lines.push("```ts");
+		lines.push(snippet.before);
+		lines.push("```");
+		lines.push("");
+		lines.push("**After:**");
+		lines.push("");
+		lines.push("```ts");
+		lines.push(snippet.after);
+		lines.push("```");
+		lines.push("");
+	}
+
+	return lines.join("\n");
+}
+
+/**
+ * Build an Impact Summary section for an issue body.
+ *
+ * @param score - Impact score for the extension
+ * @returns Markdown summary string
+ */
+export function buildImpactSummary(score: ImpactScore): string {
+	const severityEmoji: Record<string, string> = {
+		none: "✅",
+		low: "🟢",
+		medium: "🟡",
+		high: "🔴",
+		critical: "🚨",
+	};
+
+	const emoji = severityEmoji[score.severity] ?? "❓";
+	const testsBadge = score.hasTests ? "✅" : "❌";
+
+	const lines: string[] = [];
+	lines.push("## Impact Summary");
+	lines.push("");
+	const severityLabel = score.severity.charAt(0).toUpperCase() + score.severity.slice(1);
+	lines.push(`${emoji} **Severity:** ${severityLabel}`);
+	lines.push(`- **Affected APIs:** ${score.uniqueApis}`);
+	lines.push(`- **Breaking changes:** ${score.breakingCount}`);
+	lines.push(`- **Tests:** ${testsBadge}`);
+	lines.push("");
+
+	return lines.join("\n");
+}
+
+/**
+ * Build a full issue body with migration snippets and impact scoring.
+ * Extends buildIssueBody with richer content.
+ *
+ * @param extensionName - Name of the extension
+ * @param findings - Array of AST findings
+ * @param version - Pi version from changelog
+ * @param snippets - Migration snippets (may be empty)
+ * @param impactScore - Impact score for this extension
+ * @returns Complete markdown issue body
+ */
+export function buildIssueBodyWithSnippets(
+	extensionName: string,
+	findings: ASTFinding[],
+	version: string,
+	snippets: MigrationSnippet[],
+	impactScore: ImpactScore,
+): string {
+	const lines: string[] = [];
+
+	lines.push(`# Extension Audit: ${extensionName}`);
+	lines.push("");
+	lines.push(
+		`This issue tracks API changes in **pi ${version}** that affect the \`${extensionName}\` extension.`,
+	);
+	lines.push("");
+
+	// Impact Summary
+	lines.push(buildImpactSummary(impactScore));
+
+	// Changelog Reference
+	lines.push("## Changelog Reference");
+	lines.push("");
+	lines.push(`Pi version \`${version}\` contains changes that impact this extension.`);
+	lines.push("");
+
+	// Breaking changes
+	const breaking = findings.filter((f) => f.isBreaking);
+	const nonBreaking = findings.filter((f) => !f.isBreaking);
+
+	if (breaking.length > 0) {
+		lines.push("## Breaking Changes");
+		lines.push("");
+		lines.push("The following API changes require immediate attention:");
+		lines.push("");
+		for (const f of breaking) {
+			const ctxBadge = getContextBadge(f.matchContext);
+			lines.push(`### \`${f.apiName}\` ${ctxBadge}`);
+			lines.push("");
+			lines.push(`- **File:** \`${f.file}\``);
+			lines.push(`- **Line:** ${f.line}`);
+			lines.push(`- **Code:** \`${f.lineContent}\``);
+			if (f.callArgs && f.callArgs.length > 0) {
+				lines.push(`- **Args:** \`${f.callArgs.join(", ")}\``);
+			}
+			lines.push("");
+		}
+	}
+
+	// Non-breaking changes
+	if (nonBreaking.length > 0) {
+		lines.push("## Simplifications & Non-Breaking Changes");
+		lines.push("");
+		lines.push("The following changes may simplify or improve extension code:");
+		lines.push("");
+		for (const f of nonBreaking) {
+			const ctxBadge = getContextBadge(f.matchContext);
+			lines.push(`### \`${f.apiName}\` ${ctxBadge}`);
+			lines.push("");
+			lines.push(`- **File:** \`${f.file}\``);
+			lines.push(`- **Line:** ${f.line}`);
+			lines.push(`- **Code:** \`${f.lineContent}\``);
+			if (f.callArgs && f.callArgs.length > 0) {
+				lines.push(`- **Args:** \`${f.callArgs.join(", ")}\``);
+			}
+			lines.push("");
+		}
+	}
+
+	// Migration Guide section
+	if (snippets.length > 0) {
+		lines.push(buildMigrationSection(snippets));
+	}
+
+	// Suggested Actions
+	lines.push("## Suggested Actions");
+	lines.push("");
+	lines.push("1. Review each finding in context");
+	lines.push("2. Apply migration snippets where provided (review low-confidence ones)");
+	lines.push("3. Update affected API calls to match new patterns");
+	lines.push("4. Test extension with updated APIs");
+	lines.push("5. Close this issue when updates are complete");
+	lines.push("");
+	lines.push("---");
+	lines.push("");
+	lines.push("_Auto-generated by \`/check-extensions\` extension._");
+
+	return lines.join("\n");
+}
+
+/**
+ * Get a short emoji badge for match context type.
+ */
+function getContextBadge(context: string): string {
+	const badges: Record<string, string> = {
+		"runtime-call": "⚡",
+		"import-type": "📦",
+		"import-value": "📥",
+		comment: "💬",
+		"string-literal": "🔤",
+		"dead-code": "💀",
+	};
+	return badges[context] ?? "❓";
 }

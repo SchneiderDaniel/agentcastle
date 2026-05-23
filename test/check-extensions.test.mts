@@ -1,7 +1,7 @@
 /**
  * Tests for check-extensions extension
  *
- * Phases 1-3: changelog-parser, extension-scanner, issue-builder
+ * Phases 1-8: all modules
  *
  * Run with:
  *   node --experimental-strip-types --test test/check-extensions.test.mts
@@ -9,9 +9,10 @@
 
 import assert from "node:assert";
 import { describe, it, beforeEach, afterEach } from "node:test";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, accessSync, constants } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Phase 1: changelog-parser.ts
@@ -619,6 +620,923 @@ describe("issue-builder", () => {
 			};
 			const authed = await checkGhAuth(exec);
 			assert.strictEqual(authed, false);
+		});
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 4: ast-scanner.ts — AST-based file scanning
+// ═══════════════════════════════════════════════════════════════════════
+
+import {
+	scanExtensionsAST,
+	type ASTFinding,
+	type ASTScanningResult,
+} from "../.pi/extensions/check-extensions/ast-scanner.ts";
+
+/**
+ * Resolve ast-grep binary path from npm global prefix.
+ */
+function getAstGrepPath(): string {
+	const home = process.env.HOME || "/home/miria";
+	const candidates = [
+		join(home, ".npm-global", "bin", "ast-grep"),
+		"/usr/local/bin/ast-grep",
+		"/usr/bin/ast-grep",
+	];
+	for (const c of candidates) {
+		try {
+			accessSync(c, constants.X_OK);
+			return c;
+		} catch {
+			/* try next */
+		}
+	}
+	return "ast-grep"; // fallback — hope it's on PATH
+}
+
+describe("ast-scanner", () => {
+	let tmpDir: string;
+	const astGrepPath = getAstGrepPath();
+
+	beforeEach(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), "ast-scan-test-"));
+	});
+
+	afterEach(() => {
+		if (tmpDir) {
+			try {
+				rmSync(tmpDir, { recursive: true, force: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	it("finds runtime-call findings for pi.method calls", async () => {
+		const extDir = join(tmpDir, "caveman");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			[
+				`pi.on("session_start", async (_event: any, ctx: any) => {`,
+				`  pi.registerCommand("caveman", { description: "", handler: async () => {} });`,
+				`  pi.registerTool({ name: "test", execute: async () => {} });`,
+				`  pi.exec("gh", ["issue"], { cwd: ctx.cwd });`,
+				`  ctx.ui.notify("hello", "info");`,
+				`  pi.sendUserMessage("test");`,
+				`});`,
+			].join("\n"),
+		);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return new Promise((resolve) => {
+				execFile(cmd, args, { timeout: 10_000 }, (err, stdout, stderr) => {
+					resolve({
+						stdout: stdout || "",
+						stderr: stderr || "",
+						code: err ? 1 : 0,
+						killed: false,
+					});
+				});
+			});
+		};
+
+		const result = await scanExtensionsAST(
+			extDir,
+			["pi.on", "pi.registerCommand", "pi.registerTool", "pi.exec", "pi.sendUserMessage", "ctx.ui"],
+			execFn,
+			astGrepPath,
+		);
+
+		// Should have runtime-call findings
+		const runtimeCalls = result.findings.filter((f) => f.matchContext === "runtime-call");
+		assert.ok(runtimeCalls.length >= 5, `Expected >=5 runtime calls, got ${runtimeCalls.length}`);
+
+		const apiNames = runtimeCalls.map((f) => f.apiName);
+		assert.ok(apiNames.includes("pi.on"), "Should find pi.on");
+		assert.ok(apiNames.includes("pi.registerCommand"), "Should find pi.registerCommand");
+		assert.ok(apiNames.includes("pi.registerTool"), "Should find pi.registerTool");
+		assert.ok(apiNames.includes("pi.exec"), "Should find pi.exec");
+		assert.ok(apiNames.includes("pi.sendUserMessage"), "Should find pi.sendUserMessage");
+	});
+
+	it("skips comments and string literals", async () => {
+		const extDir = join(tmpDir, "clean-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			[
+				`// TODO: migrate pi.on("tool_call", oldHandler)`,
+				`// pi.registerCommand("old", { handler: oldFn });`,
+				`const x = "pi.on inside string";`,
+				`const y = "ctx.ui should not match";`,
+			].join("\n"),
+		);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return new Promise((resolve) => {
+				execFile(cmd, args, { timeout: 10_000 }, (err, stdout, stderr) => {
+					resolve({
+						stdout: stdout || "",
+						stderr: stderr || "",
+						code: err ? 1 : 0,
+						killed: false,
+					});
+				});
+			});
+		};
+
+		const result = await scanExtensionsAST(
+			extDir,
+			["pi.on", "pi.registerCommand", "ctx.ui"],
+			execFn,
+			astGrepPath,
+		);
+
+		// No runtime-call findings from comments or strings
+		const runtimeCalls = result.findings.filter((f) => f.matchContext === "runtime-call");
+		assert.strictEqual(runtimeCalls.length, 0, "Should NOT find runtime calls in comments/strings");
+	});
+
+	it("classifies import-type and import-value contexts", async () => {
+		const extDir = join(tmpDir, "import-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			[
+				`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
+				`import { registerCommand } from "@earendil-works/pi-coding-agent";`,
+				`pi.on("session_start", async () => {});`,
+			].join("\n"),
+		);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return new Promise((resolve) => {
+				execFile(cmd, args, { timeout: 10_000 }, (err, stdout, stderr) => {
+					resolve({
+						stdout: stdout || "",
+						stderr: stderr || "",
+						code: err ? 1 : 0,
+						killed: false,
+					});
+				});
+			});
+		};
+
+		const result = await scanExtensionsAST(
+			extDir,
+			["pi.on", "pi.registerCommand"],
+			execFn,
+			astGrepPath,
+		);
+
+		// Should have import-type finding
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.ok(typeImports.length >= 1, `Expected >=1 import-type, got ${typeImports.length}`);
+
+		// Should have import-value finding
+		const valueImports = result.findings.filter((f) => f.matchContext === "import-value");
+		assert.ok(valueImports.length >= 1, `Expected >=1 import-value, got ${valueImports.length}`);
+
+		// Should have runtime-call finding
+		const runtimeCalls = result.findings.filter((f) => f.matchContext === "runtime-call");
+		assert.ok(runtimeCalls.length >= 1, `Expected >=1 runtime-call, got ${runtimeCalls.length}`);
+	});
+
+	it("extracts call args from pi.on matches", async () => {
+		const extDir = join(tmpDir, "args-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "index.ts"), `pi.on("session_start", async () => {});\n`);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return new Promise((resolve) => {
+				execFile(cmd, args, { timeout: 10_000 }, (err, stdout, stderr) => {
+					resolve({
+						stdout: stdout || "",
+						stderr: stderr || "",
+						code: err ? 1 : 0,
+						killed: false,
+					});
+				});
+			});
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, astGrepPath);
+
+		const piOnFindings = result.findings.filter((f) => f.apiName === "pi.on");
+		assert.ok(piOnFindings.length >= 1);
+		const finding = piOnFindings[0]!;
+		// callArgs should include "session_start" (first arg)
+		assert.ok(
+			finding.callArgs.includes('"session_start"') ||
+				finding.callArgs.some((a) => a.includes("session_start")),
+			"Should extract first arg",
+		);
+	});
+
+	it("Boundary: empty extensions dir returns empty", async () => {
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(
+			join(tmpDir, "no-files"),
+			["pi.on"],
+			execFn,
+			astGrepPath,
+		);
+		assert.strictEqual(result.findings.length, 0);
+	});
+
+	it("Boundary: file with no patterns produces no findings", async () => {
+		const extDir = join(tmpDir, "empty-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "index.ts"), `const x = 42;\nexport default x;\n`);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return new Promise((resolve) => {
+				execFile(cmd, args, { timeout: 10_000 }, (err, stdout, stderr) => {
+					resolve({
+						stdout: stdout || "",
+						stderr: stderr || "",
+						code: err ? 1 : 0,
+						killed: false,
+					});
+				});
+			});
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on", "pi.exec"], execFn, astGrepPath);
+		assert.strictEqual(result.findings.length, 0);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 5: change-resolver.ts — Changelog-to-usage context mapping
+// ═══════════════════════════════════════════════════════════════════════
+
+import {
+	resolveRelevance,
+	type StructuredChange,
+} from "../.pi/extensions/check-extensions/change-resolver.ts";
+
+describe("change-resolver", () => {
+	it("returns true when changelog event matches finding args", () => {
+		const entry = {
+			version: "1.0.0",
+			category: "Changed" as const,
+			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+			apiNames: ["on"],
+			isBreaking: true,
+		};
+		const finding = {
+			extensionName: "caveman",
+			file: "index.ts",
+			apiName: "pi.on",
+			line: 1,
+			lineContent: 'pi.on("tool_call", handler)',
+			changelogVersion: "",
+			isBreaking: false,
+			category: "",
+			callArgs: ["tool_call"],
+			matchContext: "runtime-call" as const,
+		};
+		const structured: StructuredChange = {
+			deprecatedSignature: 'pi.on("tool_call")',
+			newSignature: 'pi.on("tool_before_call")',
+			affectedEventType: "tool_call",
+		};
+
+		const result = resolveRelevance(entry, finding, structured);
+		assert.strictEqual(result, true);
+	});
+
+	it("returns false when changelog event doesn't match finding args", () => {
+		const entry = {
+			version: "1.0.0",
+			category: "Changed" as const,
+			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+			apiNames: ["on"],
+			isBreaking: true,
+		};
+		const finding = {
+			extensionName: "caveman",
+			file: "index.ts",
+			apiName: "pi.on",
+			line: 5,
+			lineContent: 'pi.on("session_start", handler)',
+			changelogVersion: "",
+			isBreaking: false,
+			category: "",
+			callArgs: ["session_start"],
+			matchContext: "runtime-call" as const,
+		};
+		const structured: StructuredChange = {
+			deprecatedSignature: 'pi.on("tool_call")',
+			newSignature: 'pi.on("tool_before_call")',
+			affectedEventType: "tool_call",
+		};
+
+		const result = resolveRelevance(entry, finding, structured);
+		assert.strictEqual(result, false);
+	});
+
+	it("returns undefined when no structured change info available (falls through)", () => {
+		const entry = {
+			version: "1.0.0",
+			category: "Changed" as const,
+			description: "Updated some internal API",
+			apiNames: ["on"],
+			isBreaking: false,
+		};
+		const finding = {
+			extensionName: "caveman",
+			file: "index.ts",
+			apiName: "pi.on",
+			line: 1,
+			lineContent: 'pi.on("session_start", handler)',
+			changelogVersion: "",
+			isBreaking: false,
+			category: "",
+			callArgs: ["session_start"],
+			matchContext: "runtime-call" as const,
+		};
+
+		// No structured change provided → falls through (return undefined)
+		const result = resolveRelevance(entry, finding, undefined);
+		assert.strictEqual(result, undefined);
+	});
+
+	it("returns false when finding has no callArgs", () => {
+		const entry = {
+			version: "1.0.0",
+			category: "Changed" as const,
+			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+			apiNames: ["on"],
+			isBreaking: true,
+		};
+		const finding = {
+			extensionName: "caveman",
+			file: "index.ts",
+			apiName: "pi.on",
+			line: 5,
+			lineContent: 'pi.on("tool_call", handler)',
+			changelogVersion: "",
+			isBreaking: false,
+			category: "",
+			callArgs: [],
+			matchContext: "runtime-call" as const,
+		};
+		const structured: StructuredChange = {
+			deprecatedSignature: 'pi.on("tool_call")',
+			newSignature: 'pi.on("tool_before_call")',
+			affectedEventType: "tool_call",
+		};
+
+		const result = resolveRelevance(entry, finding, structured);
+		assert.strictEqual(result, undefined);
+	});
+
+	it("returns true for pi.registerCommand changes when command name matches", () => {
+		const entry = {
+			version: "2.0.0",
+			category: "Deprecated" as const,
+			description: "Registering commands without handler option deprecated",
+			apiNames: ["registerCommand"],
+			isBreaking: true,
+		};
+		const finding = {
+			extensionName: "caveman",
+			file: "index.ts",
+			apiName: "pi.registerCommand",
+			line: 1,
+			lineContent: 'pi.registerCommand("my-cmd", { description: "", handler: async () => {} })',
+			changelogVersion: "",
+			isBreaking: false,
+			category: "",
+			callArgs: ["my-cmd"],
+			matchContext: "runtime-call" as const,
+		};
+
+		const result = resolveRelevance(entry, finding, undefined);
+		// No structured change with specific deprecatedSignature → falls through
+		assert.strictEqual(result, undefined);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 6: migration-generator.ts — Before/after code snippets
+// ═══════════════════════════════════════════════════════════════════════
+
+import {
+	generateMigrationSnippet,
+	type MigrationSnippet,
+} from "../.pi/extensions/check-extensions/migration-generator.ts";
+
+describe("migration-generator", () => {
+	it("generates snippet for pi.on tool_call → tool_before_call", () => {
+		const snippet = generateMigrationSnippet(
+			"Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+			"pi.on",
+		);
+		assert.ok(snippet, "Expected a MigrationSnippet");
+		if (snippet) {
+			assert.ok(snippet.before.includes("pi.on"), "before should contain pi.on");
+			assert.ok(snippet.after.includes("pi.on"), "after should contain pi.on");
+			assert.ok(snippet.before.includes("tool_call"), "before should mention tool_call");
+			assert.ok(
+				snippet.after.includes("tool_before_call"),
+				"after should mention tool_before_call",
+			);
+			assert.ok(snippet.confidence > 0, "confidence should be positive");
+		}
+	});
+
+	it("generates generic fallback for unknown changelog description", () => {
+		const snippet = generateMigrationSnippet(
+			"Fixed internal error handling for provider connections",
+			"pi.exec",
+		);
+		assert.ok(snippet, "Expected a MigrationSnippet");
+		if (snippet) {
+			assert.ok(snippet.before.includes("Update"), "fallback should have generic message");
+			assert.strictEqual(snippet.confidence, 0, "fallback confidence should be 0");
+		}
+	});
+
+	it("returns snippet for pi.registerCommand changes", () => {
+		const snippet = generateMigrationSnippet(
+			"Registering commands now requires a handler option",
+			"pi.registerCommand",
+		);
+		assert.ok(snippet, "Expected a MigrationSnippet");
+		if (snippet) {
+			assert.ok(snippet.confidence >= 0, "confidence should be >= 0");
+		}
+	});
+
+	it("returns null for null/empty description", () => {
+		const snippet = generateMigrationSnippet("", "pi.on");
+		assert.strictEqual(snippet, null);
+	});
+
+	it("generates snippet for tool-related changes", () => {
+		const snippet = generateMigrationSnippet(
+			"Tool registration API changed: `registerTool({ ... })` now requires `execute` instead of `run`",
+			"pi.registerTool",
+		);
+		assert.ok(snippet, "Expected a MigrationSnippet");
+		if (snippet) {
+			assert.ok(snippet.before.includes("registerTool"), "before should mention registerTool");
+			assert.ok(snippet.confidence >= 0.4, "confidence should be >= 0.4 for known API");
+		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 7: impact-scorer.ts — Cross-extension impact scoring
+// ═══════════════════════════════════════════════════════════════════════
+
+import {
+	computeImpactScore,
+	type ImpactScore,
+} from "../.pi/extensions/check-extensions/impact-scorer.ts";
+
+describe("impact-scorer", () => {
+	it("scores no findings as 'none' severity", () => {
+		const score = computeImpactScore("caveman", []);
+		assert.strictEqual(score.severity, "none");
+		assert.strictEqual(score.uniqueApis, 0);
+		assert.strictEqual(score.breakingCount, 0);
+	});
+
+	it("scores one non-breaking finding as 'low' severity", () => {
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "caveman",
+				file: "index.ts",
+				apiName: "pi.on",
+				line: 1,
+				lineContent: "",
+				changelogVersion: "",
+				isBreaking: false,
+				category: "Added",
+				callArgs: [],
+				matchContext: "runtime-call",
+			},
+		];
+		const score = computeImpactScore("caveman", findings);
+		assert.strictEqual(score.severity, "low");
+		assert.strictEqual(score.uniqueApis, 1);
+	});
+
+	it("scores one breaking finding as 'medium' severity", () => {
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "caveman",
+				file: "index.ts",
+				apiName: "pi.on",
+				line: 1,
+				lineContent: "",
+				changelogVersion: "",
+				isBreaking: true,
+				category: "Deprecated",
+				callArgs: [],
+				matchContext: "runtime-call",
+			},
+		];
+		const score = computeImpactScore("caveman", findings);
+		assert.strictEqual(score.severity, "medium");
+		assert.strictEqual(score.breakingCount, 1);
+	});
+
+	it("scores multiple breaking findings as 'high' severity", () => {
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "caveman",
+				file: "index.ts",
+				apiName: "pi.on",
+				line: 1,
+				lineContent: "",
+				changelogVersion: "",
+				isBreaking: true,
+				category: "Deprecated",
+				callArgs: [],
+				matchContext: "runtime-call",
+			},
+			{
+				extensionName: "caveman",
+				file: "index.ts",
+				apiName: "pi.registerCommand",
+				line: 2,
+				lineContent: "",
+				changelogVersion: "",
+				isBreaking: true,
+				category: "Removed",
+				callArgs: [],
+				matchContext: "runtime-call",
+			},
+		];
+		const score = computeImpactScore("caveman", findings);
+		assert.strictEqual(score.severity, "high");
+		assert.strictEqual(score.uniqueApis, 2);
+		assert.strictEqual(score.breakingCount, 2);
+	});
+
+	it("scores breaking+non-breaking mixed as appropriate severity", () => {
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "mixed",
+				file: "a.ts",
+				apiName: "pi.on",
+				line: 1,
+				lineContent: "",
+				changelogVersion: "",
+				isBreaking: true,
+				category: "Deprecated",
+				callArgs: [],
+				matchContext: "runtime-call",
+			},
+			{
+				extensionName: "mixed",
+				file: "a.ts",
+				apiName: "pi.exec",
+				line: 2,
+				lineContent: "",
+				changelogVersion: "",
+				isBreaking: true,
+				category: "Removed",
+				callArgs: [],
+				matchContext: "runtime-call",
+			},
+			{
+				extensionName: "mixed",
+				file: "a.ts",
+				apiName: "ctx.ui",
+				line: 3,
+				lineContent: "",
+				changelogVersion: "",
+				isBreaking: false,
+				category: "Added",
+				callArgs: [],
+				matchContext: "runtime-call",
+			},
+		];
+		const score = computeImpactScore("mixed", findings);
+		assert.strictEqual(score.severity, "high");
+		assert.strictEqual(score.uniqueApis, 3);
+	});
+
+	it("sets extensionName on result", () => {
+		const score = computeImpactScore("my-ext", []);
+		assert.strictEqual(score.extensionName, "my-ext");
+	});
+
+	it("scores 6+ breaking findings as 'critical'", () => {
+		const findings: ASTFinding[] = Array.from({ length: 6 }, (_, i) => ({
+			extensionName: "big-ext",
+			file: "index.ts",
+			apiName: `api.${i}`,
+			line: i + 1,
+			lineContent: "",
+			changelogVersion: "",
+			isBreaking: true,
+			category: "Deprecated",
+			callArgs: [],
+			matchContext: "runtime-call" as const,
+		}));
+		const score = computeImpactScore("big-ext", findings);
+		assert.strictEqual(score.severity, "critical");
+		assert.strictEqual(score.uniqueApis, 6);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 8: manifest-reader.ts — Extension manifest parsing
+// ═══════════════════════════════════════════════════════════════════════
+
+import {
+	readManifest,
+	type ExtensionManifest,
+} from "../.pi/extensions/check-extensions/manifest-reader.ts";
+
+describe("manifest-reader", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), "manifest-test-"));
+	});
+
+	afterEach(() => {
+		if (tmpDir) {
+			try {
+				rmSync(tmpDir, { recursive: true, force: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	it("reads extension.json when present", () => {
+		writeFileSync(
+			join(tmpDir, "extension.json"),
+			JSON.stringify({ piVersion: "0.75.0", testedWithVersion: "0.75.0" }),
+		);
+		const manifest = readManifest(tmpDir);
+		assert.strictEqual(manifest.piVersion, "0.75.0");
+		assert.strictEqual(manifest.testedWithVersion, "0.75.0");
+	});
+
+	it("reads package.json as fallback when extension.json missing", () => {
+		writeFileSync(
+			join(tmpDir, "package.json"),
+			JSON.stringify({ piVersion: "0.74.0", testedWithVersion: "0.74.0" }),
+		);
+		const manifest = readManifest(tmpDir);
+		assert.strictEqual(manifest.piVersion, "0.74.0");
+		assert.strictEqual(manifest.testedWithVersion, "0.74.0");
+	});
+
+	it("returns UNKNOWN when no manifest found", () => {
+		const manifest = readManifest(tmpDir);
+		assert.strictEqual(manifest.piVersion, "UNKNOWN");
+		assert.strictEqual(manifest.testedWithVersion, "UNKNOWN");
+	});
+
+	it("reads package.json from nested directory", () => {
+		// Some extensions have package.json inside a nested folder
+		writeFileSync(
+			join(tmpDir, "package.json"),
+			JSON.stringify({ version: "1.0.0", piVersion: "0.76.0" }),
+		);
+		const manifest = readManifest(tmpDir);
+		assert.strictEqual(manifest.piVersion, "0.76.0");
+	});
+
+	it("returns UNKNOWN for empty extension.json", () => {
+		writeFileSync(join(tmpDir, "extension.json"), "{}");
+		const manifest = readManifest(tmpDir);
+		assert.strictEqual(manifest.piVersion, "UNKNOWN");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 9: changelog-parser.ts — Extended: parseStructuredChange
+// ═══════════════════════════════════════════════════════════════════════
+
+import { parseStructuredChange } from "../.pi/extensions/check-extensions/changelog-parser.ts";
+
+describe("parseStructuredChange", () => {
+	it("parses pi.on tool_call → tool_before_call migration", () => {
+		const result = parseStructuredChange(
+			"Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+		);
+		assert.ok(result, "Expected a StructuredChange");
+		if (result) {
+			assert.strictEqual(result.deprecatedSignature, 'pi.on("tool_call")');
+			assert.strictEqual(result.newSignature, 'pi.on("tool_before_call")');
+			assert.strictEqual(result.affectedEventType, "tool_call");
+		}
+	});
+
+	it("parses pi.registerCommand signature change", () => {
+		const result = parseStructuredChange(
+			"`pi.registerCommand(name, opts)` now requires `opts.handler` to be async",
+		);
+		assert.ok(result, "Expected a StructuredChange");
+		if (result) {
+			assert.ok(result.deprecatedSignature?.includes("registerCommand"));
+			assert.ok(result.newSignature?.includes("registerCommand"));
+		}
+	});
+
+	it("returns null for non-API description", () => {
+		const result = parseStructuredChange("Fixed internal provider connection error");
+		assert.strictEqual(result, null);
+	});
+
+	it("parses ctx.ui redesign description", () => {
+		const result = parseStructuredChange(
+			"`ctx.ui.select()` args changed from `(items, prompt)` to `(config)`",
+		);
+		assert.ok(result, "Expected a StructuredChange");
+		if (result) {
+			assert.ok(
+				result.deprecatedSignature?.includes("ctx.ui") || result.affectedEventType === "select",
+			);
+		}
+	});
+
+	it("returns null for empty description", () => {
+		assert.strictEqual(parseStructuredChange(""), null);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 10: issue-builder.ts — Extended: migration snippets + impact scores
+// ═══════════════════════════════════════════════════════════════════════
+
+import {
+	buildMigrationSection,
+	buildIssueBodyWithSnippets,
+	buildImpactSummary,
+	type ExecFn,
+} from "../.pi/extensions/check-extensions/issue-builder.ts";
+
+describe("issue-builder-extended", () => {
+	describe("buildMigrationSection", () => {
+		it("returns formatted section with before/after blocks", () => {
+			const snippets = [
+				{
+					apiName: "pi.on",
+					before: 'pi.on("tool_call", handler)',
+					after: 'pi.on("tool_before_call", handler)',
+					confidence: 0.9,
+				},
+			];
+			const section = buildMigrationSection(snippets);
+			assert.ok(section.includes("## Migration Guide"));
+			assert.ok(section.includes("Before"));
+			assert.ok(section.includes("After"));
+			assert.ok(section.includes('pi.on("tool_call", handler)'));
+			assert.ok(section.includes('pi.on("tool_before_call", handler)'));
+		});
+
+		it("returns empty string for empty snippets array", () => {
+			assert.strictEqual(buildMigrationSection([]), "");
+		});
+
+		it("handles multiple snippets", () => {
+			const snippets = [
+				{
+					apiName: "pi.on",
+					before: 'pi.on("tool_call", handler)',
+					after: 'pi.on("tool_before_call", handler)',
+					confidence: 0.9,
+				},
+				{
+					apiName: "pi.registerTool",
+					before: "registerTool({ run: handler })",
+					after: "registerTool({ execute: handler })",
+					confidence: 0.7,
+				},
+			];
+			const section = buildMigrationSection(snippets);
+			assert.ok(section.includes("tool_call"));
+			assert.ok(section.includes("execute"));
+		});
+	});
+
+	describe("buildImpactSummary", () => {
+		it("formats impact score in markdown", () => {
+			const summary = buildImpactSummary({
+				extensionName: "caveman",
+				severity: "high",
+				uniqueApis: 3,
+				breakingCount: 2,
+				hasTests: false,
+			});
+			assert.ok(summary.includes("High"));
+			assert.ok(summary.includes("3"));
+			assert.ok(summary.includes("2"));
+		});
+
+		it("includes hasTests badge when tests exist", () => {
+			const summary = buildImpactSummary({
+				extensionName: "caveman",
+				severity: "low",
+				uniqueApis: 1,
+				breakingCount: 0,
+				hasTests: true,
+			});
+			assert.ok(summary.includes("**Tests:** ✅"));
+		});
+
+		it("includes no-tests badge when tests absent", () => {
+			const summary = buildImpactSummary({
+				extensionName: "caveman",
+				severity: "medium",
+				uniqueApis: 2,
+				breakingCount: 1,
+				hasTests: false,
+			});
+			assert.ok(summary.includes("**Tests:** ❌"));
+		});
+	});
+
+	describe("buildIssueBodyWithSnippets", () => {
+		it("generates body with migration snippets and impact summary", () => {
+			const findings: ASTFinding[] = [
+				{
+					extensionName: "caveman",
+					file: "index.ts",
+					apiName: "pi.on",
+					line: 1,
+					lineContent: 'pi.on("tool_call", handler)',
+					changelogVersion: "1.0.0",
+					isBreaking: true,
+					category: "Deprecated",
+					callArgs: ["tool_call"],
+					matchContext: "runtime-call",
+				},
+			];
+			const snippets = [
+				{
+					apiName: "pi.on",
+					before: 'pi.on("tool_call", handler)',
+					after: 'pi.on("tool_before_call", handler)',
+					confidence: 0.9,
+				},
+			];
+			const impactScore = {
+				extensionName: "caveman",
+				severity: "medium" as const,
+				uniqueApis: 1,
+				breakingCount: 1,
+				hasTests: false as const,
+			};
+
+			const body = buildIssueBodyWithSnippets("caveman", findings, "1.0.0", snippets, impactScore);
+			assert.ok(body.includes("Migration Guide"));
+			assert.ok(body.includes("Impact"));
+			assert.ok(body.includes("Medium"));
+			assert.ok(body.includes("tool_before_call"));
+		});
+
+		it("handles empty snippets gracefully", () => {
+			const findings: ASTFinding[] = [];
+			const impactScore = {
+				extensionName: "caveman",
+				severity: "none" as const,
+				uniqueApis: 0,
+				breakingCount: 0,
+				hasTests: false as const,
+			};
+
+			const body = buildIssueBodyWithSnippets("caveman", findings, "1.0.0", [], impactScore);
+			assert.ok(body.includes("caveman"));
+			assert.ok(body.includes("1.0.0"));
 		});
 	});
 });
