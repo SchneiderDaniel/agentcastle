@@ -10,3 +10,4 @@ ignore/
 .pi/chromium-deps/
 npm/
 custom/
+cache/
