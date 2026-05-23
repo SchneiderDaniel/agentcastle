@@ -303,10 +303,26 @@ function parseAgentFileExtensions(filePath: string): string | undefined {
 
 describe("production agent files — extensions field", () => {
 	const agents = [
-		{ name: "architect", expected: "caveman,crawl4ai,piignore" },
-		{ name: "test-designer", expected: "caveman,crawl4ai,piignore" },
-		{ name: "developer", expected: "caveman,crawl4ai,piignore,tsc-checkpoint" },
-		{ name: "auditor", expected: "caveman,crawl4ai,piignore" },
+		{
+			name: "architect",
+			expected:
+				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+		},
+		{
+			name: "test-designer",
+			expected:
+				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+		},
+		{
+			name: "developer",
+			expected:
+				"agent-harness,caveman,crawl4ai,format-on-save,piignore,ranked-map,ripgrep-search,tsc-checkpoint,structural-analyzer",
+		},
+		{
+			name: "auditor",
+			expected:
+				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+		},
 	];
 
 	for (const agent of agents) {

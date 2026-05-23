@@ -4,7 +4,7 @@ description: Searches the public web for best practices, recent library versions
 tools: read, bash, structural_search, ripgrep_search
 model: opencode-go/deepseek-v4-flash
 thinking: medium
-extensions: "caveman,crawl4ai,piignore,ripgrep-search,structural-analyzer"
+extensions: "agent-harness,caveman,crawl4ai,piignore,ripgrep-search,structural-analyzer"
 ---
 
 🛠 Tool Discipline — Researcher
