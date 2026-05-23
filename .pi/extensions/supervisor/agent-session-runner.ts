@@ -508,10 +508,11 @@ export async function runAgentInProcess(
 		});
 		await resourceLoader.reload();
 
-		const sessionManager = SessionManager.inMemory();
+		const sessionManager = SessionManager.inMemory(effectiveCwd);
 		const settingsManager = SettingsManager.inMemory();
 
 		const sessionResult = await createAgentSession({
+			cwd: effectiveCwd,
 			sessionManager,
 			resourceLoader,
 			settingsManager,
