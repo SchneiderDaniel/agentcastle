@@ -9,3 +9,4 @@ ignore/
 .pi/crawl4ai-venv/
 .pi/chromium-deps/
 npm/
+custom/
