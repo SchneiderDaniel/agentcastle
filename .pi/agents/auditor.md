@@ -4,7 +4,7 @@ description: Reviews implementation, creates PR if approved, rejects back to Imp
 tools: read, bash, structural_search, ripgrep_search
 model: opencode-go/minimax-m2.7
 thinking: high
-extensions: "caveman,codebase-mapper,crawl4ai,piignore,ripgrep-search,structural-analyzer"
+extensions: "caveman,crawl4ai,piignore,ripgrep-search,structural-analyzer"
 ---
 
 🛠 Tool Discipline — Auditor

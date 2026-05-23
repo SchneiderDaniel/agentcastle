@@ -1,12 +1,10 @@
 /**
- * codebase-mapper — Scans codebase structure with ctags and returns symbol hierarchy
+ * codebase-mapper — Library layer: ctags parsing, grouping, command building.
  *
- * Provides the map_codebase tool. Discovers all symbols (classes, functions,
- * methods, variables) grouped by file. Returns metadata only — never file contents.
+ * This module exports library functions consumed by ranked-map.ts.
+ * Tool registration has been migrated to ranked-map.ts (ranked_map tool).
+ * No tool is registered from this module.
  */
-
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -135,7 +133,16 @@ export function buildCtagsArgs(
 	targetDir: string,
 	maxDepth: number,
 ): { command: string; args: string[] } {
-	const args = ["-R", "--output-format=json", "--exclude=node_modules", "--exclude=.git", "--exclude=*.json", "--exclude=*.min.js", "--exclude=*.css", "--exclude=static"];
+	const args = [
+		"-R",
+		"--output-format=json",
+		"--exclude=node_modules",
+		"--exclude=.git",
+		"--exclude=*.json",
+		"--exclude=*.min.js",
+		"--exclude=*.css",
+		"--exclude=static",
+	];
 
 	if (maxDepth > 0) {
 		args.push(`--maxdepth=${maxDepth}`);
@@ -144,142 +151,4 @@ export function buildCtagsArgs(
 	args.push(targetDir);
 
 	return { command: "ctags", args };
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Extension
-// ═══════════════════════════════════════════════════════════════════════
-
-export default function codebaseMapper(pi: ExtensionAPI): void {
-	pi.registerTool({
-		name: "map_codebase",
-		label: "Map Codebase",
-		description:
-			"Run ctags (Universal Ctags) on a target directory and return a compressed, " +
-			"hierarchical tree of symbols (classes, functions, methods, variables) grouped by file. " +
-			"Output: JSON object where keys are file paths and values are arrays of " +
-			'{ "type": string, "name": string, "line": number } entries. ' +
-			"Use this to answer 'What files and functions exist?' before reading any files. " +
-			"This tool is strictly read-only and metadata-focused. " +
-			"It never returns file contents or function bodies. " +
-			"Requires universal-ctags compiled with JSON output support.",
-		promptSnippet: "Map a codebase directory by running ctags and returning symbol hierarchy",
-		promptGuidelines: [
-			"Use map_codebase at the start of a task to get a macro-level skeleton of the repository. This answers 'What files and functions exist?' without reading individual files.",
-			"Default target_directory is project root, default max_depth is 3. Pass max_depth=0 for unlimited depth, or max_depth=1-3 for a top-level overview.",
-			"Combine map_codebase results with read to inspect specific functions by file path and line number.",
-			"Run map_codebase once and reuse the result — re-running is expensive for large codebases.",
-		],
-		parameters: Type.Object({
-			target_directory: Type.Optional(
-				Type.String({
-					default: ".",
-					description: "Path to the directory to map (default: current working directory)",
-				}),
-			),
-			max_depth: Type.Optional(
-				Type.Number({
-					default: 3,
-					description:
-						"Maximum directory recursion depth (default: 3 for a top-level overview, 0 for unlimited). " +
-						"Use small values (1-3) for a top-level overview to avoid overloading context.",
-				}),
-			),
-		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const targetDir = params.target_directory || ".";
-			const maxDepth = params.max_depth ?? 3;
-			const cwd = ctx.cwd;
-
-			// Build and run ctags command
-			const { command, args } = buildCtagsArgs(targetDir, maxDepth);
-
-			const result = await pi.exec(command, args, {
-				cwd,
-				timeout: 30_000,
-			});
-
-			if (result.code !== 0) {
-				// ctags may produce stderr warnings about skipped files
-				// but still output valid JSONL to stdout — only fail if stdout is empty
-				if (!result.stdout || result.stdout.trim().length === 0) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text:
-									`ctags failed (exit code ${result.code}): ` +
-									(result.stderr || "unknown error") +
-									"\n\nEnsure universal-ctags is installed with JSON output support (`ctags --list-output-formats`).",
-							},
-						],
-						details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<
-							string,
-							unknown
-						>,
-					};
-				}
-			}
-
-			// Parse and group
-			const map = buildCodebaseMap(result.stdout);
-
-			// Apply output size cap (~50 KB / ~750 symbols)
-			const MAX_OUTPUT_SYMBOLS = 750;
-			const allEntries = Object.entries(map);
-			let includedEntries: [string, SymbolEntry[]][] = allEntries;
-			let truncated = false;
-
-			const totalSymbols = allEntries.reduce((sum, [, entries]) => sum + entries.length, 0);
-			if (totalSymbols > MAX_OUTPUT_SYMBOLS) {
-				// Sort by symbol count descending, keep the most symbol-dense files
-				allEntries.sort((a, b) => b[1].length - a[1].length);
-				let count = 0;
-				const cutoff = allEntries.findIndex(([, entries]) => {
-					count += entries.length;
-					return count > MAX_OUTPUT_SYMBOLS;
-				});
-				includedEntries = allEntries.slice(0, cutoff === -1 ? allEntries.length : cutoff);
-				truncated = true;
-			}
-
-			const truncatedMap: CodebaseMap = Object.fromEntries(includedEntries);
-
-			// Format as pretty JSON for LLM consumption
-			const json = JSON.stringify(truncatedMap, null, 2);
-
-			const symbolCount = totalSymbols;
-			const fileCount = allEntries.length;
-			const includedSymbolCount = truncated
-				? Object.values(truncatedMap).flat().length
-				: symbolCount;
-			const includedFileCount = truncated
-				? Object.keys(truncatedMap).length
-				: fileCount;
-
-			const headerNote = truncated
-				? "⚠️ Output truncated: showing " +
-					`${includedSymbolCount} of ${symbolCount} symbols ` +
-					`(top ${includedFileCount} of ${fileCount} files by symbol count). ` +
-					"Retry with a smaller target_directory or max_depth for focused results.\n\n"
-				: "";
-
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text:
-							`Codebase map for: ${targetDir}\n` +
-							`Files: ${includedFileCount}${truncated ? ` of ${fileCount}` : ""}, ` +
-							`Symbols: ${includedSymbolCount}${truncated ? ` of ${symbolCount}` : ""}\n\n` +
-							headerNote +
-							"```json\n" +
-							json +
-							"\n```",
-					},
-				],
-				details: { success: true, fileCount, symbolCount, map } as Record<string, unknown>,
-			};
-		},
-	});
 }

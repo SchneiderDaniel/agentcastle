@@ -25,6 +25,7 @@ export interface RankedMapConfig {
 	tokenBudget: number;
 	recencyWindowDays: number;
 	cacheTtlHours: number;
+	autoThreshold: number;
 	weights: { keyword: number; recency: number };
 }
 
@@ -52,6 +53,7 @@ export interface RankedMapResult {
 	total_tokens: number;
 	budget: number;
 	truncated: boolean;
+	mode: "ranked" | "full_dump";
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -62,6 +64,7 @@ const DEFAULT_CONFIG: RankedMapConfig = {
 	tokenBudget: 2048,
 	recencyWindowDays: 30,
 	cacheTtlHours: 24,
+	autoThreshold: 20000,
 	weights: { keyword: 0.5, recency: 0.3 },
 };
 
@@ -78,6 +81,63 @@ const MAX_RECENCY_WINDOW_DAYS = 365;
 export function estimateTokens(text: string): number {
 	if (!text) return 0;
 	return Math.ceil(text.length / 4);
+}
+
+/**
+ * Determine tool mode based on query presence, symbol count, and autoThreshold.
+ * query provided → ranked (keyword + recency)
+ * no query, totalSymbols <= autoThreshold → full_dump (path-sorted)
+ * no query, totalSymbols > autoThreshold → ranked (recency-only)
+ */
+export function selectMode(
+	query: string,
+	totalSymbols: number,
+	autoThreshold: number,
+): "ranked" | "full_dump" {
+	if (query.trim()) return "ranked";
+	if (totalSymbols <= autoThreshold) return "full_dump";
+	return "ranked";
+}
+
+/**
+ * Dump all symbols sorted by file path, filling greedily within token budget.
+ * Each file gets score=0 and empty preview.
+ */
+export function dumpAllFiles(
+	symbols: Record<string, SymbolEntry[]>,
+	tokenBudget: number,
+): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
+	const filePaths = Object.keys(symbols).sort();
+	const files: RankedFileScore[] = [];
+	let totalTokens = 0;
+	let truncated = false;
+	const PREVIEW_TOKEN_ESTIMATE = 50;
+
+	for (const path of filePaths) {
+		const syms = symbols[path] ?? [];
+		const symText = formatSymbols(syms, path);
+		const entryTokens = estimateTokens(symText) + PREVIEW_TOKEN_ESTIMATE;
+
+		if (tokenBudget <= 0) {
+			truncated = true;
+			break;
+		}
+
+		if (totalTokens + entryTokens > tokenBudget && totalTokens > 0) {
+			truncated = true;
+			break;
+		}
+
+		files.push({
+			path,
+			score: 0,
+			symbols: symText,
+			preview: "",
+		});
+		totalTokens += entryTokens;
+	}
+
+	return { files, totalTokens, truncated };
 }
 
 /**
@@ -111,6 +171,17 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			rm.recencyWindowDays > 0
 		) {
 			recencyWindowDays = Math.min(rm.recencyWindowDays, MAX_RECENCY_WINDOW_DAYS);
+		}
+
+		// autoThreshold: non-negative integer (0 = always-ranked)
+		let autoThreshold = DEFAULT_CONFIG.autoThreshold;
+		if (
+			typeof rm.autoThreshold === "number" &&
+			Number.isFinite(rm.autoThreshold) &&
+			Number.isInteger(rm.autoThreshold) &&
+			rm.autoThreshold >= 0
+		) {
+			autoThreshold = rm.autoThreshold;
 		}
 
 		let cacheTtlHours = DEFAULT_CONFIG.cacheTtlHours;
@@ -157,6 +228,7 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			tokenBudget,
 			recencyWindowDays,
 			cacheTtlHours,
+			autoThreshold,
 			weights: { keyword: kwWeight, recency: recWeight },
 		};
 	} catch {
@@ -308,6 +380,7 @@ export function formatOutput(
 	rankedFiles: RankedFileScore[],
 	budget: number,
 	truncated: boolean,
+	mode: "ranked" | "full_dump" = "ranked",
 ): RankedMapResult {
 	return {
 		files: rankedFiles.map((f) => ({
@@ -320,6 +393,7 @@ export function formatOutput(
 		),
 		budget,
 		truncated,
+		mode,
 	};
 }
 
@@ -496,18 +570,19 @@ export default function rankedMap(pi: ExtensionAPI): void {
 		name: "ranked_map",
 		label: "Ranked Repo Map",
 		description:
-			"Ranked file index using keyword overlap (ripgrep) and git recency scoring. " +
-			"Returns the most relevant subset of the codebase within a configurable token budget. " +
-			"Output: JSON with files array (path, score, symbols, preview), total_tokens, budget, truncated. " +
-			"Reuses ctags symbol index (cached) + rg for keyword matching + git log for recency. " +
-			"Recommended over map_codebase for large repos (submodule-scale, 50K+ files) — " +
-			"~99% token reduction compared to full map_codebase dump.",
+			"Codebase symbol index with auto-mode detection. " +
+			"With a query: ranks files by keyword overlap (ripgrep) + git recency scoring. " +
+			"Without query on repos ≤ autoThreshold (default 20K symbols): returns all symbols sorted by path (full dump). " +
+			"Without query on larger repos: ranks by recency only. " +
+			"Output: JSON with files array (path, score, symbols, preview), total_tokens, budget, truncated, mode. " +
+			"Replaces the old map_codebase tool — call ranked_map with or without a query for all use cases.",
 		promptSnippet:
-			"Ranked codebase map by keyword relevance and git recency — returns top files within token budget",
+			"Codebase symbol map with auto-mode: query → ranked, no query + small repo → full dump, no query + large repo → recency-ranked",
 		promptGuidelines: [
-			"Use ranked_map instead of map_codebase for large repos (submodule-scale, 50K+ files). Map_codebase dumps ALL symbols and can consume 280K+ tokens; ranked_map returns only the most relevant subset (~2K tokens).",
-			"Pass a `query` describing what you're looking for (e.g. 'login auth token') to rank by keyword relevance. Without query, ranking falls back to git recency only.",
+			"ranked_map replaces map_codebase — use it for all codebase browsing. Auto-mode: pass `query` for ranked results, omit for full dump (small repos) or recency-ranked (large repos).",
+			"Pass a `query` describing what you're looking for (e.g. 'login auth token') to rank by keyword relevance. Without query, the tool auto-selects full dump or recency-ranked based on repo size.",
 			"Set `tokenBudget` to control output size (default 2048 tokens). Smaller budget = fewer files = faster response.",
+			"Configure autoThreshold in .pi/settings.json rankedMap.autoThreshold (default 20000). Set to 0 for always-ranked.",
 			"The tool is on-demand (not auto-injected). Call it when you need codebase context, not every turn.",
 		],
 		parameters: Type.Object({
@@ -618,22 +693,35 @@ export default function rankedMap(pi: ExtensionAPI): void {
 				}
 			}
 
-			// Compute keyword scores (if query provided)
-			let keywordScores: Record<string, number> = {};
-			if (query) {
-				const { fileMatches, terms } = runKeywordSearch(query, targetDir, cwd);
-				keywordScores = computeKeywordScores(fileMatches, terms);
+			// Mode selection
+			const totalSymbols = Object.values(index.symbols).flat().length;
+			const mode = selectMode(query, totalSymbols, config.autoThreshold);
+
+			let ranked: { files: RankedFileScore[]; totalTokens: number; truncated: boolean };
+			let modeLabel: string;
+
+			if (mode === "full_dump") {
+				// Full dump mode: all files sorted by path, score=0, no preview
+				ranked = dumpAllFiles(index.symbols, budget);
+				modeLabel = "full_dump";
+			} else {
+				// Ranked mode: compute keyword scores (if query provided) + recency scores
+				let keywordScores: Record<string, number> = {};
+				if (query) {
+					const { fileMatches, terms } = runKeywordSearch(query, targetDir, cwd);
+					keywordScores = computeKeywordScores(fileMatches, terms);
+				}
+
+				const fileDates = runGitRecency(config.recencyWindowDays, cwd);
+				const recencyScores = computeRecencyScores(fileDates, config.recencyWindowDays);
+
+				ranked = rankFiles(keywordScores, recencyScores, config.weights, budget, index.symbols);
+				modeLabel = "ranked";
 			}
 
-			// Compute recency scores
-			const fileDates = runGitRecency(config.recencyWindowDays, cwd);
-			const recencyScores = computeRecencyScores(fileDates, config.recencyWindowDays);
-
-			// Rank files
-			const ranked = rankFiles(keywordScores, recencyScores, config.weights, budget, index.symbols);
-
-			// Fill previews from actual file contents
+			// Fill previews from actual file contents (only for ranked mode; full_dump uses empty previews)
 			const filesWithPreviews = ranked.files.map((f) => {
+				if (mode === "full_dump") return f; // preview already empty
 				let preview = "";
 				try {
 					const fullPath = resolve(cwd, targetDir, f.path);
@@ -647,13 +735,21 @@ export default function rankedMap(pi: ExtensionAPI): void {
 				return { ...f, preview };
 			});
 
-			const output = formatOutput(filesWithPreviews, budget, ranked.truncated);
+			const output = formatOutput(
+				filesWithPreviews,
+				budget,
+				ranked.truncated,
+				modeLabel as "ranked" | "full_dump",
+			);
 
 			// Build summary text
 			const symbolCount = Object.values(index.symbols).flat().length;
 			const fileCount = Object.keys(index.symbols).length;
 
-			const queryInfo = query ? `query="${query}", ` : "no query, ";
+			const modeLabel =
+				output.mode === "full_dump"
+					? "full dump"
+					: `ranked${query ? ` (query="${query}")` : " (recency-only)"}`;
 			const truncatedInfo = output.truncated
 				? ` (truncated to ${output.files.length} files)`
 				: ` (${output.files.length} files)`;
@@ -663,8 +759,8 @@ export default function rankedMap(pi: ExtensionAPI): void {
 					{
 						type: "text" as const,
 						text:
-							`Ranked repo map for: ${targetDir}\n` +
-							`${queryInfo}${output.total_tokens} of ${budget} tokens used${truncatedInfo}\n` +
+							`${output.mode === "full_dump" ? "Codebase map" : "Ranked repo map"} for: ${targetDir}\n` +
+							`Mode: ${modeLabel}, ${output.total_tokens} of ${budget} tokens used${truncatedInfo}\n` +
 							`Index: ${fileCount} files, ${symbolCount} symbols\n\n` +
 							"```json\n" +
 							JSON.stringify(output, null, 2) +

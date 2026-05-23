@@ -27,6 +27,7 @@ export interface RankedMapConfig {
 	tokenBudget: number;
 	recencyWindowDays: number;
 	cacheTtlHours: number;
+	autoThreshold: number;
 	weights: { keyword: number; recency: number };
 }
 
@@ -54,6 +55,7 @@ export interface RankedMapResult {
 	total_tokens: number;
 	budget: number;
 	truncated: boolean;
+	mode: "ranked" | "full_dump";
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -64,6 +66,7 @@ const DEFAULT_CONFIG: RankedMapConfig = {
 	tokenBudget: 2048,
 	recencyWindowDays: 30,
 	cacheTtlHours: 24,
+	autoThreshold: 20000,
 	weights: { keyword: 0.5, recency: 0.3 },
 };
 
@@ -74,6 +77,63 @@ const MAX_RECENCY_WINDOW_DAYS = 365;
  */
 function estimateTokens(text: string): number {
 	return Math.ceil(text.length / 4);
+}
+
+/**
+ * Determine tool mode based on query presence, symbol count, and autoThreshold.
+ * query provided → ranked (keyword + recency)
+ * no query, totalSymbols <= autoThreshold → full_dump (path-sorted)
+ * no query, totalSymbols > autoThreshold → ranked (recency-only)
+ */
+export function selectMode(
+	query: string,
+	totalSymbols: number,
+	autoThreshold: number,
+): "ranked" | "full_dump" {
+	if (query.trim()) return "ranked";
+	if (totalSymbols <= autoThreshold) return "full_dump";
+	return "ranked";
+}
+
+/**
+ * Dump all symbols sorted by file path, filling greedily within token budget.
+ * Each file gets score=0 and empty preview.
+ */
+export function dumpAllFiles(
+	symbols: Record<string, SymbolEntry[]>,
+	tokenBudget: number,
+): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
+	const filePaths = Object.keys(symbols).sort();
+	const files: RankedFileScore[] = [];
+	let totalTokens = 0;
+	let truncated = false;
+	const PREVIEW_TOKEN_ESTIMATE = 50;
+
+	for (const path of filePaths) {
+		const syms = symbols[path] ?? [];
+		const symText = formatSymbols(syms, path);
+		const entryTokens = estimateTokens(symText) + PREVIEW_TOKEN_ESTIMATE;
+
+		if (tokenBudget <= 0) {
+			truncated = true;
+			break;
+		}
+
+		if (totalTokens + entryTokens > tokenBudget && totalTokens > 0) {
+			truncated = true;
+			break;
+		}
+
+		files.push({
+			path,
+			score: 0,
+			symbols: symText,
+			preview: "",
+		});
+		totalTokens += entryTokens;
+	}
+
+	return { files, totalTokens, truncated };
 }
 
 /**
@@ -109,6 +169,17 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			rm.recencyWindowDays > 0
 		) {
 			recencyWindowDays = Math.min(rm.recencyWindowDays, MAX_RECENCY_WINDOW_DAYS);
+		}
+
+		// autoThreshold: non-negative integer (0 = always-ranked)
+		let autoThreshold = DEFAULT_CONFIG.autoThreshold;
+		if (
+			typeof rm.autoThreshold === "number" &&
+			Number.isFinite(rm.autoThreshold) &&
+			Number.isInteger(rm.autoThreshold) &&
+			rm.autoThreshold >= 0
+		) {
+			autoThreshold = rm.autoThreshold;
 		}
 
 		// cacheTtlHours: must be positive
@@ -158,6 +229,7 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			tokenBudget,
 			recencyWindowDays,
 			cacheTtlHours,
+			autoThreshold,
 			weights: { keyword: kwWeight, recency: recWeight },
 		};
 	} catch {
@@ -330,6 +402,7 @@ export function formatOutput(
 	rankedFiles: RankedFileScore[],
 	budget: number,
 	truncated: boolean,
+	mode: "ranked" | "full_dump" = "ranked",
 ): RankedMapResult {
 	return {
 		files: rankedFiles.map((f) => ({
@@ -342,6 +415,7 @@ export function formatOutput(
 		),
 		budget,
 		truncated,
+		mode,
 	};
 }
 
@@ -704,11 +778,129 @@ describe("loadRankedMapConfig", () => {
 			assert.strictEqual(result.tokenBudget, 1024);
 			assert.strictEqual(result.recencyWindowDays, 30); // default
 			assert.strictEqual(result.cacheTtlHours, 24); // default
+			assert.strictEqual(result.autoThreshold, 20000); // default
 			assert.strictEqual(result.weights.keyword, 0.5); // default
 			assert.strictEqual(result.weights.recency, 0.3); // default
 		} finally {
 			cleanupDir(dir);
 		}
+	});
+
+	it("autoThreshold defaults to 20000 when not set in settings.json", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { tokenBudget: 4096 } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.autoThreshold, 20000);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("parses custom autoThreshold=5000", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { autoThreshold: 5000 } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.autoThreshold, 5000);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("autoThreshold=0 is valid (always-ranked mode)", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { autoThreshold: 0 } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.autoThreshold, 0);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("negative autoThreshold falls back to default 20000", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { autoThreshold: -100 } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.autoThreshold, 20000);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("non-integer autoThreshold falls back to default 20000", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { autoThreshold: "abc" } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.autoThreshold, 20000);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 1b: Mode Selection Logic
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("selectMode", () => {
+	it("query provided → ranked mode", () => {
+		const mode = selectMode("login auth", 100, 20000);
+		assert.strictEqual(mode, "ranked");
+	});
+
+	it("no query, totalSymbols <= autoThreshold → full_dump", () => {
+		const mode = selectMode("", 100, 20000);
+		assert.strictEqual(mode, "full_dump");
+	});
+
+	it("no query, totalSymbols == autoThreshold → full_dump", () => {
+		const mode = selectMode("", 20000, 20000);
+		assert.strictEqual(mode, "full_dump");
+	});
+
+	it("no query, totalSymbols > autoThreshold → ranked (recency-only)", () => {
+		const mode = selectMode("", 20001, 20000);
+		assert.strictEqual(mode, "ranked");
+	});
+
+	it("no query, autoThreshold=0 → always ranked (totalSymbols 0 > 0 is false, but 0 <= 0 is true, so full_dump)", () => {
+		// 0 symbols <= 0 threshold => full_dump
+		const mode = selectMode("", 0, 0);
+		assert.strictEqual(mode, "full_dump");
+	});
+
+	it("no query, autoThreshold=0, totalSymbols=1 → ranked (since 1 > 0)", () => {
+		const mode = selectMode("", 1, 0);
+		assert.strictEqual(mode, "ranked");
+	});
+
+	it("whitespace-only query treated as no query", () => {
+		const mode = selectMode("   ", 100, 20000);
+		assert.strictEqual(mode, "full_dump");
+	});
+
+	it("zero totalSymbols, no query, autoThreshold=20000 → full_dump", () => {
+		const mode = selectMode("", 0, 20000);
+		assert.strictEqual(mode, "full_dump");
 	});
 });
 
@@ -1127,12 +1319,23 @@ describe("rankFiles", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("formatOutput", () => {
-	it("output has top-level keys: files, total_tokens, budget, truncated", () => {
+	it("output has top-level keys: files, total_tokens, budget, truncated, mode", () => {
 		const result = formatOutput([], 2048, false);
 		assert.ok("files" in result);
 		assert.ok("total_tokens" in result);
 		assert.ok("budget" in result);
 		assert.ok("truncated" in result);
+		assert.ok("mode" in result);
+	});
+
+	it("mode defaults to 'ranked' when not specified", () => {
+		const result = formatOutput([], 2048, false);
+		assert.strictEqual(result.mode, "ranked");
+	});
+
+	it("mode can be set to 'full_dump'", () => {
+		const result = formatOutput([], 2048, false, "full_dump");
+		assert.strictEqual(result.mode, "full_dump");
 	});
 
 	it("each file entry has path, score, symbols, preview", () => {
@@ -1210,6 +1413,96 @@ describe("formatSymbols", () => {
 	it("single symbol formatted correctly", () => {
 		const result = formatSymbols([{ type: "function", name: "foo", line: 1 }], "a.ts");
 		assert.strictEqual(result, "a.ts\n  function foo");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 6b: dumpAllFiles
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("dumpAllFiles", () => {
+	it("returns all files sorted alphabetically by path", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"z.ts": [{ type: "function", name: "zFunc", line: 1 }],
+			"a.ts": [{ type: "class", name: "AClass", line: 1 }],
+			"m.ts": [{ type: "method", name: "mMethod", line: 5 }],
+		};
+		const result = dumpAllFiles(syms, 5000);
+		assert.strictEqual(result.files.length, 3);
+		assert.strictEqual(result.files[0]!.path, "a.ts");
+		assert.strictEqual(result.files[1]!.path, "m.ts");
+		assert.strictEqual(result.files[2]!.path, "z.ts");
+	});
+
+	it("each file has score=0 in full dump", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"a.ts": [{ type: "function", name: "foo", line: 1 }],
+		};
+		const result = dumpAllFiles(syms, 5000);
+		assert.strictEqual(result.files[0]!.score, 0);
+	});
+
+	it("each file has empty preview in full dump", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"a.ts": [{ type: "function", name: "foo", line: 1 }],
+		};
+		const result = dumpAllFiles(syms, 5000);
+		assert.strictEqual(result.files[0]!.preview, "");
+	});
+
+	it("empty symbols → empty result, no crash", () => {
+		const result = dumpAllFiles({}, 5000);
+		assert.strictEqual(result.files.length, 0);
+		assert.strictEqual(result.totalTokens, 0);
+		assert.strictEqual(result.truncated, false);
+	});
+
+	it("truncated when token budget exceeded", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"big.ts": Array.from({ length: 100 }, (_, i) => ({
+				type: "function",
+				name: `f${i}`,
+				line: i,
+			})),
+			"small.ts": [{ type: "function", name: "g", line: 1 }],
+		};
+		const result = dumpAllFiles(syms, 50);
+		assert.ok(result.truncated);
+	});
+
+	it("zero token budget → empty result, truncated=true", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"a.ts": [{ type: "function", name: "foo", line: 1 }],
+		};
+		const result = dumpAllFiles(syms, 0);
+		assert.strictEqual(result.files.length, 0);
+		assert.strictEqual(result.truncated, true);
+	});
+
+	it("all files fit within budget → truncated=false", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"a.ts": [{ type: "function", name: "foo", line: 1 }],
+		};
+		const result = dumpAllFiles(syms, 5000);
+		assert.strictEqual(result.truncated, false);
+	});
+
+	it("files without symbols still included (empty symbol list)", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"empty.ts": [],
+			"with.ts": [{ type: "function", name: "foo", line: 1 }],
+		};
+		const result = dumpAllFiles(syms, 5000);
+		assert.strictEqual(result.files.length, 2);
+		assert.ok(result.files.find((f) => f.path === "empty.ts"));
+	});
+
+	it("totalTokens reflects consumed token count", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"a.ts": [{ type: "function", name: "foo", line: 1 }],
+		};
+		const result = dumpAllFiles(syms, 5000);
+		assert.ok(result.totalTokens > 0);
 	});
 });
 

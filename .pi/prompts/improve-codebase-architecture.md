@@ -49,7 +49,7 @@ If target is `root` or omitted, use project root (`.`).
 
 Use Pi tools to walk the target codebase:
 
-- `map_codebase` — symbol tree: classes, functions, variables
+- `ranked_map` — symbol tree: classes, functions, variables (omit query for full dump on small repos)
 - `ripgrep_search` — hardcoded strings, magic numbers, leaky dependencies
 - `structural_search` — call chains, tightly-coupled patterns, deep nesting
 - `read` — inspect module interfaces directly

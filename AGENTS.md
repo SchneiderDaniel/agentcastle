@@ -14,7 +14,7 @@ Pi coding agent for multiple git submodules.
 - Wrong: `bash | grep`, `bash | rg`, `bash | find`
 
 **Search** — function/class/struct defs
-- Correct: `map_codebase`
+- Correct: `ranked_map` (omit query for full dump on small repos)
 - Wrong: `bash | grep`, `ripgrep_search`
 
 **Search** — AST patterns (try/catch, method calls)
