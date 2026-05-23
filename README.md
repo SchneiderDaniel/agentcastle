@@ -405,13 +405,18 @@ Detects inefficient patterns in each session and writes `.advice.md` alongside t
 | Identical call loop | error | Same tool+args 3x in last 12 calls |
 | Same-tool cascade | warning | `bash` called 12x consecutively |
 | Tool coverage gap | warning | Code files present but `structural_search` unused |
+| Structural-search underuse | warning | 3+ code files read/edited, `structural_search` never called |
 | Redundant reads | warning | Same file read 3x within 2 turns |
+| Immediate redundant read | warning | Same file read again within 1 turn |
 | Excessive turns | warning | 20+ tool calls with no file changes |
+
+**Feedback loop (before_agent_start):** On next session start, reads `latest.advice.md` and injects top 3 past findings as `⚠️ Past Session Lessons` into system prompt — agent learns from its own mistakes without manual intervention.
 
 **Per-session advice** — automatic on session shutdown:
 - `session_shutdown` hook generates `.advice.md` for the closing session
 - `session_start` recovery generates advice for any past sessions missing it
 - `latest.advice.md` symlink points to most recent advice
+- `before_agent_start` injects past lessons into next session's system prompt
 
 **Cross-session report** — manual, run via:
 ```
@@ -438,7 +443,7 @@ npx tsx scripts/session-advice.ts 2026-05-23   # by prefix
 | **Always-on** | `AGENTS.md` in project root | Concatenated and appended to system prompt every turn |
 | **On-demand** | `.pi/prompts/*.md` | Invoked manually via `/prompt-name` in Pi's editor |
 
-`AGENTS.md` contains the caveman protocol (communication style + tool routing). Active automatically every session.
+`AGENTS.md` contains the caveman protocol (communication style + tool routing) and **🛠 Tool Discipline** section (pre-call checklist, DO/DON'T table, error recovery procedure, batching triggers). Each agent `.md` in `.pi/agents/` also has a role-specific Tool Discipline box at top. Active automatically every session.
 
 ---
 
