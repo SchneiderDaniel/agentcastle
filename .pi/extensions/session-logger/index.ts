@@ -8,6 +8,7 @@
  */
 
 import * as path from "node:path";
+import * as fs from "node:fs";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createSessionStats } from "./stats.js";
@@ -48,71 +49,33 @@ export default function (pi: ExtensionAPI): void {
 
 		sessionsDir = path.resolve(sm.getCwd(), ".pi", "sessions");
 		await files.ensureSymlink(sessionFile, sessionsDir);
+
+		// Recovery: generate missing metadata/MD for the previous session.
+		// If session_shutdown didn't fire (crash, kill, race), we catch up now.
+		const prevFile = (_event as any).previousSessionFile as string | undefined;
+		if (prevFile) {
+			generateMissingReports(prevFile, files).catch((err) => {
+				console.error(
+					`[session-logger] Recovery failed for ${prevFile}: ${(err as Error).message}`,
+				);
+			});
+		}
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (!enabled) return;
 
 		const sm = ctx.sessionManager;
-		// Use session manager's own file reference — more reliable than module-level state
-		// which can be stale after pi restarts or concurrent sessions.
 		const sf = sm.getSessionFile();
 		if (!sf) return;
 
-		const sessionDir = path.dirname(sf);
-		// Derive filename prefix from JSONL basename so metadata/MD share
-		// the same prefix: {timestamp}_{uuid}.{metadata.json|md}
-		const sessionPrefix = path.basename(sf, ".jsonl");
-
-		// Parse stats directly from the JSONL file — source of truth,
-		// not dependent on event handlers that may not have fired.
-		let parsed: ParsedSessionStats | null = null;
+		// Wrap everything so one failure doesn't block the rest.
+		// Pi's extension runner catches errors silently per-handler —
+		// an uncaught throw stops execution of this handler entirely.
 		try {
-			parsed = parseSessionStats(sf);
+			await generateMissingReports(sf, files);
 		} catch (err) {
-			console.error(`[session-logger] Failed to parse session: ${(err as Error).message}`);
-		}
-
-		// Fall back to in-memory stats if JSONL parsing fails
-		const snap = stats.getSnapshot();
-
-		const meta: Metadata = {
-			sessionId: sm.getSessionId(),
-			name: sm.getSessionName() || undefined,
-			messages: sm.getEntries().length,
-			tokens: parsed?.tokens ?? {
-				input: snap.totalInputTokens,
-				output: snap.totalOutputTokens,
-				cacheRead: snap.totalCacheRead,
-				cacheWrite: snap.totalCacheWrite,
-				total:
-					snap.totalInputTokens +
-					snap.totalOutputTokens +
-					snap.totalCacheRead +
-					snap.totalCacheWrite,
-			},
-			cost: parsed?.cost ?? snap.totalCost,
-			compactions: parsed?.compactions ?? snap.compactionCount,
-			modelChanges: snap.modelChanges,
-			thinkingChanges: snap.thinkingChanges,
-			perTurnTokens: parsed?.perTurnTokens ?? snap.perTurnTokens,
-			toolStats: parsed?.toolStats ?? computeToolStats(snap.toolExecutions),
-			fileModifications: parsed?.fileModifications ?? snap.fileModifications,
-		};
-
-		// Write metadata (uses sessionPrefix for consistent naming with JSONL)
-		const metaPath = path.join(sessionDir, `${sessionPrefix}.metadata.json`);
-		await files.writeMetadata(sessionDir, sessionPrefix, meta);
-		await files.ensureLatestMetadataSymlink(sessionDir, metaPath);
-
-		// Generate .md report
-		try {
-			const md = renderSessionToMarkdown(sf);
-			const mdPath = path.join(sessionDir, `${sessionPrefix}.md`);
-			await files.writeSessionReport(sessionDir, sessionPrefix, md);
-			await files.ensureMdSymlink(sessionDir, mdPath);
-		} catch (err) {
-			console.error(`[session-logger] Failed to generate report: ${(err as Error).message}`);
+			console.error(`[session-logger] Shutdown handler failed: ${(err as Error).message}`);
 		}
 	});
 
@@ -183,6 +146,78 @@ export default function (pi: ExtensionAPI): void {
 			stats.recordFileModification("edit", event.input.path);
 		}
 	});
+}
+
+/**
+ * Generate metadata.json and .md report for a session file if they're missing.
+ * Called from session_shutdown (primary) and session_start (recovery).
+ */
+async function generateMissingReports(
+	sessionFilePath: string,
+	files: ReturnType<typeof createFileOps>,
+): Promise<void> {
+	// Check if the JSONL file still exists (might have been cleaned up)
+	if (!fs.existsSync(sessionFilePath)) return;
+
+	const sessionDir = path.dirname(sessionFilePath);
+	const sessionPrefix = path.basename(sessionFilePath, ".jsonl");
+
+	// Skip if both metadata and MD already exist
+	const metaPath = path.join(sessionDir, `${sessionPrefix}.metadata.json`);
+	const mdPath = path.join(sessionDir, `${sessionPrefix}.md`);
+	if (fs.existsSync(metaPath) && fs.existsSync(mdPath)) return;
+
+	// Parse stats from JSONL — source of truth
+	let parsed: ParsedSessionStats | null = null;
+	try {
+		parsed = parseSessionStats(sessionFilePath);
+	} catch (err) {
+		console.error(`[session-logger] Failed to parse ${sessionFilePath}: ${(err as Error).message}`);
+		return;
+	}
+
+	if (!parsed) return;
+
+	const meta: Metadata = {
+		sessionId: parsed.sessionId,
+		name: undefined,
+		messages: parsed.entryCount,
+		tokens: parsed.tokens,
+		cost: parsed.cost,
+		compactions: parsed.compactions,
+		modelChanges: parsed.models.map((m) => ({
+			time: parsed!.timestamp,
+			model: m,
+		})),
+		thinkingChanges: parsed.thinkingLevels.map((l) => ({
+			time: parsed!.timestamp,
+			level: l,
+		})),
+		perTurnTokens: parsed.perTurnTokens,
+		toolStats: parsed.toolStats,
+		fileModifications: parsed.fileModifications,
+	};
+
+	// Write metadata if missing
+	if (!fs.existsSync(metaPath)) {
+		try {
+			fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+			await files.ensureLatestMetadataSymlink(sessionDir, metaPath);
+		} catch (err) {
+			console.error(`[session-logger] Failed to write metadata: ${(err as Error).message}`);
+		}
+	}
+
+	// Generate .md report if missing
+	if (!fs.existsSync(mdPath)) {
+		try {
+			const md = renderSessionToMarkdown(sessionFilePath);
+			fs.writeFileSync(mdPath, md, "utf-8");
+			await files.ensureMdSymlink(sessionDir, mdPath);
+		} catch (err) {
+			console.error(`[session-logger] Failed to write report: ${(err as Error).message}`);
+		}
+	}
 }
 
 /** Aggregate tool executions into a summary map. */
