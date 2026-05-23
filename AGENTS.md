@@ -1,133 +1,85 @@
 # Agent Castle: The Pi Stack
 
-This is a Pi framwork based coding agent that is used on multiple git submodules.
+Pi coding agent for multiple git submodules.
 
 ## Rules
-- For read and edit in the .pi folder, please consult always the pi framework documention https://pi.dev/docs/latest and Update @README.me
-- If you need to same temporary files, please save them to the `ignore/` folder in this project. But make sure to delete them after use.
-- When creating GitHub issues, always use the repo defined in .pi/settings.json (supervisor.repo field). Never use git remote origin.
+- Read/edit `.pi` folder: consult https://pi.dev/docs/latest, update @README.me
+- Temp files: save to `ignore/` folder, delete after use
+- GitHub issues: use repo from `.pi/settings.json` (supervisor.repo), never git remote
 
-## Search Tools
+## Tool Reference
 
-### ripgrep_search (preferred)
-Dedicated tool for literal text and regex searches across the codebase. Respects `.gitignore`. Outputs structured JSON with file, line, column, text.
+**Search** — literal text, error messages, TODOs
+- Correct: `ripgrep_search`
+- Wrong: `bash | grep`, `bash | rg`, `bash | find`
 
-- **Backend**: Uses ripgrep when available, falls back to `grep -rnH` automatically
-- **Fallback limits**: grep fallback lacks column output (defaults to 1) and `.gitignore` awareness. Only `.git/` is excluded.
-- **When to use**: Finding magic numbers, hardcoded strings, error messages, TODOs, config values, any exact text match
-- **Limit**: Default `max_count` is 10 per file. Increase for targeted searches with few expected results.
+**Search** — function/class/struct defs
+- Correct: `map_codebase`
+- Wrong: `bash | grep`, `ripgrep_search`
 
-### structural_search (AST-aware)
-Use for code structure patterns — function definitions, class declarations, method calls, try/catch blocks. Does NOT search comments or strings.
+**Search** — AST patterns (try/catch, method calls)
+- Correct: `structural_search`
+- Wrong: `ripgrep_search`, `bash | grep`
 
-- **When NOT to use**: Pure text searches. Use ripgrep_search instead.
+**Read** file contents
+- Correct: `read(path, offset?, limit?)`
+- Wrong: `bash cat`, `bash head`, `bash tail`
 
-### map_codebase (ctags symbol lookup)
-Use to discover what files and symbols exist. Returns function/class/variable definitions with line numbers.
+**Write** new file
+- Correct: `write`
+- Wrong: `bash cat >`, `bash echo >`
 
-- **When to use**: Find function definitions, class declarations, understand file structure
+**Edit** existing file
+- Correct: `edit` (precise text replacement)
+- Wrong: `bash sed`, `write` (full overwrite)
 
-### bash (fallback only for search)
-Do NOT use bash+grep manually. The ripgrep_search tool handles this with proper output parsing and error handling.
+**Execute** command
+- Correct: `bash`
 
-## Tool Choice Rules
+**List** directory
+- Correct: `bash ls`
 
-Concrete rules for picking the right tool every time.
+### ripgrep_search notes
+- `.gitignore` respected natively
+- `max_count` default 10 per file
+- Auto-fallback to `grep -rnH` (no column, no `.gitignore`) if ripgrep unavailable
 
-| Task | Correct Tool | Wrong Tool |
-|------|-------------|------------|
-| Search literal text | `ripgrep_search` | `bash \| grep`, `bash \| rg`, `bash \| find` |
-| Find function/class/struct defs | `map_codebase` | `bash \| grep`, `ripgrep_search` |
-| Find AST patterns (try/catch, method calls) | `structural_search` | `ripgrep_search`, `bash \| grep` |
-| Read file contents | `read` (with offset/limit for large files) | `bash cat`, `bash head`, `bash tail` |
-| List directory | `bash ls` (only acceptable use of ls) | none |
-| Write new file | `write` | `bash cat >`, `bash echo >` |
-| Edit existing file | `edit` (precise text replacement) | `bash sed`, `write` (full overwrite) |
-| Execute command | `bash` | none — bash is correct here |
+## Discipline
 
-### Golden Rules
+1. **Pick right tool first time.** Wrong first choice cascades.
+2. **Batch same-tool calls.** 3+ consecutive `bash` → combine with `&&`. 3+ `read` → larger chunk or offset. 3+ `write`/`edit` → batch.
+3. **Read once, page with offset.** Don't re-read same file within 3 turns.
+4. **Error = change approach.** Stop → change args, tool, or ask user. Don't retry same tool+args twice.
 
-1. **First tool choice sets trajectory.** Picking `bash | grep` for search often cascades into more bash calls. Pick the right tool from turn 1.
-2. **Batch same-tool calls.** 3+ consecutive `bash`, `read`, or `write` calls = opportunity to batch. Combine bash with `&&`, read a larger chunk, or write fewer larger files.
-3. **Error means rethink.** If a tool errors, do NOT retry same tool+args. Change approach — different args, different tool, or ask user.
-4. **Prefer dedicated tools.** Pi has purpose-built tools. Using `bash` for something another tool does = inefficient.
+```
+Tool error → stop → change args, tool, or ask user
+```
 
 ## Session Advice
 
-After each session, check if `.pi/sessions/<session>.advice.md` exists.
+Read `.pi/sessions/<session>.advice.md` before each task. Auto-generated on session shutdown. Score 0.00 (clean) to 1.00. Clean = no issues.
 
-- The advice file is generated automatically on session shutdown.
-- It contains patterns detected in that session — tool misuse, cascading calls, loops, errors not actioned.
-- **Read it before starting a new task.** It may contain rules to follow this session.
-- Score: 0.00 (clean) to 1.00 (needs significant improvement).
-- Clean sessions produce `*No issues detected.*` (empty advice).
-
-To batch-analyze all past sessions:
+Batch analysis:
 ```bash
 npx tsx scripts/session-advice.ts        # all sessions
 npx tsx scripts/session-advice.ts --latest  # latest only
 ```
 
-Extension: `session-advice` (toggle with `/session-advice`).
+Extension: `session-advice` (toggle `/session-advice`).
 
-## Session File Structure
+## Session Files
 
-Every session produces up to 4 files in `.pi/sessions/`:
+`.pi/sessions/` produces per session:
+- `.jsonl` — structured log
+- `.md` — human-readable report
+- `.metadata.json` — token/cost/stats
+- `.advice.md` — improvement advice
 
-| File | Content |
-|------|---------|
-| `.jsonl` | Full structured log (JSON lines) — source of truth |
-| `.md` | Human-readable session report (rendered by `session-logger`) |
-| `.metadata.json` | Token/cost/tool-stats summary |
-| `.advice.md` | Improvement advice for the agent (rendered by `session-advice`) |
-
-Symlinks `latest.*` point to most recently closed session.
-
-## 🛠 Tool Discipline
-
-Mandatory pre-call checklist for every tool invocation:
-
-1. **Identify task type** — search, read, write, edit, execute?
-2. **Pick correct tool** from Tool Choice Rules table above
-3. **If tool errors**, do NOT retry same tool+args. Change approach: different args, different tool, or ask user.
-4. **Batch same-tool calls**: if 3+ consecutive same tool, merge into one (combine bash with `&&`, read larger chunk)
-5. **Read once, use offset to page**: do not re-read same file within 3 turns
-6. **Prefer structural_search** for code structure queries (function defs, classes, try/catch) over `bash | grep`
-
-### DO / DON'T
-
-| Task | DO | DON'T |
-|------|----|-------|
-| Find literal text | `ripgrep_search` | `bash \| grep`, `bash \| rg`, `bash \| find` |
-| Find function/class defs | `map_codebase` | `bash \| grep`, `ripgrep_search` |
-| Find AST patterns | `structural_search` | `ripgrep_search`, `bash \| grep` |
-| Read file contents | `read(path, offset?, limit?)` | `bash cat`, `bash head`, `bash tail` |
-| Write new file | `write` | `bash cat >`, `bash echo >` |
-| Edit existing file | `edit` (precise text replacement) | `bash sed`, `write` (full overwrite) |
-| Execute command | `bash` | none — bash is correct here |
-| List directory | `bash ls` | none — ls is acceptable |
-
-### Error Recovery
-
-```
-Tool error → STOP retrying same call → change args, tool, or ask user
-```
-
-If same tool errors twice in a row, force strategy switch. Do not retry more than once with same args.
-
-### Batching Triggers
-
-- 3+ consecutive `bash` → combine with `&&` or use script file
-- 3+ consecutive `read` → read larger portion with higher limit or use `offset` to page
-- 3+ consecutive `write` or `edit` → batch into one larger write
+Symlinks `latest.*` point to most recent session.
 
 ## Package Safety
 
-### npm Package Age Check
-Before installing any npm package from the public registry, run:
-`npm view <pkg> time.created`
-If first-publish date is less than 14 days old, block install with:
-"Package <name> is <X> days old — below 14-day safety threshold. Cannot install."
-If the command fails or field is missing, block (fail closed).
-This does NOT apply to git URLs, tarballs, or local paths.
-No override mechanism exists. The block is absolute.
+Before npm install from public registry: `npm view <pkg> time.created`
+- < 14 days old → block: "Package <name> is <X> days old — below 14-day safety threshold. Cannot install."
+- Command fails or field missing → block (fail closed)
+- Not applied: git URLs, tarballs, local paths. No override.
