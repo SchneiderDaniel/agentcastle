@@ -196,11 +196,14 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/lsp-auditor/` | LSP diagnostics pre-audit for supervisor |
 | `.pi/extensions/piignore.ts` | `.piignore` path blocking |
 | `.pi/extensions/tsc-checkpoint.ts` | `/check` command: `tsc --noEmit` |
+| `.pi/extensions/session-advice/` | Session advice — improvement recommendations per session |
 | `.pi/agents/researcher.md` | Researcher agent (pipeline step 1) |
 | `.pi/agents/architect.md` | Architect agent (pipeline step 2) |
 | `.pi/agents/test-designer.md` | TestDesigner agent (pipeline step 3) |
 | `.pi/agents/developer.md` | Developer agent (pipeline step 4) |
 | `.pi/agents/auditor.md` | Auditor agent (pipeline step 5) |
+| `scripts/session-advice.ts` | Post-hoc batch session analysis runner |
+| `scripts/session-advice.sh` | Shell wrapper for session-advice.ts |
 | `.pi/settings.json` | Supervisor + context status bar config |
 | `.pi/themes/agentcastle.json` | Dark cyberpunk TUI theme |
 | `.pi/prompts/issue-cutter.md` | Epic → sub-issues with layer labels |
@@ -229,6 +232,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **Web Crawler** | `web_crawl`: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps. |
 | **Context Info** | Rich TUI status bar (branch, model, tokens, TPS), welcome banner, animated working indicator. |
 | **Session Logger** | Logs sessions to `.pi/sessions/<id>.jsonl`. Generates `.md` reports with sub-agent output from supervisor pipeline. Toggle with `/session-logger`. Query with `scripts/session-query.sh`. |
+| **Session Advice** | Analyzes each session after shutdown for inefficient patterns. Generates `.advice.md` with fix recommendations. Post-hoc batch analysis via `scripts/session-advice.ts`. Report with `/session-advice report`. |
 | **Caveman Protocol** | Token-efficient communication. Active via `AGENTS.md`. Configurable intensity levels. |
 | **Ask User** | Interactive MC picker for AI-to-user questions. Uses arrow-key navigation + CSV logging. |
 | **Format on Save** | Auto-formats TS/JS with Prettier + ESLint --fix after write/edit. Non-blocking lint warnings. |
@@ -346,6 +350,9 @@ Switch the project to **Board** layout in the browser and change **Group by** to
 | Start session | `pi` |
 | Run supervisor pipeline | `/supervisor <issue-number>` |
 | Run TSC type-check | `/check` |
+| Toggle session advice | `/session-advice on` / `/session-advice off` |
+| Session advice report | `/session-advice report` — generates report, prompts cleanup + GitHub issue creation |
+| Batch advice analysis | `npx tsx scripts/session-advice.ts` (all) or `--latest` |
 | Toggle session logger | `/session-logger on` / `/session-logger off` |
 | Toggle caveman level | `/caveman` (cycle: lite → full → off) or `/caveman lite` |
 | Query session logs | `./scripts/session-query.sh 'select(.role == "user")'` |
@@ -364,7 +371,8 @@ Output formats:
 - **JSONL log**: `.pi/sessions/<datetime>_<uuid>.jsonl` — event stream per session
 - **Markdown report**: `.pi/sessions/<sessionId>.md` — human-readable session summary
 - **Metadata**: `.pi/sessions/<sessionId>.metadata.json` — structured session metadata
-- **Latest symlinks**: `.pi/sessions/latest.md` and `.pi/sessions/latest.metadata.json` — convenience symlinks to most recent report/metadata
+- **Advice**: `.pi/sessions/<sessionId>.advice.md` — improvement recommendations (see 7.3b)
+- **Latest symlinks**: `.pi/sessions/latest.*` — convenience symlinks to most recent report/metadata/advice
 
 Each session produces uniquely-named `.md` and `.metadata.json` files (keyed by `sessionId`), so no data is overwritten between sessions.
 
@@ -380,6 +388,47 @@ The JSONL log is a newline-delimited JSON event stream: messages, thinking block
 ```bash
 ./scripts/session-query.sh 'select(.role == "user")'
 cat .pi/sessions/latest.jsonl | ./scripts/session-query.sh 'select(.tool == "bash")'
+```
+
+#### 7.3b Session Advice
+
+**Extension:** `session-advice` (`.pi/extensions/session-advice/`)
+
+Detects inefficient patterns in each session and writes `.advice.md` alongside the session files.
+
+**Patterns detected:**
+
+| Pattern | Severity | Example |
+|---------|----------|---------|
+| Tool mismatch | error | `bash \| grep` instead of `ripgrep_search` |
+| Error not actioned | error | Tool errors, then retries same tool 4x |
+| Identical call loop | error | Same tool+args 3x in last 12 calls |
+| Same-tool cascade | warning | `bash` called 12x consecutively |
+| Tool coverage gap | warning | Code files present but `structural_search` unused |
+| Redundant reads | warning | Same file read 3x within 2 turns |
+| Excessive turns | warning | 20+ tool calls with no file changes |
+
+**Per-session advice** — automatic on session shutdown:
+- `session_shutdown` hook generates `.advice.md` for the closing session
+- `session_start` recovery generates advice for any past sessions missing it
+- `latest.advice.md` symlink points to most recent advice
+
+**Cross-session report** — manual, run via:
+```
+/session-advice report
+```
+Aggregates all sessions into `advice-report.md` with:
+- Priority summary table (🔴 High / 🟡 Medium / 🟢 Low) with severity + example
+- Per-category detail with sample findings, fix idea, effort estimate (Low/Medium/High)
+- Per-session findings breakdown
+
+After report generation, user is prompted to **clean up** the sessions folder (delete raw `.jsonl`, `.md`, `.metadata.json`) and then asked whether to **create a GitHub issue** from the report in the project repo (read from `supervisor.repo` in `.pi/settings.json`). Report file is preserved.
+
+**Batch analysis** (post-hoc for past sessions):
+```bash
+npx tsx scripts/session-advice.ts              # all sessions
+npx tsx scripts/session-advice.ts --latest     # latest only
+npx tsx scripts/session-advice.ts 2026-05-23   # by prefix
 ```
 
 #### 7.4 Context & Templates

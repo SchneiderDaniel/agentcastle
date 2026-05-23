@@ -30,6 +30,59 @@ Use to discover what files and symbols exist. Returns function/class/variable de
 ### bash (fallback only for search)
 Do NOT use bash+grep manually. The ripgrep_search tool handles this with proper output parsing and error handling.
 
+## Tool Choice Rules
+
+Concrete rules for picking the right tool every time.
+
+| Task | Correct Tool | Wrong Tool |
+|------|-------------|------------|
+| Search literal text | `ripgrep_search` | `bash \| grep`, `bash \| rg`, `bash \| find` |
+| Find function/class/struct defs | `map_codebase` | `bash \| grep`, `ripgrep_search` |
+| Find AST patterns (try/catch, method calls) | `structural_search` | `ripgrep_search`, `bash \| grep` |
+| Read file contents | `read` (with offset/limit for large files) | `bash cat`, `bash head`, `bash tail` |
+| List directory | `bash ls` (only acceptable use of ls) | none |
+| Write new file | `write` | `bash cat >`, `bash echo >` |
+| Edit existing file | `edit` (precise text replacement) | `bash sed`, `write` (full overwrite) |
+| Execute command | `bash` | none — bash is correct here |
+
+### Golden Rules
+
+1. **First tool choice sets trajectory.** Picking `bash | grep` for search often cascades into more bash calls. Pick the right tool from turn 1.
+2. **Batch same-tool calls.** 3+ consecutive `bash`, `read`, or `write` calls = opportunity to batch. Combine bash with `&&`, read a larger chunk, or write fewer larger files.
+3. **Error means rethink.** If a tool errors, do NOT retry same tool+args. Change approach — different args, different tool, or ask user.
+4. **Prefer dedicated tools.** Pi has purpose-built tools. Using `bash` for something another tool does = inefficient.
+
+## Session Advice
+
+After each session, check if `.pi/sessions/<session>.advice.md` exists.
+
+- The advice file is generated automatically on session shutdown.
+- It contains patterns detected in that session — tool misuse, cascading calls, loops, errors not actioned.
+- **Read it before starting a new task.** It may contain rules to follow this session.
+- Score: 0.00 (clean) to 1.00 (needs significant improvement).
+- Clean sessions produce `*No issues detected.*` (empty advice).
+
+To batch-analyze all past sessions:
+```bash
+npx tsx scripts/session-advice.ts        # all sessions
+npx tsx scripts/session-advice.ts --latest  # latest only
+```
+
+Extension: `session-advice` (toggle with `/session-advice`).
+
+## Session File Structure
+
+Every session produces up to 4 files in `.pi/sessions/`:
+
+| File | Content |
+|------|---------|
+| `.jsonl` | Full structured log (JSON lines) — source of truth |
+| `.md` | Human-readable session report (rendered by `session-logger`) |
+| `.metadata.json` | Token/cost/tool-stats summary |
+| `.advice.md` | Improvement advice for the agent (rendered by `session-advice`) |
+
+Symlinks `latest.*` point to most recently closed session.
+
 ## Package Safety
 
 ### npm Package Age Check
