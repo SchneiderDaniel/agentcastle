@@ -23,6 +23,7 @@
 		"maxRejections": 5,
 		"codeowners": ["SchneiderDaniel"],
 		"agentTimeoutsMin": {},
+		"ciGatingTimeoutSec": 0,
 		"bellOnComplete": false
 	}
 }
