@@ -37,7 +37,7 @@ export default function (pi: ExtensionAPI): void {
 
 	// ── Session lifecycle ──
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
 		if (!enabled) return;
 
 		const sm = ctx.sessionManager;
@@ -52,7 +52,7 @@ export default function (pi: ExtensionAPI): void {
 
 		// Recovery: generate missing metadata/MD for the previous session.
 		// If session_shutdown didn't fire (crash, kill, race), we catch up now.
-		const prevFile = (_event as any).previousSessionFile as string | undefined;
+		const prevFile = event.previousSessionFile;
 		if (prevFile) {
 			generateMissingReports(prevFile, files).catch((err) => {
 				console.error(

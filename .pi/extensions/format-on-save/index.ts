@@ -63,7 +63,7 @@ export default function (pi: ExtensionAPI) {
 					``,
 					lintMsg,
 				].join("\n");
-				pi.sendUserMessage?.(followUp, { deliverAs: "followUp" });
+				pi.sendUserMessage(followUp, { deliverAs: "followUp" });
 			}
 		}
 	});
