@@ -24,49 +24,49 @@ interface FixSuggestion {
 
 const FIXES: Record<string, FixSuggestion> = {
 	"tool-mismatch": {
-		idea: "Add tool-choice table to AGENTS.md. Whenever agent types `bash | grep`, `bash cat`, etc., trigger a self-correction to use the dedicated tool. Implement pre-call validation that maps intent → tool.",
+		idea: "Implement pre-call validation in harness: intercept bash commands containing grep/rg/cat/head/tail and auto-route to dedicated tool (ripgrep_search/read). Falls back to tool-choice table in AGENTS.md only if harness hook not feasible.",
 		effort: "Low",
 	},
 	"error-not-actioned": {
-		idea: "Add rule to AGENTS.md: 'After tool error, do NOT retry same tool+args. Change approach.' Track last 3 errors per tool; if same tool errors twice in a row, force strategy switch.",
+		idea: "Track last 3 errors per tool in agent runtime. If same tool errors twice consecutively, force strategy switch — block that tool, surface alternative. AGENTS.md rule only if code-level error tracking unavailable.",
 		effort: "Medium",
 	},
 	"identical-call-loop": {
-		idea: "Add tool-call dedup cache. Before issuing a tool call, check if identical args were used in last N calls. If so, skip or merge. Detect loops in agent's reasoning loop and break them.",
+		idea: "Add tool-call dedup cache in harness: before issuing call, compare args against last N calls. Skip or merge duplicates. Detect loops via arg fingerprinting and break them at runtime. AGENTS.md guidance as secondary guard.",
 		effort: "High",
 	},
 	"same-tool-cascade": {
-		idea: "Add batching guidance to AGENTS.md. Implement tool-level batching: when N same-tool calls queued, merge into one (e.g., combine bash with `&&`, batch reads by reading larger region).",
+		idea: "Implement tool-level batching in harness queue: when N same-tool calls collected within a turn, merge into single call (e.g., combine bash with `&&`, batch reads by coalescing offsets). AGENTS.md batching guidance only if queue merge not viable.",
 		effort: "Medium",
 	},
 	"redundant-read": {
-		idea: "Add read-result cache keyed by file path + offset/limit. If same file read within 3 turns, return cached content. Add 'read once, use offset to page' to AGENTS.md.",
+		idea: "Add read-result cache in harness keyed by (path, offset, limit). If same file re-read within 3 turns, serve cached content automatically. Fallback: add 'read once, use offset to page' to AGENTS.md.",
 		effort: "Medium",
 	},
 	"high-error-rate": {
-		idea: "Add pre-flight validation: check file exists before read/edit, check command exists before bash, check path before write. Surface validation errors to user early.",
+		idea: "Add pre-flight validation in harness: check file exists before read/edit, verify command exists before bash, validate path before write. Surface errors early via typed error responses. Code validation preferred over AGENTS.md rules.",
 		effort: "High",
 	},
 	"excessive-turns": {
-		idea: "Add turn budget: if more than X tool calls produce no file change, pause and ask user for direction. Add 'work in larger batches' to AGENTS.md.",
+		idea: "Add turn budget tracker in agent loop: if N tool calls produce no file change, pause and prompt user for direction. Code-based budget enforcement; AGENTS.md guidance only if loop hook not available.",
 		effort: "Medium",
 	},
 	"tool-coverage-gap": {
-		idea: "Add auto-detection: when code files are read/edited but structural_search never called in first 3 turns, add a reminder to use it. Mention in AGENTS.md.",
+		idea: "Add auto-detection hook: when code files read/edited but structural_search never called in first 3 turns, emit in-context reminder to use AST queries. Code reminder over AGENTS.md mention.",
 		effort: "Low",
 	},
 	"immediate-redundant-read": {
-		idea: "Flag same-file reads within 1 turn — use read(path, offset, limit) to page through files in one call instead of re-reading.",
+		idea: "Add harness interceptor: flag same-path reads within 1 turn and suggest offset/limit paging. Code-based detection over rule in AGENTS.md.",
 		effort: "Low",
 	},
 	"structural-search-underuse": {
-		idea: "When 3+ code files are read/edited and structural_search is never called, remind agent to use it for AST-aware queries over text grep.",
+		idea: "Add runtime counter: track read/edit calls on code files. If count hits 3 and structural_search never invoked, auto-prompt agent with AST query suggestion. Code trigger over AGENTS.md instruction.",
 		effort: "Low",
 	},
 };
 
 const DEFAULT_FIX: FixSuggestion = {
-	idea: "Review AGENTS.md for relevant rules. Consider adding automated detection for this pattern.",
+	idea: "Implement automated detection hook for this pattern in code. If code hook not feasible, add fallback rule to AGENTS.md.",
 	effort: "Medium",
 };
 
