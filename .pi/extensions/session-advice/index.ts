@@ -274,7 +274,7 @@ export default function (pi: ExtensionAPI): void {
 			for (const line of lines) {
 				if (/^### [⚠️⚡ℹ️]/.test(line)) {
 					currentCategory = line.replace(/^### [⚠️⚡ℹ️] /, "").trim();
-				} else if (currentCategory && line.startsWith("- **Detail:")) {
+				} else if (currentCategory && line.startsWith("- **Detail:**")) {
 					const detail = line.replace("- **Detail:** ", "").trim().slice(0, 200);
 					findings.push(`- [${currentCategory}] ${detail}`);
 					currentCategory = "";
@@ -390,6 +390,7 @@ export function generateAdviceReport(sessionsDir: string): string {
 				return sum + (0.5 + recencyFactor * 0.5); // range: 0.5 to 1.0
 			}, 0);
 			const reach = sessions.length * recencyWeightedIssues;
+			const priority = reach >= 50 ? "High" : reach >= 10 ? "Medium" : "Low";
 			const fix = FIXES[g.category] ?? DEFAULT_FIX;
 
 			// Unique details for display
