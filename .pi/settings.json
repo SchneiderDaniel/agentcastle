@@ -5,6 +5,15 @@
 	"contextStatusBar": {
 		"showTps": true
 	},
+	"rankedMap": {
+		"tokenBudget": 2048,
+		"recencyWindowDays": 30,
+		"cacheTtlHours": 24,
+		"weights": {
+			"keyword": 0.5,
+			"recency": 0.3
+		}
+	},
 	"docker": {
 		"memory": "4G",
 		"cpus": "2.0"
