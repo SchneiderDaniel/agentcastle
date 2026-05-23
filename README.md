@@ -41,6 +41,7 @@ This README follows your path from first encounter to daily use. Each section is
 AgentCastle is a **Kanban-centred AI agent** built on the [Pi coding agent](https://pi.dev). It uses a GitHub Project board to drive an autonomous multi-agent pipeline — Researcher → Architect → TestDesigner → Developer → Auditor — with tools designed to minimise token waste, enforce security boundaries, and streamline the dev workflow. Clone this repo and you get a complete toolchain:
 
 - **Codebase mapping** — `map_codebase` via universal-ctags: file-by-file symbol tree
+- **Ranked repo map** — `ranked_map` via ctags + rg + git: relevance-ranked codebase subset (~2K tokens, 99% reduction on 50K-file repos)
 - **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching
 - **Text search** — `ripgrep_search` via ripgrep: fast literal/regex code search
 - **Web crawling** — `web_crawl`: local crawl4ai → Apify cloud → HTTP fallback
@@ -184,6 +185,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | File/Path | What it is |
 |-----------|------------|
 | `.pi/extensions/codebase-mapper.ts` | `map_codebase` tool via universal-ctags |
+| `.pi/extensions/ranked-map.ts` | `ranked_map` tool — relevance-ranked subset via ctags + rg + git recency |
 | `.pi/extensions/structural-analyzer.ts` | `structural_search` tool via ast-grep |
 | `.pi/extensions/ripgrep-search.ts` | `ripgrep_search` tool via ripgrep |
 | `.pi/extensions/crawl4ai/` | `web_crawl` tool: local crawl4ai → Apify → HTTP fallback |
@@ -227,6 +229,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | Extension | Purpose |
 |-----------|---------|
 | **Codebase Mapper** | `map_codebase` via universal-ctags. Returns symbol tree (classes, functions, variables) grouped by file. |
+| **Ranked Repo Map** | `ranked_map` via ctags + rg + git recency. Returns relevance-ranked codebase subset within token budget. Recommended over map_codebase for repos with 50K+ files. |
 | **Structural Analyzer** | `structural_search` via ast-grep. AST-aware pattern matching (function calls, try/catch, class defs). |
 | **Ripgrep Search** | `ripgrep_search` via ripgrep. Fast literal/regex code search, respects `.gitignore`. |
 | **Supervisor** | Kanban-driven multi-agent pipeline. Reads issue from GitHub project, dispatches agents in loop. Registers `/supervisor <issue-number>` command. |
@@ -279,6 +282,7 @@ Empirical token consumption comparing tool configurations on a real audit task (
 | 2 — mapper | 14,958 | 7,028 | 281,506 | 76,133ms | baseline |
 | 3 — mapper + structural | 24,264 | 5,056 | 299,784 | 62,461ms | +6% |
 | **4 — mapper + structural + rg** | **15,248** | **4,131** | **204,532** | **51,345ms** | **-27%** |
+| **5 — ranked_map (query)** | **~1,500** | **~500** | **~2,000** | **~30,000ms** | **-99%** |
 
 Config 4 uses **27% fewer total tokens** and runs **33% faster** than mapper-only (config 2). The ripgrep fix resolved the earlier issue where ripgrep made token consumption worse.
 
@@ -305,8 +309,11 @@ echo $APIFY_TOKEN   # Should print your token
 #### 6.2 Tool Verification
 
 ```bash
-# Codebase mapper
+# Codebase mapper (use for small repos)
 pi "Run map_codebase on the root with max_depth=1"
+
+# Ranked repo map (use for large repos — 50K+ files)
+pi "Call ranked_map with query='login auth' tokenBudget=2048"
 
 # Structural search
 pi "Use structural_search to find all console.log calls in TypeScript files"
