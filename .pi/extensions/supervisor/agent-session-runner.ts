@@ -11,7 +11,7 @@
 //  6. Extract complete messages → build AgentRunResult (untruncated)
 //  7. Always dispose session on completion
 
-import type { ParsedAgent, AgentRunResult, AgentRunState, AgentPhase } from "./types";
+import type { ParsedAgent, AgentRunResult, AgentRunState, AgentPhase } from "./types.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
@@ -22,19 +22,24 @@ import {
 	AuthStorage,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { getModel, type KnownProvider } from "@earendil-works/pi-ai";
-import { resolveTools, resolveExtensionPaths } from "./extensions";
+import { getModel } from "@earendil-works/pi-ai";
+import { resolveTools, resolveExtensionPaths } from "./extensions.ts";
 import {
 	formatDuration,
 	extractSummaryLine,
 	formatTokens,
 	extractTextFromContent,
-} from "./formatting";
-import { pushLog, buildWidgetLines, buildWidgetComponent, getWorkingMessage } from "./agent-stream";
-import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
+} from "./formatting.ts";
+import {
+	pushLog,
+	buildWidgetLines,
+	buildWidgetComponent,
+	getWorkingMessage,
+} from "./agent-stream.ts";
+import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
 
 // Re-export for backward compatibility
-export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
+export { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
 
 // ─── Model Resolution ───────────────────────────────────────────────
 
@@ -79,7 +84,7 @@ export async function resolveModel(
 		const models = registry.getAll();
 		if (models && models.length > 0) {
 			const first = models[0];
-			const id = first.id || "";
+			const id = first.id || first.model || "";
 			const prov = first.provider || "";
 			if (prov && id) {
 				return { provider: prov, modelId: id };
@@ -481,7 +486,7 @@ export async function runAgentInProcess(
 	let resolvedModel: any;
 	if (modelInfo) {
 		try {
-			resolvedModel = (getModel as any)(modelInfo.provider, modelInfo.modelId);
+			resolvedModel = getModel(modelInfo.provider, modelInfo.modelId);
 		} catch {
 			// getModel threw — try fallback
 		}
@@ -496,8 +501,6 @@ export async function runAgentInProcess(
 	let session;
 	let unsubscribe: (() => void) | undefined;
 	let abortController: AbortController | undefined;
-	let flushTimer: NodeJS.Timeout | null = null;
-	let heartbeat: ReturnType<typeof setInterval> | undefined;
 
 	try {
 		// Create resource loader with system prompt override and extension paths
@@ -507,6 +510,7 @@ export async function runAgentInProcess(
 			settingsManager: SettingsManager.inMemory(),
 			systemPromptOverride: () => agent.systemPrompt,
 			additionalExtensionPaths: extPaths.length > 0 ? extPaths : undefined,
+			noExtensions: true,
 		});
 		await resourceLoader.reload();
 
@@ -530,7 +534,7 @@ export async function runAgentInProcess(
 		// The factory captures state by reference so each render picks up the
 		// latest fullLog, tool info, and stats. Styled with theme colors to
 		// match the message-renderer look.
-		flushTimer = null;
+		let flushTimer: NodeJS.Timeout | null = null;
 
 		const flushWidget = () => {
 			if (flushTimer) {
@@ -555,7 +559,7 @@ export async function runAgentInProcess(
 		};
 
 		// Heartbeat: ensure widget updates even during long idle periods (model cold start)
-		heartbeat = setInterval(() => {
+		const heartbeat = setInterval(() => {
 			flushWidget();
 		}, 5000);
 
@@ -574,6 +578,7 @@ export async function runAgentInProcess(
 
 		try {
 			await session.prompt(task, {
+				signal: abortController.signal,
 				streamingBehavior: "steer",
 			});
 		} catch (promptErr: unknown) {
