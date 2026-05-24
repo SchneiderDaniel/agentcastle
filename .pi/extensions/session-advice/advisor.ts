@@ -10,6 +10,13 @@
  */
 
 import { readFileSync } from "node:fs";
+import {
+	isSearchInBash,
+	isCatHeadTailInBash,
+	isLsInBash,
+	isCodeFilePath,
+	SEARCH_TOOLS,
+} from "../../lib/harness-rules.ts";
 
 // ── Types ──
 
@@ -135,11 +142,7 @@ export function parseJsonlFile(filepath: string): SessionData | null {
 	return { sessionId, entries };
 }
 
-// ── Constants ──
-
-const BASH_SEARCH_SIGNALS = ["| grep", "| rg", "| find", "`grep", "`rg", "`find", "`rg`", "`grep`"];
-const READ_BASH_CMDS = ["cat", "head", "tail", "less", "more"];
-const SEARCH_TOOLS = new Set(["ripgrep_search", "structural_search"]);
+// ── Constants (imported from harness-rules.ts shared module) ──
 
 // ── Detection rules ──
 
@@ -192,13 +195,8 @@ function detectToolMismatch(data: SessionData): AdviceEntry[] {
 
 		const cmd = (entry.text ?? "").toLowerCase();
 
-		// Check for grep/rg/find in bash
-		if (
-			cmd.includes("| grep") ||
-			cmd.includes("`grep") ||
-			cmd.includes("| rg") ||
-			cmd.includes("`rg")
-		) {
+		// Check for grep/rg/find in bash — use harness-rules
+		if (isSearchInBash(cmd)) {
 			results.push({
 				severity: "error",
 				category: "tool-mismatch",
@@ -209,22 +207,20 @@ function detectToolMismatch(data: SessionData): AdviceEntry[] {
 			});
 		}
 
-		// Check for file reads in bash
-		for (const c of READ_BASH_CMDS) {
-			if (cmd.startsWith(c + " ") || cmd.includes(" " + c + " ")) {
-				results.push({
-					severity: "error",
-					category: "tool-mismatch",
-					detail: `\`bash\` used with \`${c}\` — use \`read\` tool (turn ${entry.turnIndex}): \`${(entry.text ?? "").slice(0, 100)}\``,
-					recommendation: `Replace \`bash ${c}\` with \`read\` tool. Use \`read(path, offset, limit)\` for file inspection.`,
-					turns: [entry.turnIndex],
-				});
-				break;
-			}
+		// Check for file reads in bash — use harness-rules
+		if (isCatHeadTailInBash(cmd)) {
+			results.push({
+				severity: "error",
+				category: "tool-mismatch",
+				detail: `\`bash\` used with cat/head/tail — use \`read\` tool (turn ${entry.turnIndex}): \`${(entry.text ?? "").slice(0, 100)}\``,
+				recommendation:
+					"Replace `bash cat/head/tail` with `read` tool. Use `read(path, offset, limit)` for file inspection.",
+				turns: [entry.turnIndex],
+			});
 		}
 
-		// Check for ls
-		if (cmd === "ls" || cmd.startsWith("ls ") || cmd.startsWith("ls\t")) {
+		// Check for ls — use harness-rules
+		if (isLsInBash(cmd)) {
 			results.push({
 				severity: "info",
 				category: "tool-mismatch",
@@ -273,6 +269,40 @@ function detectRedundantReads(data: SessionData): AdviceEntry[] {
 }
 
 /**
+ * Rule 3b: Immediate redundant read — same file path read within 1 turn.
+ * Tighter window than existing redundant-read (2 turns). Separate category.
+ */
+function detectImmediateRedundantRead(data: SessionData): AdviceEntry[] {
+	const results: AdviceEntry[] = [];
+	const reads: Array<{ path: string; turnIndex: number }> = [];
+
+	for (const entry of data.entries) {
+		if (entry.toolName !== "read") continue;
+
+		const p = (entry.args?.path ?? entry.text ?? "") as string;
+		if (!p) continue;
+		const ti = entry.turnIndex;
+
+		const recent = reads.filter(
+			(r) => r.path === p && Math.abs(r.turnIndex - ti) <= 1 && r.turnIndex !== ti,
+		);
+		if (recent.length > 0) {
+			results.push({
+				severity: "warning",
+				category: "immediate-redundant-read",
+				detail: `\`${shortPath(p)}\` read again within 1 turn (turn ${ti})`,
+				recommendation: `For \`${shortPath(p)}\`, use \`read(path, offset, limit)\` to page. Read once, cache results.`,
+				turns: [Math.min(...recent.map((r) => r.turnIndex), ti), ti],
+			});
+		}
+
+		reads.push({ path: p, turnIndex: ti });
+	}
+
+	return results;
+}
+
+/**
  * Rule 4: Error not actioned — tool error followed by same tool retry.
  */
 function detectErrorNotActioned(data: SessionData): AdviceEntry[] {
@@ -309,13 +339,15 @@ function detectToolCoverageGap(data: SessionData): AdviceEntry[] {
 	const toolsUsed = new Set(data.entries.filter((e) => e.toolName).map((e) => e.toolName));
 	const hasStructural = [...SEARCH_TOOLS].some((t) => toolsUsed.has(t));
 
-	// Check if any tool call touched code files (read/edit/write)
+	// Check if any tool call touched code files (read/edit/write) — use harness-rules
 	const touchedCode = data.entries.some((e) => {
 		const p = (e.args?.path ?? "") as string;
-		return /\.(ts|js|tsx|jsx|py|rs|go)$/i.test(p);
+		return isCodeFilePath(p);
 	});
 
-	const hasBashSearch = data.entries.some((e) => e.toolName === "bash" && grepLike(e.text ?? ""));
+	const hasBashSearch = data.entries.some(
+		(e) => e.toolName === "bash" && isSearchInBash(e.text ?? ""),
+	);
 
 	if (!touchedCode) return [];
 	if (hasStructural) return [];
@@ -343,12 +375,12 @@ function detectStructuralSearchUnderuse(data: SessionData): AdviceEntry[] {
 	const hasStructural = [...SEARCH_TOOLS].some((t) => toolsUsed.has(t));
 	if (hasStructural) return [];
 
-	// Count unique code files touched by read/edit/write
+	// Count unique code files touched by read/edit/write — use harness-rules
 	const codeFiles = new Set(
 		data.entries
 			.filter((e) => e.toolName === "read" || e.toolName === "edit" || e.toolName === "write")
 			.map((e) => (e.args?.path ?? "") as string)
-			.filter((p) => /\.(ts|js|tsx|jsx|py|rs|go)$/i.test(p)),
+			.filter((p) => isCodeFilePath(p)),
 	);
 
 	if (codeFiles.size >= 3) {
@@ -364,45 +396,6 @@ function detectStructuralSearchUnderuse(data: SessionData): AdviceEntry[] {
 	}
 
 	return [];
-}
-
-/**
- * Rule 3b: Immediate redundant read — same file path read within 1 turn.
- * Tighter window than existing redundant-read (2 turns). Separate category.
- */
-function detectImmediateRedundantRead(data: SessionData): AdviceEntry[] {
-	const results: AdviceEntry[] = [];
-	const reads: Array<{ path: string; turnIndex: number }> = [];
-
-	for (const entry of data.entries) {
-		if (entry.toolName !== "read") continue;
-
-		const p = (entry.args?.path ?? entry.text ?? "") as string;
-		if (!p) continue;
-		const ti = entry.turnIndex;
-
-		const recent = reads.filter(
-			(r) => r.path === p && Math.abs(r.turnIndex - ti) <= 1 && r.turnIndex !== ti,
-		);
-		if (recent.length > 0) {
-			results.push({
-				severity: "warning",
-				category: "immediate-redundant-read",
-				detail: `\`${shortPath(p)}\` read again within 1 turn (turn ${ti})`,
-				recommendation: `For \`${shortPath(p)}\`, use \`read(path, offset, limit)\` to page. Read once, cache results.`,
-				turns: [Math.min(...recent.map((r) => r.turnIndex), ti), ti],
-			});
-		}
-
-		reads.push({ path: p, turnIndex: ti });
-	}
-
-	return results;
-}
-
-function grepLike(s: string): boolean {
-	const low = s.toLowerCase();
-	return low.includes("grep") || low.includes("| rg") || low.includes("`rg");
 }
 
 /**

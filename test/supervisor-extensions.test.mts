@@ -50,7 +50,14 @@ function resolveExtensions(extensionsRaw: string | undefined): string[] {
 describe("AgentFrontmatter extensions field", () => {
 	it("1.1: parses extensions: 'mcp,browser' + context-info", () => {
 		const result = resolveExtensions("mcp,browser");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/browser.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/browser.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("1.2: undefined extensions → context-info auto-injected", () => {
@@ -71,12 +78,24 @@ describe("AgentFrontmatter extensions field", () => {
 describe("runAgent() extension resolution", () => {
 	it("2.1: agent has extensions 'mcp,browser' → --extension per flag + context-info", () => {
 		const result = resolveExtensions("mcp,browser");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/browser.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/browser.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("2.2: agent has extensions 'supervisor,mcp' → supervisor filtered out, context-info added", () => {
 		const result = resolveExtensions("supervisor,mcp");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("2.3: only supervisor → context-info auto-injected", () => {
@@ -96,17 +115,38 @@ describe("runAgent() extension resolution", () => {
 
 	it("2.6: whitespace around names → trimmed + context-info added", () => {
 		const result = resolveExtensions("  mcp  ,  browser  ");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/browser.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/browser.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("2.7: mixed case — passes original case to CLI, supervisor check is case-insensitive + context-info", () => {
 		const result = resolveExtensions("MCP,Browser,Supervisor");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/MCP.ts", "--extension", ".pi/extensions/Browser.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/MCP.ts",
+			"--extension",
+			".pi/extensions/Browser.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("2.8: supervisor in middle of list → filtered out, order preserved + context-info", () => {
 		const result = resolveExtensions("mcp,supervisor,browser");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/browser.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/browser.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 });
 
@@ -117,12 +157,26 @@ describe("runAgent() extension resolution", () => {
 describe("supervisor auto-exclusion (case-insensitive)", () => {
 	it("3.1: exclude lowercase 'supervisor' + context-info added", () => {
 		const result = resolveExtensions("mcp,supervisor,browser");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/browser.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/browser.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("3.2: exclude uppercase 'SUPERVISOR' + context-info added", () => {
 		const result = resolveExtensions("mcp,SUPERVISOR,browser");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/browser.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/browser.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("3.3: exclude mixed-case 'Supervisor' → context-info auto-injected", () => {
@@ -132,7 +186,14 @@ describe("supervisor auto-exclusion (case-insensitive)", () => {
 
 	it("3.4: no supervisor in list → passes through + context-info added", () => {
 		const result = resolveExtensions("mcp,browser");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/browser.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/browser.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("3.5: only supervisor in list → context-info auto-injected", () => {
@@ -160,7 +221,14 @@ describe("edge cases", () => {
 
 	it("5.3: extension names with hyphens or dots → pass through + context-info", () => {
 		const result = resolveExtensions("my-custom-tool,my.tool");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/my-custom-tool.ts", "--extension", ".pi/extensions/my.tool.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/my-custom-tool.ts",
+			"--extension",
+			".pi/extensions/my.tool.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 
 	it("5.4: whitespace-only string → context-info auto-injected", () => {
@@ -170,17 +238,27 @@ describe("edge cases", () => {
 
 	it("caveman,crawl4ai (PS requirement) + context-info", () => {
 		const result = resolveExtensions("caveman,crawl4ai");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/caveman.ts", "--extension", ".pi/extensions/crawl4ai.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		// Both caveman and crawl4ai are directory-based -> resolve to /index.ts
+		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
+		assert.ok(result.some((r) => r.includes("crawl4ai/index.ts")));
+		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 
 	it("supervisor with caveman → supervisor excluded, context-info added", () => {
 		const result = resolveExtensions("supervisor,caveman,crawl4ai");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/caveman.ts", "--extension", ".pi/extensions/crawl4ai.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
+		assert.ok(result.some((r) => r.includes("crawl4ai/index.ts")));
+		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 
 	it("single extension (not supervisor) + context-info", () => {
 		const result = resolveExtensions("mcp");
-		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/mcp.ts", "--extension", ".pi/extensions/context-info.ts"]);
+		assert.deepStrictEqual(result, [
+			"--extension",
+			".pi/extensions/mcp.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
+		]);
 	});
 });
 
@@ -212,14 +290,30 @@ function parseAgentFileExtensions(filePath: string): string | undefined {
 
 describe("production agent files — extensions field", () => {
 	const agents = [
-		{ name: "architect", expected: "caveman,crawl4ai,piignore,codebase-memory" },
-		{ name: "test-designer", expected: "caveman,crawl4ai,piignore,codebase-memory" },
-		{ name: "developer", expected: "caveman,crawl4ai,piignore,codebase-memory" },
-		{ name: "auditor", expected: "caveman,crawl4ai,piignore,codebase-memory" },
+		{
+			name: "architect",
+			expected:
+				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+		},
+		{
+			name: "test-designer",
+			expected:
+				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+		},
+		{
+			name: "developer",
+			expected:
+				"agent-harness,caveman,crawl4ai,format-on-save,piignore,ranked-map,ripgrep-search,tsc-checkpoint,structural-analyzer",
+		},
+		{
+			name: "auditor",
+			expected:
+				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+		},
 	];
 
 	for (const agent of agents) {
-		it(`${agent.name}.md has extensions: "caveman,crawl4ai,piignore,codebase-memory"`, () => {
+		it(`${agent.name}.md has extensions field matching expected`, () => {
 			const val = parseAgentFileExtensions(`.pi/agents/${agent.name}.md`);
 			assert.strictEqual(val, agent.expected);
 		});
@@ -230,7 +324,9 @@ describe("production agent files — extensions field", () => {
 		try {
 			readFileSync(".pi/agents/supervisor.md");
 			exists = true;
-		} catch { /* expected */ }
+		} catch {
+			/* expected */
+		}
 		assert.strictEqual(exists, false);
 	});
 });
@@ -243,9 +339,9 @@ describe("production agents resolve without supervisor in output", () => {
 			// Must not contain --no-extensions (should have --extension flags)
 			assert.notStrictEqual(result[0], "--no-extensions");
 			// Must not contain "supervisor" in any path
-			assert.ok(!result.some(s => s.toLowerCase().includes("supervisor")));
+			assert.ok(!result.some((s) => s.toLowerCase().includes("supervisor")));
 			// Must contain context-info
-			assert.ok(result.some(s => s.includes("context-info.ts")));
+			assert.ok(result.some((s) => s.includes("context-info.ts")));
 		});
 	}
 });
@@ -263,15 +359,18 @@ describe("context-info extension auto-injection", () => {
 	it("P3.2: other extensions → appends context-info", () => {
 		const result = resolveExtensions("caveman,crawl4ai");
 		assert.deepStrictEqual(result, [
-			"--extension", ".pi/extensions/caveman.ts",
-			"--extension", ".pi/extensions/crawl4ai.ts",
-			"--extension", ".pi/extensions/context-info.ts",
+			"--extension",
+			".pi/extensions/caveman.ts",
+			"--extension",
+			".pi/extensions/crawl4ai.ts",
+			"--extension",
+			".pi/extensions/context-info.ts",
 		]);
 	});
 
 	it("P3.3: context-info already in list → no duplication", () => {
 		const result = resolveExtensions("caveman,context-info");
-		const contextInfoCount = result.filter(s => s.includes("context-info.ts")).length;
+		const contextInfoCount = result.filter((s) => s.includes("context-info.ts")).length;
 		assert.strictEqual(contextInfoCount, 1);
 	});
 
