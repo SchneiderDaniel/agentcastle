@@ -2,7 +2,7 @@
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
 tools: read, bash, structural_search, ripgrep_search, ranked_map
-model: opencode-go/minimax-m2.7
+model: opencode-go/deepseek-v4-flash
 thinking: high
 extensions: "agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer"
 ---

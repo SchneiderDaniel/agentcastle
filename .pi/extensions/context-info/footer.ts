@@ -85,7 +85,7 @@ export function installFooter(
 				if (thinkingLevel) {
 					const tIcon = thinkingIcon(thinkingLevel);
 					const tColor = thinkingColor(thinkingLevel);
-					const reasoningStr = theme.fg(tColor, `${tIcon} ${thinkingLevel}`);
+					const reasoningStr = theme.fg(tColor as any, `${tIcon} ${thinkingLevel}`);
 					centerStr += " " + theme.fg("dim", "·") + " " + reasoningStr;
 				}
 

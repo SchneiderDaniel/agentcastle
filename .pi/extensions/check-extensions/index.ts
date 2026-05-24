@@ -1,11 +1,12 @@
 /**
  * check-extensions — Audit extensions against pi CHANGELOG API changes
  *
- * Four-phase pipeline:
+ * Enhanced pipeline with AST analysis (replacing regex-only phase 2):
  *   1. Parse pi CHANGELOG.md → ChangeEntry[]
- *   2. Scan .pi/extensions/ → Finding[]
+ *   2. Scan .pi/extensions/ with ast-grep → ASTFinding[] (AST-aware)
+ *   2.5 Resolve relevance + compute impact scores + generate migration snippets
  *   3. Cross-reference findings against changelog entries
- *   4. Create GitHub issues for affected extensions
+ *   4. Create GitHub issues with migration snippets + impact scores
  *
  * Usage: /check-extensions
  */
@@ -14,10 +15,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { parseChangelog, type ChangeEntry } from "./changelog-parser.ts";
+import { parseChangelog, parseStructuredChange, type ChangeEntry } from "./changelog-parser.ts";
 import { scanExtensions, type Finding } from "./extension-scanner.ts";
+import { scanExtensionsAST, type ASTFinding, type ExecFn as AstExecFn } from "./ast-scanner.ts";
+import { resolveRelevance, extractStructuredChange } from "./change-resolver.ts";
+import { computeImpactScore, type ImpactScore } from "./impact-scorer.ts";
+import { generateMigrationSnippet, type MigrationSnippet } from "./migration-generator.ts";
+import { readManifest } from "./manifest-reader.ts";
 import {
 	buildIssueTitle,
+	buildIssueBodyWithSnippets,
 	buildIssueBody,
 	checkGhAuth,
 	ensureLabel,
@@ -141,11 +148,20 @@ export default function (pi: ExtensionAPI): void {
 				for (const p of API_PATTERNS) affectedApiPatterns.add(p);
 			}
 
-			// ── Phase 2: Scan extensions ──
-			ctx.ui.notify("Scanning .pi/extensions/...", "info");
+			// ── Phase 2: Scan extensions (AST-based) ──
+			ctx.ui.notify("Scanning .pi/extensions/ with ast-grep...", "info");
 			const extensionsDir = join(ctx.cwd, ".pi", "extensions");
 			const apiNamesList = Array.from(affectedApiPatterns);
-			const scanResult = scanExtensions(extensionsDir, apiNamesList);
+
+			// Resolve ast-grep binary path
+			const astGrepPath = resolveAstGrepPath();
+
+			const scanResult = await scanExtensionsAST(
+				extensionsDir,
+				apiNamesList,
+				pi.exec.bind(pi) as unknown as AstExecFn,
+				astGrepPath,
+			);
 
 			if (scanResult.skipCount > 0) {
 				reportLines.push(`⚠️ ${scanResult.skipCount} file(s) could not be read (skipped).`);
@@ -159,8 +175,13 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			// ── Phase 2.5: Group findings by extension ──
-			const findingsByExtension = new Map<string, Finding[]>();
+			// ── Phase 2.5: Group, cross-reference, resolve relevance, score, generate snippets ──
+
+			// Read manifests for version filtering
+			const manifestCache = new Map<string, ReturnType<typeof readManifest>>();
+
+			// Group findings by extension
+			const findingsByExtension = new Map<string, ASTFinding[]>();
 			for (const finding of scanResult.findings) {
 				const extName = finding.extensionName;
 				if (!findingsByExtension.has(extName)) {
@@ -169,17 +190,69 @@ export default function (pi: ExtensionAPI): void {
 				findingsByExtension.get(extName)!.push(finding);
 			}
 
-			// Cross-reference each finding with changelog metadata
+			// Cross-reference each finding with changelog metadata + relevance + snippets + score
+			const snippetsByExtension = new Map<string, MigrationSnippet[]>();
+			const scoresByExtension = new Map<string, ImpactScore>();
+
 			for (const [extName, extFindings] of findingsByExtension) {
+				// Read manifest for version info
+				const extDir = join(extensionsDir, extName);
+				const manifest = readManifest(extDir);
+				manifestCache.set(extName, manifest);
+
+				const extSnippets: MigrationSnippet[] = [];
+
 				for (const f of extFindings) {
 					f.changelogVersion = latestVersion;
+
 					// Find matching changelog entry by API name
 					const matchingEntry = findMatchingEntry(f.apiName, entries);
 					if (matchingEntry) {
 						f.isBreaking = matchingEntry.isBreaking;
 						f.category = matchingEntry.category;
+
+						// Parse structured change and resolve relevance
+						const structuredChange = parseStructuredChange(matchingEntry.description);
+						if (structuredChange) {
+							const relevant = resolveRelevance(matchingEntry, f, structuredChange);
+							if (relevant === false) {
+								// False positive — changelog change doesn't affect this call
+								f.category = "not-applicable";
+							}
+						}
+
+						// Generate migration snippet for runtime-call findings
+						if (f.matchContext === "runtime-call") {
+							const snippet = generateMigrationSnippet(matchingEntry.description, f.apiName);
+							if (snippet) {
+								extSnippets.push(snippet);
+							}
+						}
 					}
 				}
+
+				snippetsByExtension.set(extName, extSnippets);
+
+				// Compute impact score
+				const score = computeImpactScore(extName, extFindings);
+				scoresByExtension.set(extName, score);
+			}
+
+			// Filter out extensions where all findings are non-applicable
+			const relevantFindingsByExtension = new Map<string, ASTFinding[]>();
+			for (const [extName, extFindings] of findingsByExtension) {
+				const relevant = extFindings.filter((f) => f.category !== "not-applicable");
+				if (relevant.length > 0) {
+					relevantFindingsByExtension.set(extName, relevant);
+				}
+			}
+
+			if (relevantFindingsByExtension.size === 0) {
+				const msg = "All findings resolved as non-applicable after changelog cross-reference.";
+				ctx.ui.notify(msg, "info");
+				reportLines.push(msg);
+				pi.sendUserMessage(reportLines.join("\n"));
+				return;
 			}
 
 			// ── Phase 3: Check gh auth ──
@@ -193,7 +266,7 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			// ── Phase 4: Create issues ──
+			// ── Phase 4: Create issues with rich bodies ──
 			ctx.ui.notify("Creating GitHub issues...", "info");
 
 			// Resolve repo from settings
@@ -232,8 +305,10 @@ export default function (pi: ExtensionAPI): void {
 			}> = [];
 			const skippedExtensions: string[] = [];
 
-			for (const [extName, extFindings] of findingsByExtension) {
+			for (const [extName, extFindings] of relevantFindingsByExtension) {
 				const title = buildIssueTitle(extName, extFindings.length, latestVersion);
+				const snippets = snippetsByExtension.get(extName) ?? [];
+				const score = scoresByExtension.get(extName);
 
 				// Dedup check
 				try {
@@ -246,7 +321,13 @@ export default function (pi: ExtensionAPI): void {
 					// If dedup check fails, proceed anyway
 				}
 
-				const body = buildIssueBody(extName, extFindings, latestVersion);
+				// Build body with snippets and impact score (or fallback to basic body)
+				let body: string;
+				if (score) {
+					body = buildIssueBodyWithSnippets(extName, extFindings, latestVersion, snippets, score);
+				} else {
+					body = buildIssueBody(extName, extFindings, latestVersion);
+				}
 
 				try {
 					const url = await createIssue(pi.exec.bind(pi), repo, title, body);
@@ -287,7 +368,7 @@ export default function (pi: ExtensionAPI): void {
 			pi.sendUserMessage(reportLines.join("\n"));
 
 			if (createdIssues.length > 0) {
-				ctx.ui.notify(`Created ${createdIssues.length} tracking issue(s).`, "success");
+				ctx.ui.notify(`Created ${createdIssues.length} tracking issue(s).`, "info");
 			} else {
 				ctx.ui.notify("No new issues needed.", "info");
 			}
@@ -307,4 +388,27 @@ function findMatchingEntry(apiName: string, entries: ChangeEntry[]): ChangeEntry
 				name.toLowerCase() === normalized.toLowerCase(),
 		),
 	);
+}
+
+/**
+ * Resolve the path to ast-grep binary.
+ * Checks common locations, falls back to PATH.
+ */
+function resolveAstGrepPath(): string {
+	const home = process.env.HOME || "/home/miria";
+	const candidates = [
+		join(home, ".npm-global", "bin", "ast-grep"),
+		"/usr/local/bin/ast-grep",
+		"/usr/bin/ast-grep",
+	];
+	for (const c of candidates) {
+		try {
+			const { accessSync, constants } = require("node:fs") as typeof import("node:fs");
+			accessSync(c, constants.X_OK);
+			return c;
+		} catch {
+			/* try next */
+		}
+	}
+	return "ast-grep"; // fallback — hope it's on PATH
 }

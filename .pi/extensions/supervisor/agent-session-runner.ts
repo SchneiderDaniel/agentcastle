@@ -11,7 +11,7 @@
 //  6. Extract complete messages → build AgentRunResult (untruncated)
 //  7. Always dispose session on completion
 
-import type { ParsedAgent, AgentRunResult, AgentRunState, AgentPhase } from "./types";
+import type { ParsedAgent, AgentRunResult, AgentRunState, AgentPhase } from "./types.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
@@ -23,18 +23,23 @@ import {
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai";
-import { resolveTools, resolveExtensionPaths } from "./extensions";
+import { resolveTools, resolveExtensionPaths } from "./extensions.ts";
 import {
 	formatDuration,
 	extractSummaryLine,
 	formatTokens,
 	extractTextFromContent,
-} from "./formatting";
-import { pushLog, buildWidgetLines, buildWidgetComponent, getWorkingMessage } from "./agent-stream";
-import { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
+} from "./formatting.ts";
+import {
+	pushLog,
+	buildWidgetLines,
+	buildWidgetComponent,
+	getWorkingMessage,
+} from "./agent-stream.ts";
+import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
 
 // Re-export for backward compatibility
-export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
+export { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
 
 // ─── Model Resolution ───────────────────────────────────────────────
 
@@ -505,6 +510,7 @@ export async function runAgentInProcess(
 			settingsManager: SettingsManager.inMemory(),
 			systemPromptOverride: () => agent.systemPrompt,
 			additionalExtensionPaths: extPaths.length > 0 ? extPaths : undefined,
+			noExtensions: true,
 		});
 		await resourceLoader.reload();
 

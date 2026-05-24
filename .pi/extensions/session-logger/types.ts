@@ -32,7 +32,7 @@ export interface Metadata {
 	>;
 	/** File modifications tracked during session */
 	fileModifications?: Array<{
-		action: "read" | "write" | "edit";
+		action: string;
 		path: string;
 		timestamp: string;
 		size?: number;

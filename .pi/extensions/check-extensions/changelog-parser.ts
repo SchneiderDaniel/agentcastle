@@ -214,3 +214,123 @@ function extractApiNames(description: string): string[] {
 
 	return [...new Set(names)];
 }
+
+// ── Structured Change Parsing ──────────────────────────────────────────
+
+/** Structured change extracted from a changelog entry description */
+export interface StructuredChange {
+	/** Old/deprecated signature pattern (e.g., `pi.on("tool_call")`) */
+	deprecatedSignature?: string;
+	/** New/replacement signature pattern (e.g., `pi.on("tool_before_call")`) */
+	newSignature?: string;
+	/** Specific event type affected (e.g., "tool_call", "session_start") */
+	affectedEventType?: string;
+	/** Argument position affected (0-based). Defaults to 0 (first arg). */
+	affectedArgPosition?: number;
+	/** Deprecated method name (e.g., "pi.on") */
+	deprecatedMethod?: string;
+	/** New method name (e.g., "pi.on") */
+	newMethod?: string;
+}
+
+/**
+ * Known patterns for extracting structured change info from description text.
+ * Each entry has a regex and a mapping function to StructuredChange.
+ */
+const STRUCTURED_PATTERNS: Array<{
+	regex: RegExp;
+	extract: (match: RegExpMatchArray) => StructuredChange;
+}> = [
+	{
+		// Pattern: `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`
+		regex: /\`(\w+(?:\.\w+)*)\((\w+)\)\`.*?in\s+favor\s+of\s+\`(\w+(?:\.\w+)*)\((\w+)\)\`/i,
+		extract: (m) => ({
+			deprecatedSignature: `${m[1]!}("${m[2]!}")`,
+			newSignature: `${m[3]!}("${m[4]!}")`,
+			affectedEventType: m[2],
+			deprecatedMethod: m[1],
+			newMethod: m[3],
+			affectedArgPosition: 0,
+		}),
+	},
+	{
+		// Pattern: `api.method(args)` → `api.method(newArgs)` or similar transformation
+		regex: /\`(\w+(?:\.\w+)*)\(([^)]*)\)\`.*?(?:changed|now|to)\s+\`(\w+(?:\.\w+)*)\(([^)]*)\)\`/i,
+		extract: (m) => ({
+			deprecatedSignature: `${m[1]}(${m[2]})`,
+			newSignature: `${m[3]}(${m[4]})`,
+			deprecatedMethod: m[1],
+			newMethod: m[3],
+			affectedArgPosition: 0,
+		}),
+	},
+	{
+		// Pattern: "Deprecated X" or "X deprecated" — captures method name
+		regex: /(?:Deprecated|deprecated)\s+\`?(\w+(?:\.\w+)*(?:\([^)]*\))?)\`?/i,
+		extract: (m) => {
+			const sig = m[1]!;
+			const parenIdx = sig.indexOf("(");
+			const methodName = parenIdx >= 0 ? sig.slice(0, parenIdx) : sig;
+			return {
+				deprecatedSignature: sig,
+				deprecatedMethod: methodName,
+				affectedArgPosition: 0,
+			};
+		},
+	},
+	{
+		// Pattern: \`method(args)\` now requires ... — signature change without replacement method
+		// e.g., "\`pi.registerCommand(name, opts)\` now requires \`opts.handler\` to be async"
+		regex: /\`(\w+(?:\.\w+)*)\(([^)]*)\)\`.*?now\s+requires/i,
+		extract: (m) => {
+			// For "now requires" patterns, the method stays the same but args change
+			// Try to extract what's required from the rest of the description
+			const method = m[1]!;
+			const oldArgs = m[2]!;
+			return {
+				deprecatedSignature: `${method}(${oldArgs})`,
+				newSignature: `${method}(...)`,
+				deprecatedMethod: method,
+				newMethod: method,
+				affectedArgPosition: 0,
+			};
+		},
+	},
+	{
+		// Pattern: \`method()\` args changed from \`X\` to \`Y\`
+		// e.g., "\`ctx.ui.select()\` args changed from \`(items, prompt)\` to \`(config)"
+		regex:
+			/\`(\w+(?:\.\w+)*)\(([^)]*)\)\`.*?(?:args|changed).*?from\s+\`([^`]+)\`.*?to\s+\`([^`]+)\`/i,
+		extract: (m) => ({
+			deprecatedSignature: `${m[1]}(${m[2]})`,
+			newSignature: `${m[1]}(${m[3]!.trim()})`,
+			deprecatedMethod: m[1],
+			newMethod: m[1],
+			affectedEventType: m[2] ? m[2].trim() : undefined,
+			affectedArgPosition: 0,
+		}),
+	},
+];
+
+/**
+ * Parse a changelog entry description and extract structured change information.
+ *
+ * Uses regex heuristics on known changelog phrasing patterns.
+ * Returns StructuredChange if description matches a known pattern,
+ * null otherwise (false negatives → finding still flagged, just without snippet).
+ *
+ * @param description - Changelog entry description text
+ * @returns StructuredChange or null if no pattern matched
+ */
+export function parseStructuredChange(description: string): StructuredChange | null {
+	if (!description) return null;
+
+	for (const { regex, extract } of STRUCTURED_PATTERNS) {
+		const match = description.match(regex);
+		if (match) {
+			return extract(match);
+		}
+	}
+
+	return null;
+}

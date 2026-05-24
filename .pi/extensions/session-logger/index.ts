@@ -48,7 +48,7 @@ export default function (pi: ExtensionAPI): void {
 		stats.seedStats(sm);
 
 		sessionsDir = path.resolve(sm.getCwd(), ".pi", "sessions");
-		await files.ensureSymlink(sessionFile, sessionsDir);
+		await files.ensureSymlink(sessionFile!, sessionsDir!);
 
 		// Recovery: generate missing metadata/MD for the previous session.
 		// If session_shutdown didn't fire (crash, kill, race), we catch up now.

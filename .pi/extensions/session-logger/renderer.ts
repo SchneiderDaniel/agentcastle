@@ -123,8 +123,8 @@ function renderSupervisorDetails(details: Record<string, unknown>): string[] {
 	// Stats line
 	const stats: string[] = [];
 	if (toolCount != null) stats.push(`${toolCount} tools`);
-	if (tokenCount != null) stats.push(`${fmtTokens(tokenCount)} tokens`);
-	if (durationMs != null) stats.push(fmtDuration(durationMs));
+	if (tokenCount != null) stats.push(`${fmtTokens(tokenCount as number)} tokens`);
+	if (durationMs != null) stats.push(fmtDuration(durationMs as number));
 	if (stats.length > 0) {
 		lines.push(``);
 		lines.push(stats.join(", "));

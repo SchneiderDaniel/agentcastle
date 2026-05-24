@@ -97,7 +97,7 @@ export default function (pi: ExtensionAPI): void {
 				const md = generateAdviceReport(sessionsDir);
 				fs.writeFileSync(reportPath, md, "utf-8");
 
-				ctx.ui.notify(`Report written: ${reportPath}`, "success");
+				ctx.ui.notify(`Report written: ${reportPath}`, "info");
 
 				// Ask about GitHub issue (before cleanup — user may want issue from the data)
 				const createIssue = await ctx.ui.confirm(
@@ -152,7 +152,7 @@ export default function (pi: ExtensionAPI): void {
 							/* ok */
 						}
 
-						ctx.ui.notify(`Issue created: ${result}`, "success");
+						ctx.ui.notify(`Issue created: ${result}`, "info");
 					} catch (err) {
 						ctx.ui.notify(`Failed to create issue: ${(err as Error).message}`, "error");
 					}
@@ -224,14 +224,22 @@ export default function (pi: ExtensionAPI): void {
 			return;
 		}
 
+		// Skip current in-progress session — file may be incomplete
+		const currentSessionFile = sm.getSessionFile();
+
 		for (const file of files) {
-			const prefix = file.replace(/\.jsonl$/, "");
 			const jsonlPath = path.join(sessionsDir, file);
+
+			// Skip if this is the current in-progress session
+			if (currentSessionFile && jsonlPath === currentSessionFile) continue;
+
+			const prefix = file.replace(/\.jsonl$/, "");
 			const advicePath = path.join(sessionsDir, `${prefix}.advice.md`);
 
 			if (fs.existsSync(advicePath)) continue;
 
-			writeAdvice(jsonlPath, advicePath, sessionsDir);
+			// Defer to next tick — don't block session start with sync I/O
+			Promise.resolve().then(() => writeAdvice(jsonlPath, advicePath, sessionsDir));
 		}
 	});
 
@@ -414,7 +422,7 @@ export function generateAdviceReport(sessionsDir: string): string {
 			};
 		})
 		.sort((a, b) => {
-			const p = { High: 3, Medium: 2, Low: 1 };
+			const p: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
 			return (p[b.priority] ?? 0) - (p[a.priority] ?? 0);
 		});
 
@@ -549,21 +557,50 @@ function writeAdvice(jsonlPath: string, advicePath: string, symlinkDir: string):
 
 		fs.writeFileSync(advicePath, md, "utf-8");
 
-		// Update latest symlink
-		const latestPath = path.join(symlinkDir, "latest.advice.md");
-		const tmpPath = latestPath + ".tmp";
+		// Update latest symlink atomically
+		updateLatestAdviceSymlink(symlinkDir, advicePath);
+	} catch (err) {
+		console.error(`[session-advice] Failed for ${jsonlPath}: ${(err as Error).message}`);
+	}
+}
+
+/**
+ * Atomically update latest.advice.md symlink.
+ * Uses tmp + rename pattern to avoid TOCTOU races.
+ * Retries symlink once on EEXIST (concurrent writer).
+ */
+function updateLatestAdviceSymlink(symlinkDir: string, targetFile: string): void {
+	const latestPath = path.join(symlinkDir, "latest.advice.md");
+	const linkTarget = path.relative(symlinkDir, targetFile);
+	const tmpPath = latestPath + ".tmp";
+
+	// Clean stale tmp
+	try {
+		fs.unlinkSync(tmpPath);
+	} catch {
+		/* ok */
+	}
+
+	// Create symlink at temp path (retry once on EEXIST)
+	try {
+		fs.symlinkSync(linkTarget, tmpPath);
+	} catch {
 		try {
 			fs.unlinkSync(tmpPath);
 		} catch {
 			/* ok */
 		}
 		try {
-			fs.symlinkSync(path.relative(symlinkDir, advicePath), tmpPath);
-			fs.renameSync(tmpPath, latestPath);
+			fs.symlinkSync(linkTarget, tmpPath);
 		} catch {
-			/* symlink optional */
+			return; // give up
 		}
-	} catch (err) {
-		console.error(`[session-advice] Failed for ${jsonlPath}: ${(err as Error).message}`);
+	}
+
+	// Atomic rename
+	try {
+		fs.renameSync(tmpPath, latestPath);
+	} catch {
+		/* concurrent writer won the race — our symlink is fine */
 	}
 }

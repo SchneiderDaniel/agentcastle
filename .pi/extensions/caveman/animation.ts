@@ -77,7 +77,7 @@ export function createAnimationController(options: {
 			renderFrame();
 			timer = setInterval(renderFrame, anim.interval);
 			// unref so interval does not keep event loop alive
-			timer.unref();
+			(timer as any)?.unref?.();
 		} finally {
 			// If setInterval throws, old timer already cleared — no leak
 		}

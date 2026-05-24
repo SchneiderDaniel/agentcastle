@@ -5,7 +5,7 @@
  * Returns Finding[] keyed by extension name.
  */
 
-import { readdirSync, statSync, readFileSync, existsSync } from "node:fs";
+import { readdirSync, statSync, readFileSync, existsSync, type Dirent } from "node:fs";
 import { join, basename, dirname } from "node:path";
 
 export interface Finding {
@@ -74,7 +74,7 @@ export function scanExtensions(extensionsDir: string, apiNames: string[]): Scann
 	}
 
 	// Read extension directories
-	let entries: string[];
+	let entries: Dirent[];
 	try {
 		entries = readdirSync(extensionsDir, { withFileTypes: true });
 	} catch {

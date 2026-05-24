@@ -321,18 +321,25 @@ interface TscCheckpointResult {
 
 /**
  * Run `npx tsc --noEmit` using pi.exec.
+ *
+ * @param extensionsConfigPath - Optional explicit tsconfig path for extensions type-checking.
+ *   When provided, checks that path instead of worktreePath/tsconfig.json.
+ *   Silent-skip only applies when extensionsConfigPath is absent and worktree tsconfig missing.
  */
 async function runTscCheckpoint(
 	pi: { exec: (cmd: string, args: string[], opts?: unknown) => Promise<ExecResult> },
 	worktreePath: string,
+	extensionsConfigPath?: string,
 ): Promise<TscCheckpointResult> {
-	// Check for tsconfig.json first
-	const tsconfigPath = resolve(worktreePath, "tsconfig.json");
-	if (!existsSync(tsconfigPath)) {
+	// Determine which tsconfig path to check
+	const configPath = extensionsConfigPath ?? resolve(worktreePath, "tsconfig.json");
+
+	// Check for tsconfig — silent skip only when extensionsConfigPath NOT provided
+	if (!existsSync(configPath)) {
 		return { diagnostics: [], hasErrors: false };
 	}
 
-	const result = await pi.exec("npx", ["tsc", "--noEmit"], {
+	const result = await pi.exec("npx", ["tsc", "--noEmit", "--project", configPath], {
 		cwd: worktreePath,
 		timeout: 60_000,
 	});
@@ -377,7 +384,9 @@ describe("runTscCheckpoint (async, pi.exec)", () => {
 			assert.strictEqual(result.diagnostics[0]!.code, "TS2322");
 		} finally {
 			// Cleanup
-			try { rmSync(testDir, { recursive: true }); } catch {}
+			try {
+				rmSync(testDir, { recursive: true });
+			} catch {}
 		}
 	});
 
@@ -405,11 +414,151 @@ describe("runTscCheckpoint (async, pi.exec)", () => {
 			await runTscCheckpoint(pi as any, testDir);
 			assert.ok(captured);
 			assert.strictEqual(captured!.cmd, "npx");
-			assert.deepStrictEqual(captured!.args, ["tsc", "--noEmit"]);
+			// Now includes --project flag since tsconfig always passed via --project
+			assert.deepStrictEqual(captured!.args, [
+				"tsc",
+				"--noEmit",
+				"--project",
+				resolve(testDir, "tsconfig.json"),
+			]);
 			assert.strictEqual((captured!.opts as any)?.cwd, testDir);
 			assert.strictEqual((captured!.opts as any)?.timeout, 60_000);
 		} finally {
-			try { rmSync(testDir, { recursive: true }); } catch {}
+			try {
+				rmSync(testDir, { recursive: true });
+			} catch {}
 		}
+	});
+
+	// ── New tests for extensionsConfigPath ───────────────────────────────
+
+	it("extensionsConfigPath provided, path exists → pi.exec called with --project", async () => {
+		let capturedArgs: string[] | undefined;
+		const pi = {
+			exec: async (_cmd: string, args: string[]) => {
+				capturedArgs = args;
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			},
+		};
+		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test");
+		try {
+			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+			const extConfigPath = resolve(testDir, ".pi/tsconfig.json");
+			mkdirSync(resolve(testDir, ".pi"), { recursive: true });
+			writeFileSync(extConfigPath, "{}");
+			await runTscCheckpoint(pi as any, testDir, extConfigPath);
+			assert.ok(capturedArgs);
+			assert.ok(capturedArgs!.includes("--project"));
+			assert.ok(capturedArgs!.includes(extConfigPath));
+		} finally {
+			try {
+				rmSync(testDir, { recursive: true });
+			} catch {}
+		}
+	});
+
+	it("extensionsConfigPath provided, path missing → returns clean without pi.exec", async () => {
+		let execCalled = false;
+		const pi = {
+			exec: async () => {
+				execCalled = true;
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			},
+		};
+		const result = await runTscCheckpoint(pi as any, "/tmp", "/nonexistent/.pi/tsconfig.json");
+		assert.strictEqual(result.hasErrors, false);
+		assert.strictEqual(result.diagnostics.length, 0);
+		assert.strictEqual(execCalled, false);
+	});
+
+	it("extensionsConfigPath provided, tsc exits 0 → returns clean result", async () => {
+		const pi = {
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		};
+		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test2");
+		try {
+			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
+			const result = await runTscCheckpoint(pi as any, testDir, resolve(testDir, "tsconfig.json"));
+			assert.strictEqual(result.hasErrors, false);
+			assert.strictEqual(result.diagnostics.length, 0);
+		} finally {
+			try {
+				rmSync(testDir, { recursive: true });
+			} catch {}
+		}
+	});
+
+	it("extensionsConfigPath provided, tsc exits non-zero → diagnostics parsed from stderr", async () => {
+		const stderr = "src/app.ts(10,5): error TS2322: Type error.";
+		const pi = {
+			exec: async () => ({ stdout: "", stderr, code: 1, killed: false }),
+		};
+		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test3");
+		try {
+			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
+			const result = await runTscCheckpoint(pi as any, testDir, resolve(testDir, "tsconfig.json"));
+			assert.strictEqual(result.hasErrors, true);
+			assert.strictEqual(result.diagnostics.length, 1);
+			assert.strictEqual(result.diagnostics[0]!.code, "TS2322");
+		} finally {
+			try {
+				rmSync(testDir, { recursive: true });
+			} catch {}
+		}
+	});
+
+	it("extensionsConfigPath provided, non-zero with multiple errors → all parsed", async () => {
+		const stderr = [
+			"a.ts(1,1): error TS2322: First error.",
+			"b.ts(2,3): error TS2304: Second error.",
+		].join("\n");
+		const pi = {
+			exec: async () => ({ stdout: "", stderr, code: 2, killed: false }),
+		};
+		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test4");
+		try {
+			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
+			const result = await runTscCheckpoint(pi as any, testDir, resolve(testDir, "tsconfig.json"));
+			assert.strictEqual(result.hasErrors, true);
+			assert.strictEqual(result.diagnostics.length, 2);
+		} finally {
+			try {
+				rmSync(testDir, { recursive: true });
+			} catch {}
+		}
+	});
+
+	it("extensionsConfigPath omitted → falls back to worktreePath/tsconfig.json (existing behavior)", async () => {
+		let capturedArgs: string[] | undefined;
+		const pi = {
+			exec: async (_cmd: string, args: string[]) => {
+				capturedArgs = args;
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			},
+		};
+		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test5");
+		try {
+			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
+			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
+			await runTscCheckpoint(pi as any, testDir);
+			assert.ok(capturedArgs);
+			assert.ok(capturedArgs!.includes(resolve(testDir, "tsconfig.json")));
+		} finally {
+			try {
+				rmSync(testDir, { recursive: true });
+			} catch {}
+		}
+	});
+
+	it("extensionsConfigPath omitted, no worktree tsconfig → returns clean (existing behavior)", async () => {
+		const pi = {
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		};
+		const result = await runTscCheckpoint(pi as any, "/nonexistent-dir-for-test");
+		assert.strictEqual(result.hasErrors, false);
+		assert.strictEqual(result.diagnostics.length, 0);
 	});
 });
