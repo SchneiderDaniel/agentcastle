@@ -214,6 +214,9 @@ export default function (pi: ExtensionAPI): void {
 		const sessionsDir = path.resolve(cwd, ".pi", "sessions");
 		if (!fs.existsSync(sessionsDir)) return;
 
+		// Determine current session file to skip it (Bug 1: avoid parsing in-progress JSONL)
+		const currentSessionFile = sm.getSessionFile();
+
 		// Find all .jsonl files that lack a matching .advice.md
 		let files: string[] = [];
 		try {
@@ -224,22 +227,21 @@ export default function (pi: ExtensionAPI): void {
 			return;
 		}
 
-		// Skip current in-progress session — file may be incomplete
-		const currentSessionFile = sm.getSessionFile();
-
 		for (const file of files) {
-			const jsonlPath = path.join(sessionsDir, file);
-
-			// Skip if this is the current in-progress session
-			if (currentSessionFile && jsonlPath === currentSessionFile) continue;
-
 			const prefix = file.replace(/\.jsonl$/, "");
+			const jsonlPath = path.join(sessionsDir, file);
 			const advicePath = path.join(sessionsDir, `${prefix}.advice.md`);
+
+			// Skip current session file (still being written to)
+			if (currentSessionFile && jsonlPath === currentSessionFile) continue;
 
 			if (fs.existsSync(advicePath)) continue;
 
-			// Defer to next tick — don't block session start with sync I/O
-			Promise.resolve().then(() => writeAdvice(jsonlPath, advicePath, sessionsDir));
+			// Bug 2: Defer writeAdvice to next tick so session_start returns
+			// immediately, unblocking the "Context: computing..." pipeline.
+			Promise.resolve().then(() => {
+				writeAdvice(jsonlPath, advicePath, sessionsDir);
+			});
 		}
 	});
 
@@ -557,7 +559,7 @@ function writeAdvice(jsonlPath: string, advicePath: string, symlinkDir: string):
 
 		fs.writeFileSync(advicePath, md, "utf-8");
 
-		// Update latest symlink atomically
+		// Update latest symlink (Bug 3: atomic with EEXIST retry)
 		updateLatestAdviceSymlink(symlinkDir, advicePath);
 	} catch (err) {
 		console.error(`[session-advice] Failed for ${jsonlPath}: ${(err as Error).message}`);
@@ -566,41 +568,54 @@ function writeAdvice(jsonlPath: string, advicePath: string, symlinkDir: string):
 
 /**
  * Atomically update latest.advice.md symlink.
- * Uses tmp + rename pattern to avoid TOCTOU races.
- * Retries symlink once on EEXIST (concurrent writer).
+ * Uses tmp + renameSync pattern to avoid TOCTOU race.
+ * Retries once on EEXIST (concurrent writer created tmp between unlink and symlink).
  */
 function updateLatestAdviceSymlink(symlinkDir: string, targetFile: string): void {
 	const latestPath = path.join(symlinkDir, "latest.advice.md");
-	const linkTarget = path.relative(symlinkDir, targetFile);
 	const tmpPath = latestPath + ".tmp";
+	const linkTarget = path.relative(symlinkDir, targetFile);
 
-	// Clean stale tmp
+	// Clean up any stale tmp symlink from a previous crash.
 	try {
 		fs.unlinkSync(tmpPath);
 	} catch {
-		/* ok */
+		/* ENOENT — no stale temp */
 	}
 
-	// Create symlink at temp path (retry once on EEXIST)
+	// Create symlink at temp path.
+	// If EEXIST, another concurrent writer created tmp between our unlink and
+	// symlink. Remove their tmp and retry once.
 	try {
 		fs.symlinkSync(linkTarget, tmpPath);
-	} catch {
-		try {
-			fs.unlinkSync(tmpPath);
-		} catch {
-			/* ok */
-		}
-		try {
-			fs.symlinkSync(linkTarget, tmpPath);
-		} catch {
-			return; // give up
+	} catch (err: unknown) {
+		const nodeErr = err as NodeJS.ErrnoException;
+		if (nodeErr.code === "EEXIST") {
+			// Another writer created tmp between our unlink and symlink.
+			// Remove their tmp and retry. If tmp is already gone by now
+			// (concurrent rename + unlink), just retry the symlink.
+			try {
+				fs.unlinkSync(tmpPath);
+			} catch {
+				/* ENOENT — concurrent writer already moved tmp */
+			}
+			try {
+				fs.symlinkSync(linkTarget, tmpPath);
+			} catch {
+				/* Give up — second concurrent writer wins */
+				return;
+			}
+		} else {
+			/* Unexpected error — symlink optional */
+			return;
 		}
 	}
 
-	// Atomic rename
+	// Atomic rename — replaces existing symlink atomically on same filesystem.
+	// If ENOENT, another concurrent writer already renamed tmp (they won the race).
 	try {
 		fs.renameSync(tmpPath, latestPath);
 	} catch {
-		/* concurrent writer won the race — our symlink is fine */
+		/* ENOENT — concurrent writer won race, our tmp is gone */
 	}
 }
