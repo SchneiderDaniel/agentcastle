@@ -63,15 +63,15 @@ describe("createFileOps", () => {
 		assert.ok(target.includes("session-2.jsonl"));
 	});
 
-	it("ensureSymlink handles missing sessionFile gracefully", async () => {
+	it("ensureSymlink with missing sessionFile throws (no dangling symlink)", async () => {
 		const sessionsDir = path.join(tmpDir, ".pi", "sessions");
 		fs.mkdirSync(sessionsDir, { recursive: true });
 
-		// Should not throw — symlink will dangle but that's expected
-		await files.ensureSymlink("/nonexistent/file.jsonl", sessionsDir);
-
-		const latestLink = path.join(sessionsDir, "latest.jsonl");
-		assert.ok(fs.lstatSync(latestLink).isSymbolicLink());
+		// After fix: waitForFile prevents dangling symlinks — non-existent file throws
+		await assert.rejects(
+			() => files.ensureSymlink("/nonexistent/file.jsonl", sessionsDir),
+			/waitForFile.*not found/i,
+		);
 	});
 
 	// ---------------------------------------------------------------------------
@@ -317,13 +317,13 @@ describe("createFileOps", () => {
 
 		// Simulate session_start
 		await files.ensureSymlink(sessionFile, sessionDir);
+
+		// Simulate session_shutdown: write metadata first, then symlink
+		await files.writeMetadata(sessionDir, sessionId, meta);
 		await files.ensureLatestMetadataSymlink(
 			sessionDir,
 			path.join(sessionDir, `${sessionId}.metadata.json`),
 		);
-
-		// Simulate session_shutdown
-		await files.writeMetadata(sessionDir, sessionId, meta);
 		await files.writeSessionReport(sessionDir, sessionId, "# Session Report");
 		await files.ensureMdSymlink(sessionDir, mdFile);
 
@@ -616,21 +616,22 @@ describe("createFileOps", () => {
 	it("ensureSymlink with non-existent sessionsDir throws", async () => {
 		const badDir = path.join(tmpDir, "nonexistent");
 		const sessionFile = path.join(badDir, "session.jsonl");
-		await assert.rejects(() => files.ensureSymlink(sessionFile, badDir), { code: "ENOENT" });
+		await assert.rejects(() => files.ensureSymlink(sessionFile, badDir), /waitForFile.*not found/i);
 	});
 
 	it("ensureMdSymlink with non-existent sessionDir throws", async () => {
 		const badDir = path.join(tmpDir, "nonexistent");
 		const mdFile = path.join(badDir, "session.md");
-		await assert.rejects(() => files.ensureMdSymlink(badDir, mdFile), { code: "ENOENT" });
+		await assert.rejects(() => files.ensureMdSymlink(badDir, mdFile), /waitForFile.*not found/i);
 	});
 
 	it("ensureLatestMetadataSymlink with non-existent dir throws", async () => {
 		const badDir = path.join(tmpDir, "nonexistent");
 		const metaFile = path.join(badDir, "session.metadata.json");
-		await assert.rejects(() => files.ensureLatestMetadataSymlink(badDir, metaFile), {
-			code: "ENOENT",
-		});
+		await assert.rejects(
+			() => files.ensureLatestMetadataSymlink(badDir, metaFile),
+			/waitForFile.*not found/i,
+		);
 	});
 
 	// ---------------------------------------------------------------------------
