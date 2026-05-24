@@ -251,16 +251,16 @@ describe("edge cases", () => {
 
 	it("caveman,crawl4ai (PS requirement) + context-info", () => {
 		const result = resolveExtensions("caveman,crawl4ai");
-		// caveman is now directory-based -> resolves to /index.ts
+		// Both caveman and crawl4ai are directory-based -> resolve to /index.ts
 		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
-		assert.ok(result.some((r) => r.includes("crawl4ai.ts")));
+		assert.ok(result.some((r) => r.includes("crawl4ai/index.ts")));
 		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 
 	it("supervisor with caveman → supervisor excluded, context-info added", () => {
 		const result = resolveExtensions("supervisor,caveman,crawl4ai");
 		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
-		assert.ok(result.some((r) => r.includes("crawl4ai.ts")));
+		assert.ok(result.some((r) => r.includes("crawl4ai/index.ts")));
 		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 

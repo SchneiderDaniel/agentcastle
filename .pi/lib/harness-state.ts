@@ -61,6 +61,11 @@ export interface HarnessState {
 	readCache: ReadCache;
 	errorTracker: ErrorTracker;
 	callCounter: CallCounter;
+	/**
+	 * Current turn counter for cache TTL, error tracking, cascade detection.
+	 * Incremented on each tool_call event handled by the extension.
+	 */
+	currentTurn: number;
 }
 
 // ── Constants ──
@@ -169,5 +174,5 @@ export function createHarnessState(): HarnessState {
 		},
 	};
 
-	return { readCache, errorTracker, callCounter };
+	return { readCache, errorTracker, callCounter, currentTurn: 0 };
 }

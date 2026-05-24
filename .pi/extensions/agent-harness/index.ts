@@ -3,12 +3,14 @@
  *
  * Intercepts tool calls pre-execution via pi.on("tool_call") and
  * blocks/redirects known-bad patterns:
- *  - Bash commands using grep/rg/cat/head/tail/ls instead of dedicated tools
- *  - Redundant reads (same file within 3 turns)
- *  - Retry loops (same tool after 2+ consecutive errors)
+ *  - Bash commands using grep/rg instead of ripgrep_search
+ *  - Bash commands using cat/head/tail instead of read tool
+ *  - Redundant reads (same path+offset+limit within 3 turns)
+ *  - Retry loops (same tool after 2+ accumulated errors)
  *  - Same-tool cascades (4+ consecutive calls of same tool)
  *
  * State is fresh per-session (created in session_start handler).
+ * Complements session-advice (post-hoc analysis) with runtime prevention.
  *
  * @packageDocumentation
  */
@@ -19,7 +21,6 @@ import type { HarnessState } from "../../lib/harness-state.ts";
 import {
 	isSearchInBash,
 	isCatHeadTailInBash,
-	isLsInBash,
 	suggestRedirection,
 } from "../../lib/harness-rules.ts";
 
@@ -61,8 +62,8 @@ const PASS_THROUGH_TOOLS = new Set(["structural_search", "ripgrep_search", "rank
  * Logic order (priority descending):
  * 1. Pass-through / unintercepted tools → null
  * 2. Error tracking → push to tracker, pass through
- * 3. Error retry blocking → if ≥2 errors, block
- * 4. Read caching → cache hit blocks with cached content
+ * 3. Error retry blocking → if >=2 errors, block
+ * 4. Read caching → cache hit blocks with cached info
  * 5. Cascade detection → 4+ consecutive blocks
  * 6. Tool mismatch (bash) → block with redirect
  * 7. Default → pass through
@@ -73,27 +74,30 @@ export function createToolCallHandler(state: HarnessState) {
 		_ctx: ToolCallContext,
 	): ToolCallResult | null {
 		const { toolName, args } = event.input;
+		const turn = state.currentTurn;
 
 		// ── 1. Pass-through tools ──
 		if (PASS_THROUGH_TOOLS.has(toolName)) {
+			state.currentTurn++;
 			return null;
 		}
 
 		// ── 2. Error tracking ──
 		// If this call errored, track it and let the error pass through
 		if (event.isError) {
-			state.errorTracker.push(toolName, { turn: 0, toolName });
+			state.errorTracker.push(toolName, { turn, toolName });
+			state.currentTurn++;
 			return null;
 		}
 
 		// ── 3. Error retry blocking ──
-		// After 2+ consecutive errors on same tool, block retry
+		// After 2+ accumulated errors on same tool, block retry
 		const errors = state.errorTracker.getLastErrors(toolName);
 		if (errors.length >= 2) {
 			const lastErrorTurn = errors[errors.length - 1]?.turn ?? 0;
 			return {
 				block: true,
-				reason: `Tool ${toolName} errored ${errors.length}x consecutively (last turn ${lastErrorTurn}). Try a different approach or tool instead of retrying.`,
+				reason: `Tool ${toolName} errored ${errors.length}x (last turn ${lastErrorTurn}). Try a different approach or tool instead of retrying.`,
 			};
 		}
 
@@ -101,21 +105,23 @@ export function createToolCallHandler(state: HarnessState) {
 		if (toolName === "read") {
 			const path = (args.path ?? "") as string;
 			if (path) {
-				const cacheKey = `${path}|0|`;
-				const cached = state.readCache.get(cacheKey, 0);
+				const offset = (args.offset ?? 0) as number;
+				const limit = (args.limit ?? "") as number;
+				const cacheKey = `${path}|${offset}|${limit}`;
+				const cached = state.readCache.get(cacheKey, turn);
 				if (cached) {
 					return {
 						block: true,
-						reason: `Content cached from turn ${cached.turn} — use read with offset/limit to page`,
+						reason: `Content cached from turn ${cached.turn} — use offset/limit to page or re-read after 3 turns.`,
 					};
 				}
-				// Store marker to track that this path was recently read
-				state.readCache.set(cacheKey, "[pending]", 0);
+				// Store marker to track that this path+offset+limit was recently read
+				state.readCache.set(cacheKey, "[pending]", turn);
 			}
 		}
 
 		// ── 5. Same-tool cascade detection ──
-		state.callCounter.record(toolName, 0);
+		state.callCounter.record(toolName, turn);
 		const consecutive = state.callCounter.getConsecutive(toolName);
 		if (consecutive.count >= 4) {
 			const suggestion =
@@ -136,6 +142,7 @@ export function createToolCallHandler(state: HarnessState) {
 			const command = (args.command ?? "") as string;
 			if (!command) return null;
 
+			// Search in bash (grep/rg) → redirect to ripgrep_search
 			if (isSearchInBash(command)) {
 				return {
 					block: true,
@@ -144,6 +151,7 @@ export function createToolCallHandler(state: HarnessState) {
 				};
 			}
 
+			// File read in bash (cat/head/tail) → redirect to read
 			if (isCatHeadTailInBash(command)) {
 				return {
 					block: true,
@@ -152,15 +160,11 @@ export function createToolCallHandler(state: HarnessState) {
 				};
 			}
 
-			if (isLsInBash(command)) {
-				return {
-					block: true,
-					reason: `Use ripgrep_search for file finding instead of bash ls. ${suggestRedirection(command)}`,
-				};
-			}
+			// ls is informational only — pass through at runtime (not blocked)
 		}
 
-		// ── 7. Default: pass through ──
+		// ── 7. Increment turn and pass through ──
+		state.currentTurn++;
 		return null;
 	};
 }
@@ -171,45 +175,11 @@ export default function agentHarness(pi: ExtensionAPI): void {
 	let state: HarnessState = createHarnessState();
 
 	// Session start: initialize fresh state
-=======
- * agent-harness — Runtime Tool Call Validation
- *
- * Intercepts tool calls pre-execution via pi.on("tool_call") and
- * blocks/redirects known-bad patterns:
- *  - bash with grep/rg → redirect to ripgrep_search
- *  - bash with cat/head/tail → redirect to read
- *  - Read cache: deduplicates redundant reads
- *  - Error tracker: blocks retries on accumulated errors
- *  - Call counter: warns on same-tool cascades
- *
- * Complements session-advice (post-hoc analysis) with runtime prevention.
- */
-
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-	isSearchInBash,
-	isCatHeadTailInBash,
-	suggestRedirection,
-	shouldBlockRetry,
-} from "../../lib/harness-rules.ts";
-import { createHarnessState } from "../../lib/harness-state.ts";
-import type { HarnessState } from "../../lib/harness-state.ts";
-
-// ── Constants ──
-
-const CASCADE_THRESHOLD = 4;
-
-// ── Extension entry point ──
-
-export default function (pi: ExtensionAPI): void {
-	// Per-session state (initialized at session_start)
-	let state: HarnessState;
-
-	pi.on("session_start", async (_event, _ctx) => {
+	pi.on("session_start", async () => {
 		state = createHarnessState();
 	});
 
-	// Tool call handler: intercept and validate
+	// Tool_call handler
 	pi.on("tool_call", async (event, ctx) => {
 		return createToolCallHandler(state)(event, ctx);
 	});

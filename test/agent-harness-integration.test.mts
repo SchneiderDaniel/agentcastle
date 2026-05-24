@@ -18,6 +18,7 @@ import {
 	suggestRedirection,
 } from "../.pi/lib/harness-rules.ts";
 import { createHarnessState } from "../.pi/lib/harness-state.ts";
+import { createToolCallHandler } from "../.pi/extensions/agent-harness/index.ts";
 
 // ─── Handler simulation ────────────────────────────────────────────
 //
@@ -123,6 +124,107 @@ function simulateHandler(
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────
+
+describe("agent-harness REAL handler (createToolCallHandler)", () => {
+	it("blocks bash cat file | grep foo with redirect", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		const result = handler(
+			{ input: { toolName: "bash", args: { command: "cat file | grep foo" } } },
+			{},
+		);
+		assert.ok(result !== null, "should block");
+		assert.strictEqual(result.block, true);
+		assert.ok(result.redirectTo === "ripgrep_search" || result.reason?.includes("ripgrep_search"));
+	});
+
+	it("does NOT block npm test", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		const result = handler({ input: { toolName: "bash", args: { command: "npm test" } } }, {});
+		assert.strictEqual(result, null, "npm test should pass through");
+	});
+
+	it("does NOT block ls -la", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		const result = handler({ input: { toolName: "bash", args: { command: "ls -la" } } }, {});
+		assert.strictEqual(result, null, "ls should NOT be blocked at runtime");
+	});
+
+	it("passes through structural_search calls", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		const result = handler(
+			{ input: { toolName: "structural_search", args: { pattern: "test", language: "ts" } } },
+			{},
+		);
+		assert.strictEqual(result, null, "structural_search should pass through");
+	});
+
+	it("first read passes through", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		const result = handler(
+			{ input: { toolName: "read", args: { path: "/a.ts", offset: 0, limit: 100 } } },
+			{},
+		);
+		assert.strictEqual(result, null, "first read should pass through");
+	});
+
+	it("second read with same path+offset+limit within TTL is cached", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		handler({ input: { toolName: "read", args: { path: "/a.ts", offset: 0, limit: 100 } } }, {});
+		const result = handler(
+			{ input: { toolName: "read", args: { path: "/a.ts", offset: 0, limit: 100 } } },
+			{},
+		);
+		assert.ok(result !== null, "second read should be blocked (cached)");
+		assert.strictEqual(result.block, true);
+		assert.ok(result.reason?.includes("cached"), "reason should mention cache");
+	});
+
+	it("different offset/limit produces different cache key", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		handler({ input: { toolName: "read", args: { path: "/a.ts", offset: 0, limit: 100 } } }, {});
+		const result = handler(
+			{ input: { toolName: "read", args: { path: "/a.ts", offset: 50, limit: 20 } } },
+			{},
+		);
+		assert.strictEqual(result, null, "different offset should not be blocked");
+	});
+
+	it("increments currentTurn on each call", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		assert.strictEqual(state.currentTurn, 0, "initial turn should be 0");
+		handler({ input: { toolName: "bash", args: { command: "npm test" } } }, {});
+		assert.strictEqual(state.currentTurn, 1, "after first call should be 1");
+		handler({ input: { toolName: "bash", args: { command: "echo hi" } } }, {});
+		assert.strictEqual(state.currentTurn, 2, "after second call should be 2");
+	});
+
+	it("error tracking blocks on 2+ accumulated errors", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		// Simulate 2 errors for a tool
+		state.errorTracker.push("bash", { turn: 0, toolName: "bash" });
+		state.errorTracker.push("bash", { turn: 1, toolName: "bash" });
+		// Third call should be blocked
+		const result = handler({ input: { toolName: "bash", args: { command: "npm test" } } }, {});
+		assert.ok(result !== null, "should block on 2+ errors");
+		assert.strictEqual(result.block, true);
+	});
+
+	it("unknown tool does not crash", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+		const result = handler({ input: { toolName: "unknown_tool_xyz", args: {} } }, {});
+		assert.strictEqual(result, null, "unknown tool should pass through");
+	});
+});
 
 describe("agent-harness handler: bash tool validation", () => {
 	it("blocks bash cat file | grep foo with redirect to ripgrep_search", () => {
