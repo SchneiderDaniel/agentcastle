@@ -30,7 +30,12 @@ import {
 	formatTokens,
 	extractTextFromContent,
 } from "./formatting.ts";
-import { pushLog, buildWidgetLines, buildWidgetComponent, getWorkingMessage } from "./agent-stream.ts";
+import {
+	pushLog,
+	buildWidgetLines,
+	buildWidgetComponent,
+	getWorkingMessage,
+} from "./agent-stream.ts";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
 
 // Re-export for backward compatibility
@@ -505,6 +510,7 @@ export async function runAgentInProcess(
 			settingsManager: SettingsManager.inMemory(),
 			systemPromptOverride: () => agent.systemPrompt,
 			additionalExtensionPaths: extPaths.length > 0 ? extPaths : undefined,
+			noExtensions: true,
 		});
 		await resourceLoader.reload();
 
