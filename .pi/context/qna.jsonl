@@ -47,3 +47,4 @@
 {"datetime":"2026-05-24T18:50:37.372Z","question":"Dependencies — does this issue depend on any other open issue/PR, or block anything else?","answer":"no_deps"}
 {"datetime":"2026-05-24T18:50:45.525Z","question":"After discussing all this — anything else you'd now add as a requirement?","answer":"no_done"}
 {"datetime":"2026-05-24T18:51:35.892Z","question":"Issue #167 is refined. What next?","answer":"done"}
+{"datetime":"2026-05-24T19:33:06.150Z","question":"Commit submodule update and push to main? `git commit -m \"fix: cert renewal — webroot authenticator, nginx reload loop, renew script cleanup\"` then `git push origin main`","answer":"commit_push"}
