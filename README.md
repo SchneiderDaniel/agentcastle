@@ -190,6 +190,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/supervisor/` | Kanban-driven multi-agent orchestration |
 | `.pi/extensions/context-info/` | Rich TUI status bar, welcome banner, TPS |
 | `.pi/extensions/session-logger/` | Session logging to JSONL |
+| `.pi/extensions/agent-harness/` | Runtime tool call validation — blocks `bash | grep`, `cat` file reads, redundant reads, error retry loops, same-tool cascades |
 | `.pi/extensions/ask-user/` | Interactive MC questions + CSV logger |
 | `.pi/extensions/caveman/` | Token-efficient communication protocol |
 | `.pi/extensions/format-on-save/` | Auto Prettier + ESLint after write/edit |
@@ -234,6 +235,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **Context Info** | Rich TUI status bar (branch, model, tokens, TPS), welcome banner, animated working indicator. |
 | **Session Logger** | Logs sessions to `.pi/sessions/<id>.jsonl`. Generates `.md` reports with sub-agent output from supervisor pipeline. Toggle with `/session-logger`. Query with `scripts/session-query.sh`. |
 | **Session Advice** | Analyzes each session after shutdown for inefficient patterns. Generates `.advice.md` with fix recommendations. Post-hoc batch analysis via `scripts/session-advice.ts`. Report with `/session-advice report`. |
+| **Agent Harness** | Runtime tool call validation via `agent-harness` extension. Blocks `bash` with `grep`/`rg` (redirects to `ripgrep_search`), `bash` with `cat`/`head`/`tail` (redirects to `read`). Caches reads to prevent redundant file reads. Tracks errors per tool to block retry loops (2+ errors). Tracks consecutive same-tool calls to break cascades (4+). Complements Session Advice (post-hoc) with runtime prevention. |
 | **Caveman Protocol** | Token-efficient communication. Active via `AGENTS.md`. Configurable intensity levels. |
 | **Ask User** | Interactive MC picker for AI-to-user questions. Uses arrow-key navigation + CSV logging. |
 | **Format on Save** | Auto-formats TS/JS with Prettier + ESLint --fix after write/edit. Non-blocking lint warnings. |

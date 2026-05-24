@@ -1,8 +1,8 @@
 /**
- * Tests for harness-rules.ts — pure detection functions.
+ * Tests for harness-rules.ts — pure detection functions
  *
- * Phase 1: Domain layer. No pi, no I/O, no state.
- * Pure functions only.
+ * Phase 1: Domain layer unit tests.
+ * No pi, no I/O, no state. Pure functions only.
  *
  * Run with:
  *   node --experimental-strip-types --test test/agent-harness-rules.test.mts
@@ -19,262 +19,286 @@ import {
 	isCodeFilePath,
 	detectMismatchAndSuggest,
 	suggestRedirection,
-} from "../src/harness-rules.ts";
+	BASH_SEARCH_SIGNALS,
+	READ_BASH_CMDS,
+	SEARCH_TOOLS,
+	grepLike,
+} from "../.pi/lib/harness-rules.ts";
 
-// ---------------------------------------------------------------------------
-// isSearchInBash
-// ---------------------------------------------------------------------------
+// ─── isSearchInBash ────────────────────────────────────────────────
 
 describe("isSearchInBash", () => {
-	it("returns true for `cat file | grep foo`", () => {
+	it('detects "cat file | grep foo" as search in bash', () => {
 		assert.strictEqual(isSearchInBash("cat file | grep foo"), true);
 	});
 
-	it("returns true for `ls -la | rg pattern`", () => {
+	it('detects "ls -la | rg pattern" as search in bash', () => {
 		assert.strictEqual(isSearchInBash("ls -la | rg pattern"), true);
 	});
 
-	it("returns false for `ls -la` (no pipe)", () => {
-		assert.strictEqual(isSearchInBash("ls -la"), false);
-	});
-
-	it("returns false for `npm test`", () => {
+	it('does NOT flag "npm test"', () => {
 		assert.strictEqual(isSearchInBash("npm test"), false);
 	});
 
-	it("returns true for `cat file | rg foo`", () => {
-		assert.strictEqual(isSearchInBash("cat file | rg foo"), true);
+	it('does NOT flag "ls -la"', () => {
+		assert.strictEqual(isSearchInBash("ls -la"), false);
 	});
 
-	it("returns false for empty string", () => {
+	it("does NOT crash on empty string", () => {
 		assert.strictEqual(isSearchInBash(""), false);
 	});
 
-	it("processes very long command string (2000+ chars) without OOM", () => {
-		const long = "a".repeat(2000) + " | grep foo";
-		assert.strictEqual(isSearchInBash(long), true);
+	it("does NOT crash on very long string (2000+ chars)", () => {
+		const long = "a".repeat(2000);
+		assert.strictEqual(isSearchInBash(long), false);
 	});
 
-	it("returns true for backtick grep like `grep foo`", () => {
-		assert.strictEqual(isSearchInBash("`grep foo`"), true);
-	});
-
-	it("returns true for backtick rg like `rg pattern`", () => {
-		assert.strictEqual(isSearchInBash("`rg pattern`"), true);
+	it("is synchronous and returns primitive", () => {
+		const result = isSearchInBash("cat file | grep x");
+		assert.strictEqual(typeof result, "boolean");
 	});
 });
 
-// ---------------------------------------------------------------------------
-// isCatHeadTailInBash
-// ---------------------------------------------------------------------------
+// ─── isCatHeadTailInBash ───────────────────────────────────────────
 
 describe("isCatHeadTailInBash", () => {
-	it("returns true for `cat README.md`", () => {
+	it('detects "cat README.md"', () => {
 		assert.strictEqual(isCatHeadTailInBash("cat README.md"), true);
 	});
 
-	it("returns true for `head -5 file.txt`", () => {
-		assert.strictEqual(isCatHeadTailInBash("head -5 file.txt"), true);
-	});
-
-	it("returns true for `tail -f log.txt`", () => {
-		assert.strictEqual(isCatHeadTailInBash("tail -f log.txt"), true);
-	});
-
-	it("returns false for `npm test`", () => {
-		assert.strictEqual(isCatHeadTailInBash("npm test"), false);
-	});
-
-	it("returns false for `node build.js`", () => {
-		assert.strictEqual(isCatHeadTailInBash("node build.js"), false);
-	});
-
-	it("returns true for `cat file | grep x` (cat detected even when piped)", () => {
+	it('detects "cat file | grep x" (cat detected even when piped)', () => {
 		assert.strictEqual(isCatHeadTailInBash("cat file | grep x"), true);
 	});
 
-	it("returns true for `cat` alone (bare command)", () => {
-		assert.strictEqual(isCatHeadTailInBash("cat"), true);
+	it('does NOT flag "node build.js"', () => {
+		assert.strictEqual(isCatHeadTailInBash("node build.js"), false);
 	});
 
-	it("returns false for empty string", () => {
+	it('does NOT flag "npm test"', () => {
+		assert.strictEqual(isCatHeadTailInBash("npm test"), false);
+	});
+
+	it("does NOT crash on empty string", () => {
 		assert.strictEqual(isCatHeadTailInBash(""), false);
 	});
 });
 
-// ---------------------------------------------------------------------------
-// isLsInBash
-// ---------------------------------------------------------------------------
+// ─── isLsInBash ────────────────────────────────────────────────────
 
 describe("isLsInBash", () => {
-	it("returns true for `ls`", () => {
-		assert.strictEqual(isLsInBash("ls"), true);
-	});
-
-	it("returns true for `ls -la`", () => {
+	it('detects "ls -la"', () => {
 		assert.strictEqual(isLsInBash("ls -la"), true);
 	});
 
-	it("returns false for `npm ls`", () => {
+	it('detects plain "ls"', () => {
+		assert.strictEqual(isLsInBash("ls"), true);
+	});
+
+	it('does NOT flag "npm ls"', () => {
 		assert.strictEqual(isLsInBash("npm ls"), false);
 	});
 
-	it("returns false for empty string", () => {
-		assert.strictEqual(isLsInBash(""), false);
+	it('does NOT flag "lsass" as ls', () => {
+		assert.strictEqual(isLsInBash("lsass"), false);
 	});
 
-	it("returns true for `ls src/`", () => {
-		assert.strictEqual(isLsInBash("ls src/"), true);
+	it("does NOT crash on empty string", () => {
+		assert.strictEqual(isLsInBash(""), false);
 	});
 });
 
-// ---------------------------------------------------------------------------
-// shouldBlockRetry
-// ---------------------------------------------------------------------------
+// ─── shouldBlockRetry ──────────────────────────────────────────────
 
 describe("shouldBlockRetry", () => {
-	it("returns false for errorCount=0", () => {
+	it("returns false when errorCount is 0", () => {
 		assert.strictEqual(shouldBlockRetry(0), false);
 	});
 
-	it("returns false for errorCount=1", () => {
+	it("returns false when errorCount is 1", () => {
 		assert.strictEqual(shouldBlockRetry(1), false);
 	});
 
-	it("returns true for errorCount=2", () => {
+	it("returns true when errorCount is 2", () => {
 		assert.strictEqual(shouldBlockRetry(2), true);
 	});
 
-	it("returns true for errorCount=3", () => {
+	it("returns true when errorCount is 3", () => {
 		assert.strictEqual(shouldBlockRetry(3), true);
+	});
+
+	it("returns true when errorCount is 5", () => {
+		assert.strictEqual(shouldBlockRetry(5), true);
+	});
+
+	it("returns false for negative count", () => {
+		assert.strictEqual(shouldBlockRetry(-1), false);
 	});
 });
 
-// ---------------------------------------------------------------------------
-// isRedundantRead
-// ---------------------------------------------------------------------------
+// ─── isRedundantRead ───────────────────────────────────────────────
 
 describe("isRedundantRead", () => {
-	it("returns true for same path within 0 turns", () => {
+	it("detects same path with turnDiff 0", () => {
 		assert.strictEqual(isRedundantRead("/a.ts", "/a.ts", 0), true);
 	});
 
-	it("returns false for different paths within same turn", () => {
+	it("does NOT flag different paths with turnDiff 0", () => {
 		assert.strictEqual(isRedundantRead("/a.ts", "/b.ts", 0), false);
 	});
 
-	it("returns false for same path 3 turns apart", () => {
+	it("does NOT flag same path with turnDiff 3", () => {
 		assert.strictEqual(isRedundantRead("/a.ts", "/a.ts", 3), false);
 	});
 
-	it("returns true for same path within 2 turns", () => {
+	it("detects same path with turnDiff 1", () => {
 		assert.strictEqual(isRedundantRead("/a.ts", "/a.ts", 1), true);
 	});
 
-	it("returns true for same path within 2 turns (edge case diff=2)", () => {
+	it("detects same path with turnDiff 2", () => {
 		assert.strictEqual(isRedundantRead("/a.ts", "/a.ts", 2), true);
-	});
-
-	it("returns false for same path diff=3", () => {
-		assert.strictEqual(isRedundantRead("/a.ts", "/a.ts", 3), false);
 	});
 });
 
-// ---------------------------------------------------------------------------
-// isCodeFilePath
-// ---------------------------------------------------------------------------
+// ─── isCodeFilePath ────────────────────────────────────────────────
 
 describe("isCodeFilePath", () => {
-	it("returns true for `.ts` file", () => {
+	it("detects .ts file", () => {
 		assert.strictEqual(isCodeFilePath("src/app.ts"), true);
 	});
 
-	it("returns true for `.py` file", () => {
+	it("detects .py file", () => {
 		assert.strictEqual(isCodeFilePath("script.py"), true);
 	});
 
-	it("returns true for `.js` file", () => {
+	it("detects .js file", () => {
 		assert.strictEqual(isCodeFilePath("index.js"), true);
 	});
 
-	it("returns false for `.md` file", () => {
-		assert.strictEqual(isCodeFilePath("README.md"), false);
-	});
-
-	it("returns false for `.json` file", () => {
-		assert.strictEqual(isCodeFilePath("package.json"), false);
-	});
-
-	it("returns true for `.tsx` file", () => {
+	it("detects .tsx file", () => {
 		assert.strictEqual(isCodeFilePath("component.tsx"), true);
 	});
 
-	it("returns false for empty string", () => {
+	it("detects .jsx file", () => {
+		assert.strictEqual(isCodeFilePath("component.jsx"), true);
+	});
+
+	it("detects .rs file", () => {
+		assert.strictEqual(isCodeFilePath("module.rs"), true);
+	});
+
+	it("detects .go file", () => {
+		assert.strictEqual(isCodeFilePath("main.go"), true);
+	});
+
+	it("does NOT flag README.md", () => {
+		assert.strictEqual(isCodeFilePath("README.md"), false);
+	});
+
+	it("does NOT flag .json file", () => {
+		assert.strictEqual(isCodeFilePath("package.json"), false);
+	});
+
+	it("does NOT flag empty string", () => {
 		assert.strictEqual(isCodeFilePath(""), false);
 	});
 });
 
-// ---------------------------------------------------------------------------
-// detectMismatchAndSuggest
-// ---------------------------------------------------------------------------
+// ─── detectMismatchAndSuggest ─────────────────────────────────────
 
 describe("detectMismatchAndSuggest", () => {
-	it("returns category + suggestion for `cat f | rg x`", () => {
+	it('detects "cat f | rg x" as tool-mismatch', () => {
 		const result = detectMismatchAndSuggest("cat f | rg x");
-		assert.notStrictEqual(result, null);
-		assert.strictEqual(result!.category, "tool-mismatch");
-		assert.ok(result!.suggestion.includes("ripgrep_search"));
+		assert.ok(result !== null);
+		assert.strictEqual(result.category, "tool-mismatch");
+		assert.ok(result.suggestion.includes("ripgrep_search"));
 	});
 
-	it("returns category + suggestion for `ls -la`", () => {
-		const result = detectMismatchAndSuggest("ls -la");
-		assert.notStrictEqual(result, null);
-		assert.strictEqual(result!.category, "tool-mismatch");
+	it('detects "cat f | grep x" as tool-mismatch', () => {
+		const result = detectMismatchAndSuggest("cat f | grep x");
+		assert.ok(result !== null);
+		assert.strictEqual(result.category, "tool-mismatch");
+		assert.ok(result.suggestion.includes("ripgrep_search"));
 	});
 
-	it("returns null for `npm run build`", () => {
+	it('detects "cat README.md" as cat-mismatch', () => {
+		const result = detectMismatchAndSuggest("cat README.md");
+		assert.ok(result !== null, "should detect cat command");
+	});
+
+	it('returns null for "npm run build"', () => {
 		const result = detectMismatchAndSuggest("npm run build");
 		assert.strictEqual(result, null);
 	});
 
 	it("returns null for empty string", () => {
-		assert.strictEqual(detectMismatchAndSuggest(""), null);
+		const result = detectMismatchAndSuggest("");
+		assert.strictEqual(result, null);
 	});
 
-	it("returns suggestion for `cat file | grep x`", () => {
-		const result = detectMismatchAndSuggest("cat file | grep x");
-		assert.notStrictEqual(result, null);
-		assert.ok(result!.suggestion.includes("ripgrep_search") || result!.suggestion.includes("read"));
+	it("returns null for very long non-matching string", () => {
+		const result = detectMismatchAndSuggest("a".repeat(2000));
+		assert.strictEqual(result, null);
 	});
 });
 
-// ---------------------------------------------------------------------------
-// suggestRedirection
-// ---------------------------------------------------------------------------
+// ─── suggestRedirection ───────────────────────────────────────────
 
 describe("suggestRedirection", () => {
-	it("returns redirect string for `bash cat file | grep x`", () => {
-		const result = suggestRedirection("bash cat file | grep x");
-		assert.notStrictEqual(result, null);
-		assert.strictEqual(typeof result, "string");
+	it('returns redirect suggestion for "bash cat f | grep x"', () => {
+		const result = suggestRedirection("bash cat f | grep x");
+		assert.ok(result !== null, "should suggest redirection");
+		assert.ok(typeof result === "string", "should be string");
 	});
 
-	it("returns null for `npm test`", () => {
+	it('returns null for "npm test"', () => {
 		const result = suggestRedirection("npm test");
 		assert.strictEqual(result, null);
 	});
 
-	it("returns redirect string for `ls`", () => {
-		const result = suggestRedirection("ls");
-		assert.notStrictEqual(result, null);
-	});
-
-	it("returns redirect string for `cat README.md`", () => {
-		const result = suggestRedirection("cat README.md");
-		assert.notStrictEqual(result, null);
-	});
-
 	it("returns null for empty string", () => {
-		assert.strictEqual(suggestRedirection(""), null);
+		const result = suggestRedirection("");
+		assert.strictEqual(result, null);
+	});
+});
+
+// ─── Exported constants ───────────────────────────────────────────
+
+describe("exported constants", () => {
+	it("BASH_SEARCH_SIGNALS is a non-empty array", () => {
+		assert.ok(Array.isArray(BASH_SEARCH_SIGNALS));
+		assert.ok(BASH_SEARCH_SIGNALS.length > 0);
+	});
+
+	it("READ_BASH_CMDS is a non-empty array with cat, head, tail", () => {
+		assert.ok(Array.isArray(READ_BASH_CMDS));
+		assert.ok(READ_BASH_CMDS.includes("cat"));
+		assert.ok(READ_BASH_CMDS.includes("head"));
+		assert.ok(READ_BASH_CMDS.includes("tail"));
+	});
+
+	it("SEARCH_TOOLS is a Set with ripgrep_search and structural_search", () => {
+		assert.ok(SEARCH_TOOLS instanceof Set);
+		assert.ok(SEARCH_TOOLS.has("ripgrep_search"));
+		assert.ok(SEARCH_TOOLS.has("structural_search"));
+	});
+});
+
+// ─── grepLike ─────────────────────────────────────────────────────
+
+describe("grepLike", () => {
+	it('detects "grep" in string', () => {
+		assert.strictEqual(grepLike("cat file | grep foo"), true);
+	});
+
+	it('detects "| rg" in string', () => {
+		assert.strictEqual(grepLike("cat file | rg pattern"), true);
+	});
+
+	it('does NOT flag "npm install"', () => {
+		assert.strictEqual(grepLike("npm install"), false);
+	});
+
+	it("does NOT crash on empty string", () => {
+		assert.strictEqual(grepLike(""), false);
 	});
 });

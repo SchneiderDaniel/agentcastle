@@ -14,14 +14,14 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createHarnessState } from "../../../src/harness-state.ts";
-import type { HarnessState } from "../../../src/harness-state.ts";
+import { createHarnessState } from "../../lib/harness-state.ts";
+import type { HarnessState } from "../../lib/harness-state.ts";
 import {
 	isSearchInBash,
 	isCatHeadTailInBash,
 	isLsInBash,
 	suggestRedirection,
-} from "../../../src/harness-rules.ts";
+} from "../../lib/harness-rules.ts";
 
 // ── Types ──
 
@@ -171,6 +171,40 @@ export default function agentHarness(pi: ExtensionAPI): void {
 	let state: HarnessState = createHarnessState();
 
 	// Session start: initialize fresh state
+=======
+ * agent-harness — Runtime Tool Call Validation
+ *
+ * Intercepts tool calls pre-execution via pi.on("tool_call") and
+ * blocks/redirects known-bad patterns:
+ *  - bash with grep/rg → redirect to ripgrep_search
+ *  - bash with cat/head/tail → redirect to read
+ *  - Read cache: deduplicates redundant reads
+ *  - Error tracker: blocks retries on accumulated errors
+ *  - Call counter: warns on same-tool cascades
+ *
+ * Complements session-advice (post-hoc analysis) with runtime prevention.
+ */
+
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	isSearchInBash,
+	isCatHeadTailInBash,
+	suggestRedirection,
+	shouldBlockRetry,
+} from "../../lib/harness-rules.ts";
+import { createHarnessState } from "../../lib/harness-state.ts";
+import type { HarnessState } from "../../lib/harness-state.ts";
+
+// ── Constants ──
+
+const CASCADE_THRESHOLD = 4;
+
+// ── Extension entry point ──
+
+export default function (pi: ExtensionAPI): void {
+	// Per-session state (initialized at session_start)
+	let state: HarnessState;
+
 	pi.on("session_start", async (_event, _ctx) => {
 		state = createHarnessState();
 	});

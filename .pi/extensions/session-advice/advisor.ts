@@ -15,7 +15,8 @@ import {
 	isCatHeadTailInBash,
 	isLsInBash,
 	isCodeFilePath,
-} from "../../../src/harness-rules.ts";
+	SEARCH_TOOLS,
+} from "../../lib/harness-rules.ts";
 
 // ── Types ──
 
@@ -141,9 +142,7 @@ export function parseJsonlFile(filepath: string): SessionData | null {
 	return { sessionId, entries };
 }
 
-// ── Constants ──
-
-const SEARCH_TOOLS = new Set(["ripgrep_search", "structural_search"]);
+// ── Constants (imported from harness-rules.ts shared module) ──
 
 // ── Detection rules ──
 
