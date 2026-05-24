@@ -259,13 +259,24 @@ export default function (pi: ExtensionAPI): void {
 
 		if (fs.existsSync(advicePath)) return;
 
-		writeAdvice(sessionFile, advicePath, sessionDir);
+		// Defer writeAdvice to next tick so session_shutdown returns
+		// immediately — writeAdvice reads + parses entire .jsonl synchronously
+		// and would block shutdown propagation for large sessions.
+		Promise.resolve().then(() => {
+			writeAdvice(sessionFile, advicePath, sessionDir);
+		});
 	});
 
 	// ── before_agent_start: inject past session lessons into system prompt ──
 
-	pi.on("before_agent_start", async (event, _ctx) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (!enabled) return;
+
+		// Guard: skip for sub-agents (in-memory sessions have no session file).
+		// SessionManager.inMemory() sets sessionFile = undefined, so
+		// getSessionFile() returns undefined for sub-agents.
+		// File-backed sessions (main agent) always have a path.
+		if (!ctx.sessionManager?.getSessionFile()) return;
 
 		// Read latest.advice.md for past lessons
 		const cwd = process.cwd();
