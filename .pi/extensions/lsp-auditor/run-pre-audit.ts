@@ -110,7 +110,7 @@ export async function runPreAudit(
 
 	// 6. Check retry count
 	const sessionManager = ctx.sessionManager;
-	const entries = sessionManager.getEntries() as Array<{ type: string; payload: unknown }>;
+	const entries = sessionManager.getEntries().map((e) => ({ type: e.type, payload: e }));
 	const retryCount = countRetryAttempts(entries, issueNum);
 
 	if (!shouldRetry(retryCount)) {

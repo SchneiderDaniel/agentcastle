@@ -170,7 +170,15 @@ export default function askUser(pi: ExtensionAPI): void {
 			// Use custom scrollable dialog so long questions (with code
 			// blocks) can be scrolled independently from the option list.
 			const selectedLabel = (await ctx.ui.custom((tui, theme, _keybindings, done) =>
-				renderScrollableDialog(tui, theme, done, question, items, labelToValue, otherLabel),
+				renderScrollableDialog(
+					tui,
+					theme as { fg: (color: string, text: string) => string },
+					done,
+					question,
+					items,
+					labelToValue,
+					otherLabel,
+				),
 			)) as string | undefined;
 
 			const timestamp = new Date().toISOString();

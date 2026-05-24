@@ -642,8 +642,8 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				const tempDir = await mkdtemp(join(tmpdir(), "pi-ripgrep-"));
 				fullOutputPath = join(tempDir, "full-output.txt");
 				// Write raw stdout (vimgrep/grep format) — compact, avoids JSON re-serialization
-				await withFileMutationQueue(fullOutputPath, async () => {
-					await writeFile(fullOutputPath, result.stdout ?? "", "utf8");
+				await withFileMutationQueue(fullOutputPath ?? "", async () => {
+					await writeFile(fullOutputPath ?? "", result.stdout ?? "", "utf8");
 				});
 			}
 

@@ -22,7 +22,7 @@ import {
 	AuthStorage,
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel, type KnownProvider } from "@earendil-works/pi-ai";
 import { resolveTools, resolveExtensionPaths } from "./extensions";
 import {
 	formatDuration,
@@ -79,7 +79,7 @@ export async function resolveModel(
 		const models = registry.getAll();
 		if (models && models.length > 0) {
 			const first = models[0];
-			const id = first.id || first.model || "";
+			const id = first.id || "";
 			const prov = first.provider || "";
 			if (prov && id) {
 				return { provider: prov, modelId: id };
@@ -481,7 +481,7 @@ export async function runAgentInProcess(
 	let resolvedModel: any;
 	if (modelInfo) {
 		try {
-			resolvedModel = getModel(modelInfo.provider, modelInfo.modelId);
+			resolvedModel = (getModel as any)(modelInfo.provider, modelInfo.modelId);
 		} catch {
 			// getModel threw — try fallback
 		}
@@ -574,7 +574,6 @@ export async function runAgentInProcess(
 
 		try {
 			await session.prompt(task, {
-				signal: abortController.signal,
 				streamingBehavior: "steer",
 			});
 		} catch (promptErr: unknown) {
