@@ -496,6 +496,8 @@ export async function runAgentInProcess(
 	let session;
 	let unsubscribe: (() => void) | undefined;
 	let abortController: AbortController | undefined;
+	let flushTimer: NodeJS.Timeout | null = null;
+	let heartbeat: ReturnType<typeof setInterval> | undefined;
 
 	try {
 		// Create resource loader with system prompt override and extension paths
@@ -528,7 +530,7 @@ export async function runAgentInProcess(
 		// The factory captures state by reference so each render picks up the
 		// latest fullLog, tool info, and stats. Styled with theme colors to
 		// match the message-renderer look.
-		let flushTimer: NodeJS.Timeout | null = null;
+		flushTimer = null;
 
 		const flushWidget = () => {
 			if (flushTimer) {
@@ -553,7 +555,7 @@ export async function runAgentInProcess(
 		};
 
 		// Heartbeat: ensure widget updates even during long idle periods (model cold start)
-		const heartbeat = setInterval(() => {
+		heartbeat = setInterval(() => {
 			flushWidget();
 		}, 5000);
 

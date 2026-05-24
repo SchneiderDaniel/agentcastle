@@ -9,7 +9,7 @@
  * from runtime-call findings — eliminating false positives from #1, #5, #6.
  */
 
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, type Dirent } from "node:fs";
 import { join, basename } from "node:path";
 
 /** Match context classification */
@@ -357,7 +357,7 @@ export async function scanExtensionsAST(
 	// Collect .ts files
 	const tsFiles: Array<{ dirName: string; filePath: string }> = [];
 
-	let entries: string[];
+	let entries: Dirent[];
 	try {
 		entries = readdirSync(extensionsDir, { withFileTypes: true });
 	} catch {

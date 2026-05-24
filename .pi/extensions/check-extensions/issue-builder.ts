@@ -64,7 +64,7 @@ export function buildIssueBody(
 			lines.push(`- **File:** \`${f.file}\``);
 			lines.push(`- **Line:** ${f.line}`);
 			lines.push(`- **Code:** \`${f.lineContent}\``);
-			lines.push(`- **Changelog:** ${f.description}`);
+			lines.push(`- **Changelog:** ${f.changelogVersion}`);
 			lines.push(``);
 		}
 	}
@@ -80,7 +80,7 @@ export function buildIssueBody(
 			lines.push(`- **File:** \`${f.file}\``);
 			lines.push(`- **Line:** ${f.line}`);
 			lines.push(`- **Code:** \`${f.lineContent}\``);
-			lines.push(`- **Changelog:** ${f.description}`);
+			lines.push(`- **Changelog:** ${f.changelogVersion}`);
 			lines.push(``);
 		}
 	}

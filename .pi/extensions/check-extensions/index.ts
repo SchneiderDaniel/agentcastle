@@ -368,7 +368,7 @@ export default function (pi: ExtensionAPI): void {
 			pi.sendUserMessage(reportLines.join("\n"));
 
 			if (createdIssues.length > 0) {
-				ctx.ui.notify(`Created ${createdIssues.length} tracking issue(s).`, "success");
+				ctx.ui.notify(`Created ${createdIssues.length} tracking issue(s).`, "info");
 			} else {
 				ctx.ui.notify("No new issues needed.", "info");
 			}

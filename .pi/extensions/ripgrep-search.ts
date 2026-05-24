@@ -707,7 +707,12 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 		},
 
 		// Custom rendering of the tool result (Bug 4 fix)
-		renderResult(result, { expanded, isPartial }, theme, _context) {
+		renderResult(
+			result,
+			{ expanded, isPartial }: { expanded?: boolean; isPartial?: boolean },
+			theme,
+			_context,
+		) {
 			const details = result.details as
 				| {
 						total_returned?: number;

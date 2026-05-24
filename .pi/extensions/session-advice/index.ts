@@ -97,7 +97,7 @@ export default function (pi: ExtensionAPI): void {
 				const md = generateAdviceReport(sessionsDir);
 				fs.writeFileSync(reportPath, md, "utf-8");
 
-				ctx.ui.notify(`Report written: ${reportPath}`, "success");
+				ctx.ui.notify(`Report written: ${reportPath}`, "info");
 
 				// Ask about GitHub issue (before cleanup — user may want issue from the data)
 				const createIssue = await ctx.ui.confirm(
@@ -152,7 +152,7 @@ export default function (pi: ExtensionAPI): void {
 							/* ok */
 						}
 
-						ctx.ui.notify(`Issue created: ${result}`, "success");
+						ctx.ui.notify(`Issue created: ${result}`, "info");
 					} catch (err) {
 						ctx.ui.notify(`Failed to create issue: ${(err as Error).message}`, "error");
 					}
@@ -422,7 +422,7 @@ export function generateAdviceReport(sessionsDir: string): string {
 			};
 		})
 		.sort((a, b) => {
-			const p = { High: 3, Medium: 2, Low: 1 };
+			const p: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
 			return (p[b.priority] ?? 0) - (p[a.priority] ?? 0);
 		});
 

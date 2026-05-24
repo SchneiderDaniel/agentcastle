@@ -300,7 +300,7 @@ export async function auditFileGroup(
 							/* ignore */
 						}
 					}, 5000);
-					killTimer.unref();
+					(killTimer as any)?.unref?.();
 				}
 			}
 		} catch {
