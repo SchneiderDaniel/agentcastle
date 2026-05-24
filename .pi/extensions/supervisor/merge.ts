@@ -1,7 +1,7 @@
 // ─── Merge Conflict Resolution ──────────────────────────────────────
 // Auto-merge logic for worktree branches.
 
-import type { MergeResult } from "./types";
+import type { MergeResult } from "./types.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export async function tryAutoMerge(

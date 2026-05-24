@@ -9,8 +9,8 @@ import { existsSync, readdirSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { countExtensions } from "./extensions.js";
-import { countSkills } from "./skills.js";
+import { countExtensions } from "./extensions.ts";
+import { countSkills } from "./skills.ts";
 
 function listNames(dir: string, suffix: string): string[] {
 	try {

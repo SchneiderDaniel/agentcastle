@@ -7,7 +7,7 @@
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ContextStatusBarConfig, TpsSample } from "./types.js";
+import type { ContextStatusBarConfig, TpsSample } from "./types.ts";
 import {
 	formatSessionTimer,
 	formatTokens,
@@ -17,7 +17,7 @@ import {
 	thinkingColor,
 	formatTps,
 	computeTps,
-} from "./formatting.js";
+} from "./formatting.ts";
 
 /** Module-scope process start time — captures true pi process launch time */
 export const processStartTime = Date.now();

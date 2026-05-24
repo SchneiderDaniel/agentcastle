@@ -1,7 +1,7 @@
 // ─── Agent Loader ──────────────────────────────────────────────────
 // Parse .pi/agents/*.md files (YAML frontmatter + system prompt body).
 
-import type { ParsedAgent, AgentFrontmatter } from "./types";
+import type { ParsedAgent, AgentFrontmatter } from "./types.ts";
 import { readFileSync } from "node:fs";
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];

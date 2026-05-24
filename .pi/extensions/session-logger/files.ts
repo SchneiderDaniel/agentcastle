@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { Metadata } from "./types.js";
+import type { Metadata } from "./types.ts";
 
 export interface FileOps {
 	ensureSymlink(sessionFile: string, sessionsDir: string): Promise<void>;
