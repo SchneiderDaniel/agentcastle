@@ -9,15 +9,15 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { ContextStatusBarConfig, TpsSample } from "./types.js";
-import { loadConfig, readPiSetting } from "./config.js";
-import { getWorktreeName } from "./git-helpers.js";
-import { tryEmit } from "./telemetry.js";
-import { processStartTime, installFooter } from "./footer.js";
-import { showWelcomeBanner } from "./welcome.js";
-import { listLocalExtensions } from "./extensions.js";
-import { listLocalPrompts } from "./prompts.js";
-import { listLocalSkills } from "./skills.js";
+import type { ContextStatusBarConfig, TpsSample } from "./types.ts";
+import { loadConfig, readPiSetting } from "./config.ts";
+import { getWorktreeName } from "./git-helpers.ts";
+import { tryEmit } from "./telemetry.ts";
+import { processStartTime, installFooter } from "./footer.ts";
+import { showWelcomeBanner } from "./welcome.ts";
+import { listLocalExtensions } from "./extensions.ts";
+import { listLocalPrompts } from "./prompts.ts";
+import { listLocalSkills } from "./skills.ts";
 
 export default function contextInfo(pi: ExtensionAPI): void {
 	// State — enclosed in closure, not module scope
@@ -451,4 +451,4 @@ export default function contextInfo(pi: ExtensionAPI): void {
 }
 
 // Re-export types for consumers
-export type { ThresholdEntry, TpsSample, ContextStatusBarConfig } from "./types.js";
+export type { ThresholdEntry, TpsSample, ContextStatusBarConfig } from "./types.ts";

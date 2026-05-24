@@ -195,7 +195,8 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/format-on-save/` | Auto Prettier + ESLint after write/edit |
 | `.pi/extensions/lsp-auditor/` | LSP diagnostics pre-audit for supervisor |
 | `.pi/extensions/piignore.ts` | `.piignore` path blocking |
-| `.pi/extensions/tsc-checkpoint.ts` | `/check` command: `tsc --noEmit` |
+| `.pi/extensions/tsc-checkpoint.ts` | `/check` command: `tsc --noEmit`; optional `extensionsConfigPath` param for extensions type-checking |
+| `.pi/tsconfig.json` | Extensions type-checking config — covers all `.ts`/`.mts` in `.pi/extensions/` with bundler module resolution |
 | `.pi/extensions/session-advice/` | Session advice — improvement recommendations per session |
 | `.pi/extensions/check-extensions/` | `/check-extensions` — AST-based extension audit with migration snippets + impact scoring |
 | `.pi/agents/researcher.md` | Researcher agent (pipeline step 1) |
@@ -319,13 +320,25 @@ pi "Use structural_search to find all console.log calls in TypeScript files"
 pi "Use ripgrep_search to find 'TODO' in the project"
 ```
 
-#### 6.3 Pi Autonomy
+#### 6.3 Extensions Type-Checking
+
+Extensions in `.pi/extensions/` are type-checked with a dedicated tsconfig at `.pi/tsconfig.json`.
+
+```bash
+npm run tsc:extensions
+```
+
+This runs `tsc --noEmit` with bundler module resolution, strict mode, and `.ts` extension imports. All 15+ extensions are checked in one pass (including `.mts` files in `format-on-save/`).
+
+CI integration: add to CI pipeline as `tsc --noEmit --project .pi/tsconfig.json`.
+
+#### 6.4 Pi Autonomy
 
 ```bash
 pi "Respond with exactly one word: 'Operational'."
 ```
 
-#### 6.4 Execution Routing (Acid Test)
+#### 6.5 Execution Routing (Acid Test)
 
 ```bash
 pi -p "Create a file named '.pi/test-file.txt' with the content 'container works', then tell me the absolute path where it was created."

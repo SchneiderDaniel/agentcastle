@@ -2,9 +2,9 @@
 // pi.registerMessageRenderer() callback + TUI rendering helpers.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { SupervisorMessageDetails } from "./types";
+import type { SupervisorMessageDetails } from "./types.ts";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { formatTokens, formatDuration, getTermWidth, boldText } from "./formatting";
+import { formatTokens, formatDuration, getTermWidth, boldText } from "./formatting.ts";
 
 export function createMessageRenderer(pi: ExtensionAPI) {
 	return (message: any, _options: any, theme: any) => {

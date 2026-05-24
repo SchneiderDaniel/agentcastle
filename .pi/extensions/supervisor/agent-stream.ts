@@ -2,8 +2,8 @@
 // Pure functions for JSON event parsing, widget building, phase tracking.
 // No side effects, no subprocess imports — fully testable.
 
-import type { AgentRunState, AgentPhase } from "./types";
-import { formatTokens, formatDuration, boldText, getTermWidth } from "./formatting";
+import type { AgentRunState, AgentPhase } from "./types.ts";
+import { formatTokens, formatDuration, boldText, getTermWidth } from "./formatting.ts";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 // ─── Constants ──────────────────────────────────────────────────────

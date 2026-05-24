@@ -12,8 +12,8 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { execSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { parseJsonlFile, analyzeSession, renderAdviceToMarkdown } from "./advisor.js";
-import type { AdviceEntry } from "./advisor.js";
+import { parseJsonlFile, analyzeSession, renderAdviceToMarkdown } from "./advisor.ts";
+import type { AdviceEntry } from "./advisor.ts";
 
 // ── Fix ideas + effort estimates per category ──
 

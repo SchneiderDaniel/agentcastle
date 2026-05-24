@@ -3,7 +3,7 @@
 // Summary file protocol: auditor writes audit summary to temp file,
 // then uses --body-file for both PR body and issue comment.
 
-import type { FilteredIssueData } from "./types";
+import type { FilteredIssueData } from "./types.ts";
 
 export function generateBranchName(
 	issueNum: number,

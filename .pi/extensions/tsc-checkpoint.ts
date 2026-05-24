@@ -140,20 +140,25 @@ export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
  * Returns structured result with parsed diagnostics and whether any
  * errors were found.
  *
- * If tsconfig.json doesn't exist, returns { hasErrors: false } silently.
- * If tsc binary not found, returns { hasErrors: false } silently.
+ * @param extensionsConfigPath - Optional explicit path to a tsconfig for
+ *   extensions type-checking. When provided, checks that path instead of
+ *   worktreePath/tsconfig.json. Silent-skip only applies when this param
+ *   is absent AND worktree tsconfig is missing.
  */
 export async function runTscCheckpoint(
 	pi: ExtensionAPI,
 	worktreePath: string,
+	extensionsConfigPath?: string,
 ): Promise<TscCheckpointResult> {
-	// Check for tsconfig.json first
-	const tsconfigPath = resolve(worktreePath, "tsconfig.json");
-	if (!existsSync(tsconfigPath)) {
+	// Determine which tsconfig to check
+	const configPath = extensionsConfigPath ?? resolve(worktreePath, "tsconfig.json");
+
+	// Silent skip only when NO explicit extensionsConfigPath provided
+	if (!existsSync(configPath)) {
 		return { diagnostics: [], hasErrors: false };
 	}
 
-	const result = await pi.exec("npx", ["tsc", "--noEmit"], {
+	const result = await pi.exec("npx", ["tsc", "--noEmit", "--project", configPath], {
 		cwd: worktreePath,
 		timeout: 60_000, // 60s for cold start
 	});
