@@ -51,10 +51,7 @@ export async function runPreAudit(
 			);
 		});
 	} catch (err: unknown) {
-		const msg =
-			err instanceof Error
-				? (err as NodeJS.ErrnoException).stderr?.toString() || err.message
-				: String(err);
+		const msg = err instanceof Error ? (err as any).stderr?.toString() || err.message : String(err);
 		pi.sendUserMessage?.(`LSP audit skipped: git diff failed (${msg})`, { deliverAs: "followUp" });
 		return { proceed: true, note: `LSP audit skipped: git diff failed` };
 	}
@@ -113,7 +110,7 @@ export async function runPreAudit(
 
 	// 6. Check retry count
 	const sessionManager = ctx.sessionManager;
-	const entries = sessionManager.getEntries();
+	const entries = sessionManager.getEntries().map((e) => ({ type: e.type, payload: e }));
 	const retryCount = countRetryAttempts(entries, issueNum);
 
 	if (!shouldRetry(retryCount)) {

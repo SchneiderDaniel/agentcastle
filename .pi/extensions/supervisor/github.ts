@@ -10,7 +10,7 @@ import type {
 	DepsResult,
 	PrConflictInfo,
 	GhTimelineResponse,
-} from "./types.ts";
+} from "./types";
 
 // ─── Low-level gh CLI wrappers ──────────────────────────────────────
 

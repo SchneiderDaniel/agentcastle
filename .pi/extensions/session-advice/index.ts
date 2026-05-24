@@ -12,8 +12,8 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { execSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { parseJsonlFile, analyzeSession, renderAdviceToMarkdown } from "./advisor.ts";
-import type { AdviceEntry } from "./advisor.ts";
+import { parseJsonlFile, analyzeSession, renderAdviceToMarkdown } from "./advisor.js";
+import type { AdviceEntry } from "./advisor.js";
 
 // ── Fix ideas + effort estimates per category ──
 
@@ -97,7 +97,7 @@ export default function (pi: ExtensionAPI): void {
 				const md = generateAdviceReport(sessionsDir);
 				fs.writeFileSync(reportPath, md, "utf-8");
 
-				ctx.ui.notify(`Report written: ${reportPath}`, "success");
+				ctx.ui.notify(`Report written: ${reportPath}`, "info");
 
 				// Ask about GitHub issue (before cleanup — user may want issue from the data)
 				const createIssue = await ctx.ui.confirm(
@@ -152,7 +152,7 @@ export default function (pi: ExtensionAPI): void {
 							/* ok */
 						}
 
-						ctx.ui.notify(`Issue created: ${result}`, "success");
+						ctx.ui.notify(`Issue created: ${result}`, "info");
 					} catch (err) {
 						ctx.ui.notify(`Failed to create issue: ${(err as Error).message}`, "error");
 					}
@@ -214,9 +214,6 @@ export default function (pi: ExtensionAPI): void {
 		const sessionsDir = path.resolve(cwd, ".pi", "sessions");
 		if (!fs.existsSync(sessionsDir)) return;
 
-		// Determine current session file to skip it (Bug 1: avoid parsing in-progress JSONL)
-		const currentSessionFile = sm.getSessionFile();
-
 		// Find all .jsonl files that lack a matching .advice.md
 		let files: string[] = [];
 		try {
@@ -227,21 +224,22 @@ export default function (pi: ExtensionAPI): void {
 			return;
 		}
 
-		for (const file of files) {
-			const prefix = file.replace(/\.jsonl$/, "");
-			const jsonlPath = path.join(sessionsDir, file);
-			const advicePath = path.join(sessionsDir, `${prefix}.advice.md`);
+		// Skip current in-progress session — file may be incomplete
+		const currentSessionFile = sm.getSessionFile();
 
-			// Skip current session file (still being written to)
+		for (const file of files) {
+			const jsonlPath = path.join(sessionsDir, file);
+
+			// Skip if this is the current in-progress session
 			if (currentSessionFile && jsonlPath === currentSessionFile) continue;
+
+			const prefix = file.replace(/\.jsonl$/, "");
+			const advicePath = path.join(sessionsDir, `${prefix}.advice.md`);
 
 			if (fs.existsSync(advicePath)) continue;
 
-			// Bug 2: Defer writeAdvice to next tick so session_start returns
-			// immediately, unblocking the "Context: computing..." pipeline.
-			Promise.resolve().then(() => {
-				writeAdvice(jsonlPath, advicePath, sessionsDir);
-			});
+			// Defer to next tick — don't block session start with sync I/O
+			Promise.resolve().then(() => writeAdvice(jsonlPath, advicePath, sessionsDir));
 		}
 	});
 
@@ -259,24 +257,13 @@ export default function (pi: ExtensionAPI): void {
 
 		if (fs.existsSync(advicePath)) return;
 
-		// Defer writeAdvice to next tick so session_shutdown returns
-		// immediately — writeAdvice reads + parses entire .jsonl synchronously
-		// and would block shutdown propagation for large sessions.
-		Promise.resolve().then(() => {
-			writeAdvice(sessionFile, advicePath, sessionDir);
-		});
+		writeAdvice(sessionFile, advicePath, sessionDir);
 	});
 
 	// ── before_agent_start: inject past session lessons into system prompt ──
 
-	pi.on("before_agent_start", async (event, ctx) => {
+	pi.on("before_agent_start", async (event, _ctx) => {
 		if (!enabled) return;
-
-		// Guard: skip for sub-agents (in-memory sessions have no session file).
-		// SessionManager.inMemory() sets sessionFile = undefined, so
-		// getSessionFile() returns undefined for sub-agents.
-		// File-backed sessions (main agent) always have a path.
-		if (!ctx.sessionManager?.getSessionFile()) return;
 
 		// Read latest.advice.md for past lessons
 		const cwd = process.cwd();
@@ -435,7 +422,7 @@ export function generateAdviceReport(sessionsDir: string): string {
 			};
 		})
 		.sort((a, b) => {
-			const p = { High: 3, Medium: 2, Low: 1 };
+			const p: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
 			return (p[b.priority] ?? 0) - (p[a.priority] ?? 0);
 		});
 
@@ -570,7 +557,7 @@ function writeAdvice(jsonlPath: string, advicePath: string, symlinkDir: string):
 
 		fs.writeFileSync(advicePath, md, "utf-8");
 
-		// Update latest symlink (Bug 3: atomic with EEXIST retry)
+		// Update latest symlink atomically
 		updateLatestAdviceSymlink(symlinkDir, advicePath);
 	} catch (err) {
 		console.error(`[session-advice] Failed for ${jsonlPath}: ${(err as Error).message}`);
@@ -579,54 +566,41 @@ function writeAdvice(jsonlPath: string, advicePath: string, symlinkDir: string):
 
 /**
  * Atomically update latest.advice.md symlink.
- * Uses tmp + renameSync pattern to avoid TOCTOU race.
- * Retries once on EEXIST (concurrent writer created tmp between unlink and symlink).
+ * Uses tmp + rename pattern to avoid TOCTOU races.
+ * Retries symlink once on EEXIST (concurrent writer).
  */
 function updateLatestAdviceSymlink(symlinkDir: string, targetFile: string): void {
 	const latestPath = path.join(symlinkDir, "latest.advice.md");
-	const tmpPath = latestPath + ".tmp";
 	const linkTarget = path.relative(symlinkDir, targetFile);
+	const tmpPath = latestPath + ".tmp";
 
-	// Clean up any stale tmp symlink from a previous crash.
+	// Clean stale tmp
 	try {
 		fs.unlinkSync(tmpPath);
 	} catch {
-		/* ENOENT — no stale temp */
+		/* ok */
 	}
 
-	// Create symlink at temp path.
-	// If EEXIST, another concurrent writer created tmp between our unlink and
-	// symlink. Remove their tmp and retry once.
+	// Create symlink at temp path (retry once on EEXIST)
 	try {
 		fs.symlinkSync(linkTarget, tmpPath);
-	} catch (err: unknown) {
-		const nodeErr = err as NodeJS.ErrnoException;
-		if (nodeErr.code === "EEXIST") {
-			// Another writer created tmp between our unlink and symlink.
-			// Remove their tmp and retry. If tmp is already gone by now
-			// (concurrent rename + unlink), just retry the symlink.
-			try {
-				fs.unlinkSync(tmpPath);
-			} catch {
-				/* ENOENT — concurrent writer already moved tmp */
-			}
-			try {
-				fs.symlinkSync(linkTarget, tmpPath);
-			} catch {
-				/* Give up — second concurrent writer wins */
-				return;
-			}
-		} else {
-			/* Unexpected error — symlink optional */
-			return;
+	} catch {
+		try {
+			fs.unlinkSync(tmpPath);
+		} catch {
+			/* ok */
+		}
+		try {
+			fs.symlinkSync(linkTarget, tmpPath);
+		} catch {
+			return; // give up
 		}
 	}
 
-	// Atomic rename — replaces existing symlink atomically on same filesystem.
-	// If ENOENT, another concurrent writer already renamed tmp (they won the race).
+	// Atomic rename
 	try {
 		fs.renameSync(tmpPath, latestPath);
 	} catch {
-		/* ENOENT — concurrent writer won race, our tmp is gone */
+		/* concurrent writer won the race — our symlink is fine */
 	}
 }

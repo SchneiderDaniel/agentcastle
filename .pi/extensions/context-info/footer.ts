@@ -7,7 +7,7 @@
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ContextStatusBarConfig, TpsSample } from "./types.ts";
+import type { ContextStatusBarConfig, TpsSample } from "./types.js";
 import {
 	formatSessionTimer,
 	formatTokens,
@@ -17,7 +17,7 @@ import {
 	thinkingColor,
 	formatTps,
 	computeTps,
-} from "./formatting.ts";
+} from "./formatting.js";
 
 /** Module-scope process start time — captures true pi process launch time */
 export const processStartTime = Date.now();
@@ -85,7 +85,7 @@ export function installFooter(
 				if (thinkingLevel) {
 					const tIcon = thinkingIcon(thinkingLevel);
 					const tColor = thinkingColor(thinkingLevel);
-					const reasoningStr = theme.fg(tColor, `${tIcon} ${thinkingLevel}`);
+					const reasoningStr = theme.fg(tColor as any, `${tIcon} ${thinkingLevel}`);
 					centerStr += " " + theme.fg("dim", "·") + " " + reasoningStr;
 				}
 

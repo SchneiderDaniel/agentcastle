@@ -5,7 +5,7 @@
  * Used as last resort when crawl4ai + Apify both fail.
  */
 
-import type { OnUpdateCallback } from "./types.ts";
+import type { OnUpdateCallback } from "./types";
 
 /**
  * Convert HTML string to rough markdown using regex-based transformations.

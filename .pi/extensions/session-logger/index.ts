@@ -11,11 +11,11 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createSessionStats } from "./stats.ts";
-import { createFileOps } from "./files.ts";
-import { renderSessionToMarkdown, parseSessionStats } from "./renderer.ts";
-import type { ParsedSessionStats } from "./renderer.ts";
-import type { Metadata } from "./types.ts";
+import { createSessionStats } from "./stats.js";
+import { createFileOps } from "./files.js";
+import { renderSessionToMarkdown, parseSessionStats } from "./renderer.js";
+import type { ParsedSessionStats } from "./renderer.js";
+import type { Metadata } from "./types.js";
 
 export default function (pi: ExtensionAPI): void {
 	let enabled = true;
@@ -48,7 +48,7 @@ export default function (pi: ExtensionAPI): void {
 		stats.seedStats(sm);
 
 		sessionsDir = path.resolve(sm.getCwd(), ".pi", "sessions");
-		await files.ensureSymlink(sessionFile, sessionsDir);
+		await files.ensureSymlink(sessionFile!, sessionsDir!);
 
 		// Recovery: generate missing metadata/MD for the previous session.
 		// If session_shutdown didn't fire (crash, kill, race), we catch up now.

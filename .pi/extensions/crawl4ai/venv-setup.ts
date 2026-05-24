@@ -6,7 +6,7 @@
  * to let caller own caching lifecycle.
  */
 
-import type { OnUpdateCallback } from "./types.ts";
+import type { OnUpdateCallback } from "./types";
 
 interface ExecResult {
 	code: number;

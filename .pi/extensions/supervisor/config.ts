@@ -1,6 +1,6 @@
 // ─── Config: loading, validation, timeout resolution ──────────────
 
-import type { SupervisorConfig } from "./types.ts";
+import type { SupervisorConfig } from "./types";
 import { readFileSync, existsSync } from "node:fs";
 
 // ─── Constants ──────────────────────────────────────────────────────

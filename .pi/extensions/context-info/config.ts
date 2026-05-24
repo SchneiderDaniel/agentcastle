@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join as joinPath } from "node:path";
-import type { ContextStatusBarConfig, ThresholdEntry } from "./types.ts";
+import type { ContextStatusBarConfig, ThresholdEntry } from "./types.js";
 
 // ─── Default thresholds ───────────────────────────────────────────
 

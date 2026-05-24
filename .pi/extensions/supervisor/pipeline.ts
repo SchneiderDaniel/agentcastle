@@ -12,11 +12,11 @@ import type {
 	ProjectItem,
 	SupervisorMessageDetails,
 	PipelineAgentResult,
-} from "./types.ts";
+} from "./types";
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { execSync } from "node:child_process";
-import { loadConfig, resolveTimeoutMs } from "./config.ts";
+import { loadConfig, resolveTimeoutMs } from "./config";
 import {
 	ghJson,
 	getProjectFields,
@@ -28,14 +28,14 @@ import {
 	setItemStatus,
 	checkBlockedByDependencies,
 	filterIssueData,
-} from "./github.ts";
-import { parseAgentFile } from "./agent-loader.ts";
-import { buildAgentTask, generateBranchName } from "./agent-task.ts";
-import { runAgent } from "./agent-runner.ts";
-import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "./workflow.ts";
-import { countRejections, formatDuration, formatTokens } from "./formatting.ts";
-import { runTscAndLspAudit } from "./pipeline-audit.ts";
-import { handlePostPipelineMerge } from "./pipeline-merge.ts";
+} from "./github";
+import { parseAgentFile } from "./agent-loader";
+import { buildAgentTask, generateBranchName } from "./agent-task";
+import { runAgent } from "./agent-runner";
+import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "./workflow";
+import { countRejections, formatDuration, formatTokens } from "./formatting";
+import { runTscAndLspAudit } from "./pipeline-audit";
+import { handlePostPipelineMerge } from "./pipeline-merge";
 
 // ─── Pipeline summary builder ───────────────────────────────────────
 

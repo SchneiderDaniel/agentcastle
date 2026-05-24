@@ -41,7 +41,7 @@ let jsonRpcModule: JsonRpcModule | null = null;
 async function loadJsonRpc(): Promise<boolean> {
 	if (jsonRpcModule) return true;
 	try {
-		jsonRpcModule = (await import("vscode-jsonrpc")) as JsonRpcModule;
+		jsonRpcModule = (await import("vscode-jsonrpc")) as unknown as JsonRpcModule;
 		return true;
 	} catch {
 		return false;
@@ -300,7 +300,7 @@ export async function auditFileGroup(
 							/* ignore */
 						}
 					}, 5000);
-					killTimer.unref();
+					(killTimer as any)?.unref?.();
 				}
 			}
 		} catch {

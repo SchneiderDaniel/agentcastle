@@ -40,7 +40,11 @@ export default function lspAuditor(pi: ExtensionAPI): void {
 				pi,
 				ctx,
 			);
-			pi.sendMessage?.({ content: `LSP Audit result: ${result.note}`, display: true });
+			pi.sendMessage?.({
+				content: `LSP Audit result: ${result.note}`,
+				display: true,
+				customType: "lsp-auditor",
+			});
 		},
 	});
 }

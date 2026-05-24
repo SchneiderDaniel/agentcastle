@@ -3,14 +3,14 @@
 // Extracted from pipeline.ts to keep that file under 300 lines.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig } from "./types.ts";
+import type { SupervisorConfig } from "./types";
 import { existsSync } from "node:fs";
-import { generateBranchName } from "./agent-task.ts";
-import { tryAutoMerge } from "./merge.ts";
-import { checkPrConflicts } from "./github.ts";
-import { parseAgentFile } from "./agent-loader.ts";
-import { runAgent } from "./agent-runner.ts";
-import { resolveTimeoutMs } from "./config.ts";
+import { generateBranchName } from "./agent-task";
+import { tryAutoMerge } from "./merge";
+import { checkPrConflicts } from "./github";
+import { parseAgentFile } from "./agent-loader";
+import { runAgent } from "./agent-runner";
+import { resolveTimeoutMs } from "./config";
 
 /**
  * Handle post-pipeline merge conflict detection and resolution.

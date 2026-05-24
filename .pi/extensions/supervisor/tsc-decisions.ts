@@ -67,24 +67,15 @@ export function determineTscCheckpointDecision(
  * Lazy import for runTscCheckpoint to avoid circular dependencies at load time.
  */
 let _runTscCheckpoint:
-	| ((
-			pi: ExtensionAPI,
-			worktreePath: string,
-			extensionsConfigPath?: string,
-	  ) => Promise<TscCheckpointResult>)
+	| ((pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>)
 	| null = null;
 
 export async function getRunTscCheckpoint(): Promise<
-	| ((
-			pi: ExtensionAPI,
-			worktreePath: string,
-			extensionsConfigPath?: string,
-	  ) => Promise<TscCheckpointResult>)
-	| null
+	((pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>) | null
 > {
 	if (_runTscCheckpoint) return _runTscCheckpoint;
 	try {
-		const mod = await import("../tsc-checkpoint.ts");
+		const mod = await import("../tsc-checkpoint");
 		_runTscCheckpoint = mod.runTscCheckpoint;
 		return _runTscCheckpoint;
 	} catch {

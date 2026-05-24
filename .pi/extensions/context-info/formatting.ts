@@ -2,7 +2,7 @@
  * Pure visual helpers for context-info extension
  */
 
-import type { ThresholdEntry, TpsSample } from "./types.ts";
+import type { ThresholdEntry, TpsSample } from "./types.js";
 
 // ─── Hex colors for threshold levels ─────────────────────────────
 

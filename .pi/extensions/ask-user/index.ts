@@ -169,10 +169,17 @@ export default function askUser(pi: ExtensionAPI): void {
 
 			// Use custom scrollable dialog so long questions (with code
 			// blocks) can be scrolled independently from the option list.
-			const selectedLabel = await ctx.ui.custom<string | undefined>(
-				(tui, theme, _keybindings, done) =>
-					renderScrollableDialog(tui, theme, done, question, items, labelToValue, otherLabel),
-			);
+			const selectedLabel = (await ctx.ui.custom((tui, theme, _keybindings, done) =>
+				renderScrollableDialog(
+					tui,
+					theme as { fg: (color: string, text: string) => string },
+					done,
+					question,
+					items,
+					labelToValue,
+					otherLabel,
+				),
+			)) as string | undefined;
 
 			const timestamp = new Date().toISOString();
 
@@ -255,7 +262,7 @@ export default function askUser(pi: ExtensionAPI): void {
 
 			// No args or just whitespace
 			if (!trimmed) {
-				ctx.sendUserMessage?.(
+				pi.sendUserMessage?.(
 					"Usage: `/qna list [--limit N]`, `/qna get <id>`, `/qna search <text>`\n\nNo Q&A history yet.",
 					{ deliverAs: "followUp" },
 				);
@@ -279,26 +286,26 @@ export default function askUser(pi: ExtensionAPI): void {
 				try {
 					entries = await listQnaEntries(projectDir, limit);
 				} catch (err) {
-					ctx.sendUserMessage?.(`Error reading Q&A history: ${(err as Error).message}`, {
+					pi.sendUserMessage?.(`Error reading Q&A history: ${(err as Error).message}`, {
 						deliverAs: "followUp",
 					});
 					return;
 				}
 
 				if (entries.length === 0) {
-					ctx.sendUserMessage?.("No Q&A history yet.", { deliverAs: "followUp" });
+					pi.sendUserMessage?.("No Q&A history yet.", { deliverAs: "followUp" });
 					return;
 				}
 
 				const table = formatTable(entries);
-				ctx.sendUserMessage?.(table, { deliverAs: "followUp" });
+				pi.sendUserMessage?.(table, { deliverAs: "followUp" });
 				return;
 			}
 
 			if (subcommand === "get") {
 				const id = parseInt(subargs, 10);
 				if (isNaN(id) || id < 1) {
-					ctx.sendUserMessage?.("Usage: `/qna get <id>` — id must be a positive number.", {
+					pi.sendUserMessage?.("Usage: `/qna get <id>` — id must be a positive number.", {
 						deliverAs: "followUp",
 					});
 					return;
@@ -308,22 +315,22 @@ export default function askUser(pi: ExtensionAPI): void {
 				try {
 					entry = await getQnaEntry(projectDir, id);
 				} catch (err) {
-					ctx.sendUserMessage?.(`Error reading Q&A entry: ${(err as Error).message}`, {
+					pi.sendUserMessage?.(`Error reading Q&A entry: ${(err as Error).message}`, {
 						deliverAs: "followUp",
 					});
 					return;
 				}
 
 				if (entry === undefined) {
-					ctx.sendUserMessage?.("No Q&A history yet.", { deliverAs: "followUp" });
+					pi.sendUserMessage?.("No Q&A history yet.", { deliverAs: "followUp" });
 					return;
 				}
 				if (entry === null) {
-					ctx.sendUserMessage?.(`Entry #${id} not found.`, { deliverAs: "followUp" });
+					pi.sendUserMessage?.(`Entry #${id} not found.`, { deliverAs: "followUp" });
 					return;
 				}
 
-				ctx.sendUserMessage?.(
+				pi.sendUserMessage?.(
 					[
 						`### Q&A Entry #${id}`,
 						``,
@@ -342,7 +349,7 @@ export default function askUser(pi: ExtensionAPI): void {
 
 			if (subcommand === "search") {
 				if (!subargs) {
-					ctx.sendUserMessage?.("Usage: `/qna search <text>` — provide search text.", {
+					pi.sendUserMessage?.("Usage: `/qna search <text>` — provide search text.", {
 						deliverAs: "followUp",
 					});
 					return;
@@ -352,28 +359,28 @@ export default function askUser(pi: ExtensionAPI): void {
 				try {
 					entries = await queryQnaEntries(projectDir, subargs);
 				} catch (err) {
-					ctx.sendUserMessage?.(`Error searching Q&A history: ${(err as Error).message}`, {
+					pi.sendUserMessage?.(`Error searching Q&A history: ${(err as Error).message}`, {
 						deliverAs: "followUp",
 					});
 					return;
 				}
 
 				if (entries.length === 0) {
-					ctx.sendUserMessage?.(`No entries matching "${subargs}".`, {
+					pi.sendUserMessage?.(`No entries matching "${subargs}".`, {
 						deliverAs: "followUp",
 					});
 					return;
 				}
 
 				const table = formatTable(entries);
-				ctx.sendUserMessage?.([`**Search results for "${subargs}":**`, ``, table].join("\n"), {
+				pi.sendUserMessage?.([`**Search results for "${subargs}":**`, ``, table].join("\n"), {
 					deliverAs: "followUp",
 				});
 				return;
 			}
 
 			// Unknown subcommand
-			ctx.sendUserMessage?.(
+			pi.sendUserMessage?.(
 				"Unknown /qna subcommand. Usage: `/qna list [--limit N]`, `/qna get <id>`, `/qna search <text>`",
 				{ deliverAs: "followUp" },
 			);

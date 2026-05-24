@@ -8,10 +8,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import os from "node:os";
-import { CRAWL4AI_SCRIPT } from "./python-script.ts";
-import { ensurePythonVenv, ensureChromiumDeps } from "./venv-setup.ts";
-import { apifyCrawl } from "./apify-crawl.ts";
-import { directFetchCrawl } from "./direct-fetch.ts";
+import { CRAWL4AI_SCRIPT } from "./python-script";
+import { ensurePythonVenv, ensureChromiumDeps } from "./venv-setup";
+import { apifyCrawl } from "./apify-crawl";
+import { directFetchCrawl } from "./direct-fetch";
 
 export default function crawl4ai(pi: ExtensionAPI): void {
 	const venvReady = new Map<string, boolean>();

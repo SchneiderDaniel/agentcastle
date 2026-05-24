@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { Metadata } from "./types.ts";
+import type { Metadata } from "./types.js";
 
 export interface FileOps {
 	ensureSymlink(sessionFile: string, sessionsDir: string): Promise<void>;
@@ -13,31 +13,7 @@ export interface FileOps {
 }
 
 /**
- * Wait for a file to exist, with retries.
- * Polls fs.stat every 100ms up to `maxRetries` times.
- * Throws if file doesn't appear within the timeout.
- */
-async function waitForFile(filePath: string, maxRetries = 10): Promise<void> {
-	for (let i = 0; i < maxRetries; i++) {
-		try {
-			await fs.stat(filePath);
-			return;
-		} catch {
-			// File not yet available — wait and retry
-			if (i < maxRetries - 1) {
-				await new Promise((resolve) => setTimeout(resolve, 100));
-			}
-		}
-	}
-	throw new Error(`waitForFile: ${filePath} not found after ${maxRetries} retries`);
-}
-
-/**
  * Create a symlink at `linkDir/linkName` pointing to `targetFile`.
- *
- * Before creating the symlink, waits for the target file to exist
- * (prevents dangling symlinks when session_start fires before subprocess
- * finishes writing the session file).
  *
  * Uses atomic rename pattern to avoid TOCTOU race: creates the symlink at a
  * temp path on the same filesystem, then renames (atomically) to the target.
@@ -56,10 +32,6 @@ async function ensureLatestLink(
 	const latestLink = path.join(linkDir, linkName);
 	const linkTarget = path.relative(linkDir, targetFile);
 	const tmpLink = latestLink + ".tmp";
-
-	// Wait for target file to exist before creating symlink
-	// (prevents dangling symlink when called before file is fully written)
-	await waitForFile(targetFile);
 
 	// Clean up any stale tmp symlink from a previous crash.
 	try {

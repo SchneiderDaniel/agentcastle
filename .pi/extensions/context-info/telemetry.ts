@@ -13,7 +13,7 @@ export function isJsonMode(): boolean {
 }
 
 export function tryEmit(
-	ctx: { getContextUsage: () => { tokens?: number; contextWindow?: number } | undefined },
+	ctx: { getContextUsage: () => { tokens?: number | null; contextWindow?: number } | undefined },
 	state: { emitted: boolean; lastContextWindow?: number },
 ): void {
 	if (state.emitted) return;

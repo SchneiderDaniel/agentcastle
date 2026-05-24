@@ -1,7 +1,7 @@
 // ─── LSP Pre-Audit Hook ────────────────────────────────────────────
 // Decide next transition status based on LSP pre-audit result.
 
-import type { LspPreAuditDecision } from "./types.ts";
+import type { LspPreAuditDecision } from "./types";
 
 /**
  * Decide the next transition status based on LSP pre-audit result.
