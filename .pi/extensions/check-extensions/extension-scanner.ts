@@ -117,7 +117,7 @@ export function scanExtensions(extensionsDir: string, apiNames: string[]): Scann
 	}
 	for (const file of rootFiles) {
 		tsFiles.push({
-			dirName: basename(extensionsDir),
+			dirName: file.replace(/\.ts$/, ""),
 			filePath: join(extensionsDir, file),
 		});
 	}
