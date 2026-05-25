@@ -11,7 +11,8 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createSessionStats } from "./stats.js";
+import { createSessionStats, computeToolStats } from "./stats.js";
+import type { StatsSnapshot } from "./stats.js";
 import { createFileOps } from "./files.js";
 import { renderSessionToMarkdown, parseSessionStats } from "./renderer.js";
 import type { ParsedSessionStats } from "./renderer.js";
@@ -69,11 +70,15 @@ export default function (pi: ExtensionAPI): void {
 		const sf = sm.getSessionFile();
 		if (!sf) return;
 
+		// Capture in-memory tool execution timing before shutdown.
+		// This bridges accurate start/end times into metadata.
+		const snapshot = stats.getSnapshot();
+
 		// Wrap everything so one failure doesn't block the rest.
 		// Pi's extension runner catches errors silently per-handler —
 		// an uncaught throw stops execution of this handler entirely.
 		try {
-			await generateMissingReports(sf, files);
+			await generateMissingReports(sf, files, snapshot);
 		} catch (err) {
 			console.error(`[session-logger] Shutdown handler failed: ${(err as Error).message}`);
 		}
@@ -152,9 +157,10 @@ export default function (pi: ExtensionAPI): void {
  * Generate metadata.json and .md report for a session file if they're missing.
  * Called from session_shutdown (primary) and session_start (recovery).
  */
-async function generateMissingReports(
+export async function generateMissingReports(
 	sessionFilePath: string,
 	files: ReturnType<typeof createFileOps>,
+	snapshot?: StatsSnapshot,
 ): Promise<void> {
 	// Check if the JSONL file still exists (might have been cleaned up)
 	if (!fs.existsSync(sessionFilePath)) return;
@@ -178,6 +184,25 @@ async function generateMissingReports(
 
 	if (!parsed) return;
 
+	// Build tool stats — prefer in-memory timing when snapshot is available.
+	// Parsed stats are source of truth for call/error counts (message replay).
+	// In-memory stats provide accurate totalDurationMs.
+	let toolStats = parsed.toolStats;
+	if (snapshot) {
+		const computedStats = computeToolStats(snapshot.toolExecutions);
+		const merged = { ...parsed.toolStats };
+		for (const [toolName, stats] of Object.entries(computedStats)) {
+			if (merged[toolName]) {
+				// Keep parsed call/error counts, override duration from memory
+				merged[toolName].totalDurationMs = stats.totalDurationMs;
+			} else {
+				// Tool exists in memory but not in JSONL — add it
+				merged[toolName] = stats;
+			}
+		}
+		toolStats = merged;
+	}
+
 	const meta: Metadata = {
 		sessionId: parsed.sessionId,
 		name: undefined,
@@ -194,7 +219,7 @@ async function generateMissingReports(
 			level: l,
 		})),
 		perTurnTokens: parsed.perTurnTokens,
-		toolStats: parsed.toolStats,
+		toolStats,
 		fileModifications: parsed.fileModifications,
 	};
 
@@ -218,27 +243,4 @@ async function generateMissingReports(
 			console.error(`[session-logger] Failed to write report: ${(err as Error).message}`);
 		}
 	}
-}
-
-/** Aggregate tool executions into a summary map. */
-function computeToolStats(
-	executions: Array<{
-		toolName: string;
-		isError: boolean;
-		startTime: number;
-		endTime: number | null;
-	}>,
-): Record<string, { calls: number; errors: number; totalDurationMs: number }> {
-	const stats: Record<string, { calls: number; errors: number; totalDurationMs: number }> = {};
-	for (const exec of executions) {
-		if (!stats[exec.toolName]) {
-			stats[exec.toolName] = { calls: 0, errors: 0, totalDurationMs: 0 };
-		}
-		stats[exec.toolName].calls++;
-		if (exec.isError) stats[exec.toolName].errors++;
-		if (exec.endTime != null) {
-			stats[exec.toolName].totalDurationMs += exec.endTime - exec.startTime;
-		}
-	}
-	return stats;
 }

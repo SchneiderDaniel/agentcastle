@@ -51,6 +51,29 @@ export interface SessionStats {
 	recordFileModification(action: "read" | "write" | "edit", path: string, size?: number): void;
 }
 
+/** Aggregate tool executions into a summary map with durations. */
+export function computeToolStats(
+	executions: Array<{
+		toolName: string;
+		isError: boolean;
+		startTime: number;
+		endTime: number | null;
+	}>,
+): Record<string, { calls: number; errors: number; totalDurationMs: number }> {
+	const stats: Record<string, { calls: number; errors: number; totalDurationMs: number }> = {};
+	for (const exec of executions) {
+		if (!stats[exec.toolName]) {
+			stats[exec.toolName] = { calls: 0, errors: 0, totalDurationMs: 0 };
+		}
+		stats[exec.toolName].calls++;
+		if (exec.isError) stats[exec.toolName].errors++;
+		if (exec.endTime != null) {
+			stats[exec.toolName].totalDurationMs += exec.endTime - exec.startTime;
+		}
+	}
+	return stats;
+}
+
 export function createSessionStats(): SessionStats {
 	let totalInputTokens = 0;
 	let totalOutputTokens = 0;
