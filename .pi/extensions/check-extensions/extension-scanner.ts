@@ -116,9 +116,10 @@ export function scanExtensions(extensionsDir: string, apiNames: string[]): Scann
 	} catch {
 		rootFiles = [];
 	}
+	const treatRootFilesAsSingleExtension = !hasExtensionSubdirs && rootFiles.includes("index.ts");
 	for (const file of rootFiles) {
 		tsFiles.push({
-			dirName: hasExtensionSubdirs ? basename(file, ".ts") : basename(extensionsDir),
+			dirName: treatRootFilesAsSingleExtension ? basename(extensionsDir) : basename(file, ".ts"),
 			filePath: join(extensionsDir, file),
 		});
 	}

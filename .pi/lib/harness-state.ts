@@ -70,7 +70,7 @@ export interface HarnessState {
 
 // ── Constants ──
 
-const CACHE_TTL_TURNS = 3;
+import { CACHE_TTL_TURNS } from "./harness-rules.ts";
 const MAX_ERRORS_PER_TOOL = 3;
 
 // ── Factory ──

@@ -231,7 +231,7 @@ describe("extension-scanner", () => {
 	});
 
 	it("scans .ts files for pi. and ctx. patterns", () => {
-		const extDir = join(tmpDir, "caveman");
+		const extDir = join(tmpDir, "extensions", "caveman");
 		mkdirSync(extDir, { recursive: true });
 		writeFileSync(
 			join(extDir, "index.ts"),
@@ -246,7 +246,7 @@ describe("extension-scanner", () => {
 			].join("\n"),
 		);
 
-		const result = scanExtensions(extDir, [
+		const result = scanExtensions(join(tmpDir, "extensions"), [
 			"pi.on",
 			"pi.registerCommand",
 			"pi.registerTool",
@@ -270,11 +270,11 @@ describe("extension-scanner", () => {
 	});
 
 	it("extension name derived from parent directory name", () => {
-		const extDir = join(tmpDir, "my-extension");
+		const extDir = join(tmpDir, "extensions", "my-extension");
 		mkdirSync(extDir, { recursive: true });
 		writeFileSync(join(extDir, "index.ts"), `pi.on("session_start", async () => {});\n`);
 
-		const result = scanExtensions(extDir, ["pi.on"]);
+		const result = scanExtensions(join(tmpDir, "extensions"), ["pi.on"]);
 		assert.strictEqual(result.findings.length, 1);
 		assert.strictEqual(result.findings[0]!.extensionName, "my-extension");
 	});
@@ -371,6 +371,62 @@ describe("extension-scanner", () => {
 		const result = scanExtensions(extDir, ["pi.registerCommand"]);
 		assert.strictEqual(result.findings.length, 1);
 		assert.strictEqual(result.findings[0]!.apiName, "pi.registerCommand");
+	});
+
+	// ═══════════════════════════════════════════════════════════════
+	// Root-file extensionName fix
+	// ═══════════════════════════════════════════════════════════════
+
+	it("root-level .ts file gets its filename (no .ts) as extensionName", () => {
+		// Create a root-level .ts file (no subdirectory)
+		writeFileSync(join(tmpDir, "ripgrep-search.ts"), `pi.on("start", async () => {});\n`);
+
+		const result = scanExtensions(tmpDir, ["pi.on"]);
+		assert.strictEqual(result.findings.length, 1);
+		assert.strictEqual(result.findings[0]!.extensionName, "ripgrep-search");
+	});
+
+	it("multiple root-level .ts files each get correct extensionName", () => {
+		writeFileSync(join(tmpDir, "ripgrep-search.ts"), `pi.on("start", async () => {});\n`);
+		writeFileSync(join(tmpDir, "piignore.ts"), `pi.exec("echo", ["hi"]);\n`);
+
+		const result = scanExtensions(tmpDir, ["pi.on", "pi.exec"]);
+		assert.strictEqual(result.findings.length, 2);
+		const names = result.findings.map((f) => f.extensionName).sort();
+		assert.deepStrictEqual(names, ["piignore", "ripgrep-search"]);
+	});
+
+	it("subdirectory extension still gets correct name when root-level .ts also present (regression)", () => {
+		const extDir = join(tmpDir, "caveman");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "index.ts"), `pi.on("session_start", async () => {});\n`);
+
+		writeFileSync(join(tmpDir, "ripgrep-search.ts"), `pi.on("start", async () => {});\n`);
+
+		const result = scanExtensions(tmpDir, ["pi.on"]);
+		assert.strictEqual(result.findings.length, 2);
+		const cavemanFindings = result.findings.filter((f) => f.extensionName === "caveman");
+		assert.strictEqual(cavemanFindings.length, 1);
+		const rootFindings = result.findings.filter((f) => f.extensionName === "ripgrep-search");
+		assert.strictEqual(rootFindings.length, 1);
+	});
+
+	it("root-level .ts file with multiple dots strips only .ts suffix", () => {
+		writeFileSync(join(tmpDir, "my.file.name.ts"), `pi.on("start", async () => {});\n`);
+
+		const result = scanExtensions(tmpDir, ["pi.on"]);
+		assert.strictEqual(result.findings.length, 1);
+		assert.strictEqual(result.findings[0]!.extensionName, "my.file.name");
+	});
+
+	it("no root-level .ts files, only subdirectories — no regression", () => {
+		const extDir = join(tmpDir, "caveman");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "index.ts"), `pi.on("session_start", async () => {});\n`);
+
+		const result = scanExtensions(tmpDir, ["pi.on"]);
+		assert.strictEqual(result.findings.length, 1);
+		assert.strictEqual(result.findings[0]!.extensionName, "caveman");
 	});
 });
 
@@ -900,6 +956,10 @@ describe("ast-scanner", () => {
 		assert.strictEqual(result.findings.length, 0);
 	});
 
+	// ═══════════════════════════════════════════════════════════════
+	// Root-file extensionName fix (ast-scanner)
+	// ═══════════════════════════════════════════════════════════════
+
 	it("top-level .ts files keep their own file stem in AST findings", async () => {
 		mkdirSync(join(tmpDir, "dummy-ext"), { recursive: true });
 		writeFileSync(join(tmpDir, "ripgrep-search.ts"), `pi.on("session_start", async () => {});\n`);
@@ -924,6 +984,63 @@ describe("ast-scanner", () => {
 		const runtimeCalls = result.findings.filter((f) => f.matchContext === "runtime-call");
 		assert.strictEqual(runtimeCalls.length, 1);
 		assert.strictEqual(runtimeCalls[0]!.extensionName, "ripgrep-search");
+	});
+
+	it("multiple root-level .ts files each get correct extensionName (ast)", async () => {
+		writeFileSync(join(tmpDir, "ranked-map.ts"), `pi.on("build", async () => {});\n`);
+		writeFileSync(join(tmpDir, "structural-analyzer.ts"), `pi.exec("analyze", []);\n`);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return new Promise((resolve) => {
+				execFile(cmd, args, { timeout: 10_000 }, (err, stdout, stderr) => {
+					resolve({
+						stdout: stdout || "",
+						stderr: stderr || "",
+						code: err ? 1 : 0,
+						killed: false,
+					});
+				});
+			});
+		};
+
+		const result = await scanExtensionsAST(tmpDir, ["pi.on", "pi.exec"], execFn, astGrepPath);
+		assert.strictEqual(result.findings.length, 2);
+		const names = result.findings.map((f) => f.extensionName).sort();
+		assert.deepStrictEqual(names, ["ranked-map", "structural-analyzer"]);
+	});
+
+	it("subdirectory extension still correct alongside root-level .ts (ast regression)", async () => {
+		const extDir = join(tmpDir, "caveman");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "index.ts"), `pi.on("session_start", async () => {});\n`);
+
+		writeFileSync(join(tmpDir, "tsc-checkpoint.ts"), `pi.on("check", async () => {});\n`);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return new Promise((resolve) => {
+				execFile(cmd, args, { timeout: 10_000 }, (err, stdout, stderr) => {
+					resolve({
+						stdout: stdout || "",
+						stderr: stderr || "",
+						code: err ? 1 : 0,
+						killed: false,
+					});
+				});
+			});
+		};
+
+		const result = await scanExtensionsAST(tmpDir, ["pi.on"], execFn, astGrepPath);
+		assert.strictEqual(result.findings.length, 2);
+		const cavemanFindings = result.findings.filter((f) => f.extensionName === "caveman");
+		assert.strictEqual(cavemanFindings.length, 1);
+		const rootFindings = result.findings.filter((f) => f.extensionName === "tsc-checkpoint");
+		assert.strictEqual(rootFindings.length, 1);
 	});
 });
 
