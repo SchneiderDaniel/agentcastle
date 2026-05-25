@@ -363,6 +363,7 @@ export async function scanExtensionsAST(
 	} catch {
 		return { findings, skipCount };
 	}
+	const hasExtensionSubdirs = entries.some((entry) => entry.isDirectory() && !entry.name.startsWith("."));
 
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
@@ -395,7 +396,7 @@ export async function scanExtensionsAST(
 	}
 	for (const file of rootFiles) {
 		tsFiles.push({
-			dirName: basename(extensionsDir),
+			dirName: hasExtensionSubdirs ? basename(file, ".ts") : basename(extensionsDir),
 			filePath: join(extensionsDir, file),
 		});
 	}

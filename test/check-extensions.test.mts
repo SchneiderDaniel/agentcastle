@@ -279,6 +279,15 @@ describe("extension-scanner", () => {
 		assert.strictEqual(result.findings[0]!.extensionName, "my-extension");
 	});
 
+	it("top-level .ts files use the file stem as the extension name", () => {
+		mkdirSync(join(tmpDir, "dummy-ext"), { recursive: true });
+		writeFileSync(join(tmpDir, "ripgrep-search.ts"), `pi.on("session_start", async () => {});\n`);
+
+		const result = scanExtensions(tmpDir, ["pi.on"]);
+		assert.strictEqual(result.findings.length, 1);
+		assert.strictEqual(result.findings[0]!.extensionName, "ripgrep-search");
+	});
+
 	it("Boundary: file with no pi./ctx. patterns produces no findings", () => {
 		const extDir = join(tmpDir, "empty-ext");
 		mkdirSync(extDir, { recursive: true });
@@ -889,6 +898,32 @@ describe("ast-scanner", () => {
 
 		const result = await scanExtensionsAST(extDir, ["pi.on", "pi.exec"], execFn, astGrepPath);
 		assert.strictEqual(result.findings.length, 0);
+	});
+
+	it("top-level .ts files keep their own file stem in AST findings", async () => {
+		mkdirSync(join(tmpDir, "dummy-ext"), { recursive: true });
+		writeFileSync(join(tmpDir, "ripgrep-search.ts"), `pi.on("session_start", async () => {});\n`);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return new Promise((resolve) => {
+				execFile(cmd, args, { timeout: 10_000 }, (err, stdout, stderr) => {
+					resolve({
+						stdout: stdout || "",
+						stderr: stderr || "",
+						code: err ? 1 : 0,
+						killed: false,
+					});
+				});
+			});
+		};
+
+		const result = await scanExtensionsAST(tmpDir, ["pi.on"], execFn, astGrepPath);
+		const runtimeCalls = result.findings.filter((f) => f.matchContext === "runtime-call");
+		assert.strictEqual(runtimeCalls.length, 1);
+		assert.strictEqual(runtimeCalls[0]!.extensionName, "ripgrep-search");
 	});
 });
 

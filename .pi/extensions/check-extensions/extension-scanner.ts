@@ -83,6 +83,7 @@ export function scanExtensions(extensionsDir: string, apiNames: string[]): Scann
 
 	// Collect all .ts files from extension directories
 	const tsFiles: Array<{ dirName: string; filePath: string }> = [];
+	const hasExtensionSubdirs = entries.some((entry) => entry.isDirectory() && !entry.name.startsWith("."));
 
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
@@ -117,7 +118,7 @@ export function scanExtensions(extensionsDir: string, apiNames: string[]): Scann
 	}
 	for (const file of rootFiles) {
 		tsFiles.push({
-			dirName: basename(extensionsDir),
+			dirName: hasExtensionSubdirs ? basename(file, ".ts") : basename(extensionsDir),
 			filePath: join(extensionsDir, file),
 		});
 	}
