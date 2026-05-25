@@ -34,10 +34,8 @@ export interface ToolCallResult {
 }
 
 interface ToolCallEvent {
-	input: {
-		toolName: string;
-		args: Record<string, unknown>;
-	};
+	toolName: string;
+	input: Record<string, unknown>;
 	isError?: boolean;
 }
 
@@ -78,8 +76,15 @@ export function createToolCallHandler(state: HarnessState) {
 		event: ToolCallEvent,
 		_ctx: ToolCallContext,
 	): ToolCallResult | null {
-		const { toolName, args } = event.input;
+		const toolName = event.toolName;
+		const args = event.input ?? {};
 		const turn = state.currentTurn;
+
+		// ── Guard: undefined/empty toolName → skip recording, pass through ──
+		if (!toolName) {
+			state.currentTurn++;
+			return null;
+		}
 
 		// ── Step 0: Record EVERY tool call for cascade detection ──
 		// Before pass-through check so pass-through tools also reset consecutive counter.

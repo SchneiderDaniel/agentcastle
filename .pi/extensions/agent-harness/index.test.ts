@@ -14,6 +14,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHarnessState } from "../../lib/harness-state.ts";
 import { createToolCallHandler } from "./index.ts";
+import agentHarness from "./index.ts";
 import { CASCADE_THRESHOLD, CACHE_TTL_TURNS } from "../../lib/harness-rules.ts";
 import type { ToolCallResult } from "./index.ts";
 import type { HarnessState } from "../../lib/harness-state.ts";
@@ -22,7 +23,8 @@ import type { HarnessState } from "../../lib/harness-state.ts";
 
 function makeEvent(toolName: string, args: Record<string, unknown> = {}, isError = false) {
 	return {
-		input: { toolName, args },
+		toolName,
+		input: args,
 		isError,
 	};
 }
@@ -267,5 +269,179 @@ describe("agent-harness handler", () => {
 
 		// After sequence, currentTurn should be 7
 		assert.equal(state.currentTurn, sequence.length);
+	});
+});
+
+// ── Integration tests (mock ExtensionAPI) ──
+
+describe("agent-harness integration with mock ExtensionAPI", () => {
+	function createMockAPI() {
+		const handlers = new Map<string, (...args: any[]) => any>();
+		return {
+			handlers,
+			on(event: string, handler: (...args: any[]) => any) {
+				handlers.set(event, handler);
+			},
+			fire(event: string, data: any, ctx?: any) {
+				const handler = handlers.get(event);
+				if (handler) return handler(data, ctx ?? {});
+			},
+		};
+	}
+
+	it("registers session_start and tool_call handlers", () => {
+		const api = createMockAPI();
+		agentHarness(api);
+		assert.ok(api.handlers.has("session_start"));
+		assert.ok(api.handlers.has("tool_call"));
+	});
+
+	it("session_start creates fresh state — cascade resets", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Fire 8 consecutive read events through api
+		// CASCADE_THRESHOLD = 8, so 7 pass and 8th (index 7) blocks
+		for (let i = 0; i < 9; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "read",
+				input: { path: `file${i}.ts` },
+			});
+			// 8th call (0-indexed 7) should be blocked (cascade threshold = 8)
+			if (i >= 7) {
+				assert.ok(result?.block, `call ${i} should be blocked by cascade`);
+			} else {
+				assert.equal(result, null, `call ${i} should pass through`);
+			}
+		}
+
+		// Now fire session_start to reset state
+		await api.fire("session_start", { type: "session_start", reason: "new" });
+
+		// After reset, a read should not be blocked
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "reset",
+			toolName: "read",
+			input: { path: "fresh.ts" },
+		});
+		assert.equal(result, null, "after session_start, state should be fresh — no block");
+	});
+
+	it("correct pi event shape triggers read cache through full dispatch", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// First read — pass through
+		const r1 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "test.ts" },
+		});
+		assert.equal(r1, null, "first read should pass through");
+
+		// Second read same path — cache hit, blocked
+		const r2 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "test.ts" },
+		});
+		assert.ok(r2?.block, "second read same path should be blocked by cache");
+	});
+
+	it("bash grep mismatch through full dispatch", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "| grep foo" },
+		});
+		assert.ok(result?.block, "bash grep should be blocked");
+		assert.ok(result!.reason.includes("ripgrep_search"), "should suggest ripgrep_search");
+	});
+
+	it("undefined toolName in full dispatch returns null and doesn't block subsequent calls", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Fire event without toolName
+		const r1 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			input: { path: "x.ts" }, // no toolName key
+		});
+		assert.equal(r1, null, "undefined toolName should return null");
+
+		// Fire read — should work normally, not blocked by undefined's cascade count
+		const r2 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "a.ts" },
+		});
+		assert.equal(r2, null, "read should work normally after undefined toolName");
+	});
+
+	it("cross-type mixed sequence no false cascade", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Fire 10 events alternating tools
+		const sequence = [
+			{ toolName: "read", input: { path: "a.ts" } },
+			{ toolName: "bash", input: { command: "echo hi" } },
+			{ toolName: "read", input: { path: "b.ts" } },
+			{ toolName: "bash", input: { command: "echo there" } },
+			{ toolName: "write", input: { path: "c.ts", content: "x" } },
+			{ toolName: "read", input: { path: "d.ts" } },
+			{ toolName: "bash", input: { command: "echo world" } },
+			{ toolName: "write", input: { path: "e.ts", content: "y" } },
+			{ toolName: "read", input: { path: "f.ts" } },
+			{ toolName: "bash", input: { command: "echo done" } },
+		];
+
+		for (let i = 0; i < sequence.length; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				...sequence[i],
+			});
+			assert.equal(
+				result,
+				null,
+				`mixed tools should not trigger cascade at step ${i} (${sequence[i].toolName})`,
+			);
+		}
+	});
+
+	it("isError event passthrough in full dispatch", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Error event — should pass through (result null) but track error
+		const r1 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "err.ts" },
+			isError: true,
+		});
+		assert.equal(r1, null, "error event should pass through");
+
+		// Normal read — should work (only 1 error, not >=2)
+		const r2 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "ok.ts" },
+		});
+		assert.equal(r2, null, "read after single error should pass through");
 	});
 });
