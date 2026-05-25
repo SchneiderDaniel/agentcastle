@@ -18,6 +18,7 @@ import agentHarness from "./index.ts";
 import { CASCADE_THRESHOLD, CACHE_TTL_TURNS } from "../../lib/harness-rules.ts";
 import type { ToolCallResult } from "./index.ts";
 import type { HarnessState } from "../../lib/harness-state.ts";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ── Helpers ──
 
@@ -277,16 +278,40 @@ describe("agent-harness handler", () => {
 describe("agent-harness integration with mock ExtensionAPI", () => {
 	function createMockAPI() {
 		const handlers = new Map<string, (...args: any[]) => any>();
-		return {
+		const api = {
 			handlers,
-			on(event: string, handler: (...args: any[]) => any) {
+			on(event: any, handler: any) {
 				handlers.set(event, handler);
 			},
 			fire(event: string, data: any, ctx?: any) {
 				const handler = handlers.get(event);
 				if (handler) return handler(data, ctx ?? {});
 			},
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerShortcut: () => {},
+			registerFlag: () => {},
+			getFlag: () => undefined,
+			registerMessageRenderer: () => {},
+			sendMessage: () => {},
+			sendUserMessage: () => {},
+			appendEntry: () => {},
+			setSessionName: () => {},
+			getSessionName: () => undefined,
+			setLabel: () => {},
+			exec: async () => ({ code: 0, killed: false, stdout: "", stderr: "" }),
+			getActiveTools: () => [],
+			getAllTools: () => [],
+			setActiveTools: () => {},
+			getCommands: () => [],
+			setModel: async () => false,
+			getThinkingLevel: () => "off" as any,
+			setThinkingLevel: () => {},
+			registerProvider: () => {},
+			unregisterProvider: () => {},
+			events: { on: () => {}, emit: () => {}, off: () => {} } as any,
 		};
+		return api as typeof api & ExtensionAPI;
 	}
 
 	it("registers session_start and tool_call handlers", () => {

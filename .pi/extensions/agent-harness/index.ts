@@ -15,15 +15,15 @@
  * @packageDocumentation
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createHarnessState } from "../../lib/harness-state.ts";
-import type { HarnessState } from "../../lib/harness-state.ts";
+import type { ExtensionAPI, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
+import { createHarnessState } from "../../lib/harness-state";
+import type { HarnessState } from "../../lib/harness-state";
 import {
 	isSearchInBash,
 	isCatHeadTailInBash,
 	suggestRedirection,
 	CASCADE_THRESHOLD,
-} from "../../lib/harness-rules.ts";
+} from "../../lib/harness-rules";
 
 // ── Types ──
 
@@ -44,7 +44,7 @@ interface ToolCallContext {
 		getCwd?: () => string;
 	};
 	ui?: {
-		notify?: (msg: string, level?: string) => void;
+		notify?: (message: string, type?: "info" | "warning" | "error") => void;
 	};
 }
 
@@ -200,7 +200,7 @@ export default function agentHarness(pi: ExtensionAPI): void {
 	});
 
 	// Tool_call handler
-	pi.on("tool_call", async (event, ctx) => {
-		return createToolCallHandler(state)(event, ctx);
+	pi.on("tool_call", async (event, ctx): Promise<ToolCallEventResult | void> => {
+		return createToolCallHandler(state)(event, ctx) ?? undefined;
 	});
 }
