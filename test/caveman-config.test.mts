@@ -106,6 +106,27 @@ describe("config.ts — ensureConfigLoaded caches after first call", () => {
 	});
 });
 
+describe("config.ts — saveConfig updates in-memory config immediately", () => {
+	it("getConfig returns new showStatus right after saveConfig", async () => {
+		const store = createConfigStore(join(tmpDir, "caveman.json"));
+		await store.saveConfig({ defaultLevel: "ultra", showStatus: false });
+		// In-memory must reflect new value before disk write resolves
+		assert.strictEqual(store.getConfig().showStatus, false);
+		assert.strictEqual(store.getConfig().defaultLevel, "ultra");
+	});
+
+	it("subsequent getConfig calls return latest saved config", async () => {
+		const store = createConfigStore(join(tmpDir, "caveman.json"));
+		await store.saveConfig({ defaultLevel: "full", showStatus: true });
+		assert.strictEqual(store.getConfig().defaultLevel, "full");
+
+		// Save again with different values
+		await store.saveConfig({ defaultLevel: "ultra", showStatus: false });
+		assert.strictEqual(store.getConfig().defaultLevel, "ultra");
+		assert.strictEqual(store.getConfig().showStatus, false);
+	});
+});
+
 describe("config.ts — error paths", () => {
 	it("malformed JSON falls back to DEFAULT_CONFIG", async () => {
 		const configPath = join(tmpDir, "caveman.json");
