@@ -4,7 +4,7 @@ description: Reads a GitHub issue (including architecture comment) and writes a 
 tools: read, bash, structural_search, ripgrep_search, ranked_map
 model: opencode-go/deepseek-v4-flash
 thinking: medium
-extensions: "agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer"
+extensions: "caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer"
 ---
 
 🛠 Tool Discipline — TestDesigner
