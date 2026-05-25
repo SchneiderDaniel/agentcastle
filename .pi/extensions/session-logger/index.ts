@@ -18,15 +18,37 @@ import { renderSessionToMarkdown, parseSessionStats } from "./renderer.js";
 import type { ParsedSessionStats } from "./renderer.js";
 import type { Metadata } from "./types.js";
 
+export interface SessionLoggerGate {
+	enabledForNextSession: boolean;
+	sessionEnabled: boolean;
+}
+
+export function createSessionLoggerGate(initiallyEnabled = true): SessionLoggerGate {
+	return {
+		enabledForNextSession: initiallyEnabled,
+		sessionEnabled: initiallyEnabled,
+	};
+}
+
+export function toggleSessionLoggerGate(gate: SessionLoggerGate, args?: string): boolean {
+	if (args === "on") gate.enabledForNextSession = true;
+	else if (args === "off") gate.enabledForNextSession = false;
+	else gate.enabledForNextSession = !gate.enabledForNextSession;
+	return gate.enabledForNextSession;
+}
+
+export function beginSessionLoggerSession(gate: SessionLoggerGate): boolean {
+	gate.sessionEnabled = gate.enabledForNextSession;
+	return gate.sessionEnabled;
+}
+
 export default function (pi: ExtensionAPI): void {
-	let enabled = true;
+	const gate = createSessionLoggerGate();
 
 	pi.registerCommand("session-logger", {
 		description: "Toggle session report on/off (takes effect next session)",
 		handler: async (args, ctx) => {
-			if (args === "on") enabled = true;
-			else if (args === "off") enabled = false;
-			else enabled = !enabled;
+			const enabled = toggleSessionLoggerGate(gate, args);
 			ctx.ui.notify(`Session logger: ${enabled ? "ON" : "OFF"} (applies to next session)`, "info");
 		},
 	});
@@ -39,7 +61,7 @@ export default function (pi: ExtensionAPI): void {
 	// ── Session lifecycle ──
 
 	pi.on("session_start", async (event, ctx) => {
-		if (!enabled) return;
+		if (!beginSessionLoggerSession(gate)) return;
 
 		const sm = ctx.sessionManager;
 		sessionFile = sm.getSessionFile();
@@ -64,7 +86,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 
 		const sm = ctx.sessionManager;
 		const sf = sm.getSessionFile();
@@ -85,50 +107,50 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_compact", async (_event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 		stats.incrementCompaction();
 	});
 
 	// ── Model / thinking changes ──
 
 	pi.on("model_select", async (event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 		stats.modelChange(event.model.provider, event.model.id);
 	});
 
 	pi.on("thinking_level_select", async (event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 		stats.thinkingChange(event.level);
 	});
 
 	// ── Turn lifecycle ──
 
 	pi.on("turn_start", async (event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 		stats.recordTurnStart(event.turnIndex);
 	});
 
 	pi.on("turn_end", async (event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 		stats.recordTurnEnd();
 	});
 
 	// ── Message tracking ──
 
 	pi.on("message_end", async (event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 		if (event.message.role === "assistant") stats.addUsage(event.message.usage);
 	});
 
 	// ── Tool execution lifecycle ──
 
 	pi.on("tool_execution_start", async (event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 		stats.recordToolStart(event.toolCallId, event.toolName);
 	});
 
 	pi.on("tool_execution_end", async (event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 		// Calculate result size from content
 		const content = event.result?.content ?? [];
 		let size = 0;
@@ -141,7 +163,7 @@ export default function (pi: ExtensionAPI): void {
 	// ── File modification tracking via tool_call interception ──
 
 	pi.on("tool_call", async (event, _ctx) => {
-		if (!enabled) return;
+		if (!gate.sessionEnabled) return;
 
 		if (isToolCallEventType("read", event)) {
 			stats.recordFileModification("read", event.input.path);
