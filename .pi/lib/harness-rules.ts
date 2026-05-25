@@ -33,10 +33,10 @@ export const SEARCH_TOOLS = new Set(["ripgrep_search", "structural_search"]);
 const CODE_EXTENSIONS = new Set([".ts", ".js", ".tsx", ".jsx", ".py", ".rs", ".go"]);
 
 /** TTL for read cache: number of turns before a cached entry expires. */
-export const CACHE_TTL_TURNS = 3;
+export const CACHE_TTL_TURNS = 6;
 
 /** Max consecutive same-tool calls before triggering cascade block. */
-export const CASCADE_THRESHOLD = 4;
+export const CASCADE_THRESHOLD = 8;
 
 /** Max errors tracked per tool before triggering retry block. */
 export const MAX_ERRORS_PER_TOOL = 3;
