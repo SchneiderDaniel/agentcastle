@@ -118,14 +118,14 @@ describe("agent-harness handler", () => {
 		assert.equal(state.currentTurn, 2, "currentTurn should advance on read cache block");
 	});
 
-	it("currentTurn advances on cascade block", () => {
+	it("currentTurn advances on cascade block (non-read tool)", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
-		// Call read repeatedly until blocked by cascade
+		// Call write repeatedly until blocked by cascade
 		let result: ToolCallResult | null = null;
 		for (let i = 0; i < CASCADE_THRESHOLD; i++) {
-			result = handler(makeEvent("read", { path: `file${i}.ts` }), makeCtx());
+			result = handler(makeEvent("write", { path: `file${i}.ts`, content: "" }), makeCtx());
 		}
 
 		// Last call should be blocked
@@ -189,18 +189,18 @@ describe("agent-harness handler", () => {
 
 	// ── Bug 4: CASCADE_THRESHOLD ──
 
-	it("cascade blocks only after CASCADE_THRESHOLD consecutive calls", () => {
+	it("cascade blocks only after CASCADE_THRESHOLD consecutive calls (non-read tools)", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
 		// CASCADE_THRESHOLD - 1 calls → should NOT block
 		for (let i = 0; i < CASCADE_THRESHOLD - 1; i++) {
-			const result = handler(makeEvent("read", { path: `f${i}.ts` }), makeCtx());
+			const result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
 			assert.equal(result, null, `call ${i + 1}/${CASCADE_THRESHOLD - 1} should not block`);
 		}
 
 		// CASCADE_THRESHOLD-th call → should block
-		const result = handler(makeEvent("read", { path: "block.ts" }), makeCtx());
+		const result = handler(makeEvent("write", { path: "block.ts", content: "" }), makeCtx());
 		assert.ok(result?.block, `${CASCADE_THRESHOLD}th call should block`);
 		assert.ok(result!.reason.includes("Same-tool cascade"), "reason should mention cascade");
 	});
@@ -325,14 +325,14 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
-		// Fire 8 consecutive read events through api
+		// Fire 9 consecutive write events through api — cascade kicks in for NON-read tools
 		// CASCADE_THRESHOLD = 8, so 7 pass and 8th (index 7) blocks
 		for (let i = 0; i < 9; i++) {
 			const result = await api.fire("tool_call", {
 				type: "tool_call",
 				toolCallId: String(i),
-				toolName: "read",
-				input: { path: `file${i}.ts` },
+				toolName: "write",
+				input: { path: `file${i}.ts`, content: "" },
 			});
 			// 8th call (0-indexed 7) should be blocked (cascade threshold = 8)
 			if (i >= 7) {
@@ -345,12 +345,12 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		// Now fire session_start to reset state
 		await api.fire("session_start", { type: "session_start", reason: "new" });
 
-		// After reset, a read should not be blocked
+		// After reset, a write should not be blocked
 		const result = await api.fire("tool_call", {
 			type: "tool_call",
 			toolCallId: "reset",
-			toolName: "read",
-			input: { path: "fresh.ts" },
+			toolName: "write",
+			input: { path: "fresh.ts", content: "" },
 		});
 		assert.equal(result, null, "after session_start, state should be fresh — no block");
 	});

@@ -135,8 +135,8 @@ export function createToolCallHandler(state: HarnessState) {
 				}
 			}
 
-			// ── 5. Same-tool cascade detection ──
-			if (!result) {
+			// ── 5. Same-tool cascade detection (skip read — cache handles redundant reads) ──
+			if (!result && toolName !== "read") {
 				const consecutive = state.callCounter.getConsecutive(toolName);
 				if (consecutive.count >= CASCADE_THRESHOLD) {
 					const suggestion =
