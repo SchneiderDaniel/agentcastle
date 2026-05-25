@@ -16,6 +16,8 @@ import {
 	isLsInBash,
 	shouldBlockRetry,
 	suggestRedirection,
+	CASCADE_THRESHOLD,
+	CACHE_TTL_TURNS,
 } from "../.pi/lib/harness-rules.ts";
 import { createHarnessState } from "../.pi/lib/harness-state.ts";
 import { createToolCallHandler } from "../.pi/extensions/agent-harness/index.ts";
@@ -111,8 +113,8 @@ function simulateHandler(
 	state.callCounter.record(toolName, turn);
 	const consecutive = state.callCounter.getConsecutive(toolName);
 
-	// Warn on cascade (4+ consecutive same-tool calls)
-	if (consecutive.count >= 4) {
+	// Warn on cascade (CASCADATE_THRESHOLD consecutive same-tool calls)
+	if (consecutive.count >= CASCADE_THRESHOLD) {
 		return {
 			block: true,
 			reason: `\`${toolName}\` called ${consecutive.count}x consecutively since turn ${consecutive.sinceTurn} — merge calls or batch work`,
@@ -345,7 +347,7 @@ describe("agent-harness handler: read caching", () => {
 		const result = simulateHandler(
 			{ input: { toolName: "read", args: { path: "/a.ts", offset: 0, limit: 100 } } },
 			state,
-			3,
+			CACHE_TTL_TURNS, // turn diff >= TTL = expired
 		);
 		assert.strictEqual(result, null, "after TTL expiry should pass through");
 	});
@@ -380,9 +382,9 @@ describe("agent-harness handler: error tracking", () => {
 });
 
 describe("agent-harness handler: call counter cascade", () => {
-	it("passes through first 3 same-tool calls", () => {
+	it("passes through first CASCADE_THRESHOLD-1 same-tool calls", () => {
 		const state = createHarnessState();
-		for (let i = 0; i < 3; i++) {
+		for (let i = 0; i < CASCADE_THRESHOLD - 1; i++) {
 			const result = simulateHandler(
 				{ input: { toolName: "bash", args: { command: `echo ${i}` } } },
 				state,
@@ -392,17 +394,17 @@ describe("agent-harness handler: call counter cascade", () => {
 		}
 	});
 
-	it("blocks on 4th consecutive same-tool call", () => {
+	it("blocks on CASCADE_THRESHOLD consecutive same-tool call", () => {
 		const state = createHarnessState();
-		for (let i = 0; i < 3; i++) {
+		for (let i = 0; i < CASCADE_THRESHOLD - 1; i++) {
 			simulateHandler({ input: { toolName: "bash", args: { command: `echo ${i}` } } }, state, 0);
 		}
 		const result = simulateHandler(
-			{ input: { toolName: "bash", args: { command: "echo 4" } } },
+			{ input: { toolName: "bash", args: { command: "echo block" } } },
 			state,
 			0,
 		);
-		assert.ok(result !== null, "4th call should be blocked");
+		assert.ok(result !== null, `${CASCADE_THRESHOLD}th call should be blocked`);
 		assert.strictEqual(result.block, true);
 		assert.ok(result.reason?.includes("consecutively"), "reason should mention consecutive");
 	});
