@@ -128,6 +128,9 @@ export async function ensureChromiumDeps(
 		return DEPS_LIB_DIR;
 	}
 
+	// Create deps directory if it doesn't exist
+	await exec("mkdir", ["-p", DEPS_DIR]);
+
 	// Download and extract Chromium system dependencies (without sudo)
 	onUpdate?.({
 		content: [{ type: "text", text: "Downloading Chromium system libraries…" }],
