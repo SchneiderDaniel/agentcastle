@@ -338,7 +338,8 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			if (i >= 7) {
 				assert.ok(result?.block, `call ${i} should be blocked by cascade`);
 			} else {
-				assert.equal(result, null, `call ${i} should pass through`);
+				// Through dispatch, null pass-through becomes undefined via ?? undefined
+				assert.ok(result == null, `call ${i} should pass through`);
 			}
 		}
 
@@ -352,7 +353,7 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			toolName: "write",
 			input: { path: "fresh.ts", content: "" },
 		});
-		assert.equal(result, null, "after session_start, state should be fresh — no block");
+		assert.ok(result == null, "after session_start, state should be fresh — no block");
 	});
 
 	it("correct pi event shape triggers read cache through full dispatch", async () => {
@@ -366,7 +367,7 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			toolName: "read",
 			input: { path: "test.ts" },
 		});
-		assert.equal(r1, null, "first read should pass through");
+		assert.ok(r1 == null, "first read should pass through");
 
 		// Second read same path — cache hit, blocked
 		const r2 = await api.fire("tool_call", {
@@ -402,7 +403,7 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			toolCallId: "1",
 			input: { path: "x.ts" }, // no toolName key
 		});
-		assert.equal(r1, null, "undefined toolName should return null");
+		assert.ok(r1 == null, "undefined toolName should return null/undefined");
 
 		// Fire read — should work normally, not blocked by undefined's cascade count
 		const r2 = await api.fire("tool_call", {
@@ -411,7 +412,7 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			toolName: "read",
 			input: { path: "a.ts" },
 		});
-		assert.equal(r2, null, "read should work normally after undefined toolName");
+		assert.ok(r2 == null, "read should work normally after undefined toolName");
 	});
 
 	it("cross-type mixed sequence no false cascade", async () => {
@@ -438,9 +439,8 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 				toolCallId: String(i),
 				...sequence[i],
 			});
-			assert.equal(
-				result,
-				null,
+			assert.ok(
+				result == null,
 				`mixed tools should not trigger cascade at step ${i} (${sequence[i].toolName})`,
 			);
 		}
@@ -458,7 +458,7 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			input: { path: "err.ts" },
 			isError: true,
 		});
-		assert.equal(r1, null, "error event should pass through");
+		assert.ok(r1 == null, "error event should pass through");
 
 		// Normal read — should work (only 1 error, not >=2)
 		const r2 = await api.fire("tool_call", {
@@ -467,6 +467,231 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			toolName: "read",
 			input: { path: "ok.ts" },
 		});
-		assert.equal(r2, null, "read after single error should pass through");
+		assert.ok(r2 == null, "read after single error should pass through");
+	});
+
+	// ── Bug 1 fix: ask_user in PASS_THROUGH / TOOL_META ──
+
+	it("Bug 1 fix: ask_user 15 consecutive calls does NOT block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		for (let i = 0; i < 15; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "ask_user",
+				input: { question: `Q${i}?` },
+			});
+			assert.ok(result == null, `ask_user call ${i} should NOT be blocked`);
+		}
+	});
+
+	it("structural_search 15 consecutive calls does NOT block (pass-through)", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		for (let i = 0; i < 15; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "structural_search",
+				input: { pattern: "test", language: "ts" },
+			});
+			assert.ok(result == null, `structural_search call ${i} should NOT be blocked`);
+		}
+	});
+
+	// ── Bug 2 fix: cat with redirect not blocked ──
+
+	it("Bug 2 fix: bash cat with redirect (cat > file) does NOT block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "cat > /tmp/foo << EOF" },
+		});
+		assert.ok(result == null, "cat with write redirect should NOT block");
+	});
+
+	it("Bug 2 fix: bash cat with append redirect (cat >>) does NOT block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "cat >> file << EOF" },
+		});
+		assert.ok(result == null, "cat with append redirect should NOT block");
+	});
+
+	it("Bug 2 fix: bash cat file1 file2 > combined does NOT block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "cat file1.ts file2.ts > combined.ts" },
+		});
+		assert.ok(result == null, "cat concat with redirect should NOT block");
+	});
+
+	it("Bug 2 fix: bash cat README.md STILL blocks (file read)", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "cat README.md" },
+		});
+		assert.ok(result?.block, "cat README.md (file read) should STILL block");
+	});
+
+	// ── Bug 3 fix: head/tail in pipe not blocked ──
+
+	it("Bug 3 fix: ls -la | head -5 does NOT block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "ls -la | head -5" },
+		});
+		assert.ok(result == null, "head in pipe should NOT block");
+	});
+
+	it("Bug 3 fix: ls -la | tail -10 does NOT block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "ls -lt | tail -10" },
+		});
+		assert.ok(result == null, "tail in pipe should NOT block");
+	});
+
+	it("Bug 3 fix: head -5 file STILL blocks (first cmd file read)", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "head -5 file" },
+		});
+		assert.ok(result?.block, "head as first cmd should STILL block");
+	});
+
+	// ── Bug 4 fix: quoted args not triggering false positives ──
+
+	it("Bug 4 fix: gh issue --body '...| grep...' does NOT block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "gh issue create --body '...| grep...'" },
+		});
+		assert.ok(result == null, "grep pattern in quoted body should NOT block");
+	});
+
+	it("Bug 4 fix: gh issue --title '... cat ...' does NOT block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: 'gh issue create --title "... cat ..."' },
+		});
+		assert.ok(result == null, "cat pattern in quoted title should NOT block");
+	});
+
+	// ── Bug 5 fix: blocked calls should NOT increment cascade counter ──
+
+	it("Bug 5 fix: blocked bash call does NOT increment cascade counter", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Blocked call (cat README.md)
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "bash",
+			input: { command: "cat README.md" },
+		});
+
+		// Legitimate call — should count as first, not second, since blocked didn't count
+		let result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "bash",
+			input: { command: "echo hello" },
+		});
+		assert.ok(result == null, "legitimate call after blocked should pass");
+
+		// 7 more legitimate calls — 8th total (i=9) should block
+		for (let i = 3; i <= 9; i++) {
+			result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "bash",
+				input: { command: "echo hi" },
+			});
+			if (i < 9) {
+				assert.ok(result == null, `legitimate call ${i} should pass`);
+			} else {
+				assert.ok(result?.block, `8th legitimate call should be blocked by cascade`);
+			}
+		}
+	});
+
+	it("Bug 5 fix: blocked read cache does NOT increment cascade counter", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// First read passes
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "test.ts" },
+		});
+
+		// Second read same path — blocked by cache
+		const blocked = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "test.ts" },
+		});
+		assert.ok(blocked?.block, "second read same path should be blocked");
+
+		// Third read different path — should pass (counter not incremented by blocked)
+		const pass = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "other.ts" },
+		});
+		assert.ok(pass == null, "read after blocked cache hit should pass");
 	});
 });
