@@ -11,12 +11,12 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createSessionStats, computeToolStats } from "./stats.js";
-import type { StatsSnapshot } from "./stats.js";
-import { createFileOps } from "./files.js";
-import { renderSessionToMarkdown, parseSessionStats } from "./renderer.js";
-import type { ParsedSessionStats } from "./renderer.js";
-import type { Metadata } from "./types.js";
+import { createSessionStats, computeToolStats } from "./stats.ts";
+import type { StatsSnapshot } from "./stats.ts";
+import { createFileOps } from "./files.ts";
+import { renderSessionToMarkdown, parseSessionStats } from "./renderer.ts";
+import type { ParsedSessionStats } from "./renderer.ts";
+import type { Metadata } from "./types.ts";
 
 export interface SessionLoggerGate {
 	enabledForNextSession: boolean;
