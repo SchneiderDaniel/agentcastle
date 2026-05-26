@@ -30,10 +30,10 @@ describe("ReadCache", () => {
 		assert.strictEqual(entry.turn, 0);
 	});
 
-	it("returns null when TTL expires (turn difference >= 3)", () => {
+	it("returns null when TTL expires (turn difference >= CACHE_TTL_TURNS=6)", () => {
 		const state = createHarnessState();
 		state.readCache.set("a|0|100", "content", 0);
-		const entry = state.readCache.get("a|0|100", 3);
+		const entry = state.readCache.get("a|0|100", 6);
 		assert.strictEqual(entry, null);
 	});
 

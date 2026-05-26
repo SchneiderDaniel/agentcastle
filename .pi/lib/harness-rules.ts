@@ -41,35 +41,207 @@ export const CASCADE_THRESHOLD = 8;
 /** Max errors tracked per tool before triggering retry block. */
 export const MAX_ERRORS_PER_TOOL = 3;
 
+// ── Types ──
+
+/** A single segment of a piped bash command. */
+export interface BashSegment {
+	/** Command tokens (cmd + args parsed outside quotes). */
+	tokens: string[];
+	/** Output redirect detected on segment (e.g., > or >>). */
+	redirect?: "write" | "append" | "read";
+}
+
+/** Per-tool metadata for harness configuration. */
+export interface ToolMeta {
+	/** If true, tool is never blocked by any guard. */
+	passThrough?: boolean;
+	/** Consecutive-call threshold before cascade block (default 8). */
+	cascadeThreshold?: number;
+}
+
+/**
+ * Per-tool metadata replacing PASS_THROUGH_TOOLS Set.
+ * Tools not listed default to passThrough=false, cascadeThreshold=8.
+ */
+export const TOOL_META: Record<string, ToolMeta> = {
+	ask_user: { passThrough: true },
+	structural_search: { passThrough: true },
+	ripgrep_search: { passThrough: true },
+	ranked_map: { passThrough: true },
+	bash: { cascadeThreshold: CASCADE_THRESHOLD },
+};
+
+/**
+ * Get tool meta with defaults for unlisted tools.
+ */
+export function getToolMeta(toolName: string): ToolMeta {
+	return TOOL_META[toolName] ?? { passThrough: false, cascadeThreshold: CASCADE_THRESHOLD };
+}
+
+// ── Bash tokenization ──
+
+/**
+ * Tokenize a bash command string respecting quotes, pipes, and redirects.
+ * Splits by pipe (|) outside single/double quotes.
+ * Returns array of segments, each with tokens and optional redirect type.
+ *
+ * Handles:
+ *  - Single and double quoted strings (pipe inside quotes = literal)
+ *  - Tab and space token splitting
+ *  - > (write) and >> (append) redirect detection
+ *
+ * Does NOT handle:
+ *  - eval, exec, subshells ($(), ``)
+ *  - Escaped quotes inside quotes
+ *  - Heredoc bodies (<< delimiter is treated as redirect)
+ */
+export function parseBashCmd(cmd: string): BashSegment[] {
+	if (!cmd) return [];
+
+	const segments: BashSegment[] = [];
+	let currentSegment: string[] = [];
+	let currentToken = "";
+	let inSingleQuote = false;
+	let inDoubleQuote = false;
+
+	function flushToken() {
+		if (currentToken) {
+			currentSegment.push(currentToken);
+			currentToken = "";
+		}
+	}
+
+	function flushSegment() {
+		flushToken();
+		if (currentSegment.length === 0) return;
+
+		const seg: BashSegment = { tokens: [...currentSegment] };
+
+		// Check for redirect operators in tokens
+		const idx = seg.tokens.findIndex((t) => t === ">" || t === ">>");
+		if (idx >= 0) {
+			const op = seg.tokens[idx];
+			seg.redirect = op === ">>" ? "append" : "write";
+			seg.tokens = seg.tokens.slice(0, idx);
+		}
+
+		segments.push(seg);
+		currentSegment = [];
+	}
+
+	for (let i = 0; i < cmd.length; i++) {
+		const ch = cmd[i];
+
+		// Handle quote toggling
+		if (ch === "'" && !inDoubleQuote) {
+			inSingleQuote = !inSingleQuote;
+			currentToken += ch;
+			continue;
+		}
+		if (ch === '"' && !inSingleQuote) {
+			inDoubleQuote = !inDoubleQuote;
+			currentToken += ch;
+			continue;
+		}
+
+		// Inside quotes: collect everything literally
+		if (inSingleQuote || inDoubleQuote) {
+			currentToken += ch;
+			continue;
+		}
+
+		// Pipe separator (outside quotes)
+		if (ch === "|") {
+			flushSegment();
+			continue;
+		}
+
+		// Whitespace (space/tab) separator outside quotes
+		if (ch === " " || ch === "\t") {
+			flushToken();
+			continue;
+		}
+
+		currentToken += ch;
+	}
+
+	// Flush remaining
+	flushSegment();
+
+	return segments;
+}
+
 // ── Detection functions ──
 
 /**
  * Check if a bash command uses grep/rg/find for search.
  * These should be replaced with ripgrep_search.
+ *
+ * Uses parseBashCmd to avoid false positives:
+ *  - Patterns in quoted args (gh issue --body '...| grep...') → no block
+ *  - Patterns in pipe outside quotes → block
+ *  - Backtick grep/rg → block
  */
 export function isSearchInBash(cmd: string): boolean {
 	if (!cmd) return false;
 	const lower = cmd.toLowerCase();
-	return BASH_SEARCH_SIGNALS.some((signal) => lower.includes(signal));
+
+	// Backtick patterns: `grep`, `rg` — these are always search
+	if (lower.includes("`grep")) {
+		return true;
+	}
+	if (lower.includes("`rg")) {
+		return true;
+	}
+
+	// Use parseBashCmd to split by pipe outside quotes
+	const segments = parseBashCmd(lower);
+
+	// Check segments for grep/rg as the first token (piped command)
+	for (const seg of segments) {
+		if (seg.redirect) continue;
+		if (seg.tokens.length >= 1) {
+			// grep/rg as first token in segment → cmd1 | grep foo
+			const first = seg.tokens[0];
+			if (first === "grep" || first === "rg") {
+				return true;
+			}
+		}
+	}
+
+	return false;
 }
 
 /**
  * Check if a bash command uses cat/head/tail/less/more for file reading.
  * These should be replaced with the read tool.
+ *
+ * Uses parseBashCmd to avoid false positives:
+ *  - cat with output redirect (cat > file, cat >> file) → no block
+ *  - head/tail in pipe context (cmd1 | head -5) → no block
+ *  - Patterns in quoted args (gh issue --title "...cat...") → no block
+ *  - cat/head/tail as first command → block (file read)
  */
 export function isCatHeadTailInBash(cmd: string): boolean {
 	if (!cmd) return false;
 	const lower = cmd.toLowerCase().trim();
-	// Check if command starts with one of the read-like commands
-	for (const c of READ_BASH_CMDS) {
-		if (lower.startsWith(c + " ") || lower.startsWith(c + "\t")) {
-			return true;
-		}
-		// Also detect when used in pipe (e.g., "cat file | grep x")
-		if (lower.includes(" " + c + " ") || lower.includes("\t" + c + "\t")) {
-			return true;
-		}
+
+	const segments = parseBashCmd(lower);
+	if (segments.length === 0) return false;
+
+	// Check the FIRST segment only (pipe-chain head)
+	const firstSeg = segments[0];
+	if (!firstSeg || firstSeg.tokens.length === 0) return false;
+
+	// If first segment has redirect (write/append), it's not a read
+	if (firstSeg.redirect) return false;
+
+	// Check first token against READ_BASH_CMDS
+	const firstToken = firstSeg.tokens[0];
+	if (READ_BASH_CMDS.includes(firstToken as (typeof READ_BASH_CMDS)[number])) {
+		return true;
 	}
+
 	return false;
 }
 
@@ -128,6 +300,9 @@ export function isCodeFilePath(path: string): boolean {
 /**
  * Detect tool mismatch in a bash command and suggest alternative.
  * Returns null if no mismatch detected.
+ *
+ * Uses parseBashCmd for token-aware analysis to avoid false positives
+ * from quoted arguments.
  */
 export function detectMismatchAndSuggest(
 	cmd: string,
@@ -135,26 +310,42 @@ export function detectMismatchAndSuggest(
 	if (!cmd) return null;
 	const lower = cmd.toLowerCase();
 
-	// Search in bash (grep/rg)
-	if (
-		lower.includes("| grep") ||
-		lower.includes("`grep") ||
-		lower.includes("| rg") ||
-		lower.includes("`rg")
-	) {
+	// Backtick search patterns are always search
+	if (lower.includes("`grep") || lower.includes("`rg")) {
 		return {
 			category: "tool-mismatch",
 			suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
 		};
 	}
 
-	// File read in bash (cat/head/tail)
-	for (const c of READ_BASH_CMDS) {
-		if (lower.startsWith(c + " ") || lower.startsWith(c + "\t")) {
-			return {
-				category: "tool-mismatch",
-				suggestion: `Use read tool instead of bash ${c} for file inspection`,
-			};
+	const segments = parseBashCmd(lower);
+	if (segments.length === 0) return null;
+
+	// Search in bash (grep/rg as first token in piped segment)
+	for (const seg of segments) {
+		if (seg.redirect) continue;
+		if (seg.tokens.length >= 1) {
+			const first = seg.tokens[0];
+			if (first === "grep" || first === "rg") {
+				return {
+					category: "tool-mismatch",
+					suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
+				};
+			}
+		}
+	}
+
+	// File read in bash (cat/head/tail — first segment, no redirect)
+	const firstSeg = segments[0];
+	if (firstSeg && firstSeg.tokens.length >= 1 && !firstSeg.redirect) {
+		const first = firstSeg.tokens[0];
+		for (const c of READ_BASH_CMDS) {
+			if (first === c) {
+				return {
+					category: "tool-mismatch",
+					suggestion: `Use read tool instead of bash ${c} for file inspection`,
+				};
+			}
 		}
 	}
 
@@ -174,25 +365,40 @@ export function detectMismatchAndSuggest(
  * Suggest a redirection for a mismatched bash command.
  * Returns the suggested tool name or null if no mismatch.
  * Used by runtime handler to populate redirectTo field.
+ *
+ * Uses parseBashCmd for token-aware analysis.
  */
 export function suggestRedirection(cmd: string): string | null {
 	if (!cmd) return null;
 	const lower = cmd.toLowerCase();
 
-	// grep/rg → ripgrep_search
-	if (
-		lower.includes("| grep") ||
-		lower.includes("`grep") ||
-		lower.includes("| rg") ||
-		lower.includes("`rg")
-	) {
+	// Backtick search patterns → ripgrep_search
+	if (lower.includes("`grep") || lower.includes("`rg")) {
 		return "ripgrep_search";
 	}
 
-	// cat/head/tail → read
-	for (const c of READ_BASH_CMDS) {
-		if (lower.startsWith(c + " ") || lower.startsWith(c + "\t")) {
-			return "read";
+	const segments = parseBashCmd(lower);
+	if (segments.length === 0) return null;
+
+	// grep/rg as first token in any segment → ripgrep_search
+	for (const seg of segments) {
+		if (seg.redirect) continue;
+		if (seg.tokens.length >= 1) {
+			const first = seg.tokens[0];
+			if (first === "grep" || first === "rg") {
+				return "ripgrep_search";
+			}
+		}
+	}
+
+	// cat/head/tail as first token in first segment, no redirect → read
+	const firstSeg = segments[0];
+	if (firstSeg && firstSeg.tokens.length >= 1 && !firstSeg.redirect) {
+		const first = firstSeg.tokens[0];
+		for (const c of READ_BASH_CMDS) {
+			if (first === c) {
+				return "read";
+			}
 		}
 	}
 

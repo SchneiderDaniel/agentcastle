@@ -16,14 +16,15 @@
  */
 
 import type { ExtensionAPI, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
-import { createHarnessState } from "../../lib/harness-state";
-import type { HarnessState } from "../../lib/harness-state";
+import { createHarnessState } from "../../lib/harness-state.ts";
+import type { HarnessState } from "../../lib/harness-state.ts";
 import {
 	isSearchInBash,
 	isCatHeadTailInBash,
 	suggestRedirection,
 	CASCADE_THRESHOLD,
-} from "../../lib/harness-rules";
+	getToolMeta,
+} from "../../lib/harness-rules.ts";
 
 // ── Types ──
 
@@ -48,9 +49,9 @@ interface ToolCallContext {
 	};
 }
 
-// ── Pass-through tools (never blocked) ──
+// ── Guard result constants ──
 
-const PASS_THROUGH_TOOLS = new Set(["structural_search", "ripgrep_search", "ranked_map"]);
+const PASS = null as ToolCallResult | null;
 
 // ── Handler factory (exported for testing) ──
 
@@ -58,18 +59,18 @@ const PASS_THROUGH_TOOLS = new Set(["structural_search", "ripgrep_search", "rank
  * Create a tool_call handler function bound to harness state.
  * Pure function — takes state, returns handler.
  *
- * Single-exit pattern: compute result in local var, increment turn once, return.
- * Invariant: every code path calls record() + currentTurn++ exactly once.
+ * Guard order:
+ *  1. Pass-through tools → always pass, record for cascade reset
+ *  2. Error tracking → push to tracker, pass through
+ *  3. Error retry blocking → if >=2 errors, block
+ *  4. Read caching → cache hit blocks with cached info
+ *  5. Cascade detection → consecutive blocks (8+ legit calls)
+ *  6. Tool mismatch (bash) → block with redirect
+ *  7. Record if not blocked (blocked calls don't inflate cascade counter)
  *
- * Logic order (priority descending):
- * 0. record() EVERY tool call (before pass-through check) ← fix Bug 1
- * 1. Pass-through / unintercepted tools → null
- * 2. Error tracking → push to tracker, pass through
- * 3. Error retry blocking → if >=2 errors, block
- * 4. Read caching → cache hit blocks with cached info
- * 5. Cascade detection → consecutive blocks
- * 6. Tool mismatch (bash) → block with redirect
- * 7. Increment turn (all paths), return result
+ * Blocked calls (any guard) are NOT recorded (Bug 5 fix).
+ * Cascade check uses count + 1 before recording to account for current call.
+ * Pass-through tools recorded separately to reset cascade counter.
  */
 export function createToolCallHandler(state: HarnessState) {
 	return function handleToolCall(
@@ -86,24 +87,24 @@ export function createToolCallHandler(state: HarnessState) {
 			return null;
 		}
 
-		// ── Step 0: Record EVERY tool call for cascade detection ──
-		// Before pass-through check so pass-through tools also reset consecutive counter.
-		state.callCounter.record(toolName, turn);
+		const meta = getToolMeta(toolName);
+
+		// ── 1. Pass-through tools → always pass, but record for cascade reset ──
+		if (meta.passThrough) {
+			state.callCounter.record(toolName, turn);
+			state.currentTurn++;
+			return null;
+		}
 
 		let result: ToolCallResult | null = null;
 
-		// ── 1. Pass-through tools ──
-		if (PASS_THROUGH_TOOLS.has(toolName)) {
-			// result stays null → pass through
-		}
-
 		// ── 2. Error tracking ──
-		else if (event.isError) {
+		if (event.isError) {
 			state.errorTracker.push(toolName, { turn, toolName });
 			// result stays null → pass through
 		}
 
-		// ── 3/4/5/6. Blocking checks ──
+		// ── 3/4. Error retry & read cache blocking ──
 		else {
 			// ── 3. Error retry blocking ──
 			const errors = state.errorTracker.getLastErrors(toolName);
@@ -134,55 +135,65 @@ export function createToolCallHandler(state: HarnessState) {
 					}
 				}
 			}
+		}
 
-			// ── 5. Same-tool cascade detection (skip read — cache handles redundant reads) ──
-			if (!result && toolName !== "read") {
-				const consecutive = state.callCounter.getConsecutive(toolName);
-				if (consecutive.count >= CASCADE_THRESHOLD) {
-					const suggestion =
-						toolName === "bash"
-							? "Combine bash calls with && or use a script file"
-							: toolName === "read"
-								? "Batch reads — read larger portions in one call"
-								: `Batch ${toolName} calls to reduce turns`;
+		// ── 5. Same-tool cascade detection (skip read — cache handles redundant reads) ──
+		// Cascade check uses count + 1 BEFORE recording, accounting for current call
+		// without recording it (if blocked, call is not real).
+		if (!result && toolName !== "read") {
+			const cascadeThreshold = meta.cascadeThreshold ?? CASCADE_THRESHOLD;
+			const consecutive = state.callCounter.getConsecutive(toolName);
+			// Add 1 for current call (not yet recorded)
+			const effectiveCount = consecutive.count + 1;
+			if (effectiveCount >= cascadeThreshold) {
+				const suggestion =
+					toolName === "bash"
+						? "Combine bash calls with && or use a script file"
+						: toolName === "read"
+							? "Batch reads — read larger portions in one call"
+							: `Batch ${toolName} calls to reduce turns`;
 
-					result = {
-						block: true,
-						reason: `Same-tool cascade: ${toolName} called ${consecutive.count}x consecutively. ${suggestion}.`,
-					};
-				}
-			}
-
-			// ── 6. Tool mismatch detection (bash only) ──
-			if (!result && toolName === "bash") {
-				const command = (args.command ?? "") as string;
-				if (command) {
-					// Search in bash (grep/rg) → redirect to ripgrep_search
-					if (isSearchInBash(command)) {
-						result = {
-							block: true,
-							reason: `Use ripgrep_search tool instead of bash grep/rg. ${suggestRedirection(command)}`,
-							redirectTo: "ripgrep_search",
-						};
-					}
-
-					// File read in bash (cat/head/tail) → redirect to read
-					else if (isCatHeadTailInBash(command)) {
-						result = {
-							block: true,
-							reason: `Use read tool instead of bash cat/head/tail. ${suggestRedirection(command)}`,
-							redirectTo: "read",
-						};
-					}
-					// ls is informational only — pass through at runtime (not blocked)
-				}
-				// Empty/null command: result stays null (pass through)
+				result = {
+					block: true,
+					reason: `Same-tool cascade: ${toolName} called ${effectiveCount}x consecutively. ${suggestion}.`,
+				};
 			}
 		}
 
-		// ── 7. Increment turn for EVERY code path ──
-		// Fixes Bug 2: block paths, early returns all increment
-		// Fixes Bug 3: bash empty-command path increments
+		// ── 6. Tool mismatch detection (bash only) ──
+		if (!result && toolName === "bash") {
+			const command = (args.command ?? "") as string;
+			if (command) {
+				// Search in bash (grep/rg) → redirect to ripgrep_search
+				if (isSearchInBash(command)) {
+					result = {
+						block: true,
+						reason: `Use ripgrep_search tool instead of bash grep/rg. ${suggestRedirection(command)}`,
+						redirectTo: "ripgrep_search",
+					};
+				}
+
+				// File read in bash (cat/head/tail) → redirect to read
+				else if (isCatHeadTailInBash(command)) {
+					result = {
+						block: true,
+						reason: `Use read tool instead of bash cat/head/tail. ${suggestRedirection(command)}`,
+						redirectTo: "read",
+					};
+				}
+				// ls is informational only — pass through at runtime (not blocked)
+			}
+			// Empty/null command: result stays null (pass through)
+		}
+
+		// ── 7. Record only if NOT blocked ──
+		// Blocked calls (any guard) are NOT recorded (Bug 5 fix)
+		// so they don't inflate the cascade counter.
+		if (!result) {
+			state.callCounter.record(toolName, turn);
+		}
+
+		// ── 8. Increment turn for every code path, return result ──
 		state.currentTurn++;
 
 		return result;
