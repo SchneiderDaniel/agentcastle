@@ -878,6 +878,113 @@ describe("ast-scanner", () => {
 		assert.ok(runtimeCalls.length >= 1, `Expected >=1 runtime-call, got ${runtimeCalls.length}`);
 	});
 
+	// ═══════════════════════════════════════════════════════════
+	// False-positive prevention: substring matching in import findings
+	// ═══════════════════════════════════════════════════════════
+
+	it("value import with false-positive substrings produces zero import-value findings", async () => {
+		const extDir = join(tmpDir, "false-pos-ext");
+		mkdirSync(extDir, { recursive: true });
+		// Each name below contains a PI_APIS short name as substring
+		// but has no exact match. "connect".includes("on") = true,
+		// "ExtensionAPI".includes("on") = true, "ExecResult".includes("exec") = true, etc.
+		writeFileSync(
+			join(extDir, "index.ts"),
+			[
+				`import { connect, ExtensionAPI, ExecResult, ExecOptions, isToolCallEventType } from "@earendil-works/pi-coding-agent";`,
+			].join("\n"),
+		);
+
+		const execFn = async (
+			cmd: string,
+			args: string[],
+		): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on", "pi.exec"], execFn, astGrepPath);
+
+		const valueImports = result.findings.filter((f) => f.matchContext === "import-value");
+		assert.strictEqual(
+			valueImports.length,
+			0,
+			`Expected 0 import-value findings for false-positive names, got ${valueImports.length}`,
+		);
+	});
+
+	it("Edge: empty value import produces zero findings, no crash", async () => {
+		const extDir = join(tmpDir, "empty-import-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "index.ts"), `import {} from "@earendil-works/pi-coding-agent";\n`);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on", "pi.exec"], execFn, astGrepPath);
+
+		const valueImports = result.findings.filter((f) => f.matchContext === "import-value");
+		assert.strictEqual(valueImports.length, 0, "Empty import should produce 0 findings");
+	});
+
+	it("Edge: single exact match 'on' produces one pi.on import-value finding", async () => {
+		const extDir = join(tmpDir, "exact-match-on");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			`import { on } from "@earendil-works/pi-coding-agent";\n`,
+		);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, astGrepPath);
+
+		const valueImports = result.findings.filter((f) => f.matchContext === "import-value");
+		assert.strictEqual(valueImports.length, 1, "Single exact match 'on' should produce 1 finding");
+		assert.strictEqual(valueImports[0]!.apiName, "pi.on");
+	});
+
+	it("Edge: multiple exact matches 'on, exec' produce two findings", async () => {
+		const extDir = join(tmpDir, "multi-exact-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			`import { on, exec } from "@earendil-works/pi-coding-agent";\n`,
+		);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on", "pi.exec"], execFn, astGrepPath);
+
+		const valueImports = result.findings.filter((f) => f.matchContext === "import-value");
+		assert.strictEqual(
+			valueImports.length,
+			2,
+			`Multiple exact matches should produce 2 findings, got ${valueImports.length}`,
+		);
+		const apiNames = valueImports.map((f) => f.apiName).sort();
+		assert.deepStrictEqual(apiNames, ["pi.exec", "pi.on"]);
+	});
+
 	it("extracts call args from pi.on matches", async () => {
 		const extDir = join(tmpDir, "args-ext");
 		mkdirSync(extDir, { recursive: true });
