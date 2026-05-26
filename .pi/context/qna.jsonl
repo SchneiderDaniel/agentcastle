@@ -40,3 +40,13 @@
 {"datetime":"2026-05-25T19:45:44.278Z","question":"This is the plan for all files. Approve before I write code?","answer":"approve"}
 {"datetime":"2026-05-25T20:10:03.578Z","question":"Review complete for PR #215 (narutamaaurum — session-logger gate). 12 automated checks done, 2 minor issues found (missing trailing newline, unreviewed tests). Post this review comment to PR #215?","answer":"post"}
 {"datetime":"2026-05-26T18:52:00.441Z","question":"Post this review to PR #212 on SchneiderDaniel/agentcastle?","answer":"post"}
+{"datetime":"2026-05-26T19:49:00.807Z","question":"Why add a lint check on PRs? What problem does it solve, and for whom?","answer":"quality_consistency"}
+{"datetime":"2026-05-26T19:49:38.401Z","question":"What checks should the lint workflow run? Project currently has only Prettier (formatter), no ESLint or other linter installed.","answer":"eslint_plus_prettier"}
+{"datetime":"2026-05-26T19:50:00.961Z","question":"When should the lint workflow trigger? On all PR events, or only on specific events?","answer":"pr_open_sync"}
+{"datetime":"2026-05-26T19:50:18.596Z","question":"When lint issues are found, what action should the workflow take?","answer":"fail_and_comment"}
+{"datetime":"2026-05-26T19:50:58.588Z","question":"Which directories and file types should the lint check cover?","answer":"all_ts_js"}
+{"datetime":"2026-05-26T19:51:14.623Z","question":"How should the workflow handle a large number of lint issues that exceed GitHub's comment size limit?","answer":"summarize"}
+{"datetime":"2026-05-26T19:51:26.549Z","question":"Should the lint workflow run on all PRs, or skip certain author types?","answer":"all_prs"}
+{"datetime":"2026-05-26T19:53:53.637Z","question":"After all this — does anything else come to mind that you'd now add as a requirement?","answer":"reask me the question that you where blocked for sme reason"}
+{"datetime":"2026-05-26T19:54:42.762Z","question":"Last blocked question: Workflow needs `pull-requests: write` + `contents: read` — is that right? And does this scope cover everything? (ESLint + TS plugins + prettier as devDeps, create `.eslintrc.json`, add workflow YAML)","answer":"yes_full"}
+{"datetime":"2026-05-26T19:57:56.066Z","question":"Issue #216 is refined and updated on GitHub. What's next?","answer":"done"}
