@@ -27,7 +27,7 @@ type ExecHandler = (
 	cmd: string,
 	args: string[],
 	opts?: { timeout?: number; signal?: AbortSignal },
-) => ExecResult;
+) => Promise<ExecResult>;
 
 function makeMockExec(handler: ExecHandler) {
 	return mock.fn(handler) as ReturnType<typeof mock.fn<ExecHandler>> & {
@@ -57,7 +57,7 @@ describe("ensureChromiumDeps — mkdir-p fix", () => {
 			fs.mkdirSync(DEPS_DIR, { recursive: true });
 		}
 
-		const exec = makeMockExec((_cmd: string, _args: string[]) => {
+		const exec = makeMockExec(async (_cmd: string, _args: string[]) => {
 			// Default: fail everything — tests override per scenario
 			return { code: 1, stdout: "", stderr: "mock: not mocked" };
 		});
@@ -83,7 +83,7 @@ describe("ensureChromiumDeps — mkdir-p fix", () => {
 		const testLib = `${DEPS_DIR}/usr/lib/x86_64-linux-gnu/libnspr4.so`;
 
 		exec.mock.mockImplementation(
-			(cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
+			async (cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
 				callLog.push({ cmd, args });
 				const fullCmd = cmd + " " + args.join(" ");
 				if (fullCmd.includes("test -f") && fullCmd.includes("libnspr4.so")) {
@@ -135,7 +135,7 @@ describe("ensureChromiumDeps — mkdir-p fix", () => {
 		const callLog: ExecCall[] = [];
 
 		exec.mock.mockImplementation(
-			(cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
+			async (cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
 				callLog.push({ cmd, args });
 				const fullCmd = cmd + " " + args.join(" ");
 				if (fullCmd.includes("test -f") && fullCmd.includes("libnspr4.so")) {
@@ -179,7 +179,7 @@ describe("ensureChromiumDeps — mkdir-p fix", () => {
 		const callLog: ExecCall[] = [];
 
 		exec.mock.mockImplementation(
-			(cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
+			async (cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
 				callLog.push({ cmd, args });
 				const fullCmd = cmd + " " + args.join(" ");
 				if (fullCmd.includes("test -f") && fullCmd.includes("libnspr4.so")) {
@@ -230,7 +230,7 @@ describe("ensureChromiumDeps — mkdir-p fix", () => {
 
 		try {
 			exec.mock.mockImplementation(
-				(cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
+				async (cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
 					const fullCmd = cmd + " " + args.join(" ");
 					if (fullCmd.includes("test -f") && fullCmd.includes("libnspr4.so")) {
 						return { code: 1, stdout: "", stderr: "" };
@@ -272,7 +272,7 @@ describe("ensureChromiumDeps — mkdir-p fix", () => {
 		const callLog: ExecCall[] = [];
 
 		exec.mock.mockImplementation(
-			(cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
+			async (cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
 				callLog.push({ cmd, args });
 				const fullCmd = cmd + " " + args.join(" ");
 				if (fullCmd.includes("test -f") && fullCmd.includes("libnspr4.so")) {
@@ -326,7 +326,7 @@ describe("ensureChromiumDeps — mkdir-p fix", () => {
 		const callLog: ExecCall[] = [];
 
 		exec.mock.mockImplementation(
-			(cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
+			async (cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
 				callLog.push({ cmd, args });
 				const fullCmd = cmd + " " + args.join(" ");
 				if (fullCmd.includes("test -f") && fullCmd.includes("libnspr4.so")) {
@@ -381,7 +381,7 @@ describe("ensureChromiumDeps — mkdir-p fix", () => {
 
 		// First call setup: simulate success
 		exec.mock.mockImplementation(
-			(cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
+			async (cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
 				const fullCmd = cmd + " " + args.join(" ");
 				if (fullCmd.includes("test -f") && fullCmd.includes("libnspr4.so")) {
 					// Use actual extraction state, not depsReady map

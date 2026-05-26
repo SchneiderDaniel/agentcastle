@@ -14,17 +14,6 @@ export interface FileOps {
 }
 
 /**
- * Create a symlink at `linkDir/linkName` pointing to `targetFile`.
- *
- * Uses atomic rename pattern to avoid TOCTOU race: creates the symlink at a
- * temp path on the same filesystem, then renames (atomically) to the target.
- * Observers opening the target path never see ENOENT between updates.
- *
- * Under concurrent access, the tmp path may collide with another writer.
- * We retry the symlink once on EEXIST. If the rename fails with ENOENT it
- * means another concurrent writer already renamed the tmp — the target path
- * already holds a valid symlink, so we can safely skip the update.
- */
 /**
  * Create a symlink at `linkDir/linkName` pointing to `targetFile`.
  *
