@@ -32,10 +32,86 @@ import {
 	shouldRetry,
 	MAX_RETRIES,
 } from "../.pi/extensions/lsp-auditor/retry.ts";
+import { mapSessionEntriesToRetryEntries } from "../.pi/extensions/lsp-auditor/run-pre-audit.ts";
 
 // =========================================================================
 // Tests
 // =========================================================================
+
+describe("mapSessionEntriesToRetryEntries", () => {
+	it("custom entry → maps customType as type and data as payload", () => {
+		const input = [
+			{ type: "custom", customType: "lsp-audit-retry", data: { issueNum: 42, attempt: 1 } },
+		];
+		const result = mapSessionEntriesToRetryEntries(input);
+		assert.deepStrictEqual(result, [
+			{ type: "lsp-audit-retry", payload: { issueNum: 42, attempt: 1 } },
+		]);
+	});
+
+	it("non-custom entry → passes through unchanged", () => {
+		const input = [{ type: "message", text: "hello", turnIndex: 0 }];
+		const result = mapSessionEntriesToRetryEntries(input);
+		assert.deepStrictEqual(result, [{ type: "message", payload: input[0] }]);
+	});
+
+	it("empty array → []", () => {
+		assert.deepStrictEqual(mapSessionEntriesToRetryEntries([]), []);
+	});
+
+	it("customType undefined → type: '' fallback", () => {
+		const input = [{ type: "custom", data: { issueNum: 7 } }];
+		const result = mapSessionEntriesToRetryEntries(input);
+		assert.strictEqual(result[0]!.type, "");
+		assert.deepStrictEqual(result[0]!.payload, { issueNum: 7 });
+	});
+
+	it("customType empty string → type: ''", () => {
+		const input = [{ type: "custom", customType: "", data: { issueNum: 7 } }];
+		const result = mapSessionEntriesToRetryEntries(input);
+		assert.strictEqual(result[0]!.type, "");
+		assert.deepStrictEqual(result[0]!.payload, { issueNum: 7 });
+	});
+
+	it("data null → payload null", () => {
+		const input = [{ type: "custom", customType: "lsp-audit-retry", data: null }];
+		const result = mapSessionEntriesToRetryEntries(input);
+		assert.strictEqual(result[0]!.type, "lsp-audit-retry");
+		assert.strictEqual(result[0]!.payload, null);
+	});
+
+	it("data undefined → payload undefined", () => {
+		const input = [{ type: "custom", customType: "lsp-audit-retry" }];
+		const result = mapSessionEntriesToRetryEntries(input);
+		assert.strictEqual(result[0]!.type, "lsp-audit-retry");
+		assert.strictEqual(result[0]!.payload, undefined);
+	});
+
+	it("mixed entries → each mapped independently", () => {
+		const input = [
+			{ type: "message", text: "hello" },
+			{ type: "custom", customType: "lsp-audit-retry", data: { issueNum: 1 } },
+			{ type: "model_change", model: "claude" },
+		];
+		const result = mapSessionEntriesToRetryEntries(input);
+		assert.strictEqual(result.length, 3);
+		assert.strictEqual(result[0]!.type, "message");
+		assert.strictEqual(result[1]!.type, "lsp-audit-retry");
+		assert.deepStrictEqual(result[1]!.payload, { issueNum: 1 });
+		assert.strictEqual(result[2]!.type, "model_change");
+		assert.strictEqual(result[2]!.payload, input[2]);
+	});
+
+	it("mapped entries fed to countRetryAttempts → correct count", () => {
+		const entries = [
+			{ type: "custom", customType: "lsp-audit-retry", data: { issueNum: 42, attempt: 1 } },
+			{ type: "custom", customType: "lsp-audit-retry", data: { issueNum: 42, attempt: 2 } },
+			{ type: "custom", customType: "other-type", data: { issueNum: 42 } },
+		];
+		const mapped = mapSessionEntriesToRetryEntries(entries);
+		assert.strictEqual(countRetryAttempts(mapped, 42), 2);
+	});
+});
 
 describe("formatDiagnostics", () => {
 	it("empty array → empty string", () => {
