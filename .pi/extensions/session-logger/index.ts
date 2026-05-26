@@ -175,6 +175,44 @@ export default function (pi: ExtensionAPI): void {
  * Generate metadata.json and .md report for a session file if they're missing.
  * Called from session_shutdown (primary) and session_start (recovery).
  */
+/**
+ * Scan sessions directory for .jsonl files missing .md reports and generate them.
+ * Called on session_start to catch sessions that missed shutdown handler.
+ */
+export function recoverMissingReports(
+	sessionsDir: string,
+	currentSessionFile: string,
+	files: ReturnType<typeof createFileOps>,
+): void {
+	if (!fs.existsSync(sessionsDir)) return;
+
+	const entries = fs.readdirSync(sessionsDir);
+	const jsonlFiles = entries.filter((e) => e.endsWith(".jsonl"));
+
+	for (const entry of jsonlFiles) {
+		const jsonlPath = path.resolve(sessionsDir, entry);
+		// Resolve symlink to real path if needed
+		let realPath: string;
+		try {
+			realPath = fs.realpathSync(jsonlPath);
+		} catch {
+			realPath = jsonlPath;
+		}
+
+		// Skip current session — its report is generated on shutdown
+		if (realPath === currentSessionFile) continue;
+
+		const prefix = path.basename(entry, ".jsonl");
+		const mdPath = path.join(sessionsDir, `${prefix}.md`);
+		if (fs.existsSync(mdPath)) continue;
+
+		// Generate missing report synchronously (already in async handler)
+		generateMissingReports(realPath, files).catch((err) =>
+			console.error(`[session-logger] Recovery failed for ${realPath}: ${(err as Error).message}`),
+		);
+	}
+}
+
 export async function generateMissingReports(
 	sessionFilePath: string,
 	files: ReturnType<typeof createFileOps>,
