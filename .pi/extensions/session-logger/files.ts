@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Metadata } from "./types.js";
@@ -24,6 +25,16 @@ export interface FileOps {
  * means another concurrent writer already renamed the tmp — the target path
  * already holds a valid symlink, so we can safely skip the update.
  */
+/**
+ * Create a symlink at `linkDir/linkName` pointing to `targetFile`.
+ *
+ * Uses a unique temp name (with random suffix) to avoid EEXIST races
+ * between concurrent writers. Cleans up stale temp files before creating
+ * the symlink, then atomically renames tmp → target.
+ *
+ * If rename fails with ENOENT another concurrent writer won the race —
+ * the target link already points to a valid symlink, so we skip.
+ */
 async function ensureLatestLink(
 	linkDir: string,
 	targetFile: string,
@@ -31,46 +42,26 @@ async function ensureLatestLink(
 ): Promise<void> {
 	const latestLink = path.join(linkDir, linkName);
 	const linkTarget = path.relative(linkDir, targetFile);
-	const tmpLink = latestLink + ".tmp";
+	const rand = crypto.randomBytes(4).toString("hex");
+	const tmpLink = `${latestLink}.tmp.${rand}`;
 
-	// Clean up any stale tmp symlink from a previous crash.
-	try {
-		await fs.unlink(tmpLink);
-	} catch {
-		// Ignore ENOENT — no stale temp to clean.
-	}
-
-	// Create symlink at temp path.
-	// If EEXIST, another concurrent writer created tmp between our unlink and
-	// symlink. Remove their tmp and retry once.
-	try {
-		await fs.symlink(linkTarget, tmpLink);
-	} catch (err: unknown) {
-		const nodeErr = err as NodeJS.ErrnoException;
-		if (nodeErr.code === "EEXIST") {
-			// Another writer created tmp between our unlink and symlink.
-			// Remove their tmp and retry. If tmp is already gone by now
-			// (concurrent rename + unlink), just retry the symlink.
-			try {
-				await fs.unlink(tmpLink);
-			} catch {
-				// Ignore ENOENT — concurrent writer already moved tmp.
-			}
-			await fs.symlink(linkTarget, tmpLink);
-		} else {
-			throw err;
-		}
-	}
+	// Create symlink at unique temp path — no collision possible.
+	await fs.symlink(linkTarget, tmpLink);
 
 	// Atomic rename — replaces existing symlink atomically on same filesystem.
-	// If ENOENT, another concurrent writer already renamed the tmp symlink
-	// (they won the race). The target path holds a valid symlink from the
-	// winner — we can safely skip the update.
+	// If ENOENT, another concurrent writer already renamed (they won the race).
 	try {
 		await fs.rename(tmpLink, latestLink);
 	} catch (err: unknown) {
 		const nodeErr = err as NodeJS.ErrnoException;
-		if (nodeErr.code !== "ENOENT") {
+		if (nodeErr.code === "ENOENT") {
+			// Another writer won the race — clean up our tmp and move on.
+			try {
+				await fs.unlink(tmpLink);
+			} catch {
+				// Ignore cleanup failures.
+			}
+		} else {
 			throw err;
 		}
 	}
