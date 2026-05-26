@@ -17,6 +17,26 @@ import { auditFileGroup } from "./lsp-client.ts";
 import { readSettings } from "./settings.ts";
 
 /**
+ * Map session-storage entries to retry-logic shape.
+ *
+ * Session entries from `appendEntry()` have shape:
+ *   { type: "custom", customType: "<type>", data: <payload> }
+ * Retry logic expects:  { type: "<type>", payload: <payload> }
+ *
+ * Non-custom entries pass through with full entry as payload.
+ */
+export function mapSessionEntriesToRetryEntries(
+	entries: Array<Record<string, unknown>>,
+): Array<{ type: string; payload: unknown }> {
+	return entries.map((e) => {
+		if (e.type === "custom") {
+			return { type: (e.customType as string) ?? "", payload: e.data };
+		}
+		return { type: e.type as string, payload: e };
+	});
+}
+
+/**
  * Run pre-audit LSP diagnostics on modified files.
  *
  * Called by supervisor before transitioning Implementation → Audit.
@@ -110,7 +130,7 @@ export async function runPreAudit(
 
 	// 6. Check retry count
 	const sessionManager = ctx.sessionManager;
-	const entries = sessionManager.getEntries().map((e) => ({ type: e.type, payload: e }));
+	const entries = mapSessionEntriesToRetryEntries(sessionManager.getEntries());
 	const retryCount = countRetryAttempts(entries, issueNum);
 
 	if (!shouldRetry(retryCount)) {
