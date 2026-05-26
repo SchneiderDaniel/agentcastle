@@ -49,7 +49,8 @@ export default function (pi: ExtensionAPI): void {
 	pi.registerCommand("session-logger", {
 		description: "Toggle session report on/off (takes effect next session)",
 		handler: async (args, ctx) => {
-			const enabled = toggleSessionLoggerGate(gate, args);
+			const cmd = (args ?? "").trim().toLowerCase();
+			const enabled = toggleSessionLoggerGate(gate, cmd);
 			ctx.ui.notify(`Session logger: ${enabled ? "ON" : "OFF"} (applies to next session)`, "info");
 		},
 	});
@@ -74,11 +75,34 @@ export default function (pi: ExtensionAPI): void {
 		sessionsDir = path.resolve(sm.getCwd(), ".pi", "sessions");
 		await files.ensureSymlink(sessionFile!, sessionsDir!);
 
-		// Recovery: scan for all session files missing .md reports.
+		// Recovery: scan all .jsonl files in sessions dir for missing .md/.metadata.json.
 		// If session_shutdown didn't fire (crash, kill, race), we catch up now.
-		// Unlike limiting to event.previousSessionFile, this handles batches
-		// where multiple sessions in a row missed their shutdown handler.
-		recoverMissingReports(sessionsDir!, sessionFile!, files);
+		if (sessionsDir && fs.existsSync(sessionsDir)) {
+			let jsonlFiles: string[] = [];
+			try {
+				jsonlFiles = fs
+					.readdirSync(sessionsDir)
+					.filter((f) => f.endsWith(".jsonl") && !f.includes("latest"));
+			} catch {
+				// Can't read sessions dir — skip recovery
+			}
+
+			for (const file of jsonlFiles) {
+				const jsonlPath = path.join(sessionsDir, file);
+
+				// Skip current in-progress session — file may be incomplete
+				if (sessionFile && jsonlPath === sessionFile) continue;
+
+				// Defer to next tick — don't block session start
+				Promise.resolve().then(() =>
+					generateMissingReports(jsonlPath, files).catch((err) => {
+						console.error(
+							`[session-logger] Recovery failed for ${file}: ${(err as Error).message}`,
+						);
+					}),
+				);
+			}
+		}
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
