@@ -84,7 +84,7 @@ export async function resolveModel(
 		const models = registry.getAll();
 		if (models && models.length > 0) {
 			const first = models[0];
-			const id = first.id || first.model || "";
+			const id = first.id || "";
 			const prov = first.provider || "";
 			if (prov && id) {
 				return { provider: prov, modelId: id };
@@ -481,12 +481,16 @@ export async function runAgentInProcess(
 		textPushedThisTurn: false,
 	};
 
+	// Hoist cleanup variables so they're accessible in try, catch, and finally
+	let flushTimer: NodeJS.Timeout | null = null;
+	let heartbeat: ReturnType<typeof setInterval> | undefined;
+
 	// Resolve model
 	const modelInfo = await resolveModel(agent.config.model || "");
 	let resolvedModel: any;
 	if (modelInfo) {
 		try {
-			resolvedModel = getModel(modelInfo.provider, modelInfo.modelId);
+			resolvedModel = getModel(modelInfo.provider as any, modelInfo.modelId as any);
 		} catch {
 			// getModel threw — try fallback
 		}
@@ -500,7 +504,6 @@ export async function runAgentInProcess(
 
 	let session;
 	let unsubscribe: (() => void) | undefined;
-	let abortController: AbortController | undefined;
 
 	try {
 		// Create resource loader with system prompt override and extension paths
@@ -559,7 +562,7 @@ export async function runAgentInProcess(
 		};
 
 		// Heartbeat: ensure widget updates even during long idle periods (model cold start)
-		const heartbeat = setInterval(() => {
+		heartbeat = setInterval(() => {
 			flushWidget();
 		}, 5000);
 
@@ -572,18 +575,20 @@ export async function runAgentInProcess(
 			}
 		});
 
-		// Run prompt with timeout via AbortSignal
-		abortController = new AbortController();
-		const timeoutId = setTimeout(() => abortController!.abort(), timeoutMs);
+		// Run prompt with timeout via session.abort()
+		let timedOut = false;
+		const timeoutId = setTimeout(() => {
+			timedOut = true;
+			session!.abort();
+		}, timeoutMs);
 
 		try {
 			await session.prompt(task, {
-				signal: abortController.signal,
 				streamingBehavior: "steer",
 			});
 		} catch (promptErr: unknown) {
 			// Check if this was a timeout
-			if (abortController.signal.aborted) {
+			if (timedOut) {
 				const durationMs = Date.now() - startedAt;
 				pushLog(state, `[Timeout: ${agentName} killed after ${formatDuration(durationMs)}]`);
 
