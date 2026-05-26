@@ -31,8 +31,9 @@ export function createSessionLoggerGate(initiallyEnabled = true): SessionLoggerG
 }
 
 export function toggleSessionLoggerGate(gate: SessionLoggerGate, args?: string): boolean {
-	if (args === "on") gate.enabledForNextSession = true;
-	else if (args === "off") gate.enabledForNextSession = false;
+	const normalized = args?.toLowerCase();
+	if (normalized === "on") gate.enabledForNextSession = true;
+	else if (normalized === "off") gate.enabledForNextSession = false;
 	else gate.enabledForNextSession = !gate.enabledForNextSession;
 	return gate.enabledForNextSession;
 }
@@ -73,16 +74,11 @@ export default function (pi: ExtensionAPI): void {
 		sessionsDir = path.resolve(sm.getCwd(), ".pi", "sessions");
 		await files.ensureSymlink(sessionFile!, sessionsDir!);
 
-		// Recovery: generate missing metadata/MD for the previous session.
+		// Recovery: scan for all session files missing .md reports.
 		// If session_shutdown didn't fire (crash, kill, race), we catch up now.
-		const prevFile = event.previousSessionFile;
-		if (prevFile) {
-			generateMissingReports(prevFile, files).catch((err) => {
-				console.error(
-					`[session-logger] Recovery failed for ${prevFile}: ${(err as Error).message}`,
-				);
-			});
-		}
+		// Unlike limiting to event.previousSessionFile, this handles batches
+		// where multiple sessions in a row missed their shutdown handler.
+		recoverMissingReports(sessionsDir!, sessionFile!, files);
 	});
 
 	pi.on("session_shutdown", async (_event, ctx) => {
