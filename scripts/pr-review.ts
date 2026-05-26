@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+/// <reference types="node" />
+
 /**
  * pr-review.ts — Automated PR review for external contributor PRs.
  *
@@ -304,7 +306,7 @@ function checkLinkedIssue(pr: PrInfo, comments: PrComment[]): CheckResult {
 		return {
 			name: "Linked issue",
 			status: "✅",
-			details: `Issue #${commentRefs[0].replace("#", "")} referenced in PR comments`,
+			details: `Issue #${commentRefs[0]!.replace("#", "")} referenced in PR comments`,
 		};
 	}
 
@@ -852,6 +854,38 @@ function checkCodeStyle(diff: string, pr: PrInfo): CheckResult {
 
 // ── Comment Formatter ──
 
+/** Extract a concise summary of what this PR does from title + body */
+function extractPrSummary(pr: PrInfo): string {
+	// Start with the title
+	let summary = pr.title;
+
+	if (pr.body) {
+		// Walk clean body lines for first meaningful description paragraph
+		const lines = pr.body
+			.split("\n")
+			.map((l) => l.trim())
+			.filter(
+				(l) =>
+					l.length > 20 &&
+					!l.startsWith("#") &&
+					!l.startsWith("-") &&
+					!l.startsWith("<!--") &&
+					!l.startsWith("```") &&
+					!l.startsWith(">") &&
+					!l.match(/^(fix(es|ed)?|closes?|resolves?|refs?)s?\s+#/i),
+			);
+
+		for (const line of lines) {
+			if (line.length > 20) {
+				summary = line.length > 300 ? line.slice(0, 300) + "…" : line;
+				break;
+			}
+		}
+	}
+
+	return summary;
+}
+
 function formatReviewComment(pr: PrInfo, results: CheckResult[], comments: PrComment[]): string {
 	const passCount = results.filter((r) => r.status === "✅").length;
 	const warnCount = results.filter((r) => r.status === "⚠️").length;
@@ -868,6 +902,13 @@ function formatReviewComment(pr: PrInfo, results: CheckResult[], comments: PrCom
 	lines.push(
 		`**PR:** #${pr.number} — ${pr.title} by @${pr.author} (${pr.changedFiles} files, +${pr.additions}/-${pr.deletions})`,
 	);
+	lines.push("");
+
+	// ── What this PR does ──
+	const prSummary = extractPrSummary(pr);
+	lines.push("### 📋 What This PR Does");
+	lines.push("");
+	lines.push(prSummary);
 	lines.push("");
 
 	// Summary badges

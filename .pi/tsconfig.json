@@ -12,6 +12,6 @@
 		"resolveJsonModule": true,
 		"declaration": false
 	},
-	"include": ["extensions/**/*.ts", "extensions/**/*.mts", "lib/**/*.ts"],
+	"include": ["extensions/**/*.ts", "extensions/**/*.mts", "lib/**/*.ts", "scripts/**/*.ts"],
 	"exclude": ["sessions", "node_modules"]
 }

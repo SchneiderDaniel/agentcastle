@@ -19,7 +19,7 @@ review pull request 42
 1. **Fetch PR** — reads PR metadata, diff, linked issues, commits via `gh`
 2. **Fetch comments** — reads all PR comments for context
 3. **Run automated checks** — 12 checks total across 4 categories
-4. **Format review comment** — structured checklist with automated results + comments summary + human-review sections
+4. **Format review comment** — PR summary (title + body description), automated results table, comments summary, and human-review checklist sections
 5. **Show user** — displays the proposed comment text
 6. **Confirm** — asks "Post this review to PR #<number>?"
 7. **Post** — if confirmed, runs `gh pr comment <number> --body <comment>`

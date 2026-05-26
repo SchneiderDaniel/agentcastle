@@ -6,6 +6,7 @@ Pi coding agent for multiple git submodules.
 - Read/edit `.pi` folder: consult https://pi.dev/docs/latest, update @README.me
 - Temp files: save to `ignore/` folder, delete after use
 - GitHub issues: use repo from `.pi/settings.json` (supervisor.repo), never git remote
+- TypeScript: root `tsconfig.json` extends `.pi/tsconfig.json`. Run `npm run tsc:extensions` or `tsc --noEmit` for type checks.
 
 ## Tool Reference
 
