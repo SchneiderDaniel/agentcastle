@@ -49,7 +49,7 @@ See `references/extension-spec.md` Mode Detection table.
 
 See [full spec](references/extension-spec.md) for:
 - Complete PRD template
-- Anti-pattern checklist (C1-C9, M1-M7, R1-R6, P1-P14)
+- Anti-pattern checklist (C1-C14, M1-M8, R1-R6, P1-P24)
 - Phase details (0-4)
 - Security considerations
 - Priority matrix (P0-P3)
