@@ -56,6 +56,11 @@ These rules are **mandatory** for every extension design. Violating any P0/P1 ru
 | **C7** | **`import()` not `require()`** | CommonJS `require()` synchronously blocks event loop and prevents tree-shaking. Use dynamic `import()` in async contexts. |
 | **C8** | **Use discriminated unions for events** | Instead of `event: any`, model `{role: "user" | "assistant" | "tool"} & ...` for pattern-matched type narrowing. |
 | **C9** | **Prefer interfaces over type intersections** | Interfaces create flat object types with conflict detection and cached type relationships. Intersections recursively merge and can produce `never`. |
+| **C10** | **Use `.ts` extension for all local imports** | With `moduleResolution: bundler` + `allowImportingTsExtensions: true` (already in `.pi/tsconfig.json`), the canonical import style is `from "./module.ts"`. This matches the source file extension, avoids ambiguity between `.ts`, `.js`, and no-extension imports, and ensures consistency across all extensions. Existing codebase: caveman/check-extensions/lsp-auditor/ask-user already use `.ts` (60+ imports). |
+| **C11** | **Use `satisfies` for object literals matching an interface** | TypeScript 4.9+ `satisfies` operator validates an expression matches a type without widening to that type. Preserves literal types for discriminated unions and narrows property types. Use when constructing an object that must conform to an interface but retain its literal types for downstream narrowing. Existing use: `supervisor/pipeline.ts:429`. |
+| **C12** | **Dynamic `import()` returns module namespace — double-cast to target type** | `await import("pkg")` returns `typeof import("pkg")` (module namespace), not the default/interface type. Single `as T` cast fails. Pattern: `(await import("pkg")) as unknown as MyInterface`. Existing use: `lsp-auditor/lsp-client.ts:44`, `check-extensions/index.ts:162`, `caveman/command.ts:132`. |
+| **C13** | **Underscore prefix for unused callback parameters** | TypeScript `noUnusedParameters` (part of `strict`) flags unused function parameters. Use `_param` naming convention (`_event`, `_ctx`) to signal intentional omission. Do NOT use `// eslint-disable-next-line` or suppress compiler errors with `any`. Existing use: `session-logger/index.ts:109` (15+ instances across codebase). |
+| **C14** | **Inline type annotation for destructured object parameters** | `noImplicitAny` requires explicit parameter type annotations. Destructured object params need inline type: `renderResult(result, { expanded, isPartial }: { expanded?: boolean; isPartial?: boolean }, ...)`. Avoid separate interface when the type is only used once and is small. Existing use: `ripgrep-search.ts:710-713`. |
 
 ---
 
@@ -70,6 +75,7 @@ These rules are **mandatory** for every extension design. Violating any P0/P1 ru
 | **M5** | **Extraction order: types → pure → dependent → orchestrator → entry** | When splitting a monolith: extract types first (zero deps), then pure utility modules, then modules with internal deps, then the orchestrator/command handler, then clean up `index.ts`. Verify after each step. |
 | **M6** | **Preserve external contracts during refactoring** | When restructuring, do NOT change: config format, security model, CLI flags, message renderer `customType`, completion markers, or external integrations (LSP hooks, dynamic imports). |
 | **M7** | **Re-export for testability** | Entry point may re-export pure functions from sub-modules so tests import from a single path without breaking encapsulation. |
+| **M8** | **Parameter count/type changes in signatures must update all consumers** | When refactoring function signatures, changing parameter count or types silently breaks all callers and re-exported types. Lazy-import wrappers and interface re-exports fail at compile time when signatures diverge. Before removing or adding a parameter, grep for all references to the function across all extensions. Existing breakage: `tsc-checkpoint.ts` param removal broke `supervisor/tsc-decisions.ts`. |
 
 ### ♻️ Reuse Pi Built-in APIs
 
@@ -112,6 +118,16 @@ These rules are **mandatory** for every extension design. Violating any P0/P1 ru
 | **P12** | **Sync I/O in async handlers** — `writeFileSync`, `execSync` inside `async` functions block the event loop. | Use `fs.promises.writeFile`, `execFile` with promise wrapper. |
 | **P13** | **Child process spawned without enforceable timeout** — unbounded child processes accumulate, consuming system resources. | Always use `AbortController` + `child.kill()` pattern. |
 | **P14** | **`StringEnum` vs `Type.Union([Type.Literal(...)])`** — Google API doesn't support `Type.Union` for string enums. | Always use `StringEnum(["a", "b"] as const)` from `@earendil-works/pi-ai`. |
+| **P15** | **`timer.unref()` type mismatch** — `NodeJS.Timeout` may not expose `.unref()` in strict TS types depending on `@types/node` version. | Safe escape: `(timer as any)?.unref?.()`. Double optional chain + `any` cast handles both the type mismatch and null safety. Existing use: `caveman/animation.ts:80`, `lsp-auditor/lsp-client.ts:303`. |
+| **P16** | **`readdirSync(dir, { withFileTypes: true })` returns `Dirent[]` not `string[]`** — typing the result as `string[]` fails under strict TS. | Import `type Dirent` from `node:fs` and declare: `let entries: Dirent[]`. Existing use: `check-extensions/ast-scanner.ts:12`, `extension-scanner.ts:8`. |
+| **P17** | **`ctx.ui.notify()` level param union is `"info" | "error" | "warning"`, not `"success"`** — passing `"success"` causes TS error under strict typing. | Use one of the valid literals: `ctx.ui.notify(msg, "info")`. Existing fix: `check-extensions/index.ts:371`, `session-advice/index.ts:100`. |
+| **P18** | **Optional fields that can be `null` must be `T | null`, not just `T?`** — The `?` syntax adds `| undefined`, not `| null`. When an API returns `null`, the type must include `null`. | Use `{ tokens?: number | null }` instead of `{ tokens?: number }`. Existing fix: `context-info/telemetry.ts:16`. |
+| **P19** | **Non-standard error property access — `(err as NodeJS.ErrnoException).stderr` fails** — `useUnknownInCatchVariables` means `err` is `unknown`, and `NodeJS.ErrnoException` may not be in scope. | Use `(err as any).stderr` for non-standard error properties. `err instanceof Error ? (err as any).stderr : String(err)` for safe access. Existing use: `lsp-auditor/run-pre-audit.ts:54`. |
+| **P20** | **Theme API type limitations — `theme.fg()` second param may require literal union, not `string`** — computed color strings fail type checking. | Safe escape: `theme.fg(tColor as any, text)`. Document that this is an accepted boundary where pi SDK types are the constraint, not the extension. Existing use: `context-info/footer.ts:88`. |
+| **P21** | **Literal union widening — when runtime values exceed declared union, member-by-member union expansion is fragile** — If a union `"read" | "write"` doesn't cover actual runtime values, adding every runtime value to the union is impractical. | Widen to `string` when the API returns values outside the declared union and the union cannot be changed. Existing fix: `session-logger/types.ts:35`. |
+| **P22** | **Non-null assertion (`!`) should only be used when API contract guarantees non-null at call site** — `sessionFile!` suppresses null checks but can cause runtime `undefined` access if the contract changes. | Only use `!` when you have documented proof (API spec, schema) that the value is always present at call time. Include a `/* guaranteed by API contract */` comment explaining the guarantee. Existing use: `session-logger/index.ts:51`. |
+| **P23** | **Property rename in interface breaks all consumers silently** — when a type field is renamed (e.g. `description` → `changelogVersion`), all files using the old name fail at compile time. | Before renaming a field in a shared type/interface, grep for the old key name across ALL extensions and update every usage. Existing breakage: `check-extensions/issue-builder.ts` (`description` → `changelogVersion`). |
+| **P24** | **`pi.sendMessage()` / `pi.sendUserMessage()` may require `customType` field** — omitting required fields causes TS error. | Consult the pi docs or the `sendMessage` type signature before constructing messages. Include all required fields including `customType` when mandated by the type. Existing fix: `lsp-auditor/index.ts:43-46`. |
 
 ---
 
@@ -179,6 +195,22 @@ Before finalizing any design, verify against this checklist:
 - [ ] `ctx.ui.*` dialogs used for standard user interactions (not custom TUI)
 - [ ] `pi.sendUserMessage()` used for sending messages to the conversation
 - [ ] `ctx.cwd` used in place of `process.cwd()` for current working directory
+- [ ] C10: All local imports use `.ts` extension (`from "./module.ts"`)
+- [ ] C11: `satisfies` used for object literals that must match an interface without type widening
+- [ ] C12: Dynamic `import()` uses double-cast pattern (`as unknown as T`)
+- [ ] C13: Unused callback parameters prefixed with underscore (`_event`, `_ctx`)
+- [ ] C14: Destructured object parameters have inline type annotations
+- [ ] P15: `timer.unref()` uses safe escape pattern (`(timer as any)?.unref?.()`)
+- [ ] P16: `readdirSync` with `withFileTypes: true` uses `Dirent[]` type (import `type Dirent` from `node:fs`)
+- [ ] P17: `ctx.ui.notify()` level param uses valid literal (`"info" | "error" | "warning"`, never `"success"`)
+- [ ] P18: Optional nullable fields typed as `T | null`, not just `T?`
+- [ ] P19: Non-standard error properties accessed via `(err as any).stderr`, not `NodeJS.ErrnoException`
+- [ ] P20: Theme API type limitations handled with `as any` escape, documented as pi SDK boundary
+- [ ] P21: Literal unions widened to `string` when runtime values exceed declared union
+- [ ] P22: Non-null assertions (`!`) used only with API-contract guarantee and explanatory comment
+- [ ] P23: Property renames in interfaces include grep for old key name across all extensions
+- [ ] P24: `pi.sendMessage()` / `pi.sendUserMessage()` includes all required fields including `customType`
+- [ ] M8: Parameter count/type changes in signatures updated across all consumers including re-exports
 
 ---
 
