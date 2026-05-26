@@ -247,13 +247,15 @@ function findImportFindings(filePath: string, content: string, extName: string):
 		const valueImportMatch = trimmed.match(/^import\s+\{\s*([^}]+)\s*\}\s+from\s+["']([^"']+)["']/);
 		if (valueImportMatch && piModulePattern.test(valueImportMatch[2]!)) {
 			const importedNames = valueImportMatch[1]!;
-			// Check for pi API function imports
-			for (const api of PI_APIS) {
-				if (importedNames.includes(api)) {
+			// Parse individual import names for exact matching (fix substring false positives)
+			const trimmedNames = importedNames.split(",").map((name: string) => name.trim());
+			// Check for pi API function imports using exact match
+			for (const name of trimmedNames) {
+				if (PI_APIS.has(name)) {
 					findings.push({
 						extensionName: extName,
 						file: filePath,
-						apiName: `pi.${api}`,
+						apiName: `pi.${name}`,
 						line: i + 1,
 						column: 1,
 						lineContent: trimmed,
@@ -363,7 +365,9 @@ export async function scanExtensionsAST(
 	} catch {
 		return { findings, skipCount };
 	}
-	const hasExtensionSubdirs = entries.some((entry) => entry.isDirectory() && !entry.name.startsWith("."));
+	const hasExtensionSubdirs = entries.some(
+		(entry) => entry.isDirectory() && !entry.name.startsWith("."),
+	);
 
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
