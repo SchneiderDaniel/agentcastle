@@ -125,10 +125,15 @@ export function createToolCallHandler(state: HarnessState) {
 					const cacheKey = `${path}|${offset}|${limit}`;
 					const cached = state.readCache.get(cacheKey, turn);
 					if (cached) {
-						result = {
-							block: true,
-							reason: `Content cached from turn ${cached.turn} — use offset/limit to page or re-read after 3 turns.`,
-						};
+						// Same-turn [pending] → pass through (let re-read happen)
+						if (cached.content === "[pending]" && cached.turn === turn) {
+							// result stays null, pass through
+						} else {
+							result = {
+								block: true,
+								reason: `Content cached from turn ${cached.turn} — use offset/limit to page or re-read after 3 turns.`,
+							};
+						}
 					} else {
 						// Store marker to track that this path+offset+limit was recently read
 						state.readCache.set(cacheKey, "[pending]", turn);
@@ -137,12 +142,20 @@ export function createToolCallHandler(state: HarnessState) {
 			}
 		}
 
+		// ── Extract bash subKey for sub-command-aware cascade detection ──
+		// First token of bash command becomes subKey. Empty/absent command → undefined.
+		const bashSubKey =
+			toolName === "bash"
+				? ((args.command ?? "") as string).trim().split(/\s+/)[0] || undefined
+				: undefined;
+
 		// ── 5. Same-tool cascade detection (skip read — cache handles redundant reads) ──
 		// Cascade check uses count + 1 BEFORE recording, accounting for current call
 		// without recording it (if blocked, call is not real).
+		// Uses bashSubKey for sub-command-aware cascade (Bug 3 fix).
 		if (!result && toolName !== "read") {
 			const cascadeThreshold = meta.cascadeThreshold ?? CASCADE_THRESHOLD;
-			const consecutive = state.callCounter.getConsecutive(toolName);
+			const consecutive = state.callCounter.getConsecutive(toolName, bashSubKey);
 			// Add 1 for current call (not yet recorded)
 			const effectiveCount = consecutive.count + 1;
 			if (effectiveCount >= cascadeThreshold) {
@@ -189,8 +202,9 @@ export function createToolCallHandler(state: HarnessState) {
 		// ── 7. Record only if NOT blocked ──
 		// Blocked calls (any guard) are NOT recorded (Bug 5 fix)
 		// so they don't inflate the cascade counter.
+		// Uses bashSubKey for sub-command-aware cascade (Bug 3 fix).
 		if (!result) {
-			state.callCounter.record(toolName, turn);
+			state.callCounter.record(toolName, turn, bashSubKey);
 		}
 
 		// ── 8. Increment turn for every code path, return result ──
