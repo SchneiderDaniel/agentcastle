@@ -269,40 +269,6 @@ function detectRedundantReads(data: SessionData): AdviceEntry[] {
 }
 
 /**
- * Rule 3b: Immediate redundant read — same file path read within 1 turn.
- * Tighter window than existing redundant-read (2 turns). Separate category.
- */
-function detectImmediateRedundantRead(data: SessionData): AdviceEntry[] {
-	const results: AdviceEntry[] = [];
-	const reads: Array<{ path: string; turnIndex: number }> = [];
-
-	for (const entry of data.entries) {
-		if (entry.toolName !== "read") continue;
-
-		const p = (entry.args?.path ?? entry.text ?? "") as string;
-		if (!p) continue;
-		const ti = entry.turnIndex;
-
-		const recent = reads.filter(
-			(r) => r.path === p && Math.abs(r.turnIndex - ti) <= 1 && r.turnIndex !== ti,
-		);
-		if (recent.length > 0) {
-			results.push({
-				severity: "warning",
-				category: "immediate-redundant-read",
-				detail: `\`${shortPath(p)}\` read again within 1 turn (turn ${ti})`,
-				recommendation: `For \`${shortPath(p)}\`, use \`read(path, offset, limit)\` to page. Read once, cache results.`,
-				turns: [Math.min(...recent.map((r) => r.turnIndex), ti), ti],
-			});
-		}
-
-		reads.push({ path: p, turnIndex: ti });
-	}
-
-	return results;
-}
-
-/**
  * Rule 4: Error not actioned — tool error followed by same tool retry.
  */
 function detectErrorNotActioned(data: SessionData): AdviceEntry[] {
@@ -491,7 +457,6 @@ export function analyzeSession(data: SessionData): AdviceResult {
 		...detectSameToolCascade(data),
 		...detectToolMismatch(data),
 		...detectRedundantReads(data),
-		...detectImmediateRedundantRead(data),
 		...detectErrorNotActioned(data),
 		...detectToolCoverageGap(data),
 		...detectStructuralSearchUnderuse(data),
@@ -516,7 +481,6 @@ export function analyzeSession(data: SessionData): AdviceResult {
 		"identical-call-loop": 0.35,
 		"same-tool-cascade": 0.2,
 		"redundant-read": 0.15,
-		"immediate-redundant-read": 0.15,
 		"high-error-rate": 0.3,
 		"excessive-turns": 0.15,
 		"tool-coverage-gap": 0.1,

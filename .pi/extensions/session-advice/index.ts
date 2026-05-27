@@ -55,10 +55,6 @@ const FIXES: Record<string, FixSuggestion> = {
 		idea: "Add auto-detection hook: when code files read/edited but structural_search never called in first 3 turns, emit in-context reminder to use AST queries. Code reminder over AGENTS.md mention.",
 		effort: "Low",
 	},
-	"immediate-redundant-read": {
-		idea: "Add harness interceptor: flag same-path reads within 1 turn and suggest offset/limit paging. Code-based detection over rule in AGENTS.md.",
-		effort: "Low",
-	},
 	"structural-search-underuse": {
 		idea: "Add runtime counter: track read/edit calls on code files. If count hits 3 and structural_search never invoked, auto-prompt agent with AST query suggestion. Code trigger over AGENTS.md instruction.",
 		effort: "Low",

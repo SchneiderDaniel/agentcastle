@@ -66,7 +66,7 @@ function readToolError(turnIndex: number): SessionEntry {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("analyzeSession → immediate-redundant-read", () => {
+describe("analyzeSession → redundant-read", () => {
 	it("flags same file read within 1-turn window", () => {
 		const data = makeSession([readEntry("/repo/src/app.ts", 0), readEntry("/repo/src/app.ts", 1)]);
 		const result = analyzeSession(data);
@@ -212,32 +212,6 @@ describe("analyzeSession → structural-search-underuse (new rule)", () => {
 		const result = analyzeSession(data);
 		const underuse = result.entries.filter((e) => e.category === "structural-search-underuse");
 		assert.strictEqual(underuse.length, 0, "should not flag when structural_search used");
-	});
-});
-
-describe("analyzeSession → immediate-redundant-read (new rule)", () => {
-	it("flags same file read within 1 turn", () => {
-		const data = makeSession([readEntry("/repo/src/app.ts", 0), readEntry("/repo/src/app.ts", 1)]);
-		const result = analyzeSession(data);
-		const imm = result.entries.filter((e) => e.category === "immediate-redundant-read");
-		assert.ok(imm.length >= 1, "should flag immediate redundant read");
-	});
-
-	it("does NOT flag same file read 2+ turns apart", () => {
-		const data = makeSession([readEntry("/repo/src/app.ts", 0), readEntry("/repo/src/app.ts", 2)]);
-		const result = analyzeSession(data);
-		const imm = result.entries.filter((e) => e.category === "immediate-redundant-read");
-		assert.strictEqual(imm.length, 0, "2 turns apart should not flag immediate");
-	});
-
-	it("coexists with existing redundant-read (2-turn window)", () => {
-		const data = makeSession([readEntry("/repo/src/app.ts", 0), readEntry("/repo/src/app.ts", 1)]);
-		const result = analyzeSession(data);
-		const imm = result.entries.filter((e) => e.category === "immediate-redundant-read");
-		const red = result.entries.filter((e) => e.category === "redundant-read");
-		// Both should fire: same file within 1 turn triggers both rules
-		assert.ok(imm.length >= 1, "immediate-redundant-read should fire");
-		assert.ok(red.length >= 1, "existing redundant-read should also fire");
 	});
 });
 

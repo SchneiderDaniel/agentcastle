@@ -414,8 +414,7 @@ Detects inefficient patterns in each session and writes `.advice.md` alongside t
 | Same-tool cascade | warning | `bash` called 12x consecutively |
 | Tool coverage gap | warning | Code files present but `structural_search` unused |
 | Structural-search underuse | warning | 3+ code files read/edited, `structural_search` never called |
-| Redundant reads | warning | Same file read 3x within 2 turns |
-| Immediate redundant read | warning | Same file read again within 1 turn |
+| Redundant reads | warning | Same file read within 2 turns |
 | Excessive turns | warning | 20+ tool calls with no file changes |
 
 **Feedback loop (before_agent_start):** On next session start, reads `latest.advice.md` and injects top 3 past findings as `⚠️ Past Session Lessons` into system prompt — agent learns from its own mistakes without manual intervention.
