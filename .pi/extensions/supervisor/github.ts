@@ -356,6 +356,19 @@ export async function checkPrConflicts(
 	}
 }
 
+// ─── Post GitHub Issue Comment ─────────────────────────────────────
+
+/** Post a comment on a GitHub issue.
+ *  Uses authenticated gh CLI — respects same auth session as other gh calls. */
+export async function postIssueComment(
+	pi: ExtensionAPI,
+	issueNum: number,
+	repo: string,
+	body: string,
+): Promise<void> {
+	await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", body]);
+}
+
 // ─── Security: Filter Issue Data ────────────────────────────────────
 
 /** Filter issue body and comments to only trusted codeowners.

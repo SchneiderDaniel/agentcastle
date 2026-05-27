@@ -28,6 +28,7 @@ import {
 	setItemStatus,
 	checkBlockedByDependencies,
 	filterIssueData,
+	postIssueComment,
 } from "./github";
 import { parseAgentFile } from "./agent-loader";
 import { buildAgentTask, generateBranchName } from "./agent-task";
@@ -513,6 +514,15 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								ctx,
 							);
 							effectiveNextStatus = auditResult.nextStatus;
+							// If audit hooks rejected the transition, post failure reason
+							// as GitHub comment so developer sees what to fix.
+							if (effectiveNextStatus !== "Audit" && auditResult.note) {
+								try {
+									await postIssueComment(pi, issueNum, config.repo, auditResult.note);
+								} catch {
+									// Non-fatal — comment posting failure shouldn't stop pipeline
+								}
+							}
 						} catch (auditErr: unknown) {
 							const msg = auditErr instanceof Error ? auditErr.message : String(auditErr);
 							ctx.ui.notify(`Pre-audit error: ${msg}`, "warning");
