@@ -395,7 +395,7 @@ export async function pushBranch(
 }
 
 /** Add all, commit, and push in sequence.
- *  Short-circuits: does NOT push if commit fails. */
+ *  Pushes even if commit fails with "nothing to commit" (dev already committed). */
 export async function commitAndPush(
 	pi: ExtensionAPI,
 	cwd: string,
@@ -408,7 +408,15 @@ export async function commitAndPush(
 	if (addResult.code !== 0) {
 		throw new Error(`git add failed: ${addResult.stderr || addResult.stdout}`);
 	}
-	await commitChanges(pi, cwd, message);
+	// Try commit — skip on "nothing to commit" (dev already committed)
+	const commitResult = await pi.exec("git", ["commit", "-m", message], { cwd });
+	if (commitResult.code !== 0) {
+		const stderr = commitResult.stderr || "";
+		// "nothing to commit" is not a real error — still push
+		if (!stderr.includes("nothing to commit")) {
+			throw new Error(`git commit failed: ${stderr || commitResult.stdout}`);
+		}
+	}
 	await pushBranch(pi, cwd, remote, branch);
 }
 
