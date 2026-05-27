@@ -294,10 +294,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		lastSampledOutput = undefined;
 		toolCallCount.value = 0;
 
-		// Deferred I/O — detect worktree on first session
-		if (worktreeName === null) {
-			worktreeName = getWorktreeName(ctx.cwd);
-		}
+		// Detect worktree each session — git worktree can change across sessions
+		worktreeName = getWorktreeName(ctx.cwd);
 		// Deferred I/O — read pi settings on first session
 		if (!thinkingLevel) {
 			thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
