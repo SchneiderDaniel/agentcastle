@@ -199,6 +199,80 @@ describe("CallCounter", () => {
 		const info = state.callCounter.getConsecutive("bash");
 		assert.strictEqual(info.sinceTurn, 5);
 	});
+
+	// ── subKey support (Bug 3 fix) ──
+
+	it("records first subKey call", () => {
+		const state = createHarnessState();
+		state.callCounter.record("bash", 0, "ls");
+		const info = state.callCounter.getConsecutive("bash", "ls");
+		assert.strictEqual(info.toolName, "bash");
+		assert.strictEqual(info.count, 1);
+		assert.strictEqual(info.sinceTurn, 0);
+	});
+
+	it("different subKey resets counter", () => {
+		const state = createHarnessState();
+		state.callCounter.record("bash", 0, "ls");
+		state.callCounter.record("bash", 1, "cd");
+		const cdInfo = state.callCounter.getConsecutive("bash", "cd");
+		assert.strictEqual(cdInfo.count, 1);
+	});
+
+	it("same subKey increments counter", () => {
+		const state = createHarnessState();
+		state.callCounter.record("bash", 0, "ls");
+		state.callCounter.record("bash", 0, "ls");
+		state.callCounter.record("bash", 0, "ls");
+		const info = state.callCounter.getConsecutive("bash", "ls");
+		assert.strictEqual(info.count, 3);
+	});
+
+	it("stale subKey returns count 0", () => {
+		const state = createHarnessState();
+		state.callCounter.record("bash", 0, "ls");
+		state.callCounter.record("bash", 1, "cd");
+		const lsInfo = state.callCounter.getConsecutive("bash", "ls");
+		assert.strictEqual(lsInfo.count, 0);
+	});
+
+	it("no subKey maintains backward compat", () => {
+		const state = createHarnessState();
+		state.callCounter.record("bash", 0);
+		state.callCounter.record("bash", 1);
+		const info = state.callCounter.getConsecutive("bash");
+		assert.strictEqual(info.count, 2);
+	});
+
+	it("subKey resets on tool switch", () => {
+		const state = createHarnessState();
+		state.callCounter.record("bash", 0, "ls");
+		state.callCounter.record("read", 1);
+		const readInfo = state.callCounter.getConsecutive("read");
+		assert.strictEqual(readInfo.count, 1);
+		const bashLsInfo = state.callCounter.getConsecutive("bash", "ls");
+		assert.strictEqual(bashLsInfo.count, 0);
+	});
+
+	it("no subKey tools maintain backward compat count", () => {
+		const state = createHarnessState();
+		state.callCounter.record("write", 0);
+		state.callCounter.record("write", 1);
+		state.callCounter.record("write", 2);
+		const info = state.callCounter.getConsecutive("write");
+		assert.strictEqual(info.count, 3);
+	});
+
+	it("reset clears subKey counters", () => {
+		const state = createHarnessState();
+		state.callCounter.record("bash", 0, "ls");
+		state.callCounter.record("bash", 1, "cd");
+		state.callCounter.record("read", 2);
+		state.callCounter.reset();
+		assert.strictEqual(state.callCounter.getConsecutive("bash", "ls").count, 0);
+		assert.strictEqual(state.callCounter.getConsecutive("bash", "cd").count, 0);
+		assert.strictEqual(state.callCounter.getConsecutive("read").count, 0);
+	});
 });
 
 // ─── Factory isolation ────────────────────────────────────────────

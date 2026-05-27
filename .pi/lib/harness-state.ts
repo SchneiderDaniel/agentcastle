@@ -49,10 +49,17 @@ export interface ErrorTracker {
 }
 
 export interface CallCounter {
-	/** Record a tool call. Resets consecutive count if tool changes. */
-	record(toolName: string, turn: number): void;
-	/** Get consecutive call info for a tool. */
-	getConsecutive(toolName: string): ConsecutiveInfo;
+	/**
+	 * Record a tool call. Resets consecutive count if composite key changes.
+	 * Composite key = toolName:subKey (when subKey provided) or just toolName.
+	 * Different subKey within same tool resets the counter.
+	 */
+	record(toolName: string, turn: number, subKey?: string): void;
+	/**
+	 * Get consecutive call info for a composite key.
+	 * Returns count 0 if composite key doesn't match the last recorded key.
+	 */
+	getConsecutive(toolName: string, subKey?: string): ConsecutiveInfo;
 	/** Reset all counters. */
 	reset(): void;
 }
@@ -140,15 +147,21 @@ export function createHarnessState(): HarnessState {
 
 	// ── Call Counter ──
 
-	let lastToolName = "";
+	let lastKey: string | null = null;
 	let consecutiveCount = 0;
 	let sinceTurn = 0;
 
+	/** Build composite key from toolName and optional subKey. */
+	function makeKey(toolName: string, subKey?: string): string {
+		return subKey !== undefined ? `${toolName}\x00${subKey}` : toolName;
+	}
+
 	const callCounter: CallCounter = {
-		record(toolName: string, turn: number): void {
-			if (toolName !== lastToolName) {
-				// Tool changed — reset counter for previous tool
-				lastToolName = toolName;
+		record(toolName: string, turn: number, subKey?: string): void {
+			const key = makeKey(toolName, subKey);
+			if (key !== lastKey) {
+				// Composite key changed — reset counter
+				lastKey = key;
 				consecutiveCount = 1;
 				sinceTurn = turn;
 			} else {
@@ -156,19 +169,20 @@ export function createHarnessState(): HarnessState {
 			}
 		},
 
-		getConsecutive(toolName: string): ConsecutiveInfo {
-			if (toolName !== lastToolName) {
+		getConsecutive(toolName: string, subKey?: string): ConsecutiveInfo {
+			const key = makeKey(toolName, subKey);
+			if (key !== lastKey) {
 				return { toolName: "", count: 0, sinceTurn: 0 };
 			}
 			return {
-				toolName: lastToolName,
+				toolName,
 				count: consecutiveCount,
 				sinceTurn,
 			};
 		},
 
 		reset(): void {
-			lastToolName = "";
+			lastKey = null;
 			consecutiveCount = 0;
 			sinceTurn = 0;
 		},

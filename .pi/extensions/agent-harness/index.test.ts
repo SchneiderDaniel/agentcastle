@@ -695,3 +695,192 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		assert.ok(pass == null, "read after blocked cache hit should pass");
 	});
 });
+
+// ── Phase 2: CallCounter subKey cascade (Bug 3) ──
+
+describe("Bug 3 fix: CallCounter subKey cascade", () => {
+	it("8 bash calls with same sub-command — 8th blocked", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "ls -la" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `bash ls call ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th same-subKey bash call should block");
+	});
+
+	it("diverse bash sub-commands never block", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const commands = [
+			"ls",
+			"cd src",
+			"file index.ts",
+			"stat main.ts",
+			"timeout 10",
+			"find .",
+			"git log",
+			"npm test",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `diverse cmd ${i} (${commands[i]}) should pass`);
+		}
+	});
+
+	it("8 git sub-commands — 8th blocked (same-subKey bash:git)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const gitCommands = [
+			"git status",
+			"git diff",
+			"git log",
+			"git stash",
+			"git branch",
+			"git merge",
+			"git push",
+			"git pull",
+		];
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < gitCommands.length; i++) {
+			result = handler(makeEvent("bash", { command: gitCommands[i] }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `git cmd ${i} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th git sub-command should block");
+	});
+
+	it("bash subKey resets when switching between different first tokens", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// bash:ls ×4 → bash:cd ×4 → bash:ls ×4 — never blocks
+		for (let round = 0; round < 3; round++) {
+			for (let i = 0; i < 4; i++) {
+				const cmd = round === 1 ? "cd .." : "ls";
+				const result = handler(makeEvent("bash", { command: cmd }), makeCtx());
+				assert.equal(result, null, `bash ${cmd} round ${round} call ${i} should pass`);
+			}
+		}
+
+		// Final check: total 12 calls, 0 blocks
+		assert.equal(state.currentTurn, 12);
+	});
+
+	it("non-bash tool cascade still works (backward compat)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `write call ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th write call should block (backward compat)");
+	});
+
+	it("bash empty command recorded without subKey — backward compat", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// Empty command passes through, no subKey extracted
+		const r1 = handler(makeEvent("bash", {}), makeCtx());
+		assert.equal(r1, null);
+
+		// Next bash call with command — should be different subKey vs no subKey
+		const r2 = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+		assert.equal(r2, null);
+
+		// Since empty command had no subKey and echo has subKey "echo",
+		// they're different keys, so both have count 1.
+		// Total turns: 2
+		assert.equal(state.currentTurn, 2);
+	});
+});
+
+// ── Phase 3: Read cache [pending] same-turn pass-through (Bug 5) ──
+
+describe("Bug 5 fix: read cache [pending] same-turn pass-through", () => {
+	it("same-turn [pending] re-read passes through", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read at turn 0: cache miss, set [pending], pass
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+		assert.equal(state.currentTurn, 1);
+
+		// Reset turn to 0 to simulate same-turn re-read
+		state.currentTurn = 0;
+
+		// Second read at turn 0: cache hit with [pending] at turn 0 → pass through
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r2, null, "same-turn [pending] should pass through");
+	});
+
+	it("cross-turn [pending] re-read blocks", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read: turn 0, sets [pending]
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(state.currentTurn, 1);
+
+		// Second read at turn 1: cache hit with [pending] at turn 0
+		// Since cached.turn(0) !== currentTurn(1), it blocks
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.ok(r2?.block, "cross-turn [pending] should block");
+	});
+
+	it("same-turn normal content still blocks", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// Manually set cache with real content at turn 0
+		state.readCache.set("a.ts|0|", "real content", 0);
+
+		// Read at turn 0: cache hit with real content at turn 0 → block
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.ok(r1?.block, "same-turn real content should still block");
+	});
+
+	it("different cache keys both pass", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// Read with offset 0, limit 100
+		const r1 = handler(makeEvent("read", { path: "a.ts", offset: 0, limit: 100 }), makeCtx());
+		assert.equal(r1, null);
+
+		// Reset turn to 0 for same-turn
+		state.currentTurn = 0;
+
+		// Read with offset 100, limit 100 — different cache key, should pass
+		const r2 = handler(makeEvent("read", { path: "a.ts", offset: 100, limit: 100 }), makeCtx());
+		assert.equal(r2, null, "different offset should have different cache key");
+	});
+
+	it("TTL-expired [pending] cache miss passes through", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read at turn 0: sets [pending]
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// Set turn to 6 (CACHE_TTL_TURNS = 6, diff >= 6 → TTL expired)
+		state.currentTurn = 6;
+
+		// Re-read: cache TTL expired, miss, pass through
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r2, null, "TTL-expired cache miss should pass through");
+	});
+});
