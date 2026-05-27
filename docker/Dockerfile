@@ -46,6 +46,7 @@ RUN apt-get update && \
 RUN npm install -g --force \
         @earendil-works/pi-coding-agent \
         @ast-grep/cli \
+        jscpd \
         typescript
 
 # ---------------------------------------------------------------

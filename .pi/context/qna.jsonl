@@ -52,3 +52,6 @@
 {"datetime":"2026-05-26T19:57:56.066Z","question":"Issue #216 is refined and updated on GitHub. What's next?","answer":"done"}
 {"datetime":"2026-05-27T19:00:07.244Z","question":"Issue #218 pipeline complete. Developer + auditor both SUCCESS. But PR creation failed — head sha blank, no commits between branches. What you want me do?","answer":"investigate_failure"}
 {"datetime":"2026-05-27T19:07:18.255Z","question":"Issue #225 fix is implemented but PR #244 can't merge — branch 29 commits behind main with conflicts. What next?","answer":"rebase_main"}
+{"datetime":"2026-05-27T19:56:25.769Z","question":"What kind of refactoring for .pi/extensions/ripgrep-search.ts (806 lines)?\n\nOptions:","answer":"call you skill for the refactor of an extension"}
+{"datetime":"2026-05-27T19:56:53.750Z","question":"ranked-map extension refactor PRD ready at `.pi/specs/ranked-map-prd.md`. Want me to implement the refactor now?","answer":"github-issue"}
+{"datetime":"2026-05-27T19:57:55.744Z","question":"PRD complete. Implement the ripgrep-search refactoring now?","answer":"create_issue"}

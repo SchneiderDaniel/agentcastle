@@ -291,7 +291,17 @@ The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming
 
 #### 5.8 Skills
 
-Currently **no skills installed** (`.pi/skills/.gitkeep`). Skills are used sparingly in this project — every skill's description injects ~50-150 tokens into the context window on every turn, causing [context rot](https://docs.anthropic.com/en/docs/build-with-claude/context-windows). Prefer extensions (concise prompt snippets) or prompt templates (lazy-loaded) over skills.
+Currently **5 skills installed**:
+
+| Skill | Purpose |
+|-------|---------|
+| **dead-code-hunter** | Systematic dead code detection — finds unused exports, unreachable paths, dead branches, orphaned imports. Hunt loop picks random extension, validates with deterministic proof. |
+| **extension-bug-hunter** | Systematic bug hunting — boundary analysis, type safety, error paths, concurrency, input validation, security. Hunt loop with three-strike proof. |
+| **extension-spec** | Designs pi extensions — new or refactoring — with full PRD, TypeScript best practices, anti-pattern audit, migration plan. |
+| **improve-codebase-architecture** | Surface architectural friction — shallow modules, leaky seams, low locality. Creates umbrella + sub-issues with Mermaid diagrams. |
+| **duplicate-code-hunter** | Systematic duplicate code detection — exact clones (Type 1), renamed clones (Type 2), near-miss (Type 3), semantic clones (Type 4). Uses jscpd for token-based scanning. Hunt loop with three-way-match proof. |
+
+Skills are loaded on-demand via `/skill:<name>` invocation. Every skill's description injects ~50-150 tokens into the context window on every turn, causing [context rot](https://docs.anthropic.com/en/docs/build-with-claude/context-windows). Use sparingly. Prefer extensions (concise prompt snippets) or prompt templates (lazy-loaded) over skills.
 
 ---
 
@@ -911,6 +921,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | AST-grep | ≥0.42 | MIT | system | [ast-grep.github.io](https://ast-grep.github.io) |
 | Universal Ctags | latest | GPL-2.0 | system | [ctags.io](https://ctags.io) |
 | ripgrep (rg) | latest | MIT | system | [github.com/BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep) |
+| jscpd | 4.2.4 | MIT | system | [github.com/kucherenko/jscpd](https://github.com/kucherenko/jscpd) |
 | **Web Crawling (Python venv)** | | | | |
 | crawl4ai | latest | Apache-2.0 | venv | [github.com/unclecode/crawl4ai](https://github.com/unclecode/crawl4ai) |
 | Playwright Chromium | latest | Apache-2.0 | venv | [playwright.dev](https://playwright.dev) |
@@ -928,6 +939,12 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | lsp-auditor/ | — | MIT | project | This repository |
 | piignore.ts | — | MIT | project | This repository |
 | tsc-checkpoint.ts | — | MIT | project | This repository |
+| **Project Skills (`.pi/skills/`)** | | | | |
+| dead-code-hunter/ (with references/) | — | MIT | project | This repository |
+| extension-bug-hunter/ (with references/) | — | MIT | project | This repository |
+| extension-spec/ | — | MIT | project | This repository |
+| improve-codebase-architecture/ (with references/) | — | MIT | project | This repository |
+| duplicate-code-hunter/ (with references/) | — | MIT | project | This repository |
 
 > **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
 >
