@@ -17,7 +17,7 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
-import { mkdtemp, stat, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -352,6 +352,30 @@ export function parseVimgrepOutput(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Temp directory tracking (session-scoped cleanup)
+// ═══════════════════════════════════════════════════════════════════════
+
+const trackedTempDirs = new Set<string>();
+
+/** Register a temp directory for deferred cleanup at session end. */
+export function registerTempDir(dir: string): void {
+	trackedTempDirs.add(dir);
+}
+
+/**
+ * Clean up all tracked temp directories.
+ * Accepts rm function for testability (mock injection).
+ */
+export async function cleanupTrackedTempDirs(
+	rmFn: (path: string, opts?: { recursive?: boolean; force?: boolean }) => Promise<void>,
+): Promise<void> {
+	for (const dir of trackedTempDirs) {
+		await rmFn(dir, { recursive: true, force: true });
+	}
+	trackedTempDirs.clear();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Extension
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -371,6 +395,11 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			rgAvailable = false;
 		}
 		backendNoteInjected = false;
+	});
+
+	// Clean up tracked temp directories at session end
+	pi.on("session_shutdown", async () => {
+		await cleanupTrackedTempDirs(rm);
 	});
 
 	// Inject backend-status note into system prompt
@@ -640,6 +669,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			// If either results cap or byte truncation kicked in, save full output (raw stdout)
 			if (resultsTruncated || truncation.truncated) {
 				const tempDir = await mkdtemp(join(tmpdir(), "pi-ripgrep-"));
+				registerTempDir(tempDir); // Track for cleanup on session shutdown
 				fullOutputPath = join(tempDir, "full-output.txt");
 				// Write raw stdout (vimgrep/grep format) — compact, avoids JSON re-serialization
 				await withFileMutationQueue(fullOutputPath ?? "", async () => {
