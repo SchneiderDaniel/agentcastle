@@ -13,9 +13,10 @@ import type {
 	SupervisorMessageDetails,
 	PipelineAgentResult,
 } from "./types";
-import { existsSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { existsSync, writeFileSync } from "node:fs";
+import { resolve as resolvePath, join as joinPath } from "node:path";
 import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { loadConfig, resolveTimeoutMs } from "./config";
 import {
 	ghJson,
@@ -29,6 +30,10 @@ import {
 	checkBlockedByDependencies,
 	filterIssueData,
 	postIssueComment,
+	commitAndPush,
+	createPullRequest,
+	extractAgentCommentBody,
+	extractStructuredAuditOutput,
 } from "./github";
 import { parseAgentFile } from "./agent-loader";
 import { buildAgentTask, generateBranchName } from "./agent-task";
@@ -429,6 +434,96 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								: undefined,
 						} satisfies SupervisorMessageDetails,
 					});
+
+					// ── Phase 2: Post issue comments deterministically ──
+					// Pipeline posts the comment instead of the agent running gh CLI.
+					if (result.success && !usedRetry) {
+						const agentOutput = result.textOutput || result.output || "";
+
+						// Phase 2: Post COMMENT_BODY for architect/test-designer/researcher
+						if (
+							agentName === "architect" ||
+							agentName === "test-designer" ||
+							agentName === "researcher"
+						) {
+							const commentBody = extractAgentCommentBody(agentOutput);
+							if (commentBody) {
+								try {
+									await postIssueComment(pi, issueNum, config.repo, commentBody);
+									ctx.ui.notify(`Posted ${agentName} comment on issue #${issueNum}`, "info");
+								} catch (commentErr: unknown) {
+									const cmtMsg =
+										commentErr instanceof Error ? commentErr.message : String(commentErr);
+									console.warn(`[supervisor] Failed to post ${agentName} comment: ${cmtMsg}`);
+								}
+							}
+						}
+
+						// Phase 4: Commit and push after developer agent succeeds
+						if (agentName === "developer" && worktreePath && worktreeBranch) {
+							const commitMsg = `feat(#${issueNum}): ${issueTitle}`;
+							try {
+								await commitAndPush(pi, worktreePath, config.remote!, worktreeBranch, commitMsg);
+								ctx.ui.notify("Changes committed and pushed to branch", "info");
+							} catch (cpErr: unknown) {
+								const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr);
+								ctx.ui.notify(`commitAndPush failed: ${cpMsg}`, "warning");
+								console.warn(`[supervisor] commitAndPush failed: ${cpMsg}`);
+							}
+						}
+
+						// Phase 3: Process structured auditor output
+						if (agentName === "auditor") {
+							const auditOutput = extractStructuredAuditOutput(agentOutput);
+							if (auditOutput) {
+								if (auditOutput.decision === "APPROVED") {
+									// Write PR_BODY to temp file for deterministic PR creation
+									if (auditOutput.prBody) {
+										const tempFile = joinPath(tmpdir(), `audit-pr-body-${issueNum}.md`);
+										try {
+											writeFileSync(tempFile, auditOutput.prBody, "utf-8");
+											const prTitle = auditOutput.prTitle || `feat(#${issueNum}): ${issueTitle}`;
+											const prResult = await createPullRequest(
+												pi,
+												config.repo,
+												config.defaultBranch!,
+												worktreeBranch ||
+													generateBranchName(issueNum, issueTitle, config.branchPrefix!),
+												prTitle,
+												tempFile,
+											);
+											ctx.ui.notify(`PR #${prResult.number} created`, "info");
+										} catch (prErr: unknown) {
+											const prMsg = prErr instanceof Error ? prErr.message : String(prErr);
+											ctx.ui.notify(`Failed to create PR: ${prMsg}`, "warning");
+											console.warn(`[supervisor] createPullRequest failed: ${prMsg}`);
+										}
+									}
+									// Also post approval comment
+									if (auditOutput.commentBody) {
+										try {
+											await postIssueComment(pi, issueNum, config.repo, auditOutput.commentBody);
+											ctx.ui.notify("Audit approval comment posted", "info");
+										} catch (acErr: unknown) {
+											const acMsg = acErr instanceof Error ? acErr.message : String(acErr);
+											console.warn(`[supervisor] Failed to post audit comment: ${acMsg}`);
+										}
+									}
+								} else if (auditOutput.decision === "REJECTED") {
+									// Post rejection comment
+									if (auditOutput.commentBody) {
+										try {
+											await postIssueComment(pi, issueNum, config.repo, auditOutput.commentBody);
+											ctx.ui.notify("Audit rejection comment posted", "info");
+										} catch (rcErr: unknown) {
+											const rcMsg = rcErr instanceof Error ? rcErr.message : String(rcErr);
+											console.warn(`[supervisor] Failed to post rejection comment: ${rcMsg}`);
+										}
+									}
+								}
+							}
+						}
+					}
 
 					agentResults.push({
 						agentName: result.agentName,

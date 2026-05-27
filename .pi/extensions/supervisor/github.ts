@@ -369,6 +369,151 @@ export async function postIssueComment(
 	await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", body]);
 }
 
+// ─── Deterministic git/GitHub helpers (Phase 1) ────────────────────
+
+/** Commit staged changes in a working directory.
+ *  Throws if git commit fails (nothing to commit, merge conflict, etc). */
+export async function commitChanges(pi: ExtensionAPI, cwd: string, message: string): Promise<void> {
+	const result = await pi.exec("git", ["commit", "-m", message], { cwd });
+	if (result.code !== 0) {
+		throw new Error(`git commit failed: ${result.stderr || result.stdout}`);
+	}
+}
+
+/** Push a branch to a remote.
+ *  Throws if git push fails (auth failed, rejected, no remote). */
+export async function pushBranch(
+	pi: ExtensionAPI,
+	cwd: string,
+	remote: string,
+	branch: string,
+): Promise<void> {
+	const result = await pi.exec("git", ["push", remote, branch], { cwd });
+	if (result.code !== 0) {
+		throw new Error(`git push failed: ${result.stderr || result.stdout}`);
+	}
+}
+
+/** Add all, commit, and push in sequence.
+ *  Short-circuits: does NOT push if commit fails. */
+export async function commitAndPush(
+	pi: ExtensionAPI,
+	cwd: string,
+	remote: string,
+	branch: string,
+	message: string,
+): Promise<void> {
+	// Stage all changes first
+	const addResult = await pi.exec("git", ["add", "-A"], { cwd });
+	if (addResult.code !== 0) {
+		throw new Error(`git add failed: ${addResult.stderr || addResult.stdout}`);
+	}
+	await commitChanges(pi, cwd, message);
+	await pushBranch(pi, cwd, remote, branch);
+}
+
+/** Create a pull request using gh CLI.
+ *  Returns PR number from output.
+ *  If bodyFile is provided, uses --body-file flag (avoids shell escaping issues). */
+export async function createPullRequest(
+	pi: ExtensionAPI,
+	repo: string,
+	base: string,
+	head: string,
+	title: string,
+	bodyFile?: string,
+): Promise<{ number: number }> {
+	const args: string[] = [
+		"pr",
+		"create",
+		"--repo",
+		repo,
+		"--base",
+		base,
+		"--head",
+		head,
+		"--title",
+		title,
+	];
+	if (bodyFile) {
+		args.push("--body-file", bodyFile);
+	}
+	const result = await gh(pi, args);
+	// gh pr create outputs URL like https://github.com/owner/repo/pull/123
+	// or sometimes just the number "123"
+	const urlMatch = result.match(/pull\/(\d+)/);
+	if (urlMatch) {
+		return { number: parseInt(urlMatch[1], 10) };
+	}
+	const numMatch = result.match(/(\d+)/);
+	if (numMatch) {
+		return { number: parseInt(numMatch[1], 10) };
+	}
+	throw new Error(`gh pr create failed to parse PR number from output: ${result}`);
+}
+
+// ─── Structured agent output parsing (Phase 2+3) ──────────────────
+
+/** Parse structured audit output from auditor agent.
+ *  Looks for AUDIT_DECISION, PR_TITLE, PR_BODY, COMMENT_BODY markers.
+ *  Last occurrence of each marker wins. */
+export interface StructuredAuditOutput {
+	decision: "APPROVED" | "REJECTED";
+	prTitle?: string;
+	prBody?: string;
+	commentBody?: string;
+}
+
+export function extractStructuredAuditOutput(output: string): StructuredAuditOutput | null {
+	const decisionMatch = output.match(/AUDIT_DECISION\s*:\s*(APPROVED|REJECTED)/g);
+	if (!decisionMatch) return null;
+
+	const lastDecision = decisionMatch[decisionMatch.length - 1];
+	const decision = lastDecision.includes("APPROVED")
+		? ("APPROVED" as const)
+		: ("REJECTED" as const);
+
+	const result: StructuredAuditOutput = { decision };
+
+	// Extract PR_TITLE (last occurrence)
+	const prTitleMatch = output.match(/PR_TITLE\s*:\s*(.+)$/gm);
+	if (prTitleMatch) {
+		result.prTitle = prTitleMatch[prTitleMatch.length - 1].replace(/^PR_TITLE\s*:\s*/i, "").trim();
+	}
+
+	// Extract PR_BODY (text between PR_BODY: and next marker or end)
+	const prBodyMatch = output.match(/PR_BODY\s*:\s*([\s\S]*?)(?=\n[A-Z_]+\s*:|$)/);
+	if (prBodyMatch) {
+		result.prBody = prBodyMatch[1].trim();
+	}
+
+	// Extract COMMENT_BODY (text between COMMENT_BODY: and next marker or end)
+	const commentBodyMatch = output.match(/COMMENT_BODY\s*:\s*([\s\S]*?)(?=\n[A-Z_]+\s*:|$)/);
+	if (commentBodyMatch) {
+		result.commentBody = commentBodyMatch[1].trim();
+	}
+
+	return result;
+}
+
+/** Extract agent comment body from text after COMMENT_BODY marker.
+ *  Last occurrence wins. Returns null if no marker found. */
+export function extractAgentCommentBody(output: string): string | null {
+	const startMarker = /COMMENT_BODY\s*:\s*/g;
+	const endMarker = /COMMENT_BODY_END/g;
+
+	let lastBody: string | null = null;
+	let match;
+	while ((match = startMarker.exec(output)) !== null) {
+		const start = match.index + match[0].length;
+		const endIdx = output.indexOf("COMMENT_BODY_END", start);
+		const body = endIdx !== -1 ? output.slice(start, endIdx) : output.slice(start);
+		lastBody = body.trim();
+	}
+
+	return lastBody;
+}
+
 // ─── Security: Filter Issue Data ────────────────────────────────────
 
 /** Filter issue body and comments to only trusted codeowners.
