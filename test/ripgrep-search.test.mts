@@ -13,7 +13,7 @@
  */
 
 import assert from "node:assert";
-import { describe, it } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, join } from "node:path";
@@ -35,6 +35,7 @@ interface RgMatch {
 interface RgResult {
 	total_returned: number;
 	results: RgMatch[];
+	truncated?: boolean;
 }
 
 interface SearchConfig {
@@ -204,13 +205,17 @@ function buildGrepArgs(
 /**
  * Parse raw ripgrep --vimgrep output into RgResult.
  */
-function parseVimgrepOutput(raw: string | null | undefined): RgResult {
+function parseVimgrepOutput(
+	raw: string | null | undefined,
+	maxResults: number = Infinity,
+): RgResult {
 	if (!raw) {
 		return { total_returned: 0, results: [] };
 	}
 
 	const lines = raw.split("\n");
 	const results: RgMatch[] = [];
+	let totalMatches = 0;
 
 	const vimgrepRegex = /^(.+?):(\d+):(\d+):(.*)$/;
 
@@ -227,30 +232,36 @@ function parseVimgrepOutput(raw: string | null | undefined): RgResult {
 
 		if (isNaN(lineNum) || isNaN(column)) continue;
 
-		results.push({
-			file,
-			line: lineNum,
-			column,
-			text,
-		});
+		totalMatches++;
+
+		if (results.length < maxResults) {
+			results.push({
+				file,
+				line: lineNum,
+				column,
+				text,
+			});
+		}
 	}
 
 	return {
-		total_returned: results.length,
+		total_returned: totalMatches,
 		results,
+		truncated: totalMatches > maxResults,
 	};
 }
 
 /**
  * Parse generic grep -rnH output into RgResult.
  */
-function parseGrepOutput(raw: string | null | undefined): RgResult {
+function parseGrepOutput(raw: string | null | undefined, maxResults: number = Infinity): RgResult {
 	if (!raw) {
 		return { total_returned: 0, results: [] };
 	}
 
 	const lines = raw.split("\n");
 	const results: RgMatch[] = [];
+	let totalMatches = 0;
 
 	const grepRegex = /^(.+?):(\d+):(.*)$/;
 
@@ -266,18 +277,48 @@ function parseGrepOutput(raw: string | null | undefined): RgResult {
 
 		if (isNaN(lineNum)) continue;
 
-		results.push({
-			file,
-			line: lineNum,
-			column: 1,
-			text,
-		});
+		totalMatches++;
+
+		if (results.length < maxResults) {
+			results.push({
+				file,
+				line: lineNum,
+				column: 1,
+				text,
+			});
+		}
 	}
 
 	return {
-		total_returned: results.length,
+		total_returned: totalMatches,
 		results,
+		truncated: totalMatches > maxResults,
 	};
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Temp directory tracking (match source after fix)
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Tracked temp directories for session-scoped cleanup. */
+const trackedTempDirs = new Set<string>();
+
+/** Register a temp directory for deferred cleanup. */
+function registerTempDir(dir: string): void {
+	trackedTempDirs.add(dir);
+}
+
+/**
+ * Clean up all tracked temp directories.
+ * Accepts rm function to allow mock injection in tests.
+ */
+async function cleanupTrackedTempDirs(
+	rm: (path: string, opts?: { recursive?: boolean; force?: boolean }) => Promise<void>,
+): Promise<void> {
+	for (const dir of trackedTempDirs) {
+		await rm(dir, { recursive: true, force: true });
+	}
+	trackedTempDirs.clear();
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -973,6 +1014,170 @@ describe("resolveBackend", () => {
 		const result = resolveBackend({ searchBackend: "grep", maxLineLength: 200 }, false);
 		assert.strictEqual(result.backend, "grep");
 		assert.strictEqual(result.error, undefined);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Temp directory tracking lifecycle (Phase 1 — unit, Phase 2 — mock-based)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("temp dir tracking", () => {
+	beforeEach(() => {
+		trackedTempDirs.clear();
+	});
+
+	// ── Phase 1: Unit tests for tracking functions ──
+
+	describe("registerTempDir", () => {
+		it("adds path to set", () => {
+			registerTempDir("/tmp/pi-ripgrep-abc123");
+			assert.strictEqual(trackedTempDirs.size, 1);
+			assert.ok(trackedTempDirs.has("/tmp/pi-ripgrep-abc123"));
+		});
+
+		it("same path twice is idempotent", () => {
+			registerTempDir("/tmp/pi-ripgrep-abc123");
+			registerTempDir("/tmp/pi-ripgrep-abc123");
+			assert.strictEqual(trackedTempDirs.size, 1);
+		});
+
+		it("multiple dirs registered", () => {
+			registerTempDir("/tmp/pi-ripgrep-001");
+			registerTempDir("/tmp/pi-ripgrep-002");
+			assert.strictEqual(trackedTempDirs.size, 2);
+		});
+	});
+
+	describe("cleanupTrackedTempDirs", () => {
+		it("calls rm for each tracked dir with recursive+force", async () => {
+			const calls: Array<{ path: string; opts: unknown }> = [];
+			const mockRm = async (path: string, opts?: { recursive?: boolean; force?: boolean }) => {
+				calls.push({ path, opts });
+			};
+
+			registerTempDir("/tmp/dir1");
+			registerTempDir("/tmp/dir2");
+			await cleanupTrackedTempDirs(mockRm);
+
+			assert.strictEqual(calls.length, 2);
+			assert.strictEqual(calls[0]!.path, "/tmp/dir1");
+			assert.deepStrictEqual(calls[0]!.opts, { recursive: true, force: true });
+			assert.strictEqual(calls[1]!.path, "/tmp/dir2");
+			assert.deepStrictEqual(calls[1]!.opts, { recursive: true, force: true });
+		});
+
+		it("clears set after cleanup", async () => {
+			registerTempDir("/tmp/dir1");
+			registerTempDir("/tmp/dir2");
+			const mockRm = async () => {};
+			await cleanupTrackedTempDirs(mockRm);
+			assert.strictEqual(trackedTempDirs.size, 0);
+		});
+
+		it("empty set — no throw, no calls", async () => {
+			let callCount = 0;
+			const mockRm = async () => {
+				callCount++;
+			};
+			await cleanupTrackedTempDirs(mockRm);
+			assert.strictEqual(callCount, 0);
+			assert.strictEqual(trackedTempDirs.size, 0);
+		});
+
+		it("rm with force:true suppresses ENOENT", async () => {
+			registerTempDir("/tmp/nonexistent");
+			const mockRm = async (_path: string, opts?: { force?: boolean }) => {
+				if (!opts?.force) throw new Error("ENOENT: no such file");
+				// force:true — rm suppresses error, resolve normally
+			};
+			// Should not reject
+			await cleanupTrackedTempDirs(mockRm);
+			assert.strictEqual(trackedTempDirs.size, 0);
+		});
+
+		it("multiple dirs — each correct path passed to rm", async () => {
+			const removed: string[] = [];
+			const mockRm = async (path: string) => {
+				removed.push(path);
+			};
+
+			registerTempDir("/tmp/a");
+			registerTempDir("/tmp/b");
+			registerTempDir("/tmp/c");
+			await cleanupTrackedTempDirs(mockRm);
+
+			assert.strictEqual(removed.length, 3);
+			assert.deepStrictEqual(removed.sort(), ["/tmp/a", "/tmp/b", "/tmp/c"]);
+		});
+	});
+
+	// ── Phase 2: Mock-based lifecycle (tool executor-like) ──
+
+	describe("full lifecycle (mock executor)", () => {
+		it("temp dir created on truncation — fullOutputPath set", async () => {
+			// Generate 600 lines to exceed MAX_TOTAL_RESULTS=500
+			const lines: string[] = [];
+			for (let i = 0; i < 600; i++) {
+				lines.push(`file:${i + 1}:1:line ${i + 1}`);
+			}
+			const rawOutput = lines.join("\n");
+
+			const searchResult = parseVimgrepOutput(rawOutput, 500);
+			const resultsTruncated = searchResult.truncated ?? false;
+
+			// Simulate the tool executor's temp dir creation
+			let fullOutputPath: string | undefined;
+			if (resultsTruncated) {
+				const tempDir = mkdtempSync(join(tmpdir(), "pi-ripgrep-test-"));
+				fullOutputPath = join(tempDir, "full-output.txt");
+				writeFileSync(fullOutputPath, rawOutput, "utf8");
+				registerTempDir(tempDir);
+			}
+
+			assert.ok(resultsTruncated, "Should be truncated (600 > 500)");
+			assert.ok(fullOutputPath, "Should set fullOutputPath");
+			assert.ok(fullOutputPath!.includes("pi-ripgrep-test-"), "Path should be in temp dir");
+
+			// Verify file exists
+			assert.ok(existsSync(fullOutputPath!), "Temp file should exist after tool call");
+			const content = readFileSync(fullOutputPath!, "utf8");
+			assert.strictEqual(content, rawOutput, "File should contain full raw stdout");
+
+			// Verify dir is tracked
+			assert.strictEqual(trackedTempDirs.size, 1);
+
+			// Clean up test artifacts
+			const parentDir = fullOutputPath!.replace("/full-output.txt", "");
+			rmSync(parentDir, { recursive: true, force: true });
+			trackedTempDirs.clear();
+		});
+
+		it("cleanup removes temp dir", async () => {
+			// Create a real temp dir with a file
+			const tempDir = mkdtempSync(join(tmpdir(), "pi-ripgrep-test-cleanup-"));
+			const filePath = join(tempDir, "full-output.txt");
+			writeFileSync(filePath, "test content", "utf8");
+			registerTempDir(tempDir);
+
+			assert.ok(existsSync(tempDir), "Temp dir should exist before cleanup");
+
+			// Use real rm from test scope
+			const { rm } = await import("node:fs/promises");
+			await cleanupTrackedTempDirs(rm);
+
+			assert.ok(!existsSync(tempDir), "Temp dir should be removed after cleanup");
+			assert.strictEqual(trackedTempDirs.size, 0, "Set should be cleared");
+		});
+
+		it("no temp dir on non-truncated search", async () => {
+			const rawOutput = "file:1:1:only one result";
+			const searchResult = parseVimgrepOutput(rawOutput);
+			const resultsTruncated = searchResult.truncated ?? false;
+
+			assert.ok(!resultsTruncated, "Should not be truncated (1 result)");
+			// This mimics the executor: no temp dir created when not truncated
+			assert.strictEqual(trackedTempDirs.size, 0);
+		});
 	});
 });
 
