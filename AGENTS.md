@@ -1,6 +1,7 @@
 # Agent Castle: The Pi Stack
 
 Pi coding agent for multiple git submodules.
+Core philosophy: Tool output is evidence. LLM opinion is speculation.
 
 ## Rules
 - Read/edit `.pi` folder: consult https://pi.dev/docs/latest, update @README.me
@@ -40,10 +41,6 @@ Pi coding agent for multiple git submodules.
 **List** directory
 - Correct: `bash ls`
 
-### ripgrep_search notes
-- `.gitignore` respected natively
-- `max_count` default 10 per file
-- Auto-fallback to `grep -rnH` (no column, no `.gitignore`) if ripgrep unavailable
 
 ## Discipline
 
@@ -55,28 +52,6 @@ Pi coding agent for multiple git submodules.
 ```
 Tool error → stop → change args, tool, or ask user
 ```
-
-## Session Advice
-
-Read `.pi/sessions/<session>.advice.md` before each task. Auto-generated on session shutdown. Score 0.00 (clean) to 1.00. Clean = no issues.
-
-Batch analysis:
-```bash
-npx tsx scripts/session-advice.ts        # all sessions
-npx tsx scripts/session-advice.ts --latest  # latest only
-```
-
-Extension: `session-advice` (toggle `/session-advice`).
-
-## Session Files
-
-`.pi/sessions/` produces per session:
-- `.jsonl` — structured log
-- `.md` — human-readable report
-- `.metadata.json` — token/cost/stats
-- `.advice.md` — improvement advice
-
-Symlinks `latest.*` point to most recent session.
 
 ## Package Safety
 
