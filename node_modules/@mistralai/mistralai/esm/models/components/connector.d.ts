@@ -1,0 +1,44 @@
+import * as z from "zod/v4";
+import { Result as SafeParseResult } from "../../types/fp.js";
+import { SDKValidationError } from "../errors/sdkvalidationerror.js";
+import { AuthenticationConfiguration } from "./authenticationconfiguration.js";
+import { ConnectionPreference } from "./connectionpreference.js";
+import { ConnectorLocale } from "./connectorlocale.js";
+import { ConnectorProtocol } from "./connectorprotocol.js";
+import { ConnectorTool } from "./connectortool.js";
+import { MCPServerCard } from "./mcpservercard.js";
+import { PublicAuthenticationMethod } from "./publicauthenticationmethod.js";
+import { PublicConnectionConfig } from "./publicconnectionconfig.js";
+import { ResourceType } from "./resourcetype.js";
+import { ResourceVisibility } from "./resourcevisibility.js";
+export type Connector = {
+    id: string;
+    name: string;
+    title?: string | null | undefined;
+    description: string;
+    createdAt: Date;
+    modifiedAt: Date;
+    server?: string | null | undefined;
+    protocol?: ConnectorProtocol | undefined;
+    iconUrl?: string | null | undefined;
+    serverCard?: MCPServerCard | null | undefined;
+    ownerId?: string | null | undefined;
+    ownerType: ResourceType;
+    visibility: ResourceVisibility;
+    locale?: ConnectorLocale | null | undefined;
+    systemPrompt?: string | null | undefined;
+    supportedAuthMethods?: Array<PublicAuthenticationMethod> | null | undefined;
+    connectionPreferences?: Array<ConnectionPreference> | null | undefined;
+    connectionCredentials?: Array<AuthenticationConfiguration> | null | undefined;
+    active?: boolean | null | undefined;
+    privateToolExecution: boolean;
+    mistral: boolean;
+    isAuthenticated?: boolean | null | undefined;
+    tools?: Array<ConnectorTool> | null | undefined;
+    systemPromptRoute?: string | null | undefined;
+    connectionConfig?: PublicConnectionConfig | null | undefined;
+};
+/** @internal */
+export declare const Connector$inboundSchema: z.ZodType<Connector, unknown>;
+export declare function connectorFromJSON(jsonString: string): SafeParseResult<Connector, SDKValidationError>;
+//# sourceMappingURL=connector.d.ts.map

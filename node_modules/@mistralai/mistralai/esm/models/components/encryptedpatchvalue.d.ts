@@ -1,0 +1,21 @@
+import * as z from "zod/v4";
+import { Result as SafeParseResult } from "../../types/fp.js";
+import { SDKValidationError } from "../errors/sdkvalidationerror.js";
+/**
+ * Wrapper for encrypted patch values in selective json_patch encryption.
+ *
+ * @remarks
+ *
+ * When partial encryption mode is enabled and a patch targets an EncryptedStrField,
+ * the patch value is encrypted and wrapped in this structure.
+ *
+ * The type field acts as a discriminator to distinguish this from user data.
+ */
+export type EncryptedPatchValue = {
+    type: "__encrypted__";
+    value: string;
+};
+/** @internal */
+export declare const EncryptedPatchValue$inboundSchema: z.ZodType<EncryptedPatchValue, unknown>;
+export declare function encryptedPatchValueFromJSON(jsonString: string): SafeParseResult<EncryptedPatchValue, SDKValidationError>;
+//# sourceMappingURL=encryptedpatchvalue.d.ts.map

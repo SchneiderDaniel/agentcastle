@@ -1,0 +1,391 @@
+/**
+ * Tests for .pi/extensions/context-info.ts — Context Window Telemetry Extension
+ *
+ * Verifies extension state machine handles all event orderings and edge cases.
+ * Pure unit tests — mock ExtensionAPI by capturing registered callbacks.
+ *
+ * Run with:
+ *   node --experimental-strip-types --test test/context-info.test.mts
+ */
+
+import assert from "node:assert";
+import { describe, it, beforeEach } from "node:test";
+
+// ---------------------------------------------------------------------------
+// Replicate context-info extension logic for isolated unit testing
+// (matches .pi/extensions/context-info.ts implementation exactly)
+// ---------------------------------------------------------------------------
+
+interface MockCtx {
+	getContextUsage: () => { tokens?: number; contextWindow?: number } | undefined;
+}
+
+interface MockPi {
+	on: (event: string, handler: (...args: any[]) => void) => void;
+}
+
+function createContextInfoExtension(): { pi: MockPi; logCalls: string[]; mockCtx: MockCtx } {
+	const logCalls: string[] = [];
+	const handlers = new Map<string, (...args: any[]) => void>();
+	const mockCtx: MockCtx = {
+		getContextUsage: () => undefined,
+	};
+
+	const mockPi: MockPi = {
+		on(event, handler) {
+			handlers.set(event, handler);
+		},
+	};
+
+	// Simulate the extension's default export logic
+	let contextWindow: number | undefined;
+	let contextTokens: number | undefined;
+	let emitted = false;
+
+	function tryEmit() {
+		if (emitted) return;
+		if (contextWindow === undefined || contextWindow <= 0) return;
+		if (contextTokens === undefined || contextTokens <= 0) return;
+		emitted = true;
+		logCalls.push(
+			JSON.stringify({
+				type: "context_info",
+				contextTokens,
+				contextWindow,
+			}),
+		);
+	}
+
+	handlers.set("session_start", () => {
+		contextWindow = undefined;
+		contextTokens = undefined;
+		emitted = false;
+	});
+
+	handlers.set("model_select", (event: any) => {
+		const cw = event.model?.contextWindow;
+		if (typeof cw === "number" && cw > 0) {
+			contextWindow = cw;
+			tryEmit();
+		}
+	});
+
+	// Match production: use ctx.getContextUsage() instead of event.message.usage
+	handlers.set("message_end", (event: any) => {
+		const msg = event.message;
+		if (!msg || msg.role !== "assistant") return;
+		const usage = mockCtx.getContextUsage();
+		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
+			contextTokens = usage.tokens;
+			tryEmit();
+		}
+	});
+
+	function invoke(event: string, ...args: any[]) {
+		const handler = handlers.get(event);
+		if (handler) handler(...args);
+	}
+
+	return {
+		pi: mockPi,
+		logCalls,
+		mockCtx,
+		_handlers: handlers,
+		_invoke: invoke,
+	} as unknown as {
+		pi: MockPi;
+		logCalls: string[];
+		mockCtx: MockCtx;
+		_invoke: (e: string, ...a: any[]) => void;
+	};
+}
+
+type TestCtx = ReturnType<typeof createContextInfoExtension>;
+
+function setCtxUsage(ctx: TestCtx, tokens: number) {
+	ctx.mockCtx.getContextUsage = () => ({ tokens, contextWindow: 256000 });
+}
+
+function invoke(ctx: TestCtx, event: string, ...args: any[]) {
+	(ctx as any)._invoke(event, ...args);
+}
+
+// ---------------------------------------------------------------------------
+// Duplicated helpers from .pi/extensions/context-info.ts (session timer)
+// ---------------------------------------------------------------------------
+
+/** Format elapsed ms → "⏱ Xh Ym Zs" */
+function formatSessionTimer(ms: number): string {
+	const totalSeconds = Math.floor(ms / 1000);
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+
+	if (hours > 0) return `\u23f1 ${hours}h ${minutes}m ${seconds}s`;
+	if (minutes > 0) return `\u23f1 ${minutes}m ${seconds}s`;
+	return `\u23f1 ${seconds}s`;
+}
+
+/** Build right section string: timer · tokens, or just timer, or just tokens */
+function buildRightSection(
+	showTimer: boolean,
+	timerMs: number,
+	tokenDisplay: string | null,
+): string {
+	const timerStr = showTimer ? formatSessionTimer(timerMs) : null;
+	if (timerStr && tokenDisplay) return `${timerStr} \u00b7 ${tokenDisplay}`;
+	if (timerStr) return timerStr;
+	return tokenDisplay ?? "";
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// formatSessionTimer tests
+// ---------------------------------------------------------------------------
+
+describe("formatSessionTimer", () => {
+	it("0ms → ⏱ 0s", () => {
+		assert.strictEqual(formatSessionTimer(0), "\u23f1 0s");
+	});
+
+	it("sub-minute: 30s → ⏱ 30s", () => {
+		assert.strictEqual(formatSessionTimer(30_000), "\u23f1 30s");
+	});
+
+	it("multi-minute: 5m 30s → ⏱ 5m 30s", () => {
+		assert.strictEqual(formatSessionTimer(330_000), "\u23f1 5m 30s");
+	});
+
+	it("multi-hour: 1h 23m 45s → ⏱ 1h 23m 45s", () => {
+		assert.strictEqual(formatSessionTimer(5_025_000), "\u23f1 1h 23m 45s");
+	});
+
+	it(">24h: 26h 15m → ⏱ 26h 15m 0s", () => {
+		// 26h 15m = 94,500,000ms
+		assert.strictEqual(formatSessionTimer(94_500_000), "\u23f1 26h 15m 0s");
+	});
+
+	it("exact hour: 1h → ⏱ 1h 0m 0s", () => {
+		assert.strictEqual(formatSessionTimer(3_600_000), "\u23f1 1h 0m 0s");
+	});
+
+	it("exact minute: 1m → ⏱ 1m 0s", () => {
+		assert.strictEqual(formatSessionTimer(60_000), "\u23f1 1m 0s");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Footer right section integration tests
+// ---------------------------------------------------------------------------
+
+describe("footer right section — session timer", () => {
+	it("timer with token display → ⏱ ... · ◉ ...", () => {
+		const result = buildRightSection(true, 330_000, "\u25c9 12.5K/200K [6%]");
+		assert.strictEqual(result, "\u23f1 5m 30s \u00b7 \u25c9 12.5K/200K [6%]");
+	});
+
+	it("timer hidden (showTimer=false) → only token display", () => {
+		const result = buildRightSection(false, 330_000, "\u25c9 12.5K/200K [6%]");
+		assert.strictEqual(result, "\u25c9 12.5K/200K [6%]");
+	});
+
+	it("timer visible, no token data → timer alone", () => {
+		const result = buildRightSection(true, 60_000, null);
+		assert.strictEqual(result, "\u23f1 1m 0s");
+	});
+
+	it("timer hidden, no token data → empty string", () => {
+		const result = buildRightSection(false, 0, null);
+		assert.strictEqual(result, "");
+	});
+});
+
+describe("context-info extension — happy path", () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = createContextInfoExtension();
+	});
+
+	it("P2.1: model_select then assistant message with usage → emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, 12400);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+
+		assert.strictEqual(ctx.logCalls.length, 1);
+		assert.strictEqual(
+			ctx.logCalls[0],
+			'{"type":"context_info","contextTokens":12400,"contextWindow":256000}',
+		);
+	});
+
+	it("P2.2: message_end before model_select → deferred emit", () => {
+		invoke(ctx, "session_start", {});
+		setCtxUsage(ctx, 12400);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		// No emit yet — waiting for model info
+		assert.strictEqual(ctx.logCalls.length, 0);
+
+		// Now model info arrives → emit
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		assert.strictEqual(ctx.logCalls.length, 1);
+		assert.strictEqual(
+			ctx.logCalls[0],
+			'{"type":"context_info","contextTokens":12400,"contextWindow":256000}',
+		);
+	});
+});
+
+describe("context-info extension — suppression cases", () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = createContextInfoExtension();
+	});
+
+	it("P2.3: contextWindow missing → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: {} });
+		setCtxUsage(ctx, 1000);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.4: contextWindow is 0 → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 0 } });
+		setCtxUsage(ctx, 1000);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.5: contextWindow undefined → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: undefined } });
+		setCtxUsage(ctx, 1000);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.6: getContextUsage returns undefined → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		// Don't call setCtxUsage — getContextUsage returns undefined
+		invoke(ctx, "message_end", { message: { role: "assistant" } });
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.7: getContextUsage returns tokens=0 → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, 0);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.8: message role is not assistant → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, 1000);
+		invoke(ctx, "message_end", {
+			message: { role: "user" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.9: no message_end ever fires → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.10: no model_select ever fires → no emit", () => {
+		invoke(ctx, "session_start", {});
+		setCtxUsage(ctx, 1000);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.11: agent fails immediately (only session_start) → no emit", () => {
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+});
+
+describe("context-info extension — reset behavior", () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = createContextInfoExtension();
+	});
+
+	it("P2.12: second session_start resets state → separate emits per round", () => {
+		// Round 1
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, 12400);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 1);
+
+		// Round 2 — reset mockCtx as well (new session)
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 512000 } });
+		setCtxUsage(ctx, 8000);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 2);
+		assert.strictEqual(
+			ctx.logCalls[1],
+			'{"type":"context_info","contextTokens":8000,"contextWindow":512000}',
+		);
+	});
+});
+
+describe("context-info extension — error resilience", () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = createContextInfoExtension();
+	});
+
+	it("P2.13: getContextUsage returns negative tokens → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		setCtxUsage(ctx, -1);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+
+	it("P2.14: contextWindow negative → no emit", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: -1 } });
+		setCtxUsage(ctx, 1000);
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+});
