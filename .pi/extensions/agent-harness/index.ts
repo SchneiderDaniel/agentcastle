@@ -49,6 +49,17 @@ interface ToolCallContext {
 	};
 }
 
+// ── Helpers ──
+
+/**
+ * Extract bash sub-key for sub-command-aware cascade detection.
+ * Uses first 2 tokens to distinguish multi-verb CLIs (git status vs git diff).
+ * Single-token commands produce same sub-key as before. Empty → undefined.
+ */
+export function getBashSubKey(command: string): string | undefined {
+	return command.trim().split(/\s+/).slice(0, 2).join(" ") || undefined;
+}
+
 // ── Guard result constants ──
 
 const PASS = null as ToolCallResult | null;
@@ -143,11 +154,9 @@ export function createToolCallHandler(state: HarnessState) {
 		}
 
 		// ── Extract bash subKey for sub-command-aware cascade detection ──
-		// First token of bash command becomes subKey. Empty/absent command → undefined.
+		// First 2 tokens of bash command become subKey. Empty/absent command → undefined.
 		const bashSubKey =
-			toolName === "bash"
-				? ((args.command ?? "") as string).trim().split(/\s+/)[0] || undefined
-				: undefined;
+			toolName === "bash" ? getBashSubKey((args.command ?? "") as string) : undefined;
 
 		// ── 5. Same-tool cascade detection (skip read — cache handles redundant reads) ──
 		// Cascade check uses count + 1 BEFORE recording, accounting for current call
