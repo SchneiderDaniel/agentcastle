@@ -151,8 +151,13 @@ function checkPath(
  * and checks each against ignore patterns.
  */
 function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string): string | null {
-	// Split into tokens, respecting quoted strings
-	const tokens: string[] = [];
+	// Split into tokens, respecting quoted strings. Track whether each
+	// token was quoted — quoted strings (echo "some.log") are not paths.
+	interface Token {
+		text: string;
+		wasQuoted: boolean;
+	}
+	const tokens: Token[] = [];
 	let current = "";
 	let inSingle = false;
 	let inDouble = false;
@@ -161,30 +166,42 @@ function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string):
 		if (inSingle) {
 			if (ch === "'") {
 				inSingle = false;
+				if (current) tokens.push({ text: current, wasQuoted: true });
+				current = "";
 				continue;
 			}
 			current += ch;
 		} else if (inDouble) {
 			if (ch === '"') {
 				inDouble = false;
+				if (current) tokens.push({ text: current, wasQuoted: true });
+				current = "";
 				continue;
 			}
 			current += ch;
 		} else if (ch === "'") {
+			if (current) tokens.push({ text: current, wasQuoted: false });
+			current = "";
 			inSingle = true;
 		} else if (ch === '"') {
+			if (current) tokens.push({ text: current, wasQuoted: false });
+			current = "";
 			inDouble = true;
 		} else if (ch === " " || ch === "\t") {
-			if (current) tokens.push(current);
+			if (current) tokens.push({ text: current, wasQuoted: false });
 			current = "";
 		} else {
 			current += ch;
 		}
 	}
-	if (current) tokens.push(current);
+	if (current) {
+		tokens.push({ text: current, wasQuoted: inSingle || inDouble });
+	}
 
 	// Filter tokens that look like paths (not options/flags/keywords)
-	const pathLike = tokens.filter((t) => {
+	const pathLike = tokens.filter((tok) => {
+		const t = tok.text;
+		if (tok.wasQuoted) return false; // "some.log", "file.tar" — not paths
 		if (t.startsWith("-")) return false; // options like -rf, --verbose
 		if (t === "|" || t === ";" || t === "&&" || t === "||") return false;
 		if (
@@ -197,12 +214,18 @@ function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string):
 			t === "1>"
 		)
 			return false;
+		// Skip URLs
+		if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(t)) return false;
+		// Skip npm scoped packages (@scope/name)
+		if (t.startsWith("@") && t.includes("/")) return false;
+		// Skip standalone tilde (shell home shortcut)
+		if (t === "~") return false;
 		// Contains path separator or known path indicators
 		return t.includes("/") || t.includes(".") || t.includes("~");
 	});
 
-	for (const t of pathLike) {
-		const result = checkPath(t, entries, cwd);
+	for (const tok of pathLike) {
+		const result = checkPath(tok.text, entries, cwd);
 		if (result) return result;
 	}
 	return null;
