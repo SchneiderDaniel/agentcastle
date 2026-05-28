@@ -12,8 +12,8 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { execSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { parseJsonlFile, analyzeSession, renderAdviceToMarkdown } from "./advisor.js";
-import type { AdviceEntry } from "./advisor.js";
+import { parseJsonlFile, analyzeSession, renderAdviceToMarkdown } from "./advisor.ts";
+import type { AdviceEntry } from "./advisor.ts";
 
 // ── Fix ideas + effort estimates per category ──
 
@@ -365,13 +365,21 @@ export function generateAdviceReport(sessionsDir: string): string {
 		});
 	}
 
-	// Sort sessions by recency (newest first) for recency decay weighting
-	// Recent sessions contribute more to priority calculation
+	// Build session recency map by pre-scanning JSONL headers.
+	// Key by header.id (session UUID) so lookup with data.sessionId matches.
+	// File index i from sorted list gives recency weight (0 = oldest, 1 = newest).
 	const sessionRecency = new Map<string, number>();
 	jsonlFiles.forEach((f, i) => {
-		// Assume files are sorted lexicographically (timestamp-based IDs)
-		const id = f.replace(/\.jsonl$/, "");
-		sessionRecency.set(id, i / Math.max(jsonlFiles.length - 1, 1));
+		const jsonlPath = path.join(sessionsDir, f);
+		try {
+			const raw = fs.readFileSync(jsonlPath, "utf-8");
+			const header = JSON.parse(raw.split("\n")[0]);
+			const sid = header.id ?? f.replace(/\.jsonl$/, "");
+			sessionRecency.set(sid, i / Math.max(jsonlFiles.length - 1, 1));
+		} catch {
+			// Fallback: key by filename for unparseable headers
+			sessionRecency.set(f.replace(/\.jsonl$/, ""), i / Math.max(jsonlFiles.length - 1, 1));
+		}
 	});
 
 	// Compute per-category severity + pick an example
