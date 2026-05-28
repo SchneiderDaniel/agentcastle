@@ -27,8 +27,8 @@ export interface ParsedSessionStats {
 		total: number;
 	};
 	cost: number;
-	models: string[];
-	thinkingLevels: string[];
+	modelChanges: Array<{ time: string; model: string }>;
+	thinkingChanges: Array<{ time: string; level: string }>;
 	compactions: number;
 	toolStats: Record<string, { calls: number; errors: number; totalDurationMs: number }>;
 	fileModifications: Array<{ action: string; path: string; timestamp: string; size?: number }>;
@@ -187,8 +187,8 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 
 	const header = entries[0];
 
-	const models = new Set<string>();
-	const thinkLevels = new Set<string>();
+	const modelChanges: Array<{ time: string; model: string }> = [];
+	const thinkingChanges: Array<{ time: string; level: string }> = [];
 	let inputTokens = 0;
 	let outputTokens = 0;
 	let cacheRead = 0;
@@ -225,9 +225,15 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 
 	for (const entry of entries) {
 		if (entry.type === "model_change") {
-			models.add(`${entry.provider}/${entry.modelId}`);
+			modelChanges.push({
+				time: entry.timestamp,
+				model: `${entry.provider}/${entry.modelId}`,
+			});
 		} else if (entry.type === "thinking_level_change") {
-			thinkLevels.add(entry.thinkingLevel);
+			thinkingChanges.push({
+				time: entry.timestamp,
+				level: entry.thinkingLevel,
+			});
 		} else if (entry.type === "compaction") {
 			compactions++;
 		} else if (entry.type === "message") {
@@ -308,8 +314,8 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 			total: totalTokens,
 		},
 		cost: totalCost,
-		models: [...models],
-		thinkingLevels: [...thinkLevels],
+		modelChanges,
+		thinkingChanges,
 		compactions,
 		toolStats: toolCounts,
 		fileModifications: fileMods,

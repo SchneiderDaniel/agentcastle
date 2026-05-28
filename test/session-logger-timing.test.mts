@@ -233,14 +233,8 @@ describe("tool stats merge logic (snapshot integration)", () => {
 			tokens: parsed.tokens,
 			cost: parsed.cost,
 			compactions: parsed.compactions,
-			modelChanges: parsed.models.map((m) => ({
-				time: parsed!.timestamp,
-				model: m,
-			})),
-			thinkingChanges: parsed.thinkingLevels.map((l) => ({
-				time: parsed!.timestamp,
-				level: l,
-			})),
+			modelChanges: parsed.modelChanges,
+			thinkingChanges: parsed.thinkingChanges,
 			perTurnTokens: parsed.perTurnTokens,
 			toolStats,
 			fileModifications: parsed.fileModifications,
