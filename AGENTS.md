@@ -48,6 +48,7 @@ Core philosophy: Tool output is evidence. LLM opinion is speculation.
 2. **Batch same-tool calls.** 3+ consecutive `bash` → combine with `&&`. 3+ `read` → larger chunk or offset. 3+ `write`/`edit` → batch.
 3. **Read once, page with offset.** Don't re-read same file within 3 turns.
 4. **Error = change approach.** Stop → change args, tool, or ask user. Don't retry same tool+args twice.
+5. Never commit to main
 
 ```
 Tool error → stop → change args, tool, or ask user
