@@ -478,17 +478,52 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							if (auditOutput) {
 								if (auditOutput.decision === "APPROVED") {
 									// Write PR_BODY to temp file for deterministic PR creation
-									if (auditOutput.prBody) {
+									const headBranch =
+										worktreeBranch ||
+										generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+
+									// Check branch has commits ahead of base before creating PR
+									let aheadCommits = 0;
+									try {
+										const ahead = execSync(
+											`git rev-list --count "${config.defaultBranch!}..${headBranch}`,
+											{ cwd: ctx.cwd, timeout: 5000 },
+										)
+											.toString()
+											.trim();
+										aheadCommits = parseInt(ahead, 10) || 0;
+									} catch {
+										// Branch may not exist locally — can't create PR
+									}
+
+									if (aheadCommits === 0) {
+										ctx.ui.notify(
+											`No new commits on ${headBranch} — skipping PR creation (already up to date with ${config.defaultBranch!})`,
+											"info",
+										);
+									} else if (auditOutput.prBody) {
 										const tempFile = joinPath(tmpdir(), `audit-pr-body-${issueNum}.md`);
 										try {
 											writeFileSync(tempFile, auditOutput.prBody, "utf-8");
 											const prTitle = auditOutput.prTitle || `feat(#${issueNum}): ${issueTitle}`;
+
+											// Push branch before creating PR so remote ref exists
+											if (worktreePath) {
+												try {
+													execSync(`git push "${config.remote!}" "${headBranch}"`, {
+														cwd: worktreePath,
+														timeout: 15000,
+													});
+												} catch {
+													// Branch may already be pushed — non-fatal
+												}
+											}
+
 											const prResult = await createPullRequest(
 												pi,
 												config.repo,
 												config.defaultBranch!,
-												worktreeBranch ||
-													generateBranchName(issueNum, issueTitle, config.branchPrefix!),
+												headBranch,
 												prTitle,
 												tempFile,
 											);
