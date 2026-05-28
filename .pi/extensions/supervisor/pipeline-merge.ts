@@ -76,7 +76,7 @@ export async function handlePostPipelineMerge(
 					"warning",
 				);
 
-				const devAgentPath = `.pi/agents/developer.md`;
+				const devAgentPath = `.pi/extensions/supervisor/agents/developer.md`;
 				if (existsSync(devAgentPath)) {
 					try {
 						const devAgent = parseAgentFile(devAgentPath);

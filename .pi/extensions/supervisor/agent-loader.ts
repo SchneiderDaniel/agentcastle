@@ -1,5 +1,5 @@
 // ─── Agent Loader ──────────────────────────────────────────────────
-// Parse .pi/agents/*.md files (YAML frontmatter + system prompt body).
+// Parse .pi/extensions/supervisor/agents/*.md files (YAML frontmatter + system prompt body).
 
 import type { ParsedAgent, AgentFrontmatter } from "./types";
 import { readFileSync } from "node:fs";

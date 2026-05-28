@@ -325,7 +325,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					}
 
 					// Load agent
-					const agentPath = `.pi/agents/${agentName}.md`;
+					const agentPath = `.pi/extensions/supervisor/agents/${agentName}.md`;
 					if (!existsSync(agentPath)) {
 						ctx.ui.notify(`Agent file not found: ${agentPath}`, "error");
 						stopReason = `Agent file not found: ${agentPath}`;

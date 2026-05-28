@@ -33,7 +33,7 @@ Store both answers for use in later phases.
 
 Read agent files to understand current model context and agent roles:
 ```bash
-ls .pi/agents/*.md
+ls .pi/extensions/supervisor/agents/*.md
 ```
 
 Read each agent file to extract:
@@ -227,7 +227,7 @@ After presenting the recommendation, use `ask_user` to ask:
 "Should I update the agent files with the recommended models? (y)es — apply top pick per agent, (n)o — discard, (c)ustom — pick per agent from recommended pairs"
 
 ### If "yes"
-1. Read each `.pi/agents/*.md` file using `read`
+1. Read each `.pi/extensions/supervisor/agents/*.md` file using `read`
 2. For each agent, update the `model:` field in the YAML frontmatter with the **1st pick** from the per-agent recommendation table
 3. If an agent file lacks a `model:` field, add it as `model: <recommended-model>` in the frontmatter (before the `---` closing line)
 4. Before executing any writes, show the user a diff of all changes using `ask_user` with the diff as context
