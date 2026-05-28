@@ -33,17 +33,23 @@ export async function runTscAndLspAudit(
 
 		if (ciResult.status === "failing") {
 			const failedNames = ciResult.checks
-				.filter((c) => c.conclusion === "failure" || c.conclusion === "cancelled" || c.conclusion === "action_required" || c.conclusion === "timed_out" || c.conclusion === "stale")
+				.filter(
+					(c) =>
+						c.conclusion === "failure" ||
+						c.conclusion === "cancelled" ||
+						c.conclusion === "action_required" ||
+						c.conclusion === "timed_out" ||
+						c.conclusion === "stale",
+				)
 				.map((c) => c.name)
 				.join(", ");
 			ctx.ui.notify(
 				`CI checks failing: ${failedNames}. Skipping audit — returning to Implementation.`,
 				"warning",
 			);
-			pi.sendUserMessage?.(
-				`CI failed: ${ciResult.message}. Fix and re-trigger.`,
-				{ deliverAs: "followUp" },
-			);
+			pi.sendUserMessage?.(`CI failed: ${ciResult.message}. Fix and re-trigger.`, {
+				deliverAs: "followUp",
+			});
 			return { nextStatus: "Implementation", note: `CI_FAILED: ${ciResult.message}` };
 		}
 
@@ -55,19 +61,19 @@ export async function runTscAndLspAudit(
 		}
 
 		if (ciResult.status === "error") {
-			ctx.ui.notify(
-				`CI check polling issue: ${ciResult.message}. Proceeding to audit.`,
-				"warning",
-			);
+			ctx.ui.notify(`CI check polling issue: ${ciResult.message}. Proceeding to audit.`, "warning");
 		}
 	}
 
 	// Step 1: TSC checkpoint (Tier 2)
+	// Run from main repo cwd, not worktree. Worktree has source files but
+	// no node_modules — imports to typebox, pi-coding-agent would fail.
+	// Main repo has all deps and same tsconfig.
 	const runTscCheckpointFn = await getRunTscCheckpoint();
 
 	if (runTscCheckpointFn) {
 		ctx.ui.setStatus("supervisor", "Running TSC checkpoint...");
-		const tscResult = await runTscCheckpointFn(pi, wt);
+		const tscResult = await runTscCheckpointFn(pi, ctx.cwd);
 		const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
 
 		if (tscDecision.nextStatus !== "Audit") {

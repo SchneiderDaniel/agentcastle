@@ -411,10 +411,10 @@ export async function commitAndPush(
 	// Try commit — skip on "nothing to commit" (dev already committed)
 	const commitResult = await pi.exec("git", ["commit", "-m", message], { cwd });
 	if (commitResult.code !== 0) {
-		const stderr = commitResult.stderr || "";
+		const output = (commitResult.stderr || "") + (commitResult.stdout || "");
 		// "nothing to commit" is not a real error — still push
-		if (!stderr.includes("nothing to commit")) {
-			throw new Error(`git commit failed: ${stderr || commitResult.stdout}`);
+		if (!output.includes("nothing to commit")) {
+			throw new Error(`git commit failed: ${output.trim()}`);
 		}
 	}
 	await pushBranch(pi, cwd, remote, branch);
