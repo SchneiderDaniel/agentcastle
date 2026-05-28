@@ -133,7 +133,7 @@ export default function crawl4ai(pi: ExtensionAPI): void {
 				content: [{ type: "text", text: "Falling back to direct HTTP fetch …" }],
 				details: {} as Record<string, unknown>,
 			});
-			const directResult = await directFetchCrawl(params.url, maxPages, signal);
+			const directResult = await directFetchCrawl(params.url, maxPages, signal, onUpdate);
 			return {
 				content: [{ type: "text", text: directResult }],
 				details: {} as Record<string, unknown>,

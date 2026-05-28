@@ -75,6 +75,11 @@ export async function directFetchCrawl(
 		visited.add(current);
 
 		try {
+			onUpdate?.({
+				content: [{ type: "text", text: `Fetching ${current}…` }],
+				details: {} as Record<string, unknown>,
+			});
+
 			const res = await fetch(current, {
 				headers: {
 					"User-Agent":
@@ -88,6 +93,15 @@ export async function directFetchCrawl(
 
 			if (!res.ok) {
 				results.push(`--- ${current} ---\nError: HTTP ${res.status} ${res.statusText}`);
+				onUpdate?.({
+					content: [
+						{
+							type: "text",
+							text: `Error fetching ${current}: HTTP ${res.status} ${res.statusText}`,
+						},
+					],
+					details: {} as Record<string, unknown>,
+				});
 				continue;
 			}
 
@@ -95,12 +109,26 @@ export async function directFetchCrawl(
 			if (!contentType.includes("text/html")) {
 				const snippet = await res.text();
 				results.push(`--- ${current} ---\n[Non-HTML: ${contentType}]\n${snippet.slice(0, 800)}`);
+				onUpdate?.({
+					content: [
+						{
+							type: "text",
+							text: `Fetched ${current} (non-HTML: ${contentType})`,
+						},
+					],
+					details: {} as Record<string, unknown>,
+				});
 				continue;
 			}
 
 			const html = await res.text();
 			const md = htmlToMarkdown(html);
 			results.push(`--- ${current} ---\n${md || "[No extractable content]"}`);
+
+			onUpdate?.({
+				content: [{ type: "text", text: `Fetched ${current} (${md.length} chars)` }],
+				details: {} as Record<string, unknown>,
+			});
 
 			if (visited.size < maxPages) {
 				const base = new URL(current);
@@ -120,6 +148,10 @@ export async function directFetchCrawl(
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
 			results.push(`--- ${current} ---\nError: ${msg}`);
+			onUpdate?.({
+				content: [{ type: "text", text: `Error fetching ${current}: ${msg}` }],
+				details: {} as Record<string, unknown>,
+			});
 		}
 	}
 
