@@ -13,7 +13,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHarnessState } from "../../lib/harness-state.ts";
-import { createToolCallHandler } from "./index.ts";
+import { createToolCallHandler, getBashSubKey } from "./index.ts";
 import agentHarness from "./index.ts";
 import { CASCADE_THRESHOLD, CACHE_TTL_TURNS } from "../../lib/harness-rules.ts";
 import type { ToolCallResult } from "./index.ts";
@@ -631,7 +631,7 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
-		// Blocked call (cat README.md)
+		// Blocked call (cat README.md) — subKey "cat", blocked, NOT recorded
 		await api.fire("tool_call", {
 			type: "tool_call",
 			toolCallId: "1",
@@ -639,16 +639,17 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			input: { command: "cat README.md" },
 		});
 
-		// Legitimate call — should count as first, not second, since blocked didn't count
+		// Legitimate call — use 2-token command for consistent subKey across loop
+		// subKey "echo hi" — should count as first, not second, since blocked didn't count
 		let result = await api.fire("tool_call", {
 			type: "tool_call",
 			toolCallId: "2",
 			toolName: "bash",
-			input: { command: "echo hello" },
+			input: { command: "echo hi" },
 		});
 		assert.ok(result == null, "legitimate call after blocked should pass");
 
-		// 7 more legitimate calls — 8th total (i=9) should block
+		// 7 more identical legitimate calls — 8th total (i=9) should block
 		for (let i = 3; i <= 9; i++) {
 			result = await api.fire("tool_call", {
 				type: "tool_call",
@@ -733,7 +734,7 @@ describe("Bug 3 fix: CallCounter subKey cascade", () => {
 		}
 	});
 
-	it("8 git sub-commands — 8th blocked (same-subKey bash:git)", () => {
+	it("8 diverse git sub-commands — all 8 pass (sub-command-aware keys)", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
@@ -747,14 +748,12 @@ describe("Bug 3 fix: CallCounter subKey cascade", () => {
 			"git push",
 			"git pull",
 		];
-		let result: ToolCallResult | null = null;
 		for (let i = 0; i < gitCommands.length; i++) {
-			result = handler(makeEvent("bash", { command: gitCommands[i] }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `git cmd ${i} should pass`);
-			}
+			const result = handler(makeEvent("bash", { command: gitCommands[i] }), makeCtx());
+			assert.equal(result, null, `git cmd ${i} (${gitCommands[i]}) should pass`);
 		}
-		assert.ok(result?.block, "8th git sub-command should block");
+		// Verify 0 blocks by checking currentTurn == 8
+		assert.equal(state.currentTurn, 8, "all 8 git calls should have passed");
 	});
 
 	it("bash subKey resets when switching between different first tokens", () => {
@@ -804,6 +803,197 @@ describe("Bug 3 fix: CallCounter subKey cascade", () => {
 		// they're different keys, so both have count 1.
 		// Total turns: 2
 		assert.equal(state.currentTurn, 2);
+	});
+});
+
+// ── Phase 2: Multi-verb CLI diversity (npm, docker, gh) ──
+
+describe("Phase 2: Multi-verb CLI diversity — 2-token subKey", () => {
+	it("getBashSubKey pure function — 2-token extraction", () => {
+		assert.equal(getBashSubKey("git status"), "git status");
+		assert.equal(getBashSubKey("git diff"), "git diff");
+		assert.equal(getBashSubKey("echo hi"), "echo hi");
+		assert.equal(getBashSubKey("ls"), "ls");
+		assert.equal(getBashSubKey("npm install"), "npm install");
+		assert.equal(getBashSubKey("docker ps"), "docker ps");
+		assert.equal(getBashSubKey("gh issue list"), "gh issue");
+		assert.equal(getBashSubKey(""), undefined);
+		assert.equal(getBashSubKey("   "), undefined);
+		assert.equal(getBashSubKey("git push origin main"), "git push");
+	});
+
+	it("npm install ×8 — 8th blocked (same 2-token subKey)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "npm install" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `npm install call ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th npm install should block (same subKey)");
+	});
+
+	it("diverse npm sub-commands — all 8 pass", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const commands = [
+			"npm install",
+			"npm test",
+			"npm run build",
+			"npm publish",
+			"npm audit",
+			"npm cache clean",
+			"npm ci",
+			"npm outdated",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `npm cmd ${i} (${commands[i]}) should pass`);
+		}
+		assert.equal(state.currentTurn, 8, "all 8 diverse npm calls should pass");
+	});
+
+	it("diverse docker sub-commands — all 8 pass", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const commands = [
+			"docker ps",
+			"docker exec",
+			"docker logs",
+			"docker build",
+			"docker run",
+			"docker stop",
+			"docker rm",
+			"docker images",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `docker cmd ${i} (${commands[i]}) should pass`);
+		}
+		assert.equal(state.currentTurn, 8, "all 8 diverse docker calls should pass");
+	});
+
+	it("diverse gh sub-commands — all 8 pass", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const commands = [
+			"gh issue list",
+			"gh pr create",
+			"gh release list",
+			"gh run list",
+			"gh repo view",
+			"gh search repos",
+			"gh secret list",
+			"gh config list",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `gh cmd ${i} (${commands[i]}) should pass`);
+		}
+		assert.equal(state.currentTurn, 8, "all 8 diverse gh calls should pass");
+	});
+});
+
+// ── Phase 3: Backward compatibility and edge cases ──
+
+describe("Phase 3: Backward compatibility and edge cases", () => {
+	it("echo hi ×8 — 8th blocked (single-token subKey, backward compat)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `echo hi call ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th echo hi should block (same subKey)");
+	});
+
+	it("non-bash write cascade still works — 8th blocked", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `write call ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th write call should block (unchanged path)");
+	});
+
+	it("bash empty command ×8 — 8th blocked (same undefined subKey)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `empty bash ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th empty bash should block (same undefined subKey)");
+	});
+
+	it("bash({}) then bash with command — both pass (different subKeys)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// No command key — subKey undefined
+		const r1 = handler(makeEvent("bash", {}), makeCtx());
+		assert.equal(r1, null);
+
+		// Has command — subKey "echo"
+		const r2 = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+		assert.equal(r2, null);
+
+		// Different keys, both pass, 2 turns
+		assert.equal(state.currentTurn, 2);
+	});
+
+	it("mixed CLIs (git/npm/docker/gh) — all 8 pass", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const commands = [
+			"git status",
+			"npm install",
+			"docker ps",
+			"gh issue list",
+			"git diff",
+			"npm test",
+			"docker exec",
+			"gh pr create",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `mixed cmd ${i} (${commands[i]}) should pass`);
+		}
+		assert.equal(state.currentTurn, 8, "all 8 mixed CLI calls should pass");
+	});
+
+	it("git push origin main ×8 — 8th blocked (same 2-token subKey 'git push')", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "git push origin main" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `git push call ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th git push origin main should block (same 2-token subKey)");
 	});
 });
 
