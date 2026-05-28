@@ -145,64 +145,139 @@ function checkPath(
 	return null;
 }
 
+// ---------------------------------------------------------------------------
+// Bash tokenization helpers
+// ---------------------------------------------------------------------------
+
+interface BashToken {
+	text: string;
+	quoted: boolean;
+}
+
 /**
- * Extract potential file/directory paths from a bash command string.
- * Looks for tokens that look like paths (contain / or common extensions)
- * and checks each against ignore patterns.
+ * Split a bash command string into tokens, tracking whether each was quoted.
+ * Only the outermost quoting pair is tracked (double or single).
+ * Nested quotes inside a quoted token are literal characters.
  */
-function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string): string | null {
-	// Split into tokens, respecting quoted strings
-	const tokens: string[] = [];
+function tokenizeBashCommand(command: string): BashToken[] {
+	const tokens: BashToken[] = [];
 	let current = "";
 	let inSingle = false;
 	let inDouble = false;
+	let quoted = false;
+
+	function flush() {
+		if (current || quoted) {
+			tokens.push({ text: current, quoted });
+		}
+		current = "";
+		quoted = false;
+	}
+
 	for (let i = 0; i < command.length; i++) {
 		const ch = command[i];
+
 		if (inSingle) {
 			if (ch === "'") {
 				inSingle = false;
+				quoted = true;
 				continue;
 			}
 			current += ch;
 		} else if (inDouble) {
 			if (ch === '"') {
 				inDouble = false;
+				quoted = true;
 				continue;
 			}
 			current += ch;
 		} else if (ch === "'") {
+			flush();
 			inSingle = true;
 		} else if (ch === '"') {
+			flush();
 			inDouble = true;
 		} else if (ch === " " || ch === "\t") {
-			if (current) tokens.push(current);
-			current = "";
+			flush();
 		} else {
 			current += ch;
 		}
 	}
-	if (current) tokens.push(current);
 
-	// Filter tokens that look like paths (not options/flags/keywords)
-	const pathLike = tokens.filter((t) => {
-		if (t.startsWith("-")) return false; // options like -rf, --verbose
-		if (t === "|" || t === ";" || t === "&&" || t === "||") return false;
-		if (
-			t === ">" ||
-			t === ">>" ||
-			t === "<" ||
-			t === "2>" ||
-			t === "2>>" ||
-			t === "&>" ||
-			t === "1>"
-		)
-			return false;
-		// Contains path separator or known path indicators
-		return t.includes("/") || t.includes(".") || t.includes("~");
-	});
+	flush();
+
+	return tokens;
+}
+
+/**
+ * Extract the command name from a bash command (first non-option token).
+ */
+function getCommandName(command: string): string {
+	const tokens = tokenizeBashCommand(command);
+	for (const t of tokens) {
+		if (t.quoted) continue;
+		if (t.text.startsWith("-")) continue;
+		if (t.text === "|" || t.text === ";" || t.text === "&&" || t.text === "||") continue;
+		return t.text;
+	}
+	return "";
+}
+
+/**
+ * Determine if a token looks like a file path that should be checked.
+ * Excludes known non-path patterns (URLs, npm scoped packages, standalone tilde,
+ * option flags, shell operators) and all tokens when command is echo/printf.
+ */
+function isPathLike(token: BashToken, commandName: string): boolean {
+	const t = token.text;
+
+	// Option flags and shell operators are never paths
+	if (t.startsWith("-")) return false;
+	if (
+		t === "|" ||
+		t === ";" ||
+		t === "&&" ||
+		t === "||" ||
+		t === ">" ||
+		t === ">>" ||
+		t === "<" ||
+		t === "2>" ||
+		t === "2>>" ||
+		t === "&>" ||
+		t === "1>"
+	)
+		return false;
+
+	// Standalone tilde is shell home shortcut, not a file path
+	if (t === "~") return false;
+
+	// npm/yarn scoped package names (@scope/...) are not local paths
+	if (t.startsWith("@")) return false;
+
+	// URLs with scheme prefix are not local paths
+	// Matches http://, https://, ftp://, s3://, file://, etc.
+	if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return false;
+
+	// Echo-like commands take string literals, never file paths
+	if (commandName === "echo" || commandName === "printf") return false;
+
+	// Path-like character heuristic for non-excluded tokens
+	return t.includes("/") || t.includes(".") || t.includes("~");
+}
+
+/**
+ * Extract potential file/directory paths from a bash command string.
+ * Tokenizes the command, extracts the command name, checks each
+ * path-like token against ignore patterns.
+ */
+function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string): string | null {
+	const tokens = tokenizeBashCommand(command);
+	const commandName = getCommandName(command);
+
+	const pathLike = tokens.filter((t) => isPathLike(t, commandName));
 
 	for (const t of pathLike) {
-		const result = checkPath(t, entries, cwd);
+		const result = checkPath(t.text, entries, cwd);
 		if (result) return result;
 	}
 	return null;
