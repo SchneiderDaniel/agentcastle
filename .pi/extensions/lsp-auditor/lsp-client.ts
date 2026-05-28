@@ -88,12 +88,35 @@ function lspSeverityToLabel(severity: number): "Error" | "Warning" | "Informatio
 	}
 }
 
-/** Promise with timeout */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
-	return Promise.race([
-		promise,
-		new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
-	]);
+/** Promise with timeout — guarded against unhandled rejections from losing promise */
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+	// Use a settled flag so the losing settlement is silently absorbed.
+	// This prevents unhandled rejections when connection.dispose() rejects
+	// a timed-out sendRequest promise (issue #247), while still propagating
+	// rejections that occur before the timeout fires.
+	let settled = false;
+	return new Promise<T | null>((resolve, reject) => {
+		promise.then(
+			(val) => {
+				if (!settled) {
+					settled = true;
+					resolve(val);
+				}
+			},
+			(err) => {
+				if (!settled) {
+					settled = true;
+					reject(err);
+				}
+			},
+		);
+		setTimeout(() => {
+			if (!settled) {
+				settled = true;
+				resolve(null);
+			}
+		}, ms);
+	});
 }
 
 function sleep(ms: number): Promise<void> {
