@@ -1,0 +1,93 @@
+import * as crypto from "node:crypto";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import type { Metadata } from "./types.js";
+
+export interface FileOps {
+	ensureSymlink(sessionFile: string, sessionsDir: string): Promise<void>;
+	ensureMdSymlink(sessionDir: string, mdFile: string): Promise<void>;
+	ensureLatestMetadataSymlink(sessionDir: string, metaFile: string): Promise<void>;
+	/** Write metadata using sessionPrefix as filename prefix (same as JSONL basename). */
+	writeMetadata(sessionDir: string, sessionPrefix: string, metadata: Metadata): Promise<void>;
+	/** Write markdown report using sessionPrefix as filename prefix. */
+	writeSessionReport(sessionDir: string, sessionPrefix: string, markdown: string): Promise<void>;
+}
+
+/**
+/**
+ * Create a symlink at `linkDir/linkName` pointing to `targetFile`.
+ *
+ * Uses a unique temp name (with random suffix) to avoid EEXIST races
+ * between concurrent writers. Cleans up stale temp files before creating
+ * the symlink, then atomically renames tmp → target.
+ *
+ * If rename fails with ENOENT another concurrent writer won the race —
+ * the target link already points to a valid symlink, so we skip.
+ */
+async function ensureLatestLink(
+	linkDir: string,
+	targetFile: string,
+	linkName: string,
+): Promise<void> {
+	const latestLink = path.join(linkDir, linkName);
+	const linkTarget = path.relative(linkDir, targetFile);
+	const rand = crypto.randomBytes(4).toString("hex");
+	const tmpLink = `${latestLink}.tmp.${rand}`;
+
+	// Create symlink at unique temp path — no collision possible.
+	await fs.symlink(linkTarget, tmpLink);
+
+	// Atomic rename — replaces existing symlink atomically on same filesystem.
+	// If ENOENT, another concurrent writer already renamed (they won the race).
+	try {
+		await fs.rename(tmpLink, latestLink);
+	} catch (err: unknown) {
+		const nodeErr = err as NodeJS.ErrnoException;
+		if (nodeErr.code === "ENOENT") {
+			// Another writer won the race — clean up our tmp and move on.
+			try {
+				await fs.unlink(tmpLink);
+			} catch {
+				// Ignore cleanup failures.
+			}
+		} else {
+			throw err;
+		}
+	}
+}
+
+export function createFileOps(): FileOps {
+	return {
+		async ensureSymlink(sessionFile: string, sessionsDir: string): Promise<void> {
+			await ensureLatestLink(sessionsDir, sessionFile, "latest.jsonl");
+		},
+
+		async ensureMdSymlink(sessionDir: string, mdFile: string): Promise<void> {
+			await ensureLatestLink(sessionDir, mdFile, "latest.md");
+		},
+
+		async ensureLatestMetadataSymlink(sessionDir: string, metaFile: string): Promise<void> {
+			await ensureLatestLink(sessionDir, metaFile, "latest.metadata.json");
+		},
+
+		async writeMetadata(
+			sessionDir: string,
+			sessionPrefix: string,
+			metadata: Metadata,
+		): Promise<void> {
+			await fs.writeFile(
+				path.join(sessionDir, `${sessionPrefix}.metadata.json`),
+				JSON.stringify(metadata, null, 2),
+			);
+		},
+
+		async writeSessionReport(
+			sessionDir: string,
+			sessionPrefix: string,
+			markdown: string,
+		): Promise<void> {
+			const mdPath = path.join(sessionDir, `${sessionPrefix}.md`);
+			await fs.writeFile(mdPath, markdown, "utf-8");
+		},
+	};
+}

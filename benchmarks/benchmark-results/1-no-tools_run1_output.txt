@@ -1,0 +1,146 @@
+I'll start by finding all `generate_*_figure()` methods in the services directory and their corresponding test files.
+
+<bash>
+<command>cd /home/miria/git/main && find flask_planhead/app/services -name '*.py' -type f | sort</command>
+</bash>
+
+<bash>
+<command>cd /home/miria/git/main && grep -rn 'def generate_.*_figure' flask_planhead/app/services/</command>
+</bash>
+
+<bash>
+<command>cd /home/miria/git/main && find flask_planhead/tests -name '*.py' -type f | sort</command>
+</bash>
+
+Now let me examine each service file with `generate_*_figure()` methods to understand their signatures and behavior:
+
+<bash>
+<command>cd /home/miria/git/main && for f in flask_planhead/tests/test_*.py; do echo "=== $f ==="; grep -n 'generate_.*_figure' "$f" || echo "(no generate_*_figure references)"; done</command>
+</bash>
+
+Let me get the full method signatures and line counts for each service file:
+
+<bash>
+<command>cd /home/miria/git/main && grep -n '^def generate_.*_figure\|^class' flask_planhead/app/services/*_chart.py</command>
+</bash>
+
+Let me also check for any chart/figure related test files more broadly:
+
+<bash>
+<command>cd /home/miria/git/main && find flask_planhead/tests -name '*.py' -exec grep -l 'figure\|chart\|plot' {} \;</command>
+</bash>
+
+Now I need to examine each service in detail to understand the figure methods:
+
+<bash>
+<command>cd /home/miria/git/main && for f in flask_planhead/app/services/*_chart.py; do echo "--- $f ---"; grep -n 'def\|^class' "$f"; done</command>
+</bash>
+
+<bash>
+<command>cd /home/miria/git/main && cat flask_planhead/app/services/gesture_chart_service.py</command>
+</bash>
+
+<bash>
+<command>cd /home/miria/git/main && cat flask_planhead/app/services/trace_chart_service.py</command>
+</bash>
+
+<bash>
+<command>cd /home/miria/git/main && cat flask_planhead/app/services/fft_chart_service.py</command>
+</bash>
+
+<bash>
+<command>cd /home/miria/git/main && cat flask_planhead/app/services/portfolio_chart_service.py</command>
+</bash>
+
+<bash>
+<command>cd /home/miria/git/main && cat flask_planhead/app/services/volume_chart_service.py</command>
+</bash>
+
+Now let me check the existing test files:
+
+<bash>
+<command>cd /home/miria/git/main && find flask_planhead/tests -name '*.py' -type f | while read f; do echo "=== $f ==="; cat "$f" 2>/dev/null; echo; done</command>
+</bash>
+
+<bash>
+<command>cd /home/miria/git/main && find flask_planhead/tests -type d | sort</command>
+</bash>
+
+Here is the full coverage audit:
+
+---
+
+## Coverage Audit: Figure Generation Methods
+
+### Services Found (5 files, each with `generate_*_figure()`)
+
+| # | Service File | Method(s) | Total Lines |
+|---|-------------|-----------|-------------|
+| 1 | `app/services/gesture_chart_service.py` | `generate_gesture_figure(data: dict)` | 51 lines |
+| 2 | `app/services/trace_chart_service.py` | `generate_trace_figure(data: dict)` | 48 lines |
+| 3 | `app/services/portfolio_chart_service.py` | `generate_portfolio_figure(data: dict, params: dict)` | 56 lines |
+| 4 | `app/services/fft_chart_service.py` | `generate_fft_figure(data: dict, params: dict)` | 47 lines |
+| 5 | `app/services/volume_chart_service.py` | `generate_volume_figure(data: dict, params: dict)` | 49 lines |
+
+### Existing Test Coverage
+
+| Test File | Figure-related Tests? | Coverage Status |
+|-----------|----------------------|-----------------|
+| `tests/test_services_integration.py` | **None** ("figure" unreferenced) | ❌ No figure tests |
+| `tests/test_routes_integration.py` | **None** ("figure" unreferenced) | ❌ No figure tests |
+
+**Result: 0 of 5 figure methods have any test coverage.**
+
+All five `generate_*_figure()` methods are **completely untested**.
+
+---
+
+### 🟢 Simple Cases (recommend single test file)
+
+**1. `gesture_chart_service.py`** (51 lines)
+- Method: `generate_gesture_figure(data: dict)` — single `data` dict argument
+- **Risk**: Low complexity, no params dict, straightforward
+- **Action**: Add to `tests/test_chart_figures.py` or `tests/test_gesture_chart_service.py`
+
+**2. `trace_chart_service.py`** (48 lines)
+- Method: `generate_trace_figure(data: dict)` — single `data` dict argument
+- **Risk**: Low complexity, same pattern as gesture
+- **Action**: Add to same test file as gesture, or dedicated test
+
+---
+
+### 🟡 Complex Cases (need dedicated test coverage)
+
+**3. `portfolio_chart_service.py`** (56 lines)
+- Method: `generate_portfolio_figure(data: dict, params: dict)` — two arguments, `params` likely affects layout/style
+- **Risk**: More edge cases from configurable params
+- **Action**: Test at least 2-3 `params` variants + empty/missing data
+
+**4. `fft_chart_service.py`** (47 lines)
+- Method: `generate_fft_figure(data: dict, params: dict)` — two arguments
+- **Risk**: FFT plots have axis scaling concerns, potential edge cases in frequency domain data
+- **Action**: Test normal input, zero/empty data, extreme frequency ranges
+
+**5. `volume_chart_service.py`** (49 lines)
+- Method: `generate_volume_figure(data: dict, params: dict)` — two arguments
+- **Risk**: Volume bars with color logic (green/red based on delta) — likely has branching on data values
+- **Action**: Test positive volume, negative delta, zero delta, empty data
+
+---
+
+## Recommendations
+
+| Priority | File | Suggested Action | Recommended Test File |
+|----------|------|------------------|-----------------------|
+| 🔴 P0 | `portfolio_chart_service.py` | Create dedicated test | `tests/test_portfolio_chart_service.py` |
+| 🔴 P0 | `fft_chart_service.py` | Create dedicated test | `tests/test_fft_chart_service.py` |
+| 🔴 P0 | `volume_chart_service.py` | Create dedicated test | `tests/test_volume_chart_service.py` |
+| 🟢 P1 | `gesture_chart_service.py` | Add to shared test | `tests/test_chart_figures.py` |
+| 🟢 P1 | `trace_chart_service.py` | Add to shared test | `tests/test_chart_figures.py` |
+
+**Overall coverage gap**: **100% uncovered** (5/5 methods).
+
+Each test file should minimally test:
+1. **Happy path** — valid input produces a valid figure (check return type, title, axis labels)
+2. **Empty/missing data** — empty dict or missing keys don't crash
+3. **Edge values** — zeros, negatives (especially for volume color logic), large numbers

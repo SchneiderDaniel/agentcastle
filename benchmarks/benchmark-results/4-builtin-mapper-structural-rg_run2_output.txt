@@ -1,0 +1,110 @@
+Now I have a complete picture. Let me compile the comprehensive audit report.
+
+---
+
+## 📊 Audit Report: Chart/Figure Generation Method Test Coverage
+
+### Summary
+
+| Status | Count |
+|--------|-------|
+| Total `generate_*_figure()` methods found | **24** (across 18 service files) |
+| Fully tested (direct figure assertions) | **7** |
+| Partially tested (mock only in route tests) | **6** |
+| **No figure test coverage at all** | **11** |
+
+---
+
+### ✅ FULLY COVERED (have test files with direct `generate_*_figure` assertions)
+
+| Service File | Method(s) | Test File | What's Tested |
+|---|---|---|---|
+| `freezer_service.py` | `generate_comparison_figure` | `test_freezer_service.py` | Assert `fig.data[0].name` matches |
+| `washing_machine_service.py` | `generate_comparison_figure` | `test_washing_machine_service.py` | Assert `fig.data[0].name` matches |
+| `reading_service.py` | `generate_reading_figure` | `test_reading_service.py` | Assert bar chart with 4 data points |
+| `meeting_service.py` | `generate_cost_gauge` | `test_meeting_service.py` | 5 scenarios testing gauge scale ranges |
+| `dashboard_service.py` | `generate_scenario_figure`, `generate_monthly_category_flow_figure`, `generate_monthly_income_expense_figure`, `generate_sankey_diagram`, `generate_priority_expense_pie_figure` | `test_dashboard_service.py` | Full coverage with sample data and no-events edge case |
+| `spider_diagram_service.py` | `generate_pdf` | `test_spider_diagram.py` | Normalization logic + route-level PDF assertions |
+
+---
+
+### ⚠️ PARTIALLY COVERED (mocked only in route tests, no service-level figure tests)
+
+| Service File | Method(s) | Covered By | Gap |
+|---|---|---|---|
+| `dashboard_service.py` | `generate_depot_figure` | `test_routes.py` (mocked) | ❌ **No unit test** in `test_dashboard_service.py` — method is mocked in route tests but never unit-tested directly |
+
+Note: The 6 dashboard methods listed in ✅ have direct unit tests. `generate_depot_figure` is the **only** dashboard method that's mocked in routes but never directly tested.
+
+---
+
+### ❌ NO TEST COVERAGE for figure generation
+
+| # | Service File | Method(s) | Test File | Gap |
+|---|---|---|---|---|
+| 1 | `car_service.py` | `generate_comparison_figure` | `test_car_io.py` / `test_car_edge_cases.py` | **No figure tests at all** (files test route I/O and edge cases only) |
+| 2 | `coffee_service.py` | `generate_comparison_figures` | `test_coffee_service.py` | Tests `calculate_cumulative_costs` and `calculate_cumulative_time` only |
+| 3 | `kettle_service.py` | `generate_waste_figure` | `test_kettle_service.py` | Tests thermodynamics calculation only |
+| 4 | `oven_service.py` | `generate_comparison_figure` | `test_oven_service.py` | Tests cumulative costs only |
+| 5 | `calorie_service.py` | `generate_comparison_figure` | `test_calorie_service.py` | Tests `calculate_burn` only |
+| 6 | `inflation_service.py` | `generate_inflation_figure` | `test_inflation_service.py` | Tests value calculation + era comparisons only |
+| 7 | `caffeine_service.py` | `generate_decay_figure` | `test_caffeine_service.py` | Tests decay calculation only |
+| 8 | `tv_service.py` | `generate_comparison_figure` | `test_tv_service.py` | Tests cumulative costs only |
+| 9 | `stove_service.py` | `generate_comparison_figure` | `test_stove_service.py` | Tests cumulative costs + efficiency only |
+| 10 | `pc_service.py` | `generate_comparison_figure` | `test_pc_service.py` | Tests cumulative costs only |
+| 11 | `protein_service.py` | `generate_chart` | `test_protein_service.py` | Tests calculation + defaults only |
+
+---
+
+### ❌ NO DEDICATED TEST FILE EXISTS at all
+
+These services have `generate_*_figure()` methods but **no corresponding `test_<service>.py` file**:
+
+| Service File | Method(s) | Notes |
+|---|---|---|
+| `dishwasher_service.py` | `generate_comparison_figure` | No test file at all |
+| `dryer_service.py` | `generate_comparison_figure` | No test file at all |
+| `lighting_service.py` | `generate_comparison_figure` | No test file at all |
+| `fitness_service.py` | `generate_comparison_figures` | No test file at all |
+
+(These also lack a `test_*_service.py` file entirely, so their `calculate_*` methods have no coverage either.)
+
+---
+
+### 🎯 Recommendations (by priority)
+
+**P0 — Missing test files (4 new files needed):**
+1. **Create `test_dishwasher_service.py`** — test `generate_comparison_figure` + `calculate_cumulative_costs`
+2. **Create `test_dryer_service.py`** — test `generate_comparison_figure` + `calculate_cumulative_costs`  
+3. **Create `test_lighting_service.py`** — test `generate_comparison_figure` + `calculate_cumulative_costs`
+4. **Create `test_fitness_service.py`** — test `generate_comparison_figures` + `calculate_cumulative_costs`
+
+Follow the pattern from `test_freezer_service.py` / `test_washing_machine_service.py` (assert `fig.data[0].name` and figure structure).
+
+**P1 — Extend existing test files (7 files to update):**
+5. **Extend `test_car_service.py`** (or create it; currently only `test_car_io.py` exists) — add `test_generate_comparison_figure`
+6. **Extend `test_coffee_service.py`** — add `test_generate_comparison_figures` (plural — returns list of figures, unique pattern)
+7. **Extend `test_kettle_service.py`** — add `test_generate_waste_figure`
+8. **Extend `test_oven_service.py`** — add `test_generate_comparison_figure`
+9. **Extend `test_calorie_service.py`** — add `test_generate_comparison_figure`
+10. **Extend `test_inflation_service.py`** — add `test_generate_inflation_figure`
+11. **Extend `test_caffeine_service.py`** — add `test_generate_decay_figure`
+
+**P2 — Add missing figure assertions to existing tests (3 files):**
+12. **Extend `test_tv_service.py`** — add `test_generate_comparison_figure`
+13. **Extend `test_stove_service.py`** — add `test_generate_comparison_figure`
+14. **Extend `test_pc_service.py`** — add `test_generate_comparison_figure`
+15. **Extend `test_protein_service.py`** — add `test_generate_chart`
+
+**P3 — Depot figure gap:**
+16. **Extend `test_dashboard_service.py`** — add `test_generate_depot_figure` (only dashboard figure method missing a dedicated unit test)
+
+**Key testing pattern from existing well-covered tests:**
+```python
+def test_generate_comparison_figure():
+    service = SomeService(...)
+    item = SomeModel(name="Test", ...)
+    fig = service.generate_comparison_figure([item])
+    assert len(fig.data) == 1
+    assert fig.data[0].name == "Test"
+```
