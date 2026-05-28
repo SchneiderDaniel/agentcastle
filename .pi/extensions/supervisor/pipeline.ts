@@ -477,64 +477,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							const auditOutput = extractStructuredAuditOutput(agentOutput);
 							if (auditOutput) {
 								if (auditOutput.decision === "APPROVED") {
-									// Write PR_BODY to temp file for deterministic PR creation
-									const headBranch =
-										worktreeBranch ||
-										generateBranchName(issueNum, issueTitle, config.branchPrefix!);
-
-									// Check branch has commits ahead of base before creating PR
-									let aheadCommits = 0;
-									try {
-										const ahead = execSync(
-											`git rev-list --count "${config.defaultBranch!}..${headBranch}`,
-											{ cwd: ctx.cwd, timeout: 5000 },
-										)
-											.toString()
-											.trim();
-										aheadCommits = parseInt(ahead, 10) || 0;
-									} catch {
-										// Branch may not exist locally — can't create PR
-									}
-
-									if (aheadCommits === 0) {
-										ctx.ui.notify(
-											`No new commits on ${headBranch} — skipping PR creation (already up to date with ${config.defaultBranch!})`,
-											"info",
-										);
-									} else if (auditOutput.prBody) {
-										const tempFile = joinPath(tmpdir(), `audit-pr-body-${issueNum}.md`);
-										try {
-											writeFileSync(tempFile, auditOutput.prBody, "utf-8");
-											const prTitle = auditOutput.prTitle || `feat(#${issueNum}): ${issueTitle}`;
-
-											// Push branch before creating PR so remote ref exists
-											if (worktreePath) {
-												try {
-													execSync(`git push "${config.remote!}" "${headBranch}"`, {
-														cwd: worktreePath,
-														timeout: 15000,
-													});
-												} catch {
-													// Branch may already be pushed — non-fatal
-												}
-											}
-
-											const prResult = await createPullRequest(
-												pi,
-												config.repo,
-												config.defaultBranch!,
-												headBranch,
-												prTitle,
-												tempFile,
-											);
-											ctx.ui.notify(`PR #${prResult.number} created`, "info");
-										} catch (prErr: unknown) {
-											const prMsg = prErr instanceof Error ? prErr.message : String(prErr);
-											ctx.ui.notify(`Failed to create PR: ${prMsg}`, "warning");
-											console.warn(`[supervisor] createPullRequest failed: ${prMsg}`);
-										}
-									}
-									// Also post approval comment
+									// Post approval comment (PR creation handled after nextStatus resolution)
 									if (auditOutput.commentBody) {
 										try {
 											await postIssueComment(pi, issueNum, config.repo, auditOutput.commentBody);
@@ -578,6 +521,74 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						resolveNextStatus(step, result.textOnly) ??
 						resolveNextStatus(step, result.textOutput) ??
 						resolveNextStatus(step, result.output);
+
+					// ── PR creation: when auditor approves and transitions to Done ──
+					// Decoupled from auditOutput marker parsing — triggers reliably on workflow transition.
+					if (agentName === "auditor" && result.success && nextStatus === "Done") {
+						const headBranch =
+							worktreeBranch ?? generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+
+						// Check branch has commits ahead of base before creating PR
+						let aheadCommits = 0;
+						try {
+							const ahead = execSync(
+								`git rev-list --count "${config.defaultBranch!}..${headBranch}`,
+								{ cwd: ctx.cwd, timeout: 5000 },
+							)
+								.toString()
+								.trim();
+							aheadCommits = parseInt(ahead, 10) || 0;
+						} catch {
+							// Branch may not exist locally — can't create PR
+						}
+
+						if (aheadCommits === 0) {
+							ctx.ui.notify(
+								`No new commits on ${headBranch} — skipping PR creation (already up to date with ${config.defaultBranch!})`,
+								"info",
+							);
+						} else {
+							// Generate PR body from pipeline summary — always works, no marker dependency
+							const prBody = buildPipelineSummary(
+								agentResults,
+								"success",
+								issueNum,
+								issueTitle,
+								config,
+							);
+							const tempFile = joinPath(tmpdir(), `pr-body-${issueNum}.md`);
+							try {
+								writeFileSync(tempFile, prBody, "utf-8");
+								const prTitle = `feat(#${issueNum}): ${issueTitle}`;
+
+								// Push branch before creating PR so remote ref exists
+								if (worktreePath) {
+									try {
+										execSync(`git push "${config.remote!}" "${headBranch}"`, {
+											cwd: worktreePath,
+											timeout: 15000,
+										});
+									} catch {
+										// Branch may already be pushed — non-fatal
+									}
+								}
+
+								const prResult = await createPullRequest(
+									pi,
+									config.repo,
+									config.defaultBranch!,
+									headBranch,
+									prTitle,
+									tempFile,
+								);
+								ctx.ui.notify(`PR #${prResult.number} created`, "info");
+							} catch (prErr: unknown) {
+								const prMsg = prErr instanceof Error ? prErr.message : String(prErr);
+								ctx.ui.notify(`Failed to create PR: ${prMsg}`, "warning");
+								console.warn(`[supervisor] createPullRequest failed: ${prMsg}`);
+							}
+						}
+					}
 
 					if (!result.success && nextStatus !== "Audit") {
 						ctx.ui.notify(
