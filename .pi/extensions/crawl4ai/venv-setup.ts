@@ -4,9 +4,31 @@
  * Adapts system/shell operations — pi.exec injected to keep functions
  * testable with mock exec. State Maps (venvReady, depsReady) passed in
  * to let caller own caching lifecycle.
+ *
+ * Cache entries carry retry metadata: failed setups retry after TTL expiry
+ * up to max retries. This prevents permanent lockout without restart.
  */
 
 import type { OnUpdateCallback } from "./types";
+
+// ── Configurable constants ──
+
+/** TTL before a failed venv/deps cache entry is eligible for retry (ms). */
+export const VENV_RETRY_TTL_MS = 30_000;
+
+/** Maximum retry attempts for failed venv/deps setup. */
+export const VENV_RETRY_MAX = 3;
+
+// ── Types ──
+
+/** Cache entry for venv/deps ready state with retry metadata. */
+export interface VenvCacheEntry {
+	ready: boolean;
+	timestamp: number;
+	retries: number;
+}
+
+export type VenvCache = Map<string, VenvCacheEntry>;
 
 interface ExecResult {
 	code: number;
@@ -31,6 +53,31 @@ function lazyPaths(cwd: string) {
 	};
 }
 
+// ── Cache helpers ──
+
+function cacheGet(
+	cache: Map<string, VenvCacheEntry>,
+	key: string,
+): { entry: VenvCacheEntry | undefined; shouldRetry: boolean } {
+	const entry = cache.get(key);
+	if (!entry) return { entry: undefined, shouldRetry: false };
+	if (entry.ready) return { entry, shouldRetry: false };
+	// Failed entry: check if retry eligible
+	if (entry.retries >= VENV_RETRY_MAX) return { entry, shouldRetry: false };
+	if (Date.now() - entry.timestamp < VENV_RETRY_TTL_MS) return { entry, shouldRetry: false };
+	return { entry, shouldRetry: true };
+}
+
+function cacheMarkSuccess(cache: Map<string, VenvCacheEntry>, key: string): void {
+	cache.set(key, { ready: true, timestamp: Date.now(), retries: 0 });
+}
+
+function cacheMarkFailure(cache: Map<string, VenvCacheEntry>, key: string): void {
+	const existing = cache.get(key);
+	const retries = existing ? existing.retries + 1 : 0;
+	cache.set(key, { ready: false, timestamp: Date.now(), retries });
+}
+
 /**
  * Ensure Python virtual env with crawl4ai installed exists.
  * Returns path to python3 binary or null if setup fails.
@@ -39,24 +86,26 @@ export async function ensurePythonVenv(
 	exec: ExecFn,
 	cwd: string,
 	onUpdate?: OnUpdateCallback,
-	venvReady?: Map<string, boolean>,
+	venvReady?: VenvCache,
 ): Promise<string | null> {
-	const ready = venvReady ?? new Map<string, boolean>();
+	const ready = venvReady ?? new Map<string, VenvCacheEntry>();
 	const { VENV_PYTHON, VENV_DIR } = lazyPaths(cwd);
-	if (ready.has(cwd)) return ready.get(cwd)! ? VENV_PYTHON : null;
+
+	const { entry, shouldRetry } = cacheGet(ready, cwd);
+	if (entry && !shouldRetry) return entry.ready ? VENV_PYTHON : null;
 
 	// Check system python3 exists
 	const pyCheck = await exec("python3", ["--version"]);
 	if (pyCheck.code !== 0) {
 		console.error("crawl4ai: python3 not found");
-		ready.set(cwd, false);
+		cacheMarkFailure(ready, cwd);
 		return null;
 	}
 
 	// Check if venv already set up with crawl4ai
 	const alreadyOk = await exec(VENV_PYTHON, ["-c", "import crawl4ai; print('ok')"]);
 	if (alreadyOk.code === 0 && alreadyOk.stdout.includes("ok")) {
-		ready.set(cwd, true);
+		cacheMarkSuccess(ready, cwd);
 		return VENV_PYTHON;
 	}
 
@@ -72,7 +121,7 @@ export async function ensurePythonVenv(
 		const create = await exec("python3", ["-m", "venv", "--clear", VENV_DIR]);
 		if (create.code !== 0) {
 			console.error("crawl4ai: failed to create venv");
-			ready.set(cwd, false);
+			cacheMarkFailure(ready, cwd);
 			return null;
 		}
 	}
@@ -87,7 +136,7 @@ export async function ensurePythonVenv(
 	});
 	if (install.code !== 0) {
 		console.error("crawl4ai: pip install failed:", install.stderr.slice(0, 500));
-		ready.set(cwd, false);
+		cacheMarkFailure(ready, cwd);
 		return null;
 	}
 
@@ -101,30 +150,39 @@ export async function ensurePythonVenv(
 	// Verify
 	const verify = await exec(VENV_PYTHON, ["-c", "import crawl4ai; print('ok')"]);
 	const readyFlag = verify.code === 0 && verify.stdout.includes("ok");
-	ready.set(cwd, readyFlag);
-	return readyFlag ? VENV_PYTHON : null;
+	if (readyFlag) {
+		cacheMarkSuccess(ready, cwd);
+		return VENV_PYTHON;
+	}
+	cacheMarkFailure(ready, cwd);
+	return null;
 }
 
 /**
  * Ensure Chromium system dependencies are available.
  * Downloads and extracts .deb packages without sudo.
  * Returns path to lib directory or null if setup fails.
+ *
+ * Tries package names with fallback for distro version differences
+ * (e.g., libasound2t64 on Debian 12+ / Ubuntu 24.04+ vs libasound2 on older).
  */
 export async function ensureChromiumDeps(
 	exec: ExecFn,
 	cwd: string,
 	onUpdate?: OnUpdateCallback,
-	depsReady?: Map<string, boolean>,
+	depsReady?: VenvCache,
 ): Promise<string | null> {
-	const ready = depsReady ?? new Map<string, boolean>();
+	const ready = depsReady ?? new Map<string, VenvCacheEntry>();
 	const { DEPS_DIR, DEPS_LIB_DIR } = lazyPaths(cwd);
-	if (ready.has(cwd)) return ready.get(cwd)! ? DEPS_LIB_DIR : null;
+
+	const { entry, shouldRetry } = cacheGet(ready, cwd);
+	if (entry && !shouldRetry) return entry.ready ? DEPS_LIB_DIR : null;
 
 	// Check if deps already extracted and working
 	const testLib = `${DEPS_LIB_DIR}/libnspr4.so`;
 	const libCheck = await exec("bash", ["-c", `test -f ${testLib}`]);
 	if (libCheck.code === 0) {
-		ready.set(cwd, true);
+		cacheMarkSuccess(ready, cwd);
 		return DEPS_LIB_DIR;
 	}
 
@@ -137,13 +195,29 @@ export async function ensureChromiumDeps(
 		details: {} as Record<string, unknown>,
 	});
 
-	const pkgs = ["libnspr4", "libnss3", "libasound2t64"];
-	for (const pkg of pkgs) {
-		const dl = await exec("bash", ["-c", `cd ${DEPS_DIR} && apt-get download ${pkg}`], {
-			timeout: 30_000,
-		});
-		if (dl.code !== 0) {
-			console.error(`crawl4ai: failed to download ${pkg}`);
+	// Package groups with fallback names per group
+	// libasound2t64 is Debian 12+ / Ubuntu 24.04+ naming; libasound2 for older distros
+	const pkgGroups = [["libasound2t64", "libasound2"], ["libnspr4"], ["libnss3"]];
+
+	for (const group of pkgGroups) {
+		let downloaded = false;
+		for (const pkg of group) {
+			const dl = await exec("bash", ["-c", `cd ${DEPS_DIR} && apt-get download ${pkg}`], {
+				timeout: 30_000,
+			});
+			if (dl.code === 0) {
+				downloaded = true;
+				if (pkg !== group[0]) {
+					console.warn(`crawl4ai: using fallback package ${pkg} (${group[0]} not available)`);
+				}
+				break;
+			}
+			if (pkg === group[group.length - 1]) {
+				console.error(`crawl4ai: failed to download ${group[0]} (and fallback if available)`);
+			}
+		}
+		if (!downloaded) {
+			console.error(`crawl4ai: failed to download any package in group ${group[0]}`);
 		}
 	}
 
@@ -159,10 +233,10 @@ export async function ensureChromiumDeps(
 	const verify = await exec("bash", ["-c", `test -f ${testLib}`]);
 	if (verify.code !== 0) {
 		console.error("crawl4ai: failed to set up Chromium system libraries");
-		ready.set(cwd, false);
+		cacheMarkFailure(ready, cwd);
 		return null;
 	}
 
-	ready.set(cwd, true);
+	cacheMarkSuccess(ready, cwd);
 	return DEPS_LIB_DIR;
 }
