@@ -357,28 +357,16 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						break;
 					}
 
-					// Build task and run
-					const submodules = config.submodules || [];
-					const task = buildAgentTask(
-						agentName,
-						issueNum,
-						config.repo,
-						issueTitle,
-						loopFilteredData,
-						submodules,
-						config.defaultBranch!,
-						config.remote!,
-						config.worktreeBase!,
-						config.branchPrefix!,
-					);
+					// Load agent config for name display (needed before task build)
 					ctx.ui.notify(`Dispatching ${agent.config.name}...`, "info");
 
 					const timeoutMs = resolveTimeoutMs(agentName, config.agentTimeoutsMin);
 
 					// ── Supervisor-owned worktree lifecycle ──
-					// Create worktree before dispatching developer or auditor agents.
-					// Agent cwd is set to worktree path so tools (write/edit/read/bash)
-					// naturally target the isolated worktree, not the main checkout.
+					// Create worktree BEFORE building agent task so task text can embed
+					// the worktree path and branch name. Agent cwd is set to worktree path
+					// so tools (write/edit/read/bash) naturally target the isolated worktree,
+					// not the main checkout.
 					if ((agentName === "developer" || agentName === "auditor") && !worktreePath) {
 						worktreeBranch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 						const wt = resolvePath(ctx.cwd, config.worktreeBase!, worktreeBranch);
@@ -400,6 +388,25 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						}
 						worktreePath = wt;
 					}
+
+					// Build task AFTER worktree creation so worktreePath + branch info
+					// can be embedded in the task text (fixes auditor checking main checkout).
+					const submodules = config.submodules || [];
+					const task = buildAgentTask(
+						agentName,
+						issueNum,
+						config.repo,
+						issueTitle,
+						loopFilteredData,
+						submodules,
+						config.defaultBranch!,
+						config.remote!,
+						config.worktreeBase!,
+						config.branchPrefix!,
+						// Pass worktree path + branch name for auditor/developer task embedding
+						worktreePath,
+						worktreeBranch,
+					);
 
 					// Pass worktree path as cwd so agent tools resolve against isolated worktree
 					const agentCwd =

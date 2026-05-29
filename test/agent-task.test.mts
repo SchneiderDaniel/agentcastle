@@ -12,6 +12,14 @@ import { generateBranchName, buildAgentTask } from "../.pi/extensions/supervisor
 import type { FilteredIssueData } from "../.pi/extensions/supervisor/types.ts";
 
 // ---------------------------------------------------------------------------
+// Phase 4: worktree path + branch name in auditor task (Bug: auditor checks
+//          main instead of feature worktree — false rejection)
+// ---------------------------------------------------------------------------
+// Tests for new optional worktreePath+branchName params on buildAgentTask.
+// Auditor case must embed the worktree path so agent's bash tool uses correct
+// cwd. Developer/architect/researcher/test-designer cases unchanged.
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -410,5 +418,205 @@ describe("buildAgentTask — other agents unchanged or adjusted", () => {
 		);
 		assert.ok(task.includes("Complete the task for issue #42"));
 		assert.ok(!task.includes("undefined"));
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4: worktree path + branch name in auditor task
+// ---------------------------------------------------------------------------
+
+describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () => {
+	it("auditor with worktreePath → task contains 'Your current working directory IS the worktree' with path", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/worktree-git-issue-42-fix-bug",
+		);
+		assert.ok(
+			task.includes("Your current working directory IS the worktree"),
+			"Should contain worktree path announcement",
+		);
+		assert.ok(
+			task.includes("/home/worktree-git-issue-42-fix-bug"),
+			"Should contain the actual worktree path",
+		);
+	});
+
+	it("auditor with worktreePath + branchName → task contains both", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/wt",
+			"fix-bug",
+		);
+		assert.ok(
+			task.includes("Your current working directory IS the worktree"),
+			"Should contain worktree announcement",
+		);
+		assert.ok(task.includes("/home/wt"), "Should contain worktree path");
+		assert.ok(task.includes("fix-bug"), "Should contain branch name");
+		assert.ok(
+			task.includes("git branch --show-current"),
+			"Should contain git branch --show-current instruction",
+		);
+	});
+
+	it("auditor with worktreePath → task contains 'prepend: cd <path> &&' instruction", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/wt",
+		);
+		assert.ok(task.includes("cd /home/wt"), "Should contain cd to worktree path instruction");
+		assert.ok(
+			task.includes("Before any bash command"),
+			"Should contain instruction to prepend cd before bash commands",
+		);
+	});
+
+	it("auditor without worktreePath → no worktree path in task (backward compat)", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(
+			!task.includes("Your current working directory IS the worktree"),
+			"Should NOT contain worktree announcement when no worktreePath given",
+		);
+	});
+
+	it("developer with worktreePath → developer task unchanged (no worktree path in task text)", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/wt",
+			"fix-bug",
+		);
+		assert.ok(task.includes("Work from current directory"), "Developer task unchanged");
+		assert.ok(
+			!task.includes("Your current working directory IS the worktree"),
+			"Developer should NOT have the auditor's worktree announcement",
+		);
+	});
+
+	it("architect with worktreePath → architect task unchanged", () => {
+		const task = buildAgentTask(
+			"architect",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/wt",
+		);
+		assert.ok(
+			!task.includes("Your current working directory IS the worktree"),
+			"Architect should NOT have worktree announcement",
+		);
+		assert.ok(task.includes("architecture comment"), "Architect task unchanged");
+	});
+
+	it("researcher with worktreePath → task unchanged", () => {
+		const task = buildAgentTask(
+			"researcher",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/wt",
+		);
+		assert.ok(
+			!task.includes("Your current working directory IS the worktree"),
+			"Researcher should NOT have worktree announcement",
+		);
+		assert.ok(task.includes("web_crawl"), "Researcher task unchanged");
+	});
+
+	it("test-designer with worktreePath → task unchanged", () => {
+		const task = buildAgentTask(
+			"test-designer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/wt",
+		);
+		assert.ok(
+			!task.includes("Your current working directory IS the worktree"),
+			"Test-designer should NOT have worktree announcement",
+		);
+		assert.ok(task.includes("test plan"), "Test-designer task unchanged");
+	});
+
+	it("All existing tests still pass with new optional params — backward compat", () => {
+		// Same call as existing tests — no worktreePath, no branchName
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(task.includes("git diff main"), "Existing auditor behavior preserved");
+		assert.ok(task.includes("AUDIT_DECISION"), "Existing auditor behavior preserved");
 	});
 });
