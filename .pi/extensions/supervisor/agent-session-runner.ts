@@ -477,7 +477,7 @@ function buildAgentRunResult(
 			.filter((m) => m && m.role === "assistant" && m.usage)
 			.reduce((sum, m) => {
 				const u = m.usage;
-				const total = u.totalTokens ?? u.input + u.output ?? 0;
+				const total = u.totalTokens ?? (u.input ?? 0) + (u.output ?? 0);
 				return sum + (typeof total === "number" && !Number.isNaN(total) ? total : 0);
 			}, 0);
 		tokenCount = Math.max(state.tokenCount, scannedSum);
