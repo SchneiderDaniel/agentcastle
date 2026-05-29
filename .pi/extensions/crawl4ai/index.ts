@@ -10,12 +10,14 @@ import { Type } from "typebox";
 import os from "node:os";
 import { CRAWL4AI_SCRIPT } from "./python-script";
 import { ensurePythonVenv, ensureChromiumDeps } from "./venv-setup";
+import type { VenvCache } from "./venv-setup";
+import { runCrawl4aiScript } from "./executor";
 import { apifyCrawl } from "./apify-crawl";
 import { directFetchCrawl } from "./direct-fetch";
 
 export default function crawl4ai(pi: ExtensionAPI): void {
-	const venvReady = new Map<string, boolean>();
-	const depsReady = new Map<string, boolean>();
+	const venvReady: VenvCache = new Map();
+	const depsReady: VenvCache = new Map();
 
 	pi.registerTool({
 		name: "web_crawl",
@@ -41,6 +43,16 @@ export default function crawl4ai(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params, signal, onUpdate, _ctx) {
 			const maxPages = Math.min(Math.max(1, params.maxPages ?? 1), 10);
 
+			// URL validation — reject invalid URLs early
+			try {
+				new URL(params.url);
+			} catch {
+				return {
+					content: [{ type: "text", text: "Invalid URL" }],
+					details: {} as Record<string, unknown>,
+				};
+			}
+
 			onUpdate?.({
 				content: [{ type: "text", text: `Crawling ${params.url} …` }],
 				details: {} as Record<string, unknown>,
@@ -51,47 +63,25 @@ export default function crawl4ai(pi: ExtensionAPI): void {
 			const python = await ensurePythonVenv(pi.exec, cwd, onUpdate, venvReady);
 			const depsDir = await ensureChromiumDeps(pi.exec, cwd, onUpdate, depsReady);
 			if (python && depsDir) {
-				const cfg = JSON.stringify({ url: params.url, maxPages });
 				const browsersPath = (os.homedir() || "/tmp") + "/.cache/ms-playwright";
-				// Base64-encode script & config to avoid bash escaping issues.
-				// Use bash -c to set LD_LIBRARY_PATH (ExecOptions has no 'env' field).
-				const scriptB64 = Buffer.from(CRAWL4AI_SCRIPT, "utf-8").toString("base64");
-				const cfgB64 = Buffer.from(cfg, "utf-8").toString("base64");
-				const run = await pi.exec(
-					"bash",
-					[
-						"-c",
-						"LD_LIBRARY_PATH=" +
-							depsDir +
-							":$LD_LIBRARY_PATH " +
-							"PLAYWRIGHT_BROWSERS_PATH=" +
-							browsersPath +
-							" " +
-							python +
-							' -c "$(echo ' +
-							scriptB64 +
-							' | base64 -d)" ' +
-							'"$(echo ' +
-							cfgB64 +
-							' | base64 -d)"',
-					],
-					{
-						timeout: 120_000,
-						signal,
-					},
+				const run = await runCrawl4aiScript(
+					python,
+					depsDir,
+					browsersPath,
+					CRAWL4AI_SCRIPT,
+					{ url: params.url, maxPages },
+					120_000,
+					signal,
+					pi.exec,
 				);
 				if (run.code === 0) {
 					try {
-						// stdout may contain crawl4ai progress lines before the final JSON.
-						// Extract the last JSON object from stdout.
-						const lines = run.stdout.split("\n");
+						// Parse between CRAWL4AI_OK and CRAWL4AI_DONE delimiters
+						const okIdx = run.stdout.indexOf("CRAWL4AI_OK");
+						const doneIdx = run.stdout.indexOf("CRAWL4AI_DONE");
 						let jsonStr = "";
-						for (let i = lines.length - 1; i >= 0; i--) {
-							const trimmed = lines[i].trim();
-							if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-								jsonStr = trimmed;
-								break;
-							}
+						if (okIdx !== -1 && doneIdx !== -1 && doneIdx > okIdx) {
+							jsonStr = run.stdout.slice(okIdx + "CRAWL4AI_OK".length, doneIdx).trim();
 						}
 						const parsed = JSON.parse(jsonStr || run.stdout) as {
 							ok: boolean;
@@ -110,7 +100,11 @@ export default function crawl4ai(pi: ExtensionAPI): void {
 							};
 						}
 					} catch {
-						// parsing failed → fall through
+						console.error(
+							"crawl4ai: parse failed, raw stdout (first 500 chars):",
+							run.stdout.slice(0, 500),
+						);
+						// parsing failed => fall through
 					}
 				}
 			}
