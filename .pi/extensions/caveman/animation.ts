@@ -35,6 +35,7 @@ export function createAnimationController(options: {
 	let timer: ReturnType<typeof setInterval> | null = null;
 	let frameIndex = 0;
 	let isActive = false;
+	let generation = 0;
 
 	function stopAnimation() {
 		if (timer) {
@@ -68,7 +69,9 @@ export function createAnimationController(options: {
 			return;
 		}
 
+		const myGen = ++generation;
 		const renderFrame = () => {
+			if (myGen !== generation) return; // stale ctx after session replacement
 			setFrame(anim.frames[frameIndex % anim.frames.length]!);
 			frameIndex++;
 		};

@@ -15,7 +15,11 @@ import assert from "node:assert/strict";
 import { createHarnessState } from "../../lib/harness-state.ts";
 import { createToolCallHandler, getBashSubKey } from "./index.ts";
 import agentHarness from "./index.ts";
-import { CASCADE_THRESHOLD, CACHE_TTL_TURNS } from "../../lib/harness-rules.ts";
+import {
+	CASCADE_THRESHOLD,
+	CACHE_TTL_TURNS,
+	buildRedirectMessage,
+} from "../../lib/harness-rules.ts";
 import type { ToolCallResult } from "./index.ts";
 import type { HarnessState } from "../../lib/harness-state.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -142,7 +146,7 @@ describe("agent-harness handler", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
-		const result = handler(makeEvent("bash", { command: "| grep something" }), makeCtx());
+		const result = handler(makeEvent("bash", { command: "grep something" }), makeCtx());
 		assert.ok(result?.block, "should block bash grep");
 
 		assert.equal(state.currentTurn, 1, "currentTurn should advance on bash mismatch block");
@@ -383,11 +387,12 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
+		// Standalone grep (no pipe) should be blocked
 		const result = await api.fire("tool_call", {
 			type: "tool_call",
 			toolCallId: "1",
 			toolName: "bash",
-			input: { command: "| grep foo" },
+			input: { command: "grep foo" },
 		});
 		assert.ok(result?.block, "bash grep should be blocked");
 		assert.ok(result!.reason.includes("ripgrep_search"), "should suggest ripgrep_search");
@@ -812,7 +817,7 @@ describe("Phase 2: Multi-verb CLI diversity — 2-token subKey", () => {
 	it("getBashSubKey pure function — 2-token extraction", () => {
 		assert.equal(getBashSubKey("git status"), "git status");
 		assert.equal(getBashSubKey("git diff"), "git diff");
-		assert.equal(getBashSubKey("echo hi"), "echo hi");
+		assert.equal(getBashSubKey("echo hi"), "echo");
 		assert.equal(getBashSubKey("ls"), "ls");
 		assert.equal(getBashSubKey("npm install"), "npm install");
 		assert.equal(getBashSubKey("docker ps"), "docker ps");
@@ -903,7 +908,7 @@ describe("Phase 2: Multi-verb CLI diversity — 2-token subKey", () => {
 // ── Phase 3: Backward compatibility and edge cases ──
 
 describe("Phase 3: Backward compatibility and edge cases", () => {
-	it("echo hi ×8 — 8th blocked (single-token subKey, backward compat)", () => {
+	it("echo hi ×8 — 8th blocked (single-token subKey 'echo', backward compat)", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
@@ -914,7 +919,7 @@ describe("Phase 3: Backward compatibility and edge cases", () => {
 				assert.equal(result, null, `echo hi call ${i + 1} should pass`);
 			}
 		}
-		assert.ok(result?.block, "8th echo hi should block (same subKey)");
+		assert.ok(result?.block, "8th echo hi should block (same subKey 'echo')");
 	});
 
 	it("non-bash write cascade still works — 8th blocked", () => {
@@ -1072,5 +1077,201 @@ describe("Bug 5 fix: read cache [pending] same-turn pass-through", () => {
 		// Re-read: cache TTL expired, miss, pass through
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.equal(r2, null, "TTL-expired cache miss should pass through");
+	});
+});
+
+// ── Issue 270: Harness improvements ──
+
+describe("Issue 270: Cache invalidation on write", () => {
+	it("write tool clears read cache", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read caches
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// Write clears cache
+		handler(makeEvent("write", { path: "out.ts", content: "data" }), makeCtx());
+
+		// Re-read same file should pass (cache was cleared)
+		state.currentTurn = 2;
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r2, null, "read after write should pass — cache invalidated");
+	});
+
+	it("file-modifying bash command clears read cache", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read caches
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// sed -i modifies files, should clear cache
+		handler(makeEvent("bash", { command: "sed -i 's/foo/bar/g' file.ts" }), makeCtx());
+
+		// Re-read same file should pass (cache was cleared)
+		state.currentTurn = 4;
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r2, null, "read after sed should pass — cache invalidated");
+	});
+
+	it("non-modifying bash command does NOT clear read cache", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read caches
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// ls doesn't modify files, cache should stay
+		handler(makeEvent("bash", { command: "ls -la" }), makeCtx());
+
+		// Re-read same file — cache still present, should block
+		state.currentTurn = 2;
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.ok(r2?.block, "read after ls should block — cache not invalidated");
+	});
+
+	it("echo with redirect clears read cache", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read caches
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// echo with > redirect modifies files
+		handler(makeEvent("bash", { command: "echo 'data' > /tmp/x" }), makeCtx());
+
+		// Cache should be cleared
+		state.currentTurn = 4;
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r2, null, "read after echo > should pass — cache invalidated");
+	});
+});
+
+describe("Issue 270: buildRedirectMessage format", () => {
+	it("bash grep block uses system override format", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const result = handler(makeEvent("bash", { command: "grep foo" }), makeCtx());
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("[SYSTEM OVERRIDE]"),
+			"reason should start with SYSTEM OVERRIDE",
+		);
+		assert.ok(result!.reason.includes("ripgrep_search"), "should mention ripgrep_search tool");
+		assert.ok(result!.reason.includes("JSON Schema"), "should include JSON Schema");
+	});
+
+	it("bash cat block uses system override format", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const result = handler(makeEvent("bash", { command: "cat README.md" }), makeCtx());
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("[SYSTEM OVERRIDE]"),
+			"reason should start with SYSTEM OVERRIDE",
+		);
+		assert.ok(result!.reason.includes("read"), "should mention read tool");
+		assert.ok(result!.reason.includes("JSON Schema"), "should include JSON Schema");
+	});
+});
+
+describe("Issue 270: Pipeline pass-through for bash search", () => {
+	it("piped grep (ls | grep) does NOT block", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const result = handler(makeEvent("bash", { command: "ls -la | grep foo" }), makeCtx());
+		assert.equal(result, null, "piped grep should pass through");
+	});
+
+	it("chained grep (cmd && grep) does NOT block", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const result = handler(makeEvent("bash", { command: "cd src && rg pattern" }), makeCtx());
+		assert.equal(result, null, "chained grep with && should pass through");
+	});
+
+	it("standalone grep still blocks", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const result = handler(makeEvent("bash", { command: "grep foo" }), makeCtx());
+		assert.ok(result?.block, "standalone grep should still block");
+	});
+
+	it("pipeline with grep in pipe segment does NOT block", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const result = handler(
+			makeEvent("bash", { command: "find . -type f | xargs grep TODO" }),
+			makeCtx(),
+		);
+		assert.equal(result, null, "xargs grep pipeline should pass through");
+	});
+
+	it("semicolon chained grep does NOT block", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const result = handler(makeEvent("bash", { command: "echo done; grep foo" }), makeCtx());
+		assert.equal(result, null, "semicolon chained grep should pass through");
+	});
+});
+
+describe("Issue 270: batchId-aware cache TTL", () => {
+	it("handler passes state.batchId to read cache", () => {
+		const state = createHarnessState();
+		state.batchId = 42;
+		const handler = createToolCallHandler(state);
+
+		// First read caches with batchId
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// Simulate same batch — same batchId, currentTurn advanced
+		// Cache entry was stored with batchId=42, now get with batchId=42
+		// Should still be valid (same batch), so blocked
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.ok(r2?.block, "same batchId read should block (cache still valid)");
+	});
+
+	it("different batchId uses turn-based TTL", () => {
+		const state = createHarnessState();
+		state.batchId = 42;
+		const handler = createToolCallHandler(state);
+
+		// First read caches with batchId 42 at turn 0
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// New batch — state.batchId changes
+		state.batchId = 43;
+
+		// Within TTL turns (diff < 6), cache still valid for different batchId
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.ok(r2?.block, "different batchId within turn TTL should block");
+	});
+
+	it("no batchId set — backward compat fallback to turn-based", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// No batchId set (undefined)
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// Same turn — normal blocking
+		state.currentTurn = 1;
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.ok(r2?.block, "no batchId — normal cache block");
 	});
 });

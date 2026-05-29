@@ -543,6 +543,7 @@ export async function runAgentInProcess(
 	// Hoist cleanup variables so they're accessible in try, catch, and finally
 	let flushTimer: NodeJS.Timeout | null = null;
 	let heartbeat: ReturnType<typeof setInterval> | undefined;
+	let storedTui: any = null;
 
 	// Resolve model
 	const modelInfo = await resolveModel(agent.config.model || "");
@@ -596,8 +597,6 @@ export async function runAgentInProcess(
 		// The factory captures state by reference so each render picks up the
 		// latest fullLog, tool info, and stats. Styled with theme colors to
 		// match the message-renderer look.
-		let flushTimer: NodeJS.Timeout | null = null;
-
 		const flushWidget = () => {
 			if (flushTimer) {
 				clearTimeout(flushTimer);
@@ -606,11 +605,15 @@ export async function runAgentInProcess(
 			// Pass Component factory: TUI calls it on each render
 			ctx.ui.setWidget(
 				widgetId,
-				(_tui, theme) => buildWidgetComponent(state, agentName, agent.config.model, theme),
+				(tui, theme) => {
+					storedTui = tui;
+					return buildWidgetComponent(state, agentName, agent.config.model, theme);
+				},
 				{
 					placement: "aboveEditor",
 				},
 			);
+			storedTui?.requestRender(true);
 			ctx.ui.setStatus("supervisor", undefined);
 		};
 

@@ -14,6 +14,10 @@ import {
 	isSearchInBash,
 	isCatHeadTailInBash,
 	isLsInBash,
+	isStandaloneToolCall,
+	isFileModifyingBash,
+	buildRedirectMessage,
+	MULTI_VERB_TOOLS,
 	shouldBlockRetry,
 	isRedundantRead,
 	isCodeFilePath,
@@ -30,12 +34,12 @@ import {
 // ─── isSearchInBash ────────────────────────────────────────────────
 
 describe("isSearchInBash", () => {
-	it('detects "cat file | grep foo" as search in bash', () => {
-		assert.strictEqual(isSearchInBash("cat file | grep foo"), true);
+	it('does NOT flag "cat file | grep foo" (pipeline — pass through)', () => {
+		assert.strictEqual(isSearchInBash("cat file | grep foo"), false);
 	});
 
-	it('detects "ls -la | rg pattern" as search in bash', () => {
-		assert.strictEqual(isSearchInBash("ls -la | rg pattern"), true);
+	it('does NOT flag "ls -la | rg pattern" (pipeline — pass through)', () => {
+		assert.strictEqual(isSearchInBash("ls -la | rg pattern"), false);
 	});
 
 	it('does NOT flag "npm test"', () => {
@@ -74,12 +78,12 @@ describe("isSearchInBash", () => {
 		assert.strictEqual(isSearchInBash("gh issue create --body '...| rg...'"), false);
 	});
 
-	it("still detects grep in pipe outside quotes", () => {
-		assert.strictEqual(isSearchInBash("ls -la | grep foo"), true);
+	it("does NOT flag grep in pipe (pipeline — pass through)", () => {
+		assert.strictEqual(isSearchInBash("ls -la | grep foo"), false);
 	});
 
-	it("still detects rg after pipe", () => {
-		assert.strictEqual(isSearchInBash("cat file | rg pattern"), true);
+	it("does NOT flag rg after pipe (pipeline — pass through)", () => {
+		assert.strictEqual(isSearchInBash("cat file | rg pattern"), false);
 	});
 
 	it("detects backtick grep", () => {
@@ -302,18 +306,18 @@ describe("isCodeFilePath", () => {
 // ─── detectMismatchAndSuggest ─────────────────────────────────────
 
 describe("detectMismatchAndSuggest", () => {
-	it('detects "cat f | rg x" as tool-mismatch', () => {
+	it('flags "cat f | rg x" as cat-read (cat first segment, still detected)', () => {
 		const result = detectMismatchAndSuggest("cat f | rg x");
-		assert.ok(result !== null);
+		assert.ok(result !== null, "should detect cat read");
 		assert.strictEqual(result.category, "tool-mismatch");
-		assert.ok(result.suggestion.includes("ripgrep_search"));
+		assert.ok(result.suggestion.includes("read"), "should suggest read for cat");
 	});
 
-	it('detects "cat f | grep x" as tool-mismatch', () => {
+	it('flags "cat f | grep x" as cat-read (cat first segment, still detected)', () => {
 		const result = detectMismatchAndSuggest("cat f | grep x");
-		assert.ok(result !== null);
+		assert.ok(result !== null, "should detect cat read");
 		assert.strictEqual(result.category, "tool-mismatch");
-		assert.ok(result.suggestion.includes("ripgrep_search"));
+		assert.ok(result.suggestion.includes("read"), "should suggest read for cat");
 	});
 
 	it('detects "cat README.md" as cat-mismatch', () => {
@@ -340,10 +344,12 @@ describe("detectMismatchAndSuggest", () => {
 // ─── suggestRedirection ───────────────────────────────────────────
 
 describe("suggestRedirection", () => {
-	it('returns redirect suggestion for "bash cat f | grep x"', () => {
-		const result = suggestRedirection("bash cat f | grep x");
-		assert.ok(result !== null, "should suggest redirection");
-		assert.ok(typeof result === "string", "should be string");
+	it("suggests ripgrep_search for standalone grep", () => {
+		assert.strictEqual(suggestRedirection("grep foo"), "ripgrep_search");
+	});
+
+	it("returns null for piped command (no redirection)", () => {
+		assert.strictEqual(suggestRedirection("ls | grep foo"), null);
 	});
 
 	it('returns null for "npm test"', () => {
@@ -376,6 +382,88 @@ describe("exported constants", () => {
 		assert.ok(SEARCH_TOOLS instanceof Set);
 		assert.ok(SEARCH_TOOLS.has("ripgrep_search"));
 		assert.ok(SEARCH_TOOLS.has("structural_search"));
+	});
+});
+
+// ─── New Issue 270 functions ─────────────────────────────────────
+
+describe("isStandaloneToolCall", () => {
+	it("returns true for simple command", () => {
+		assert.strictEqual(isStandaloneToolCall("grep foo"), true);
+	});
+
+	it("returns false for piped command", () => {
+		assert.strictEqual(isStandaloneToolCall("ls | grep foo"), false);
+	});
+
+	it("returns false for && chain", () => {
+		assert.strictEqual(isStandaloneToolCall("cd src && npm test"), false);
+	});
+
+	it("returns false for semicolon chain", () => {
+		assert.strictEqual(isStandaloneToolCall("echo hi; echo there"), false);
+	});
+
+	it("returns false for empty string", () => {
+		assert.strictEqual(isStandaloneToolCall(""), false);
+	});
+});
+
+describe("isFileModifyingBash", () => {
+	it("detects sed -i", () => {
+		assert.strictEqual(isFileModifyingBash("sed -i 's/foo/bar/g' file.ts"), true);
+	});
+
+	it("detects echo with redirect", () => {
+		assert.strictEqual(isFileModifyingBash("echo 'data' > file.ts"), true);
+	});
+
+	it("detects rm command", () => {
+		assert.strictEqual(isFileModifyingBash("rm file.ts"), true);
+	});
+
+	it("does not detect read-only commands", () => {
+		assert.strictEqual(isFileModifyingBash("ls -la"), false);
+		assert.strictEqual(isFileModifyingBash("git status"), false);
+	});
+
+	it("returns false for empty string", () => {
+		assert.strictEqual(isFileModifyingBash(""), false);
+	});
+});
+
+describe("buildRedirectMessage", () => {
+	it("returns system override format for ripgrep_search", () => {
+		const msg = buildRedirectMessage("ripgrep_search");
+		assert.ok(msg.includes("[SYSTEM OVERRIDE]"));
+		assert.ok(msg.includes("ripgrep_search"));
+		assert.ok(msg.includes("JSON Schema"));
+	});
+
+	it("returns system override format for read", () => {
+		const msg = buildRedirectMessage("read");
+		assert.ok(msg.includes("[SYSTEM OVERRIDE]"));
+		assert.ok(msg.includes("read"));
+		assert.ok(msg.includes("JSON Schema"));
+	});
+
+	it("returns empty string for unknown tool", () => {
+		assert.strictEqual(buildRedirectMessage("unknown"), "");
+	});
+});
+
+describe("MULTI_VERB_TOOLS", () => {
+	it("contains git, npm, docker, gh", () => {
+		assert.ok(MULTI_VERB_TOOLS.has("git"));
+		assert.ok(MULTI_VERB_TOOLS.has("npm"));
+		assert.ok(MULTI_VERB_TOOLS.has("docker"));
+		assert.ok(MULTI_VERB_TOOLS.has("gh"));
+	});
+
+	it("does not contain cat, echo, ls", () => {
+		assert.strictEqual(MULTI_VERB_TOOLS.has("cat"), false);
+		assert.strictEqual(MULTI_VERB_TOOLS.has("echo"), false);
+		assert.strictEqual(MULTI_VERB_TOOLS.has("ls"), false);
 	});
 });
 
