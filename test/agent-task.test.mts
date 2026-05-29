@@ -2,8 +2,9 @@
  * Tests for agent-task.ts
  *
  * Phase 1: generateBranchName (characterization — existing behavior preserved)
- * Phase 2: buildAgentTask auditor — summary file flow (new behavior)
- * Phase 3: buildAgentTask other agent types unchanged (regression safety net)
+ * Phase 2: buildAgentTask auditor — structured output markers (new behavior)
+ * Phase 3: buildAgentTask other agents — structured output markers (current impl)
+ * Phase 4: buildAgentTask auditor worktree path + branch name
  */
 
 import assert from "node:assert";
@@ -78,11 +79,14 @@ describe("generateBranchName", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 2: buildAgentTask auditor — summary file flow
+// Phase 2: buildAgentTask auditor — structured output markers
 // ---------------------------------------------------------------------------
+// The auditor task uses structured output markers (AUDIT_DECISION, PR_BODY,
+// COMMENT_BODY) instead of running gh CLI commands. Pipeline reads markers
+// and handles PR creation/comment posting programmatically.
 
-describe("buildAgentTask — auditor summary file flow", () => {
-	it("contains SUMMARY_FILE variable for temp file path", () => {
+describe("buildAgentTask — auditor structured output markers", () => {
+	it("contains AUDIT_DECISION: APPROVED marker", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -95,13 +99,11 @@ describe("buildAgentTask — auditor summary file flow", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(
-			task.includes("SUMMARY_FILE=/tmp/audit-summary-42.md"),
-			"Expected SUMMARY_FILE variable set to /tmp/audit-summary-42.md",
-		);
+		assert.ok(task.includes("AUDIT_DECISION: APPROVED"), "Should contain APPROVED marker");
+		assert.ok(task.includes("AUDIT_DECISION: REJECTED"), "Should contain REJECTED marker");
 	});
 
-	it("contains --body-file (via $SUMMARY_FILE) for gh pr create", () => {
+	it("contains PR_BODY and COMMENT_BODY markers for approved flow", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -114,14 +116,11 @@ describe("buildAgentTask — auditor summary file flow", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(task.includes("--body-file"), "Expected --body-file flag in task");
-		assert.ok(task.includes("gh pr create"), "Expected gh pr create command in task");
-		// Verify SUMMARY_FILE referenced somewhere near --body-file
-		const lines = task.split("\n").filter((l) => l.includes("--body-file"));
-		assert.ok(lines.length > 0, "Expected lines containing --body-file");
+		assert.ok(task.includes("PR_BODY:"), "Should contain PR_BODY marker");
+		assert.ok(task.includes("COMMENT_BODY:"), "Should contain COMMENT_BODY marker");
 	});
 
-	it("contains --body-file for gh issue comment", () => {
+	it("contains PR_TITLE with issue number and title", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -134,14 +133,10 @@ describe("buildAgentTask — auditor summary file flow", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(task.includes("gh issue comment"), "Expected gh issue comment command in task");
-		const commentLines = task
-			.split("\n")
-			.filter((l) => l.includes("gh issue comment") && l.includes("--body-file"));
-		assert.ok(commentLines.length > 0, "Expected gh issue comment with --body-file");
+		assert.ok(task.includes("PR_TITLE: feat(#42): Fix bug"), "Should contain PR_TITLE with issue");
 	});
 
-	it("contains write-summary-to-temp-file step BEFORE gh pr create", () => {
+	it("contains git diff defaultBranch instruction", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -154,21 +149,10 @@ describe("buildAgentTask — auditor summary file flow", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		const summaryFileAssign = task.indexOf("SUMMARY_FILE=/tmp/audit-summary-42.md");
-		const catSummary = task.indexOf('cat > "$SUMMARY_FILE"');
-		const prCreate = task.indexOf("gh pr create");
-
-		assert.notStrictEqual(summaryFileAssign, -1, "Expected SUMMARY_FILE assignment");
-		assert.notStrictEqual(catSummary, -1, 'Expected cat > "$SUMMARY_FILE"');
-		assert.notStrictEqual(prCreate, -1, "Expected gh pr create");
-		assert.ok(
-			summaryFileAssign < prCreate,
-			"Summary file assignment should appear before gh pr create",
-		);
-		assert.ok(catSummary < prCreate, 'cat > "$SUMMARY_FILE" should appear before gh pr create');
+		assert.ok(task.includes("git diff main"), "Should contain git diff main instruction");
 	});
 
-	it("contains fallback to --body 'Closes #N' when summary file empty", () => {
+	it("contains REJECT marker with COMMENT_BODY", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -181,13 +165,11 @@ describe("buildAgentTask — auditor summary file flow", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(
-			task.includes('--body "Closes #42"'),
-			"Expected fallback --body 'Closes #42' in task",
-		);
+		const rejectSection = task.substring(task.lastIndexOf("AUDIT_DECISION: REJECTED"));
+		assert.ok(rejectSection.includes("COMMENT_BODY:"), "REJECT flow contains COMMENT_BODY marker");
 	});
 
-	it("contains shell conditional for summary file existence check", () => {
+	it("contains structured output format heading", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -200,59 +182,10 @@ describe("buildAgentTask — auditor summary file flow", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(task.includes("if [ -s"), "Expected shell conditional checking summary file size");
+		assert.ok(task.includes("### Structured Output Format"), "Structured output heading present");
 	});
 
-	it("with 1 submodule — companion PR uses --body-file with fallback", () => {
-		const submodules = [{ path: "sub/a", repo: "owner/sub-a" }];
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		assert.ok(
-			task.includes("gh pr create --repo owner/sub-a"),
-			"Expected submodule pr create for owner/sub-a",
-		);
-		assert.ok(
-			task.includes("--body-file"),
-			"Expected --body-file in task (including submodule commands)",
-		);
-		// The hardcoded companion fallback string should be present as fallback
-		assert.ok(
-			task.includes('--body "Companion PR for'),
-			"Expected fallback companion string in submodule section",
-		);
-	});
-
-	it("with 1 submodule — contains fallback companion string when file empty", () => {
-		const submodules = [{ path: "sub/a", repo: "owner/sub-a" }];
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		assert.ok(
-			task.includes('--body "Companion PR for owner/repo#42"'),
-			"Expected fallback companion PR body in submodule section",
-		);
-	});
-
-	it("with empty submodules list — no submodule section generated", () => {
+	it("with empty submodules list — no submodule repos listed", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -265,67 +198,16 @@ describe("buildAgentTask — auditor summary file flow", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(!task.includes("submodule"), "Should not contain submodule section when list empty");
-	});
-
-	it("with 2 submodules — both use --body-file in their PR commands", () => {
-		const submodules = [
-			{ path: "sub/a", repo: "owner/sub-a" },
-			{ path: "sub/b", repo: "owner/sub-b" },
-		];
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		const matches = task.match(/--body-file/g);
-		assert.ok(matches !== null, "Expected --body-file references");
-		assert.ok(
-			matches!.length >= 4,
-			`Expected at least 4 --body-file references, got ${matches!.length}`,
-		);
-	});
-
-	it("with 2 submodules — each submodule block uses --body-file", () => {
-		const submodules = [
-			{ path: "sub/a", repo: "owner/sub-a" },
-			{ path: "sub/b", repo: "owner/sub-b" },
-		];
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		const subACmd = task.indexOf("gh pr create --repo owner/sub-a");
-		const subBCmd = task.indexOf("gh pr create --repo owner/sub-b");
-		assert.notStrictEqual(subACmd, -1, "Expected sub-a PR create command");
-		assert.notStrictEqual(subBCmd, -1, "Expected sub-b PR create command");
-
-		const subABody = task.slice(subACmd, subBCmd > -1 ? subBCmd : undefined);
-		assert.ok(subABody.includes("--body-file"), "Submodule sub-a PR create should use --body-file");
+		assert.ok(task.includes("(none)") || !task.includes("submodule"), "No submodules listed");
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Phase 3: other agent types unchanged (regression)
+// Phase 3: other agents (structured output markers)
 // ---------------------------------------------------------------------------
 
-describe("buildAgentTask — other agents unchanged or adjusted", () => {
-	it("architect task unchanged: contains gh issue comment with body", () => {
+describe("buildAgentTask — other agents (structured output markers)", () => {
+	it("architect task: COMMENT_BODY/COMMENT_BODY_END markers instead of gh CLI", () => {
 		const task = buildAgentTask(
 			"architect",
 			42,
@@ -338,11 +220,14 @@ describe("buildAgentTask — other agents unchanged or adjusted", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("gh issue comment 42 --repo owner/repo --body"));
-		assert.ok(task.includes('--body "...your architecture..."'));
+		assert.ok(task.includes("COMMENT_BODY:"));
+		assert.ok(task.includes("COMMENT_BODY_END"));
+		assert.ok(task.includes("ARCHITECTURE_COMPLETE"));
+		// No gh CLI calls in architect task
+		assert.ok(!task.includes("gh issue comment"));
 	});
 
-	it("developer task: no worktree setup, has commit + branch info + work-from-cwd note", () => {
+	it("developer task: no git add/git commit, has work-from-cwd + branch name", () => {
 		const task = buildAgentTask(
 			"developer",
 			42,
@@ -355,21 +240,21 @@ describe("buildAgentTask — other agents unchanged or adjusted", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		// Worktree is created by supervisor — no longer in agent task
-		assert.ok(!task.includes("git worktree add"), "Should NOT contain git worktree add");
-		// Commit instructions preserved (without cd prefix)
-		assert.ok(task.includes("git add -A"));
-		assert.ok(task.includes('git commit -m "feat(#42): Fix bug"'));
+		// Pipeline handles commit/push — agent task doesn't include git add/commit
+		assert.ok(!task.includes("git worktree add"), "No git worktree add in developer task");
+		assert.ok(!task.includes("git add"), "No git add in developer task");
+		assert.ok(!task.includes("git commit"), "No git commit in developer task");
 		// Branch info still present
-		assert.ok(task.includes("worktree-git-issue-42-fix-bug"), "Should contain branch name");
-		// Should mention current-directory workflow
+		assert.ok(task.includes("worktree-git-issue-42-fix-bug"), "Branch name in task");
+		// Current-directory workflow
 		assert.ok(
 			task.includes("Work from current directory") || task.includes("worktree already set up"),
-			"Should mention worktree is pre-setup",
+			"Worktree pre-setup mentioned",
 		);
+		assert.ok(task.includes("IMPLEMENTATION_COMPLETE"), "Completion marker present");
 	});
 
-	it("researcher task unchanged: contains web_crawl + research format", () => {
+	it("researcher task: web_crawl + ## Research Findings", () => {
 		const task = buildAgentTask(
 			"researcher",
 			42,
@@ -382,11 +267,11 @@ describe("buildAgentTask — other agents unchanged or adjusted", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("web_crawl"));
-		assert.ok(task.includes("## Research Findings"));
+		assert.ok(task.includes("web_crawl"), "web_crawl in researcher task");
+		assert.ok(task.includes("## Research Findings"), "Research Findings heading");
 	});
 
-	it("test-designer task unchanged: contains test plan comment instructions", () => {
+	it("test-designer task: COMMENT_BODY markers for test plan output", () => {
 		const task = buildAgentTask(
 			"test-designer",
 			42,
@@ -399,8 +284,10 @@ describe("buildAgentTask — other agents unchanged or adjusted", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("test plan"));
-		assert.ok(task.includes("gh issue comment"));
+		assert.ok(task.includes("test plan"), "Test plan reference");
+		assert.ok(task.includes("COMMENT_BODY:"), "COMMENT_BODY marker for output");
+		assert.ok(task.includes("COMMENT_BODY_END"), "COMMENT_BODY_END marker");
+		assert.ok(task.includes("TEST_PLAN_COMPLETE"), "Completion marker");
 	});
 
 	it("unknown agent name → default fallback task without crash", () => {

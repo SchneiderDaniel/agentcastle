@@ -255,7 +255,7 @@ describe("agent-runner dispatch logic", () => {
 			source.includes("try {") &&
 				source.includes("} catch (err) {") &&
 				source.includes("return await runAgentInProcess(") &&
-				source.includes("return runAgentSubprocess("),
+				source.includes("return await runAgentSubprocess("),
 			"runAgent has try/catch dispatch (in-process → subprocess fallback)",
 		);
 	});
