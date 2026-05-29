@@ -234,6 +234,52 @@ function processSessionEvent(
 					state.phase = "idle";
 					return { flush: true, workingChange: true };
 				}
+				// ── Bug D fix: handle done event (carries final message with usage) ──
+				case "done": {
+					const msg = ae.message;
+					if (msg?.usage) {
+						state.tokenCount =
+							msg.usage.totalTokens || msg.usage.input + msg.usage.output || state.tokenCount;
+					}
+					if (msg?.content && Array.isArray(msg.content)) {
+						const textParts: string[] = [];
+						const thinkingParts: string[] = [];
+						for (const block of msg.content) {
+							if (block.type === "text" && block.text) {
+								textParts.push(block.text);
+							}
+							if (block.type === "thinking" && block.thinking) {
+								const t =
+									typeof block.thinking === "string"
+										? block.thinking
+										: JSON.stringify(block.thinking);
+								thinkingParts.push(t);
+							}
+						}
+						// Push text output (skip if already pushed via text_end)
+						if (!state.textPushedThisTurn && textParts.length > 0) {
+							const allText = textParts.join("\n").trim();
+							if (allText) {
+								state.textOutputLines.push(allText);
+								for (const t of allText.split("\n")) {
+									if (t.trim()) pushLog(state, t);
+								}
+							}
+						}
+						// Push thinking output (skip if already pushed via thinking_end)
+						if (!state.thinkingPushedThisTurn && thinkingParts.length > 0) {
+							const allThinking = thinkingParts.join("\n").trim();
+							if (allThinking) {
+								state.thinkingOutputLines.push(allThinking);
+								for (const t of allThinking.split("\n")) {
+									if (t.trim()) pushLog(state, `💭 ${t}`);
+								}
+							}
+						}
+					}
+					state.phase = "idle";
+					return { flush: true, workingChange: true };
+				}
 			}
 			break;
 		}
@@ -424,12 +470,25 @@ function buildAgentRunResult(
 		state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined;
 	const summaryLine = extractSummaryLine(textOutput, success, agentName);
 
+	// Token fallback: scan messages for assistant usage data (Bug B)
+	let tokenCount = state.tokenCount;
+	if (Array.isArray(messages) && messages.length > 0) {
+		const scannedSum = messages
+			.filter((m) => m && m.role === "assistant" && m.usage)
+			.reduce((sum, m) => {
+				const u = m.usage;
+				const total = u.totalTokens ?? u.input + u.output ?? 0;
+				return sum + (typeof total === "number" && !Number.isNaN(total) ? total : 0);
+			}, 0);
+		tokenCount = Math.max(state.tokenCount, scannedSum);
+	}
+
 	return {
 		output: rawOutput,
 		success,
 		agentName,
 		toolCount: state.toolCount,
-		tokenCount: state.tokenCount,
+		tokenCount: tokenCount,
 		durationMs,
 		textOutput,
 		textOnly,
@@ -575,17 +634,24 @@ export async function runAgentInProcess(
 			}
 		});
 
-		// Run prompt with timeout via session.abort()
+		// Run prompt with timeout via Promise.race (Bug A)
 		let timedOut = false;
-		const timeoutId = setTimeout(() => {
-			timedOut = true;
-			session!.abort();
-		}, timeoutMs);
+		let timeoutRef: NodeJS.Timeout | undefined;
+		const timeoutPromise = new Promise<void>((_, reject) => {
+			timeoutRef = setTimeout(() => {
+				timedOut = true;
+				session!.abort();
+				reject(new Error(`Agent ${agentName} timed out after ${timeoutMs}ms`));
+			}, timeoutMs);
+		});
 
 		try {
-			await session.prompt(task, {
-				streamingBehavior: "steer",
-			});
+			await Promise.race([
+				session.prompt(task, {
+					streamingBehavior: "steer",
+				}),
+				timeoutPromise,
+			]);
 		} catch (promptErr: unknown) {
 			// Check if this was a timeout
 			if (timedOut) {
@@ -618,7 +684,7 @@ export async function runAgentInProcess(
 			// Re-throw other errors to be caught by outer catch
 			throw promptErr;
 		} finally {
-			clearTimeout(timeoutId);
+			if (timeoutRef) clearTimeout(timeoutRef);
 		}
 
 		// Success path

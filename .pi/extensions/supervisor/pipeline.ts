@@ -7,6 +7,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type {
+	AgentRunResult,
 	SupervisorConfig,
 	ProjectField,
 	ProjectItem,
@@ -42,6 +43,20 @@ import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from 
 import { countRejections, formatDuration, formatTokens } from "./formatting";
 import { runTscAndLspAudit } from "./pipeline-audit";
 import { handlePostPipelineMerge } from "./pipeline-merge";
+
+// ─── validateAgentResult ────────────────────────────────────────────
+
+/**
+ * Sanity-check agent result: if success=true with 0 tokens and >5 tool calls,
+ * the agent likely timed out or aborted before completion. Derate to failed.
+ */
+function validateAgentResult(result: AgentRunResult): void {
+	if (result.success && result.tokenCount === 0 && result.toolCount > 5) {
+		result.success = false;
+		const existingError = result.errorOutput ? result.errorOutput + "\n" : "";
+		result.errorOutput = `${existingError}Sanity check failed: success=true with tokenCount=0 and toolCount=${result.toolCount}. This indicates a timeout or abort before completion.`;
+	}
+}
 
 // ─── Pipeline summary builder ───────────────────────────────────────
 
@@ -391,6 +406,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						agentName === "developer" || agentName === "auditor" ? worktreePath : undefined;
 
 					let result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
+					// Validate agent result — derate if success=true with 0 tokens and >5 tools (Bug C)
+					validateAgentResult(result);
 					let usedRetry = false;
 
 					if (!result.success) {
