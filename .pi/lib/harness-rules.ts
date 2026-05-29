@@ -100,6 +100,7 @@ export const TOOL_META: Record<string, ToolMeta> = {
 	ripgrep_search: { passThrough: true },
 	ranked_map: { passThrough: true },
 	bash: { cascadeThreshold: CASCADE_THRESHOLD },
+	web_crawl: { cascadeThreshold: 20 },
 };
 
 /**

@@ -649,7 +649,12 @@ export async function runAgentInProcess(
 		});
 
 		try {
-			await Promise.race([session.prompt(task), timeoutPromise]);
+			await Promise.race([
+				session.prompt(task, {
+					streamingBehavior: "steer",
+				}),
+				timeoutPromise,
+			]);
 		} catch (promptErr: unknown) {
 			// Check if this was a timeout
 			if (timedOut) {
