@@ -6,7 +6,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {isSearchInBash,
+import {
+	isSearchInBash,
 	isCatHeadTailInBash,
 	isLsInBash,
 	isStandaloneToolCall,
@@ -17,9 +18,10 @@ import {isSearchInBash,
 	suggestRedirection,
 	MULTI_VERB_TOOLS,
 	shouldBlockRetry,
-	isRedundantRead,,
+	isRedundantRead,
 	TOOL_META,
-	getToolMeta,} from "./harness-rules.ts";
+	getToolMeta,
+} from "./harness-rules.ts";
 
 // ── isStandaloneToolCall ──
 
@@ -389,5 +391,5 @@ describe("TOOL_META — web_crawl cascade threshold (Bug 7)", () => {
 	it("(Regression) unlisted tools get default meta", () => {
 		const meta = getToolMeta("unknown_tool");
 		assert.deepEqual(meta, { passThrough: false, cascadeThreshold: 8 });
-});
+	});
 });

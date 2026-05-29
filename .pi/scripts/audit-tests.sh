@@ -3,7 +3,7 @@
 # audit-tests.sh — Execute test plan commands from markdown in a worktree
 #
 # Usage:
-#   bash .pi/scripts/audit-tests.sh run <branch-name> <test-plan-file>
+#   bash .pi/scripts/audit-tests.sh run <branch-name> <test-plan-file> [--worktree-path <path>]
 #
 # Reads a markdown test plan, extracts fenced bash code blocks, executes
 # each in the worktree directory with a 60s timeout, captures results,
@@ -15,19 +15,19 @@ set -euo pipefail
 
 TIMEOUT_SECONDS=60
 OUTPUT_LINE_LIMIT=20
-WORKTREE_PARENT="../"
 
 # ─── Helpers ───────────────────────────────────────────────────────
 
 usage() {
 	cat <<'EOF'
-Usage: audit-tests.sh run <branch-name> <test-plan-file>
+Usage: audit-tests.sh run <branch-name> <test-plan-file> [--worktree-path <path>]
 
 Executes fenced bash code blocks from a test plan markdown file.
 
 Arguments:
-  branch-name       Branch name (worktree directory is ../<branch-name>)
+  branch-name       Branch name (worktree detected via git worktree list)
   test-plan-file    Path to markdown file containing fenced bash code blocks
+  --worktree-path   Explicit worktree path (bypasses git worktree list detection)
 
 Output JSON schema:
 {
@@ -244,20 +244,79 @@ truncate_output() {
 
 # ─── Subcommand: run ───────────────────────────────────────────────
 
+# Resolve worktree directory from branch name.
+# Uses --worktree-path if provided, otherwise detects via git worktree list.
+resolve_worktree_dir() {
+	local branch_name="$1"
+	local explicit_path="$2"
+
+	if [[ -n "$explicit_path" ]]; then
+		echo "$explicit_path"
+		return 0
+	fi
+
+	# Detect worktree path from git worktree list --porcelain
+	# Format:
+	#   worktree /path/to/worktree
+	#   branch refs/heads/branch-name
+	#   ...
+	local detected
+	detected=$(git worktree list --porcelain 2>/dev/null | awk -v branch="$branch_name" '
+		/^worktree / { wt = $2 }
+		/^branch refs\/heads\// { b = $2; sub("^refs/heads/", "", b) }
+		b == branch { print wt; exit }
+	' || true)
+
+	if [[ -z "$detected" ]]; then
+		die "No worktree found for branch ${branch_name}. Use --worktree-path <path> to specify manually."
+	fi
+
+	echo "$detected"
+}
+
 cmd_run() {
+	local explicit_worktree_path=""
+	# Parse args: extract --worktree-path before positional
+	local args=()
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			--worktree-path)
+				if [[ -z "${2:-}" ]]; then
+					die "--worktree-path requires a path argument"
+				fi
+				explicit_worktree_path="$2"
+				shift 2
+				;;
+			--worktree-path=*)
+				explicit_worktree_path="${1#*=}"
+				shift
+				;;
+			*)
+				args+=("$1")
+				shift
+				;;
+		esac
+	done
+
+	# Restore positional args: branch-name test-plan-file
+	set -- "${args[@]}"
+
 	if [[ $# -lt 2 ]]; then
-		die "Usage: audit-tests.sh run <branch-name> <test-plan-file>"
+		die "Usage: audit-tests.sh run <branch-name> <test-plan-file> [--worktree-path <path>]"
 	fi
 
 	local branch_name test_plan_file
 	branch_name="$1"
 	test_plan_file="$2"
-	local worktree_dir="${WORKTREE_PARENT}${branch_name}"
 
 	# Validate branch name
 	if [[ -z "$branch_name" ]]; then
 		die "Branch name cannot be empty"
 	fi
+
+	# Resolve worktree directory (explicit path or git worktree list detection)
+	local worktree_dir
+	worktree_dir=$(resolve_worktree_dir "$branch_name" "$explicit_worktree_path")
 
 	# Check worktree directory exists
 	if [[ ! -d "$worktree_dir" ]]; then
