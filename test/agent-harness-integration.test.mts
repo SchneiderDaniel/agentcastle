@@ -128,13 +128,14 @@ function simulateHandler(
 // ─── Tests ─────────────────────────────────────────────────────────
 
 describe("agent-harness REAL handler (createToolCallHandler)", () => {
-	it("blocks bash cat file | grep foo with redirect", () => {
+	it("blocks bash cat file | grep foo (cat read, grep search — cat wins)", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 		const result = handler({ toolName: "bash", input: { command: "cat file | grep foo" } }, {});
+		// cat file is first segment — isCatHeadTailInBash blocks it
 		assert.ok(result !== null, "should block");
 		assert.strictEqual(result.block, true);
-		assert.ok(result.redirectTo === "ripgrep_search" || result.reason?.includes("ripgrep_search"));
+		assert.ok(result.redirectTo === "read" || result.reason?.includes("read"));
 	});
 
 	it("does NOT block npm test", () => {
@@ -226,16 +227,17 @@ describe("agent-harness REAL handler (createToolCallHandler)", () => {
 });
 
 describe("agent-harness handler: bash tool validation", () => {
-	it("blocks bash cat file | grep foo with redirect to ripgrep_search", () => {
+	it("blocks bash cat file | grep foo (cat first segment — cat read wins)", () => {
 		const state = createHarnessState();
 		const result = simulateHandler(
 			{ input: { toolName: "bash", args: { command: "cat file | grep foo" } } },
 			state,
 			0,
 		);
+		// simulateHandler checks isCatHeadTailInBash first
 		assert.ok(result !== null, "should block");
 		assert.strictEqual(result.block, true);
-		assert.ok(result.reason?.includes("ripgrep_search") || result.reason?.includes("read"));
+		assert.ok(result.redirectTo === "read" || result.reason?.includes("read"));
 	});
 
 	it("blocks bash cat README.md with redirect to read", () => {

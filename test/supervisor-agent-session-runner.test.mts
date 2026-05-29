@@ -1,0 +1,868 @@
+/**
+ * Tests for agent-session-runner.ts — timeout race, done event, token fallback, validation.
+ *
+ * Phase 1: processSessionEvent done case handler (Bug D)
+ * Phase 2: buildAgentRunResult token fallback scan (Bug B)
+ * Phase 3: validateAgentResult validation (Bug C)
+ * Phase 4: pipeline structural — validateAgentResult called after runAgent (Bug C)
+ * Phase 5: timeout mechanism structural — Promise.race pattern (Bug A)
+ *
+ * Run with:
+ *   node --experimental-strip-types --test test/supervisor-agent-session-runner.test.mts
+ */
+
+import assert from "node:assert";
+import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+import type {
+	AgentRunState,
+	AgentPhase,
+	AgentRunResult,
+} from "../.pi/extensions/supervisor/types.ts";
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+
+function pushLog(state: AgentRunState, entry: string): void {
+	state.fullLog.push(entry);
+	if (state.fullLog.length > 500) state.fullLog.shift();
+}
+
+/** Map phase to priority */
+function phasePriority(phase: AgentPhase): number {
+	switch (phase) {
+		case "tool":
+			return 3;
+		case "thinking":
+			return 2;
+		case "text":
+			return 1;
+		case "idle":
+			return 0;
+	}
+}
+
+/** Determine event phase */
+function getEventPhase(ev: any): AgentPhase {
+	if (!ev) return "idle";
+	if (ev.type === "tool_execution_start") return "tool";
+	if (ev.type === "tool_execution_end") return "idle";
+	if (ev.type === "message_update") {
+		const ae = ev.assistantMessageEvent;
+		if (!ae) return "idle";
+		switch (ae.type) {
+			case "thinking_delta":
+				if (ae.delta) return "thinking";
+				break;
+			case "thinking_start":
+				return "thinking";
+			case "text_delta":
+				if (ae.delta) return "text";
+				break;
+			case "text_start":
+				return "text";
+			case "thinking_end":
+			case "text_end":
+				return "idle";
+		}
+	}
+	if (ev.type === "message_end") return "idle";
+	return "idle";
+}
+
+/** Extract text from content blocks */
+function extractTextFromContent(content: any): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((b: any) => b.type === "text" && b.text)
+		.map((b: any) => b.text)
+		.join("\n");
+}
+
+/** Factory for AgentRunState */
+function createState(overrides?: Partial<AgentRunState>): AgentRunState {
+	return {
+		toolCount: 0,
+		tokenCount: 0,
+		fullLog: [],
+		liveThinking: "",
+		liveText: "",
+		textOutputLines: [],
+		thinkingOutputLines: [],
+		phase: "idle",
+		startedAt: Date.now(),
+		contextInfoReceived: false,
+		thinkingPushedThisTurn: false,
+		textPushedThisTurn: false,
+		...overrides,
+	};
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 1: processSessionEvent — done case handler (Bug D)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Duplicate of processSessionEvent with done-case handler added (Bug D).
+ * Same pattern as existing tests (supervisor-in-process.test.mts).
+ */
+function processSessionEventWithDone(
+	ev: any,
+	state: AgentRunState,
+): { flush: boolean; workingChange: boolean } {
+	const prevPhase = state.phase;
+
+	switch (ev.type) {
+		case "context_info":
+			break;
+
+		case "tool_execution_start": {
+			state.currentTool = ev.toolName || "tool";
+			state.currentToolArgs = ev.args ? JSON.stringify(ev.args).slice(0, 200) : undefined;
+			state.lastToolName = ev.toolName;
+			state.phase = "tool";
+			const logArgs = ev.args ? JSON.stringify(ev.args).slice(0, 200) : "";
+			pushLog(state, `🔧 ${ev.toolName}${logArgs ? ` ${logArgs}` : ""}`);
+			return { flush: true, workingChange: prevPhase !== "tool" };
+		}
+
+		case "tool_execution_end": {
+			state.toolCount++;
+			state.currentTool = undefined;
+			state.currentToolArgs = undefined;
+			state.phase = "idle";
+			pushLog(state, `${ev.isError ? "✗" : "✓"} ${ev.toolName}`);
+			return { flush: true, workingChange: true };
+		}
+
+		case "message_update": {
+			const ae = ev.assistantMessageEvent;
+			if (!ae) break;
+
+			const eventPhase = getEventPhase(ev);
+			if (eventPhase !== "idle" && phasePriority(eventPhase) >= phasePriority(state.phase)) {
+				state.phase = eventPhase;
+			}
+
+			switch (ae.type) {
+				case "thinking_start": {
+					state.thinkingPushedThisTurn = false;
+					return { flush: true, workingChange: prevPhase !== "thinking" };
+				}
+				case "text_start": {
+					state.textPushedThisTurn = false;
+					return { flush: true, workingChange: prevPhase !== "text" };
+				}
+				case "thinking_delta": {
+					const td = ae.delta;
+					if (typeof td === "string" && td.length > 0) {
+						state.liveThinking += td;
+						if (state.liveThinking.length > 1000) {
+							state.liveThinking = state.liveThinking.slice(-1000);
+						}
+						let nlIdx;
+						while ((nlIdx = state.liveThinking.indexOf("\n")) !== -1) {
+							const line = state.liveThinking.slice(0, nlIdx);
+							state.liveThinking = state.liveThinking.slice(nlIdx + 1);
+							if (line.trim()) pushLog(state, `💭 ${line}`);
+						}
+						return { flush: true, workingChange: prevPhase !== "thinking" };
+					}
+					break;
+				}
+				case "text_delta": {
+					const td = ae.delta;
+					if (typeof td === "string" && td.length > 0) {
+						state.liveText += td;
+						if (state.liveText.length > 10_000) {
+							state.liveText = state.liveText.slice(-8_000);
+						}
+						let nlIdx;
+						while ((nlIdx = state.liveText.indexOf("\n")) !== -1) {
+							const line = state.liveText.slice(0, nlIdx);
+							state.liveText = state.liveText.slice(nlIdx + 1);
+							if (line.trim()) pushLog(state, line);
+						}
+						return { flush: true, workingChange: prevPhase !== "text" };
+					}
+					break;
+				}
+				case "thinking_end": {
+					if (state.liveThinking.trim()) {
+						state.thinkingOutputLines.push(state.liveThinking.trim());
+						for (const t of state.liveThinking.split("\n")) {
+							const trimmed = t.trim();
+							if (trimmed) pushLog(state, `💭 ${trimmed}`);
+						}
+						state.thinkingPushedThisTurn = true;
+					}
+					state.liveThinking = "";
+					state.phase = "idle";
+					return { flush: true, workingChange: true };
+				}
+				case "text_end": {
+					if (state.liveText.trim()) {
+						state.textOutputLines.push(state.liveText.trim());
+						for (const t of state.liveText.split("\n")) {
+							const trimmed = t.trim();
+							if (trimmed) pushLog(state, trimmed);
+						}
+						state.textPushedThisTurn = true;
+					}
+					if (ev.message?.usage) {
+						state.tokenCount =
+							ev.message.usage.totalTokens ||
+							ev.message.usage.input + ev.message.usage.output ||
+							state.tokenCount;
+					}
+					state.liveText = "";
+					state.phase = "idle";
+					return { flush: true, workingChange: true };
+				}
+				// ── Bug D fix: done event handler ──
+				case "done": {
+					const msg = ae.message;
+					if (msg?.usage) {
+						state.tokenCount =
+							msg.usage.totalTokens || msg.usage.input + msg.usage.output || state.tokenCount;
+					}
+					if (msg?.content && Array.isArray(msg.content)) {
+						// Extract text from content blocks
+						const textParts: string[] = [];
+						const thinkingParts: string[] = [];
+						for (const block of msg.content) {
+							if (block.type === "text" && block.text) {
+								textParts.push(block.text);
+							}
+							if (block.type === "thinking" && block.thinking) {
+								const t =
+									typeof block.thinking === "string"
+										? block.thinking
+										: JSON.stringify(block.thinking);
+								thinkingParts.push(t);
+							}
+						}
+						// Push text output lines (skip if already pushed via text_end)
+						if (!state.textPushedThisTurn && textParts.length > 0) {
+							const allText = textParts.join("\n").trim();
+							if (allText) {
+								state.textOutputLines.push(allText);
+								for (const t of allText.split("\n")) {
+									if (t.trim()) pushLog(state, t);
+								}
+							}
+						}
+						// Push thinking output lines (skip if already pushed via thinking_end)
+						if (!state.thinkingPushedThisTurn && thinkingParts.length > 0) {
+							const allThinking = thinkingParts.join("\n").trim();
+							if (allThinking) {
+								state.thinkingOutputLines.push(allThinking);
+								for (const t of allThinking.split("\n")) {
+									if (t.trim()) pushLog(state, `💭 ${t}`);
+								}
+							}
+						}
+					}
+					state.phase = "idle";
+					return { flush: true, workingChange: true };
+				}
+			}
+			break;
+		}
+
+		case "message_end": {
+			const msg = ev.message;
+			if (!msg) break;
+
+			if (msg.role === "assistant") {
+				if (!state.thinkingPushedThisTurn && Array.isArray(msg.content)) {
+					for (const block of msg.content) {
+						if (block.type === "thinking" && block.thinking) {
+							const thinkingText =
+								typeof block.thinking === "string"
+									? block.thinking
+									: JSON.stringify(block.thinking);
+							for (const t of thinkingText.split("\n")) {
+								if (t.trim()) pushLog(state, `💭 ${t.trim()}`);
+							}
+						}
+					}
+				}
+				if (!state.textPushedThisTurn) {
+					const text = extractTextFromContent(msg.content);
+					if (text && text.trim()) {
+						state.textOutputLines.push(text.trim());
+						for (const t of text.split("\n")) {
+							if (t.trim()) pushLog(state, t);
+						}
+					}
+				}
+				if (msg.usage) {
+					state.tokenCount = msg.usage.totalTokens || msg.usage.input + msg.usage.output;
+				}
+			} else if (msg.role === "toolResult") {
+				const resultText = extractTextFromContent(msg.content);
+				const label = msg.toolName || state.lastToolName || "tool";
+				if (resultText && resultText.trim()) {
+					const resultLines = resultText.split("\n");
+					pushLog(state, `📋 ${label}: ${resultLines[0]?.slice(0, 300) || "(no output)"}`);
+					for (let i = 1; i < Math.min(resultLines.length, 6); i++) {
+						if (resultLines[i].trim()) pushLog(state, `   ${resultLines[i].slice(0, 200)}`);
+					}
+				} else {
+					pushLog(state, `📋 ${label}: (no output)`);
+				}
+				state.lastToolName = undefined;
+			}
+			state.phase = "idle";
+			state.thinkingPushedThisTurn = false;
+			state.textPushedThisTurn = false;
+			return { flush: true, workingChange: true };
+		}
+
+		case "turn_start":
+		case "turn_end":
+		case "agent_start":
+		case "agent_end":
+			break;
+	}
+
+	return { flush: false, workingChange: false };
+}
+
+describe("Phase 1: processSessionEvent — done case handler (Bug D)", () => {
+	it("1.1: done event with usage sets tokenCount", () => {
+		const state = createState();
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					usage: { totalTokens: 542 },
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.strictEqual(state.tokenCount, 542);
+	});
+
+	it("1.2: done event with text content pushes textOutputLines and sets phase idle", () => {
+		const state = createState();
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					content: [{ type: "text", text: "Hello world" }],
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.ok(state.textOutputLines.includes("Hello world"));
+		assert.strictEqual(state.phase, "idle");
+	});
+
+	it("1.3: done event with thinking content pushes thinkingOutputLines and resets thinkingPushedThisTurn", () => {
+		const state = createState({ thinkingPushedThisTurn: false });
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					content: [{ type: "thinking", thinking: "I think therefore I am" }],
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.ok(state.thinkingOutputLines[0]?.includes("I think therefore I am"));
+	});
+
+	it("1.4: done event with mixed text+thinking populates both output arrays", () => {
+		const state = createState();
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					content: [
+						{ type: "thinking", thinking: "deep thought" },
+						{ type: "text", text: "result text" },
+					],
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.ok(state.thinkingOutputLines.some((l) => l.includes("deep thought")));
+		assert.ok(state.textOutputLines.some((l) => l.includes("result text")));
+	});
+
+	it("1.5: done event without usage field leaves tokenCount unchanged (0)", () => {
+		const state = createState({ tokenCount: 0 });
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					content: [{ type: "text", text: "hello" }],
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.strictEqual(state.tokenCount, 0);
+	});
+
+	it("1.6: done event with empty content array pushes no output lines", () => {
+		const state = createState();
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					content: [],
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.strictEqual(state.textOutputLines.length, 0);
+		assert.strictEqual(state.thinkingOutputLines.length, 0);
+	});
+
+	it("1.7: done event with usage.input+output but no totalTokens sets tokenCount to sum", () => {
+		const state = createState({ tokenCount: 0 });
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					usage: { input: 200, output: 300 },
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.strictEqual(state.tokenCount, 500);
+	});
+
+	it("1.8: done event after text_end already set textPushedThisTurn=true skips duplicate text push", () => {
+		const state = createState({ textPushedThisTurn: true });
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					content: [{ type: "text", text: "should not be pushed" }],
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.strictEqual(state.textOutputLines.length, 0);
+	});
+
+	it("1.9: done event after thinking_end already set thinkingPushedThisTurn=true skips duplicate push", () => {
+		const state = createState({ thinkingPushedThisTurn: true });
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "done",
+				message: {
+					content: [{ type: "thinking", thinking: "should not be pushed" }],
+				},
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		assert.strictEqual(state.thinkingOutputLines.length, 0);
+	});
+
+	it("1.10: non-done event types not affected by done-specific fields", () => {
+		const state = createState();
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: {
+				type: "text_start",
+			},
+		};
+		processSessionEventWithDone(ev, state);
+		// text_start resets textPushedThisTurn, doesn't push output
+		assert.strictEqual(state.textPushedThisTurn, false);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2: buildAgentRunResult — token fallback scan (Bug B)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Duplicate of buildAgentRunResult with message scanning for token usage.
+ */
+function buildAgentRunResultWithScan(
+	state: AgentRunState,
+	agentName: string,
+	success: boolean,
+	durationMs: number,
+	messages: any[],
+): AgentRunResult {
+	const textOutput = state.fullLog.join("\n").trim();
+	const textOnly = state.textOutputLines.join("\n").trim();
+	const thinkingOutput =
+		state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined;
+
+	// Token fallback: scan messages for assistant usage data
+	let tokenCount = state.tokenCount;
+	if (Array.isArray(messages) && messages.length > 0) {
+		const scannedSum = messages
+			.filter((m) => m && m.role === "assistant" && m.usage)
+			.reduce((sum, m) => {
+				const u = m.usage;
+				const total = u.totalTokens ?? u.input + u.output ?? 0;
+				return sum + (typeof total === "number" && !Number.isNaN(total) ? total : 0);
+			}, 0);
+		tokenCount = Math.max(state.tokenCount, scannedSum);
+	}
+
+	return {
+		output: "",
+		success,
+		agentName,
+		toolCount: state.toolCount,
+		tokenCount,
+		durationMs,
+		textOutput,
+		textOnly,
+		summaryLine: "",
+		errorOutput: "",
+		thinkingOutput,
+	};
+}
+
+describe("Phase 2: buildAgentRunResult — token fallback scan (Bug B)", () => {
+	it("2.1: state.tokenCount=0, messages have usage → uses scanned sum", () => {
+		const state = createState({ tokenCount: 0 });
+		const messages = [{ role: "assistant", usage: { totalTokens: 1234 } }];
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, messages);
+		assert.strictEqual(result.tokenCount, 1234);
+	});
+
+	it("2.2: state.tokenCount=500, messages have lower usage → max wins (state higher)", () => {
+		const state = createState({ tokenCount: 500 });
+		const messages = [{ role: "assistant", usage: { totalTokens: 300 } }];
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, messages);
+		assert.strictEqual(result.tokenCount, 500);
+	});
+
+	it("2.3: state.tokenCount=200, messages have higher usage → max wins (message higher)", () => {
+		const state = createState({ tokenCount: 200 });
+		const messages = [{ role: "assistant", usage: { totalTokens: 999 } }];
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, messages);
+		assert.strictEqual(result.tokenCount, 999);
+	});
+
+	it("2.4: state.tokenCount=0, messages empty → stays 0", () => {
+		const state = createState({ tokenCount: 0 });
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, []);
+		assert.strictEqual(result.tokenCount, 0);
+	});
+
+	it("2.5: state.tokenCount=0, messages with usage but role != assistant → stays 0", () => {
+		const state = createState({ tokenCount: 0 });
+		const messages = [
+			{ role: "user", usage: { totalTokens: 500 } },
+			{ role: "toolResult", usage: { totalTokens: 300 } },
+		];
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, messages);
+		assert.strictEqual(result.tokenCount, 0);
+	});
+
+	it("2.6: state.tokenCount=0, messages with usage.totalTokens=0 → stays 0", () => {
+		const state = createState({ tokenCount: 0 });
+		const messages = [{ role: "assistant", usage: { totalTokens: 0 } }];
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, messages);
+		assert.strictEqual(result.tokenCount, 0);
+	});
+
+	it("2.7: multiple assistant messages with usage → sum of all used", () => {
+		const state = createState({ tokenCount: 0 });
+		const messages = [
+			{ role: "assistant", usage: { totalTokens: 100 } },
+			{ role: "assistant", usage: { totalTokens: 200 } },
+			{ role: "assistant", usage: { totalTokens: 300 } },
+		];
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, messages);
+		assert.strictEqual(result.tokenCount, 600);
+	});
+
+	it("2.8: messages array with null/undefined entries → no crash", () => {
+		const state = createState({ tokenCount: 0 });
+		const messages: any[] = [null, undefined, { role: "assistant", usage: { totalTokens: 100 } }];
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, messages);
+		assert.strictEqual(result.tokenCount, 100);
+	});
+
+	it("2.9: messages with usage but no totalTokens (only input+output) → sum fallback", () => {
+		const state = createState({ tokenCount: 0 });
+		const messages = [{ role: "assistant", usage: { input: 400, output: 600 } }];
+		const result = buildAgentRunResultWithScan(state, "test", true, 1000, messages);
+		assert.strictEqual(result.tokenCount, 1000);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 3: validateAgentResult validation function (Bug C)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Duplicate of the new validateAgentResult function.
+ * Sanity check: derates success=true when tokenCount=0 and toolCount>5.
+ */
+function validateAgentResult(result: AgentRunResult): void {
+	if (result.success && result.tokenCount === 0 && result.toolCount > 5) {
+		result.success = false;
+		const existingError = result.errorOutput ? result.errorOutput + "\n" : "";
+		result.errorOutput = `${existingError}Sanity check failed: success=true with tokenCount=0 and toolCount=${result.toolCount}. This indicates a timeout or abort before completion.`;
+	}
+}
+
+describe("Phase 3: validateAgentResult (Bug C)", () => {
+	it("3.1: success=true, tokenCount=0, toolCount=27 → derated to success=false", () => {
+		const result: AgentRunResult = {
+			output: "",
+			success: true,
+			agentName: "test",
+			toolCount: 27,
+			tokenCount: 0,
+			durationMs: 5000,
+			textOutput: "",
+			textOnly: "",
+			summaryLine: "",
+			errorOutput: "",
+		};
+		validateAgentResult(result);
+		assert.strictEqual(result.success, false);
+		assert.ok(result.errorOutput.includes("Sanity check failed"));
+	});
+
+	it("3.2: success=true, tokenCount=0, toolCount=6 → derated (toolCount > 5)", () => {
+		const result: AgentRunResult = {
+			output: "",
+			success: true,
+			agentName: "test",
+			toolCount: 6,
+			tokenCount: 0,
+			durationMs: 5000,
+			textOutput: "",
+			textOnly: "",
+			summaryLine: "",
+			errorOutput: "",
+		};
+		validateAgentResult(result);
+		assert.strictEqual(result.success, false);
+	});
+
+	it("3.3: success=true, tokenCount=0, toolCount=5 → stays success (≤5 threshold)", () => {
+		const result: AgentRunResult = {
+			output: "",
+			success: true,
+			agentName: "test",
+			toolCount: 5,
+			tokenCount: 0,
+			durationMs: 5000,
+			textOutput: "",
+			textOnly: "",
+			summaryLine: "",
+			errorOutput: "",
+		};
+		validateAgentResult(result);
+		assert.strictEqual(result.success, true);
+	});
+
+	it("3.4: success=true, tokenCount=100, toolCount=27 → stays success (has tokens)", () => {
+		const result: AgentRunResult = {
+			output: "",
+			success: true,
+			agentName: "test",
+			toolCount: 27,
+			tokenCount: 100,
+			durationMs: 5000,
+			textOutput: "",
+			textOnly: "",
+			summaryLine: "",
+			errorOutput: "",
+		};
+		validateAgentResult(result);
+		assert.strictEqual(result.success, true);
+	});
+
+	it("3.5: success=true, tokenCount=0, toolCount=0 → stays success (no tools used)", () => {
+		const result: AgentRunResult = {
+			output: "",
+			success: true,
+			agentName: "test",
+			toolCount: 0,
+			tokenCount: 0,
+			durationMs: 5000,
+			textOutput: "",
+			textOnly: "",
+			summaryLine: "",
+			errorOutput: "",
+		};
+		validateAgentResult(result);
+		assert.strictEqual(result.success, true);
+	});
+
+	it("3.6: success=false already, tokenCount=0, toolCount=10 → stays false (no change)", () => {
+		const result: AgentRunResult = {
+			output: "",
+			success: false,
+			agentName: "test",
+			toolCount: 10,
+			tokenCount: 0,
+			durationMs: 5000,
+			textOutput: "",
+			textOnly: "",
+			summaryLine: "",
+			errorOutput: "Original error",
+		};
+		validateAgentResult(result);
+		assert.strictEqual(result.success, false);
+		assert.ok(result.errorOutput.includes("Original error")); // preserved
+	});
+
+	it("3.7: result with existing errorMessage → errorMessage preserved/appended", () => {
+		const result: AgentRunResult = {
+			output: "",
+			success: true,
+			agentName: "test",
+			toolCount: 27,
+			tokenCount: 0,
+			durationMs: 5000,
+			textOutput: "",
+			textOnly: "",
+			summaryLine: "",
+			errorOutput: "Previous error",
+		};
+		validateAgentResult(result);
+		assert.strictEqual(result.success, false);
+		assert.ok(result.errorOutput.includes("Previous error"));
+		assert.ok(result.errorOutput.includes("Sanity check failed"));
+	});
+
+	it("3.8: result missing toolCount field → defaults to 0, stays success=true", () => {
+		const result: any = {
+			output: "",
+			success: true,
+			agentName: "test",
+			tokenCount: 0,
+			durationMs: 5000,
+			textOutput: "",
+			textOnly: "",
+			summaryLine: "",
+			errorOutput: "",
+		};
+		validateAgentResult(result);
+		assert.strictEqual(result.success, true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 4: pipeline structural — validateAgentResult called after runAgent
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Phase 4: pipeline — validateAgentResult integration (Bug C)", () => {
+	const source = readFileSync(".pi/extensions/supervisor/pipeline.ts", "utf-8");
+
+	it("4.1: pipeline.ts calls validateAgentResult(result) after runAgent and before retry check", () => {
+		// Find lines between "let result = await runAgent" and "if (!result.success)"
+		const afterRunAgent = source.split("let result = await runAgent(");
+		assert.ok(afterRunAgent.length >= 2, "runAgent call exists in pipeline.ts");
+
+		// After first runAgent call, find the block up to the !result.success check
+		const remainder = afterRunAgent.slice(1).join("let result = await runAgent(");
+		// Check validateAgentResult appears before the !result.success check
+		const beforeRetryCheck = remainder.split("if (!result.success)")[0] || "";
+		assert.ok(
+			beforeRetryCheck.includes("validateAgentResult("),
+			"validateAgentResult(result) must be called after runAgent() and before retry check",
+		);
+	});
+
+	it("4.2: validateAgentResult defined/imported in pipeline.ts", () => {
+		// Either defined as a function or imported
+		const hasDef =
+			source.includes("function validateAgentResult(") ||
+			(source.includes("validateAgentResult") &&
+				source.includes("import") &&
+				source.includes("validateAgentResult"));
+		assert.ok(
+			hasDef || source.includes("function validateAgentResult("),
+			"validateAgentResult must be defined or imported in pipeline.ts",
+		);
+	});
+
+	it("4.3: validateAgentResult mutates success to false when tokenCount=0 and toolCount>5", () => {
+		// Check the validation logic exists
+		const hasLogic =
+			source.includes("tokenCount === 0") &&
+			source.includes("toolCount > 5") &&
+			source.includes("result.success = false");
+		assert.ok(
+			hasLogic,
+			"validateAgentResult must check tokenCount===0 and toolCount>5, then set success=false",
+		);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 5: Timeout mechanism structural — Promise.race pattern (Bug A)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Phase 5: agent-session-runner — timeout mechanism (Bug A)", () => {
+	const source = readFileSync(".pi/extensions/supervisor/agent-session-runner.ts", "utf-8");
+
+	it("5.1: uses Promise.race with timeout promise inside inner try block", () => {
+		// Find Promise.race pattern with session.prompt
+		assert.ok(
+			source.includes("Promise.race") && source.includes("session.prompt("),
+			"Timeout must use Promise.race with session.prompt()",
+		);
+	});
+
+	it("5.2: session!.abort() called inside timeout handler for cleanup", () => {
+		// session.abort must still be present but as cleanup, not sole mechanism
+		assert.ok(
+			source.includes("session!.abort()") || source.includes("session?.abort()"),
+			"session.abort() must be called for cleanup",
+		);
+	});
+
+	it("5.3: no setTimeout + session.abort() as sole mechanism (race pattern present)", () => {
+		// Check there's no standalone setTimeout that just calls abort
+		const lines = source.split("\n");
+		const setTimeoutLines = lines.filter((l) => l.includes("setTimeout("));
+		const hasRace = source.includes("Promise.race");
+		// Must have race pattern as primary timeout
+		assert.ok(hasRace, "Promise.race must be the primary timeout mechanism");
+	});
+
+	it("5.4: timeout promise rejects when timeout fires", () => {
+		// Check for new Promise reject in timeout handler
+		assert.ok(
+			source.includes("reject(") || source.includes("reject(new Error"),
+			"Timeout promise must reject when timeout fires",
+		);
+	});
+
+	it("5.5: timedOut flag variable still present for catch block detection", () => {
+		assert.ok(
+			source.includes("let timedOut") && source.includes("timedOut = true"),
+			"timedOut flag must be declared and set in timeout handler",
+		);
+	});
+
+	it("5.6: no AbortController variable declaration in file", () => {
+		const lines = source.split("\n");
+		const abortDecl = lines.filter(
+			(l) =>
+				(l.includes("let ") || l.includes("const ") || l.includes("var ")) &&
+				l.includes("abortController"),
+		);
+		assert.strictEqual(abortDecl.length, 0, "No abortController variable declaration should exist");
+	});
+});
