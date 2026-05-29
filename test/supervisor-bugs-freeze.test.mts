@@ -193,25 +193,59 @@ describe("Phase 2: Bug 1 — Shadow flushTimer in try block", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 3: Bug 3 — Misleading `streamingBehavior: "steer"` (agent-session-runner.ts)
+// Phase 3: Bug 3 — Timeout handling via Promise.race (agent-session-runner.ts)
 // ═══════════════════════════════════════════════════════════════════════
+// streamingBehavior: "steer" is present in origin/main from #271 merge.
+// This phase validates the timeout infrastructure around session.prompt().
 
-describe("Phase 3: Bug 3 — Misleading streamingBehavior parameter", () => {
+describe("Phase 3: Bug 3 — Timeout handling (Promise.race + clearTimeout)", () => {
 	const source = readFileSync(".pi/extensions/supervisor/agent-session-runner.ts", "utf-8");
 
-	it("3.1: file does NOT contain 'streamingBehavior' string", () => {
+	it("3.1: session.prompt wrapped in Promise.race with timeoutPromise", () => {
+		const promptSection = source.split("Promise.race([")[1]?.split("])")[0] || "";
 		assert.ok(
-			!source.includes("streamingBehavior"),
-			"file must not contain streamingBehavior (removed as misleading parameter)",
+			promptSection.includes("session.prompt"),
+			"session.prompt wrapped in Promise.race for timeout",
+		);
+		assert.ok(promptSection.includes("timeoutPromise"), "timeoutPromise raced with session.prompt");
+	});
+
+	it("3.2: timeout uses clearTimeout in finally block", () => {
+		// The finally block should clean up the timeout
+		const finallySection =
+			source.split("finally {")[1]?.split("}[")[0]?.split("/* fallback")[0] || "";
+		assert.ok(
+			finallySection.includes("clearTimeout"),
+			"finally block has clearTimeout for cleanup",
 		);
 	});
 
-	it("3.2: session.prompt() call with only task argument (no streamingBehavior)", () => {
-		// Find the session.prompt call — it should NOT have streamingBehavior
-		const promptCall = source.split("session.prompt(")[1]?.split(");")[0] || "";
+	it("3.3: timeout promise rejects on expiry", () => {
+		const timeoutPromiseSection =
+			source
+				.split("const timeoutPromise = new Promise<")[1]
+				?.split("\n\t\t});")[0]
+				?.split("\n\t});")[0] || "";
 		assert.ok(
-			!promptCall.includes("streamingBehavior"),
-			"session.prompt() call must not include streamingBehavior parameter",
+			timeoutPromiseSection.includes("reject(") || timeoutPromiseSection.includes("Error("),
+			"timeout promise rejects with error",
+		);
+	});
+
+	it("3.4: timeout sets timedOut flag before abort", () => {
+		const timeoutPromiseSection =
+			source
+				.split("const timeoutPromise = new Promise<")[1]
+				?.split("\n\t\t});")[0]
+				?.split("\n\t});")[0] || "";
+		assert.ok(
+			timeoutPromiseSection.includes("timedOut = true"),
+			"timedOut flag set before session.abort()",
+		);
+		assert.ok(
+			timeoutPromiseSection.includes("session!.abort()") ||
+				timeoutPromiseSection.includes("session.abort()"),
+			"session.abort() called on timeout",
 		);
 	});
 });

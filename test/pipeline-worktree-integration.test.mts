@@ -13,9 +13,10 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { readFileSync, rmSync } from "node:fs";
+import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -24,6 +25,10 @@ const PIPELINE_TS = resolve(__dirname, "../.pi/extensions/supervisor/pipeline.ts
 
 function readPipelineSource(): string {
 	return readFileSync(PIPELINE_TS, "utf-8");
+}
+
+function run(cmd: string, cwd: string): string {
+	return execSync(cmd, { cwd, encoding: "utf-8", timeout: 15000 }).trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -129,5 +134,93 @@ describe("pipeline-worktree integration — error handling", () => {
 			prSection.includes("cwd: worktreePath") || prSection.includes("cwd:worktreePath"),
 			"cwd references worktreePath",
 		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Real git worktree integration tests (CI only — modifies git state)
+// ---------------------------------------------------------------------------
+
+const isCI = process.env.CI === "true";
+
+describe("pipeline-worktree real git operations", { skip: !isCI, concurrency: false }, () => {
+	let tmpDir: string;
+	let bareDir: string;
+	let mainDir: string;
+	let wtDir: string;
+	const branchName = "test-real-worktree-branch";
+
+	it("creates a worktree and verifies pwd returns worktree path", () => {
+		tmpDir = execSync("mktemp -d /tmp/worktree-real-test-XXXXXX", {
+			encoding: "utf-8",
+			timeout: 5000,
+		}).trim();
+
+		// Create bare repo
+		bareDir = join(tmpDir, "bare.git");
+		run(`git init --bare "${bareDir}"`, tmpDir);
+
+		// Clone main worktree
+		mainDir = join(tmpDir, "main");
+		run(`git clone "${bareDir}" "${mainDir}"`, tmpDir);
+
+		// Make an initial commit on main
+		run("git commit --allow-empty -m 'initial'", mainDir);
+		run("git push origin main", mainDir);
+
+		// Create branch for worktree
+		run(`git branch "${branchName}"`, mainDir);
+		run(`git push origin "${branchName}"`, mainDir);
+
+		// Create worktree for branch
+		wtDir = join(tmpDir, "worktree");
+		run(`git worktree add -b "${branchName}" "${wtDir}" main`, mainDir);
+
+		// Verify pwd returns worktree path
+		const pwd = run("pwd", wtDir);
+		assert.equal(pwd, wtDir, "pwd should return worktree path");
+
+		// Verify git branch --show-current returns branch name
+		const branch = run("git branch --show-current", wtDir);
+		assert.equal(branch, branchName, "branch should match worktree branch");
+
+		// Verify inside-work-tree detection
+		const inside = run("git rev-parse --is-inside-work-tree", wtDir);
+		assert.equal(inside, "true", "should be inside a git worktree");
+
+		// Verify show-toplevel returns worktree path
+		const toplevel = run("git rev-parse --show-toplevel", wtDir);
+		assert.equal(toplevel, wtDir, "show-toplevel should return worktree path");
+
+		// Verify rev-list can count commits (branch is valid)
+		const count = run(`git rev-list --count main..${branchName}`, mainDir);
+		assert.equal(parseInt(count.trim(), 10), 0, "branch should have no commits beyond main");
+	});
+
+	it("removes worktree and cleans up", () => {
+		// Remove worktree
+		if (wtDir) {
+			try {
+				run(`git worktree remove --force "${wtDir}"`, mainDir);
+			} catch {
+				// Non-fatal cleanup
+			}
+		}
+		// Delete branch
+		if (mainDir && branchName) {
+			try {
+				run(`git branch -D "${branchName}"`, mainDir);
+			} catch {
+				// Non-fatal cleanup
+			}
+		}
+		// Remove temp dir
+		if (tmpDir) {
+			try {
+				rmSync(tmpDir, { recursive: true, force: true });
+			} catch {
+				// Non-fatal cleanup
+			}
+		}
 	});
 });
