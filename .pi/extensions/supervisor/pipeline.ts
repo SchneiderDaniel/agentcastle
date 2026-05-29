@@ -532,7 +532,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						let aheadCommits = 0;
 						try {
 							const ahead = execSync(
-								`git rev-list --count "${config.defaultBranch!}..${headBranch}`,
+								`git rev-list --count "${config.defaultBranch!}..${headBranch}"`,
 								{ cwd: ctx.cwd, timeout: 5000 },
 							)
 								.toString()
