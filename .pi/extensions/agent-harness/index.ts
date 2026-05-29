@@ -21,7 +21,9 @@ import type { HarnessState } from "../../lib/harness-state.ts";
 import {
 	isSearchInBash,
 	isCatHeadTailInBash,
-	suggestRedirection,
+	isFileModifyingBash,
+	buildRedirectMessage,
+	MULTI_VERB_TOOLS,
 	CASCADE_THRESHOLD,
 	getToolMeta,
 } from "../../lib/harness-rules.ts";
@@ -53,16 +55,25 @@ interface ToolCallContext {
 
 /**
  * Extract bash sub-key for sub-command-aware cascade detection.
- * Uses first 2 tokens to distinguish multi-verb CLIs (git status vs git diff).
- * Single-token commands produce same sub-key as before. Empty → undefined.
+ * Multi-verb CLIs (git, npm, docker, gh, etc.) use first 2 tokens.
+ * Single-verb commands (cat, echo, ls, etc.) use first token only.
+ * Empty → undefined.
  */
 export function getBashSubKey(command: string): string | undefined {
-	return command.trim().split(/\s+/).slice(0, 2).join(" ") || undefined;
+	const trimmed = command.trim();
+	if (!trimmed) return undefined;
+
+	const tokens = trimmed.split(/\s+/);
+	if (tokens.length === 0 || (tokens.length === 1 && tokens[0] === "")) return undefined;
+
+	if (MULTI_VERB_TOOLS.has(tokens[0]) && tokens.length > 1) {
+		return `${tokens[0]} ${tokens[1]}`;
+	}
+
+	return tokens[0];
 }
 
 // ── Guard result constants ──
-
-const PASS = null as ToolCallResult | null;
 
 // ── Handler factory (exported for testing) ──
 
@@ -73,6 +84,7 @@ const PASS = null as ToolCallResult | null;
  * Guard order:
  *  1. Pass-through tools → always pass, record for cascade reset
  *  2. Error tracking → push to tracker, pass through
+ *  2.5 Cache invalidation → write/file-modifying bash clears read cache
  *  3. Error retry blocking → if >=2 errors, block
  *  4. Read caching → cache hit blocks with cached info
  *  5. Cascade detection → consecutive blocks (8+ legit calls)
@@ -115,8 +127,20 @@ export function createToolCallHandler(state: HarnessState) {
 			// result stays null → pass through
 		}
 
+		// ── 2.5 Cache invalidation (before blocking guards) ──
+		// File-modifying tool calls invalidate the read cache
+		if (toolName === "write") {
+			state.readCache.clear();
+		} else if (toolName === "bash") {
+			const command = (args.command ?? "") as string;
+			if (command && isFileModifyingBash(command)) {
+				state.readCache.clear();
+			}
+		}
+
 		// ── 3/4. Error retry & read cache blocking ──
-		else {
+		// Only runs for non-error events
+		if (!event.isError) {
 			// ── 3. Error retry blocking ──
 			const errors = state.errorTracker.getLastErrors(toolName);
 			if (errors.length >= 2) {
@@ -134,7 +158,7 @@ export function createToolCallHandler(state: HarnessState) {
 					const offset = (args.offset ?? 0) as number;
 					const limit = (args.limit ?? "") as number;
 					const cacheKey = `${path}|${offset}|${limit}`;
-					const cached = state.readCache.get(cacheKey, turn);
+					const cached = state.readCache.get(cacheKey, turn, state.batchId);
 					if (cached) {
 						// Same-turn [pending] → pass through (let re-read happen)
 						if (cached.content === "[pending]" && cached.turn === turn) {
@@ -147,7 +171,7 @@ export function createToolCallHandler(state: HarnessState) {
 						}
 					} else {
 						// Store marker to track that this path+offset+limit was recently read
-						state.readCache.set(cacheKey, "[pending]", turn);
+						state.readCache.set(cacheKey, "[pending]", turn, state.batchId);
 					}
 				}
 			}
@@ -190,7 +214,7 @@ export function createToolCallHandler(state: HarnessState) {
 				if (isSearchInBash(command)) {
 					result = {
 						block: true,
-						reason: `Use ripgrep_search tool instead of bash grep/rg. ${suggestRedirection(command)}`,
+						reason: buildRedirectMessage("ripgrep_search"),
 						redirectTo: "ripgrep_search",
 					};
 				}
@@ -199,7 +223,7 @@ export function createToolCallHandler(state: HarnessState) {
 				else if (isCatHeadTailInBash(command)) {
 					result = {
 						block: true,
-						reason: `Use read tool instead of bash cat/head/tail. ${suggestRedirection(command)}`,
+						reason: buildRedirectMessage("read"),
 						redirectTo: "read",
 					};
 				}

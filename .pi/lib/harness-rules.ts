@@ -38,6 +38,37 @@ export const CACHE_TTL_TURNS = 6;
 /** Max consecutive same-tool calls before triggering cascade block. */
 export const CASCADE_THRESHOLD = 8;
 
+/**
+ * Multi-verb CLIs where first 2 tokens form the sub-key
+ * (e.g., "git status" vs "git diff").
+ * Single-verb commands use only the first token.
+ */
+export const MULTI_VERB_TOOLS = new Set([
+	"git",
+	"npm",
+	"yarn",
+	"cargo",
+	"go",
+	"docker",
+	"kubectl",
+	"gh",
+]);
+
+/**
+ * Bash commands that modify files — triggers read cache invalidation.
+ */
+export const FILE_MODIFY_SIGNALS: readonly string[] = [
+	"sed",
+	"echo",
+	"cat",
+	"tee",
+	"mv",
+	"cp",
+	"rm",
+	"chmod",
+	"dd",
+];
+
 /** Max errors tracked per tool before triggering retry block. */
 export const MAX_ERRORS_PER_TOOL = 3;
 
@@ -174,42 +205,51 @@ export function parseBashCmd(cmd: string): BashSegment[] {
 // ── Detection functions ──
 
 /**
+ * Quick check if a bash command is a simple standalone call
+ * (no pipes, && chains, or semicolons).
+ * Returns false for complex commands that should pass through.
+ */
+export function isStandaloneToolCall(cmd: string): boolean {
+	if (!cmd) return false;
+	// Complex commands with pipes, &&, or ; are not standalone
+	if (cmd.includes("|") || cmd.includes("&&") || cmd.includes(";")) {
+		return false;
+	}
+	return true;
+}
+
+/**
  * Check if a bash command uses grep/rg/find for search.
  * These should be replaced with ripgrep_search.
  *
- * Uses parseBashCmd to avoid false positives:
- *  - Patterns in quoted args (gh issue --body '...| grep...') → no block
- *  - Patterns in pipe outside quotes → block
- *  - Backtick grep/rg → block
+ * Uses isStandaloneToolCall to let complex pipelines pass through:
+ *  - `cmd1 | grep foo` → pass through (pipeline)
+ *  - `grep foo` → block (standalone)
+ *  - Backtick grep/rg → always block
  */
 export function isSearchInBash(cmd: string): boolean {
 	if (!cmd) return false;
 	const lower = cmd.toLowerCase();
 
 	// Backtick patterns: `grep`, `rg` — these are always search
-	if (lower.includes("`grep")) {
-		return true;
-	}
-	if (lower.includes("`rg")) {
+	if (lower.includes("`grep") || lower.includes("`rg")) {
 		return true;
 	}
 
-	// Use parseBashCmd to split by pipe outside quotes
+	// Only block standalone calls — complex pipelines pass through
+	if (!isStandaloneToolCall(lower)) {
+		return false;
+	}
+
+	// For standalone commands, check first segment only
 	const segments = parseBashCmd(lower);
+	if (segments.length === 0) return false;
 
-	// Check segments for grep/rg as the first token (piped command)
-	for (const seg of segments) {
-		if (seg.redirect) continue;
-		if (seg.tokens.length >= 1) {
-			// grep/rg as first token in segment → cmd1 | grep foo
-			const first = seg.tokens[0];
-			if (first === "grep" || first === "rg") {
-				return true;
-			}
-		}
-	}
+	const firstSeg = segments[0];
+	if (!firstSeg || firstSeg.tokens.length === 0) return false;
 
-	return false;
+	const first = firstSeg.tokens[0];
+	return first === "grep" || first === "rg";
 }
 
 /**
@@ -243,6 +283,50 @@ export function isCatHeadTailInBash(cmd: string): boolean {
 	}
 
 	return false;
+}
+
+/**
+ * Check if a bash command modifies files (triggers cache invalidation).
+ * Detects redirect operators and known file-modifying commands.
+ */
+export function isFileModifyingBash(cmd: string): boolean {
+	if (!cmd) return false;
+	const lower = cmd.toLowerCase();
+
+	// Redirect operators (>, >>) always modify files
+	if (lower.includes(">")) return true;
+
+	const segments = parseBashCmd(lower);
+	if (segments.length === 0) return false;
+
+	// Check first token of first segment against known file-modifying commands
+	const firstSeg = segments[0];
+	if (!firstSeg || firstSeg.tokens.length === 0) return false;
+
+	const firstToken = firstSeg.tokens[0];
+	return (FILE_MODIFY_SIGNALS as readonly string[]).includes(firstToken);
+}
+
+/**
+ * Build a structured redirect message for the LLM.
+ * Returns a [SYSTEM OVERRIDE] block with forbidden action and required JSON schema.
+ */
+export function buildRedirectMessage(toolName: string): string {
+	if (toolName === "ripgrep_search") {
+		return [
+			`[SYSTEM OVERRIDE] Action Blocked. Do not use 'grep' or 'rg' in bash.`,
+			`You MUST use the dedicated 'ripgrep_search' tool.`,
+			`Required JSON Schema: { "query": "your_search_pattern", "directory": "./target_dir" }`,
+		].join("\n");
+	}
+	if (toolName === "read") {
+		return [
+			`[SYSTEM OVERRIDE] Action Blocked. Do not use 'cat', 'head', or 'tail' in bash.`,
+			`You MUST use the dedicated 'read' tool.`,
+			`Required JSON Schema: { "path": "./file.ts", "offset?": 0, "limit?": 100 }`,
+		].join("\n");
+	}
+	return "";
 }
 
 /**
@@ -321,16 +405,18 @@ export function detectMismatchAndSuggest(
 	const segments = parseBashCmd(lower);
 	if (segments.length === 0) return null;
 
-	// Search in bash (grep/rg as first token in piped segment)
-	for (const seg of segments) {
-		if (seg.redirect) continue;
-		if (seg.tokens.length >= 1) {
-			const first = seg.tokens[0];
-			if (first === "grep" || first === "rg") {
-				return {
-					category: "tool-mismatch",
-					suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
-				};
+	// Search in bash (grep/rg as first token — standalone only, not piped)
+	if (isStandaloneToolCall(cmd)) {
+		for (const seg of segments) {
+			if (seg.redirect) continue;
+			if (seg.tokens.length >= 1) {
+				const first = seg.tokens[0];
+				if (first === "grep" || first === "rg") {
+					return {
+						category: "tool-mismatch",
+						suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
+					};
+				}
 			}
 		}
 	}
@@ -380,13 +466,15 @@ export function suggestRedirection(cmd: string): string | null {
 	const segments = parseBashCmd(lower);
 	if (segments.length === 0) return null;
 
-	// grep/rg as first token in any segment → ripgrep_search
-	for (const seg of segments) {
-		if (seg.redirect) continue;
-		if (seg.tokens.length >= 1) {
-			const first = seg.tokens[0];
-			if (first === "grep" || first === "rg") {
-				return "ripgrep_search";
+	// grep/rg as first token — standalone only, not piped
+	if (isStandaloneToolCall(cmd)) {
+		for (const seg of segments) {
+			if (seg.redirect) continue;
+			if (seg.tokens.length >= 1) {
+				const first = seg.tokens[0];
+				if (first === "grep" || first === "rg") {
+					return "ripgrep_search";
+				}
 			}
 		}
 	}

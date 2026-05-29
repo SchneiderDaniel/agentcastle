@@ -15,6 +15,8 @@ export interface CacheEntry {
 	content: string;
 	turn: number;
 	timestamp: number;
+	/** Batch ID for parallel call grouping (optional). */
+	batchId?: number;
 }
 
 export interface ErrorEntry {
@@ -32,9 +34,9 @@ export interface ConsecutiveInfo {
 
 export interface ReadCache {
 	/** Get cached entry. Returns null on miss or TTL expiry. */
-	get(key: string, currentTurn: number): CacheEntry | null;
+	get(key: string, currentTurn: number, currentBatchId?: number): CacheEntry | null;
 	/** Set cached entry with current turn and timestamp. */
-	set(key: string, content: string, turn: number): void;
+	set(key: string, content: string, turn: number, batchId?: number): void;
 	/** Clear all cache entries. */
 	clear(): void;
 }
@@ -73,12 +75,21 @@ export interface HarnessState {
 	 * Incremented on each tool_call event handled by the extension.
 	 */
 	currentTurn: number;
+	/**
+	 * Batch ID for parallel call detection.
+	 * Set by session manager before dispatching parallel calls.
+	 * When undefined, falls back to currentTurn (backward compat).
+	 */
+	batchId?: number;
 }
 
 // ── Constants ──
 
 import { CACHE_TTL_TURNS } from "./harness-rules.ts";
 const MAX_ERRORS_PER_TOOL = 3;
+
+/** Time-based TTL for cache entries (in ms). 30 seconds. */
+export const CACHE_TTL_MS = 30_000;
 
 // ── Factory ──
 
@@ -92,12 +103,29 @@ export function createHarnessState(): HarnessState {
 	const cacheMap = new Map<string, CacheEntry>();
 
 	const readCache: ReadCache = {
-		get(key: string, currentTurn: number): CacheEntry | null {
+		get(key: string, currentTurn: number, currentBatchId?: number): CacheEntry | null {
 			const entry = cacheMap.get(key);
 			if (!entry) return null;
 
+			// Batch-aware check: if both entry and current call have batchId
+			// and they match, the entry is valid regardless of turn diff
+			if (currentBatchId !== undefined && entry.batchId !== undefined) {
+				if (currentBatchId === entry.batchId) {
+					// Same batch — entry is valid (not a different response cycle)
+					return entry;
+				}
+			}
+
+			// Turn-based TTL
 			const turnDiff = currentTurn - entry.turn;
 			if (turnDiff >= CACHE_TTL_TURNS) {
+				cacheMap.delete(key);
+				return null;
+			}
+
+			// Time-based TTL (monotonic clock, 30s)
+			const timeDiff = Date.now() - entry.timestamp;
+			if (timeDiff >= CACHE_TTL_MS) {
 				cacheMap.delete(key);
 				return null;
 			}
@@ -105,11 +133,12 @@ export function createHarnessState(): HarnessState {
 			return entry;
 		},
 
-		set(key: string, content: string, turn: number): void {
+		set(key: string, content: string, turn: number, batchId?: number): void {
 			cacheMap.set(key, {
 				content,
 				turn,
 				timestamp: Date.now(),
+				batchId,
 			});
 		},
 
