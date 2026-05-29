@@ -44,7 +44,7 @@ export async function runAgent(
 	} catch (err) {
 		console.error(`[supervisor] In-process runner failed, falling back to subprocess: ${err}`);
 		// Fallback: subprocess (existing code)
-		return runAgentSubprocess(agent, task, ctx, timeoutMs, cwd);
+		return await runAgentSubprocess(agent, task, ctx, timeoutMs, cwd);
 	}
 }
 
