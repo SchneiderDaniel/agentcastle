@@ -5,8 +5,6 @@
  * Used as last resort when crawl4ai + Apify both fail.
  */
 
-import type { OnUpdateCallback } from "./types";
-
 /**
  * Convert HTML string to rough markdown using regex-based transformations.
  * Pure function, no side effects.
@@ -56,14 +54,28 @@ export function htmlToMarkdown(html: string): string {
 }
 
 /**
+ * Build a human-readable HTTP error string with differentiated messages.
+ */
+function httpErrorMessage(status: number): string {
+	if (status === 401) {
+		return `HTTP 401 Unauthorized — check API key/auth headers`;
+	}
+	if (status === 403) {
+		return `HTTP 403 Forbidden`;
+	}
+	return `HTTP ${status}`;
+}
+
+/**
  * Last-resort crawl: direct HTTP fetch + regex-based HTML-to-markdown conversion.
  * No external dependencies beyond fetch (global in Node 18+).
+ *
+ * Signature: (url, maxPages, signal) — no onUpdate (unused, removed).
  */
 export async function directFetchCrawl(
 	url: string,
 	maxPages: number,
 	signal?: AbortSignal,
-	onUpdate?: OnUpdateCallback,
 ): Promise<string> {
 	const visited = new Set<string>();
 	const queue: string[] = [url];
@@ -87,7 +99,7 @@ export async function directFetchCrawl(
 			});
 
 			if (!res.ok) {
-				results.push(`--- ${current} ---\nError: HTTP ${res.status} ${res.statusText}`);
+				results.push(`--- ${current} ---\nError: ${httpErrorMessage(res.status)}`);
 				continue;
 			}
 

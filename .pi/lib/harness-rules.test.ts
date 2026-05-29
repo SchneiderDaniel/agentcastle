@@ -1,4 +1,5 @@
 /**
+
  * Tests for harness-rules.ts — pure domain rules.
  * No infra, no pi runtime, no network.
  */

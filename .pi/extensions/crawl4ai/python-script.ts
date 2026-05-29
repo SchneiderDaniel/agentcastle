@@ -9,6 +9,9 @@ export const CRAWL4AI_SCRIPT = `
 import asyncio
 import json
 import sys
+import signal
+
+signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(130))
 
 async def main():
     config = json.loads(sys.argv[1])
@@ -18,7 +21,9 @@ async def main():
     try:
         from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
     except ImportError as e:
+        print("CRAWL4AI_OK")
         print(json.dumps({"ok": False, "error": f"crawl4ai not installed: {e}"}))
+        print("CRAWL4AI_DONE")
         return
 
     results = []
@@ -65,7 +70,9 @@ async def main():
             except Exception as e:
                 results.append({"url": current, "error": str(e), "success": False})
 
+    print("CRAWL4AI_OK")
     print(json.dumps({"ok": True, "results": results}))
+    print("CRAWL4AI_DONE")
 
 asyncio.run(main())
 `;
