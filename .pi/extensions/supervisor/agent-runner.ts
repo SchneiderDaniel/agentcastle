@@ -124,8 +124,13 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName, model));
-			ctx.ui.setStatus("supervisor", undefined);
+			try {
+				ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName, model));
+				ctx.ui.setStatus("supervisor", undefined);
+			} catch (renderErr: unknown) {
+				const msg = renderErr instanceof Error ? renderErr.message : String(renderErr);
+				console.error(`[supervisor] widget render error for ${agentName}: ${msg}`);
+			}
 		};
 
 		const scheduleFlush = () => {
@@ -138,17 +143,29 @@ export async function runAgentSubprocess(
 		// Original freeze was from requestRender(true) + 5s interval, not heartbeat itself.
 		// Without heartbeat, terminal stops rendering between events — "stuck until keystroke".
 		// flushWidget calls setWidget which calls requestRender (coalesced by TUI to 16ms).
+		// Try-catch prevents uncaught exceptions from killing the interval.
 		const heartbeatTimer = setInterval(() => {
-			if (!flushTimer) flushWidget();
+			try {
+				if (!flushTimer) flushWidget();
+			} catch (hbErr: unknown) {
+				const msg = hbErr instanceof Error ? hbErr.message : String(hbErr);
+				console.error(`[supervisor] heartbeat error for ${agentName}: ${msg}`);
+			}
 		}, 2000);
 
 		// Event-driven flush at 300ms debounce + 2s heartbeat.
+		// Try-catch prevents uncaught exceptions from breaking the JSON stream processing.
 		const handleLine = (line: string) => {
-			const result = processJsonLine(line, state);
-			if (result.flush) scheduleFlush();
-			if (result.workingChange) {
-				const wm = getWorkingMessage(state, agentName);
-				ctx.ui.setWorkingMessage(wm ?? undefined);
+			try {
+				const result = processJsonLine(line, state);
+				if (result.flush) scheduleFlush();
+				if (result.workingChange) {
+					const wm = getWorkingMessage(state, agentName);
+					ctx.ui.setWorkingMessage(wm ?? undefined);
+				}
+			} catch (lineErr: unknown) {
+				const msg = lineErr instanceof Error ? lineErr.message : String(lineErr);
+				console.error(`[supervisor] JSON line error for ${agentName}: ${msg}`);
 			}
 		};
 
