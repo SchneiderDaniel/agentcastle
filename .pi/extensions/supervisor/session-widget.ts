@@ -3,12 +3,12 @@
 // Extracted from agent-stream.ts to keep files modular.
 
 import type { AgentRunState } from "./types";
-import { formatTokens, formatDuration, boldText, getTermWidth } from "./formatting";
+import { formatTokens, formatDuration, boldText, getTermWidth } from "./formatting.ts";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { WIDGET_LINES, MAX_LIVE_THINKING, pushLog } from "./agent-stream";
+import { WIDGET_LINES, MAX_LIVE_THINKING, pushLog } from "./agent-stream.ts";
 
 // Re-export constants for backward compatibility
-export { WIDGET_LINES, MAX_LIVE_THINKING } from "./agent-stream";
+export { WIDGET_LINES, MAX_LIVE_THINKING } from "./agent-stream.ts";
 
 /**
  * Build widget lines from state. Pure function — no side effects.
