@@ -130,12 +130,12 @@ export async function runAgentSubprocess(
 
 		const scheduleFlush = () => {
 			if (!flushTimer) {
-				flushTimer = setTimeout(flushWidget, 80);
+				flushTimer = setTimeout(flushWidget, 300);
 			}
 		};
 
 		// Event-driven flush only — no heartbeat interval (terminal freeze fix).
-		// Each stdout data event triggers handleLine → scheduleFlush at 80ms debounce.
+		// Each stdout data event triggers handleLine → scheduleFlush at 300ms debounce.
 		const handleLine = (line: string) => {
 			const result = processJsonLine(line, state);
 			if (result.flush) scheduleFlush();

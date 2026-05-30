@@ -24,7 +24,7 @@ import { getModel } from "@earendil-works/pi-ai";
 import { resolveExtensionPaths } from "./extensions.ts";
 import { formatDuration, extractSummaryLine } from "./formatting.ts";
 import { pushLog } from "./agent-stream.ts";
-import { buildWidgetComponent, getWorkingMessage } from "./session-widget.ts";
+import { buildWidgetLines, getWorkingMessage } from "./session-widget.ts";
 import { resolveModel, buildToolList } from "./session-model.ts";
 import { processSessionEvent } from "./session-events.ts";
 import { buildAgentRunResult } from "./session-result.ts";
@@ -122,33 +122,25 @@ export async function runAgentInProcess(
 		});
 		session = sessionResult.session;
 
-		// ── Live widget via TUI Component factory ──
-		// Uses ctx.ui.setWidget() with a Component factory function that builds
-		// a Container from pi's TUI primitives (Container, Text, Spacer).
-		// The factory captures state by reference so each render picks up the
-		// latest fullLog, tool info, and stats. Styled with theme colors to
-		// match the message-renderer look.
+		// ── Live widget via string array ──
+		// Uses ctx.ui.setWidget() with a string array (lighter than Component factory).
+		// buildWidgetLines builds ≤20 lines from state (log entries, stats, phase info).
+		// No requestRender call — avoids forced synchronous re-render
+		// that freezes terminal input (Bug: terminal freeze fix).
 		const flushWidget = () => {
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			// Pass Component factory: TUI calls factory on each render pass.
-			// No requestRender call — avoids forced synchronous re-render
-			// that freezes terminal input (Bug: terminal freeze fix).
-			ctx.ui.setWidget(
-				widgetId,
-				(_tui, theme) => buildWidgetComponent(state, agentName, agent.config.model, theme),
-				{
-					placement: "aboveEditor",
-				},
-			);
+			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName, agent.config.model), {
+				placement: "aboveEditor",
+			});
 			ctx.ui.setStatus("supervisor", undefined);
 		};
 
 		const scheduleFlush = () => {
 			if (!flushTimer) {
-				flushTimer = setTimeout(flushWidget, 80);
+				flushTimer = setTimeout(flushWidget, 300);
 			}
 		};
 
