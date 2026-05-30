@@ -48,6 +48,13 @@ export interface ErrorTracker {
 	getLastErrors(toolName: string): ErrorEntry[];
 	/** Clear all error entries. */
 	clear(): void;
+	/**
+	 * Decay errors: remove 1 oldest error entry per tool.
+	 * Called at each turn boundary alongside callCounter.turnBoundaryReset().
+	 * Enables auto-recovery: after 2 turns without errors, a tool with 2 errors
+	 * decays to 0 and is unblocked.
+	 */
+	decay(): void;
 }
 
 export interface CallCounter {
@@ -189,6 +196,14 @@ export function createHarnessState(): HarnessState {
 
 		clear(): void {
 			errorMap.clear();
+		},
+
+		decay(): void {
+			for (const [, errors] of errorMap) {
+				if (errors.length > 0) {
+					errors.shift();
+				}
+			}
 		},
 	};
 

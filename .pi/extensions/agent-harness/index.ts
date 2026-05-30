@@ -146,7 +146,7 @@ export function createToolCallHandler(state: HarnessState) {
 
 		// ── 2.5 Cache invalidation (before blocking guards) ──
 		// File-modifying tool calls invalidate the read cache
-		if (toolName === "write") {
+		if (toolName === "write" || toolName === "edit") {
 			state.readCache.clear();
 		} else if (toolName === "bash") {
 			const command = (args.command ?? "") as string;
@@ -277,10 +277,11 @@ export default function agentHarness(pi: ExtensionAPI): void {
 		state = createHarnessState();
 	});
 
-	// Turn start: increment session turn and reset cascade counter
+	// Turn start: increment session turn, reset cascade counter, decay error tracker
 	pi.on("turn_start", async () => {
 		state.sessionTurn++;
 		state.callCounter.turnBoundaryReset();
+		state.errorTracker.decay();
 	});
 
 	// Tool_call handler
