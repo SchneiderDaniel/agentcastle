@@ -2,13 +2,13 @@
 // PR creation logic: decoupled from handler, triggered on auditor approval.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig, PipelineAgentResult } from "../types";
-import { writeFileSync } from "node:fs";
+import type { SupervisorConfig, PipelineAgentResult } from "../types.ts";
+import { writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 import { tmpdir } from "node:os";
-import { generateBranchName } from "../agent-task";
-import { createPullRequest } from "../github/pr";
-import { buildPipelineSummary } from "../pipeline-output";
+import { generateBranchName } from "../agent-task.ts";
+import { createPullRequest } from "../github/pr.ts";
+import { buildPipelineSummary } from "../pipeline-output.ts";
 
 /**
  * Create a pull request after auditor approves and transitions to Done.
@@ -52,7 +52,7 @@ export async function createPrOnApproval(
 	const prBody = buildPipelineSummary(agentResults, "success", issueNum, issueTitle, config);
 	const tempFile = joinPath(tmpdir(), `pr-body-${issueNum}.md`);
 	try {
-		writeFileSync(tempFile, prBody, "utf-8");
+		await writeFile(tempFile, prBody, "utf-8");
 		const prTitle = `feat(#${issueNum}): ${issueTitle}`;
 
 		// Push branch before creating PR so remote ref exists

@@ -1,6 +1,7 @@
 // ─── Pipeline Handler ────────────────────────────────────────────
 // Main /supervisor command handler: status loop, transitions, hook wiring.
 // Orchestrates the full pipeline by importing from submodules.
+// Stage transition logic is extracted to stages.ts.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type {
@@ -9,6 +10,8 @@ import type {
 	ProjectField,
 	ProjectItem,
 	PipelineAgentResult,
+	FilteredIssueData,
+	ParsedAgent,
 } from "../types.ts";
 import { loadConfig, resolveTimeoutMs } from "../config.ts";
 import {
@@ -17,27 +20,35 @@ import {
 	getProjectId,
 	findIssueItem,
 	getItemStatusName,
-	findStatusOption,
-	setItemStatus,
-	postIssueComment,
-	extractAgentCommentBody,
-	extractStructuredAuditOutput,
-	buildAuditCommentFallback,
 	checkBlockedByDependencies,
 	filterIssueData,
-	commitAndPush,
 } from "../github/index.ts";
 import { parseAgentFile } from "../agent-loader.ts";
 import { buildAgentTask, generateBranchName, summarizeComments } from "../agent-task.ts";
 import { runAgent } from "../agent-runner.ts";
-import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "../workflow.ts";
-import { countRejections, formatDuration } from "../formatting.ts";
+import { WORKFLOW } from "../workflow.ts";
+import { formatDuration } from "../formatting.ts";
 import { runTscAndLspAudit } from "../pipeline-audit.ts";
 import { buildPipelineSummary, validateAgentResult } from "../pipeline-output.ts";
 import { handlePostPipelineMerge } from "../pipeline-merge.ts";
 import { createWorktree, installWorktreeDeps, cleanupWorktree } from "./worktree.ts";
 import { createPrOnApproval } from "./pr-creation.ts";
 import { sendPipelineSummary, sendAgentResultMessage, sendPipelineError } from "./notifications.ts";
+import {
+	MAX_PIPELINE_LOOPS,
+	createStageState,
+	type StageState,
+	handleBacklogTransition,
+	isDoneStatus,
+	resolveAgentName,
+	isWorktreeAgent,
+	isRejectionLimitReached,
+	calculateNextStatus,
+	trackAuditScore,
+	applyStatusTransition,
+	buildAgentResultEntry,
+	handlePostAgentSuccess,
+} from "./stages.ts";
 
 /**
  * Main supervisor handler — processes a GitHub issue through the full Kanban pipeline.
@@ -63,81 +74,28 @@ export async function handleSupervisorCommand(
 	try {
 		config = loadConfig();
 
-		// Initial fetch
+		// Fetch issue
 		ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
-		let issueData: Record<string, unknown> | null;
-		try {
-			issueData = await pi
-				.exec("gh", [
-					"issue",
-					"view",
-					String(issueNum),
-					"--repo",
-					config.repo,
-					"--json",
-					"number,title,body,author,comments",
-				])
-				.then((r) => JSON.parse(r.stdout || "{}"));
-		} catch {
-			ctx.ui.notify(`Issue #${issueNum} not found in ${config.repo}`, "error");
-			return;
-		}
-
+		const issueData = await fetchIssue(pi, ctx, config, issueNum);
+		if (!issueData) return;
 		issueTitle = (issueData?.title as string) || `Issue #${issueNum}`;
 
-		// Print issue header
 		pi.sendMessage({
 			customType: "supervisor",
 			content: `## GitHub Issue: [#${issueNum}] ${issueTitle}\n\n**Repository:** \`${config.repo}\``,
 			display: true,
 		});
 
-		// Code-level security: filter issue body + comments to trusted codeowners only
-		const filteredData = filterIssueData(
-			issueData as {
-				author?: { login: string };
-				body?: string;
-				comments?: Array<{ author?: { login: string }; body?: string }>;
-			},
-			config.codeowners,
+		const filteredData = filterIssueData(issueData, config.codeowners);
+
+		// Read project board
+		const { fields, items, projectId, statusField } = await readProjectBoard(
+			pi,
+			ctx,
+			config,
+			issueNum,
 		);
-
-		// Get board info
-		ctx.ui.setStatus("supervisor", "Reading project board...");
-		let fields: ProjectField[];
-		let items: ProjectItem[];
-		let projectId: string;
-
-		try {
-			fields = await getProjectFields(pi, config.projectNumber);
-			items = await getProjectItems(pi, config.projectNumber);
-			projectId = await getProjectId(pi, config.projectNumber);
-		} catch (err: unknown) {
-			const msg = err instanceof Error ? err.message : String(err);
-			if (msg.includes("missing required scopes")) {
-				ctx.ui.notify(
-					"GitHub token missing 'project' scope. Run: gh auth refresh -s project",
-					"error",
-				);
-			} else {
-				ctx.ui.notify(`Failed to read project board: ${msg}`, "error");
-			}
-			ctx.ui.setStatus("supervisor", "");
-			return;
-		}
-
-		const statusField = fields.find(
-			(f) => f.name.toLowerCase() === config.statusField?.toLowerCase(),
-		);
-		if (!statusField) {
-			ctx.ui.notify(
-				`Status field '${config.statusField}' not found. Fields: ${fields.map((f) => f.name).join(", ")}`,
-				"error",
-			);
-			ctx.ui.setStatus("supervisor", "");
-			return;
-		}
-
+		if (!fields || !statusField) return;
 		const loopItem = findIssueItem(items, issueNum);
 		if (!loopItem) {
 			ctx.ui.notify(`Issue #${issueNum} not on project board #${config.projectNumber}.`, "error");
@@ -145,151 +103,79 @@ export async function handleSupervisorCommand(
 			return;
 		}
 
-		// ── Dependency gate ──
+		// Dependency gate
 		ctx.ui.setStatus("supervisor", "Checking dependencies...");
-		try {
-			const depsResult = await checkBlockedByDependencies(pi, issueNum, config.repo);
-			if (depsResult.blocked) {
-				const lines = depsResult.blockers.map((b) => {
-					const prefix = b.type === "pullrequest" ? "!" : "#";
-					return `${prefix}${b.number}: ${b.title} (open)`;
-				});
-				ctx.ui.notify(
-					`Issue #${issueNum} is blocked by unresolved dependencies:\n${lines.join("\n")}`,
-					"error",
-				);
-				ctx.ui.setStatus("supervisor", "");
-				return;
-			}
-		} catch (err: unknown) {
-			const msg = err instanceof Error ? err.message : String(err);
-			ctx.ui.notify(`Dependency check failed: ${msg}`, "error");
-			ctx.ui.setStatus("supervisor", "");
-			return;
-		}
+		if (!(await checkDependencies(pi, ctx, config, issueNum))) return;
 
-		// ── Pipeline loop ──
-		let loopStatus = getItemStatusName(loopItem);
-		const MAX_LOOPS = 20;
-		let lastAuditScore: AuditScore | null = null;
-		let auditCycleCount = 0;
+		// Pipeline main loop
+		const stageState = createStageState(getItemStatusName(loopItem));
+		let { loopStatus } = stageState;
 
-		for (let i = 0; i < MAX_LOOPS; i++) {
+		for (let i = 0; i < MAX_PIPELINE_LOOPS; i++) {
 			ctx.ui.notify(`Issue #${issueNum}: "${issueTitle}" — Status: ${loopStatus}`, "info");
 
 			const step = WORKFLOW.find((s) => s.status.toLowerCase() === loopStatus.toLowerCase());
 			if (!step) {
-				const available = WORKFLOW.map((s) => s.status).join(", ");
+				stopReason = `No workflow step for status '${loopStatus}'`;
 				ctx.ui.notify(
-					`No workflow step for status '${loopStatus}'. Available: ${available}`,
+					`No workflow step for status '${loopStatus}'. Available: ${WORKFLOW.map((s) => s.status).join(", ")}`,
 					"error",
 				);
-				stopReason = `No workflow step for status '${loopStatus}'`;
 				break;
 			}
 
-			// ── Built-in: Backlog ──
+			// Built-in: Backlog → Architecture
 			if (step.builtIn === "backlog") {
-				const optId = findStatusOption(fields, statusField.id, "Architecture");
-				if (!optId) {
-					ctx.ui.notify("Cannot find 'Architecture' status option", "error");
-					stopReason = "Backlog transition failed: cannot find 'Architecture' status option";
-					break;
-				}
-				try {
-					await setItemStatus(pi, loopItem.id, projectId, statusField.id, optId);
-				} catch (err: unknown) {
-					const msg = err instanceof Error ? err.message : String(err);
-					ctx.ui.notify(`Failed to set status: ${msg}`, "error");
-					stopReason = `Backlog transition failed: ${msg}`;
-					break;
-				}
+				loopStatus = await handleBacklogTransition(
+					pi,
+					fields,
+					statusField.id,
+					loopItem.id,
+					projectId,
+				);
 				ctx.ui.notify(`Issue #${issueNum} moved: Backlog → Architecture`, "info");
-				loopStatus = "Architecture";
 				continue;
 			}
 
-			// ── Built-in: Done ──
+			// Built-in: Done
 			if (step.builtIn === "done") {
 				ctx.ui.notify(`Issue #${issueNum} is Done. Pipeline complete.`, "info");
 				break;
 			}
 
-			const agentName = step.agentName || config.statusMapping[loopStatus];
+			// Resolve agent for this status
+			const agentName = resolveAgentName(loopStatus, config);
 			if (!agentName) {
-				const mapped = Object.keys(config.statusMapping).join(", ");
-				ctx.ui.notify(`No agent for status '${loopStatus}'. Mapped: ${mapped}`, "error");
 				stopReason = `No agent for status '${loopStatus}'`;
+				ctx.ui.notify(`No agent for status '${loopStatus}'`, "error");
 				break;
 			}
 
-			// Re-read issue for fresh comments using pi.exec
-			let freshData: Record<string, unknown>;
-			try {
-				const raw = await pi.exec("gh", [
-					"issue",
-					"view",
-					String(issueNum),
-					"--repo",
-					config.repo,
-					"--json",
-					"number,title,body,author,comments",
-				]);
-				freshData = JSON.parse(raw.stdout || "{}");
-			} catch {
-				freshData = issueData as Record<string, unknown>;
-			}
-
-			const loopFilteredData = filterIssueData(
-				freshData as {
-					author?: { login: string };
-					body?: string;
-					comments?: Array<{ author?: { login: string }; body?: string }>;
-				},
-				config.codeowners,
-			);
+			// Fetch fresh issue data for this iteration
+			const loopFilteredData = await fetchFreshIssueData(pi, config, issueNum, issueData);
 
 			// Rejection limit check
-			if (step.maxRejections !== undefined && step.maxRejections > 0) {
-				const rejectionCount = countRejections(
-					loopFilteredData.comments.map((c) => ({ body: c.body })),
+			if (isRejectionLimitReached(loopFilteredData.comments, step.maxRejections)) {
+				stopReason = `Rejection limit reached (${step.maxRejections})`;
+				ctx.ui.notify(
+					`Issue #${issueNum} rejected ${step.maxRejections} times. Human intervention required.`,
+					"error",
 				);
-				if (rejectionCount >= step.maxRejections) {
-					ctx.ui.notify(
-						`Issue #${issueNum} rejected ${step.maxRejections} times. Human intervention required.`,
-						"error",
-					);
-					stopReason = `Rejection limit reached (${step.maxRejections})`;
-					break;
-				}
-			}
-
-			// Load agent file using pi.exec for exists check
-			const agentPath = `.pi/extensions/supervisor/agents/${agentName}.md`;
-			try {
-				await pi.exec("test", ["-f", agentPath], { cwd: ctx.cwd });
-			} catch {
-				ctx.ui.notify(`Agent file not found: ${agentPath}`, "error");
-				stopReason = `Agent file not found: ${agentPath}`;
 				break;
 			}
 
-			let agent;
-			try {
-				agent = parseAgentFile(agentPath);
-			} catch (err: unknown) {
-				const msg = err instanceof Error ? err.message : String(err);
-				ctx.ui.notify(`Failed to parse agent: ${msg}`, "error");
-				stopReason = `Failed to parse agent: ${msg}`;
+			// Load agent
+			const agent = await loadAgentFile(pi, ctx, agentName);
+			if (!agent) {
+				stopReason = `Agent file not found: ${agentName}`;
 				break;
 			}
 
 			ctx.ui.notify(`Dispatching ${agent.config.name}...`, "info");
+			const timeoutMs = resolveTimeoutMs(agentName, config.agentTimeoutsMin!);
 
-			const timeoutMs = resolveTimeoutMs(agentName, config.agentTimeoutsMin);
-
-			// ── Worktree creation ──
-			if ((agentName === "developer" || agentName === "auditor") && !worktreePath) {
+			// Worktree creation (once per pipeline run)
+			if (isWorktreeAgent(agentName) && !worktreePath) {
 				worktreeBranch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 				worktreePath = await createWorktree(
 					pi,
@@ -301,62 +187,53 @@ export async function handleSupervisorCommand(
 				await installWorktreeDeps(pi, worktreePath);
 			}
 
-			const submodules = config.submodules || [];
-
-			const summarizedRejections =
-				loopFilteredData.comments.length > 1
-					? summarizeComments(loopFilteredData.comments)
-					: undefined;
-
+			// Build task
 			const task = buildAgentTask(
 				agentName,
 				issueNum,
 				config.repo,
 				issueTitle,
 				loopFilteredData,
-				submodules,
+				config.submodules || [],
 				config.defaultBranch!,
 				config.remote!,
 				config.worktreeBase!,
 				config.branchPrefix!,
 				worktreePath,
 				worktreeBranch,
-				summarizedRejections,
+				loopFilteredData.comments.length > 1
+					? summarizeComments(loopFilteredData.comments)
+					: undefined,
 			);
 
-			const agentCwd =
-				agentName === "developer" || agentName === "auditor" ? worktreePath : undefined;
+			// Execute agent
+			const { result, usedRetry } = await executeAgent(
+				agent,
+				task,
+				ctx,
+				pi,
+				timeoutMs,
+				isWorktreeAgent(agentName) ? worktreePath : undefined,
+			);
 
-			let result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
-			validateAgentResult(result);
-			let usedRetry = false;
+			agentResults.push(buildAgentResultEntry(result, usedRetry));
 
-			if (result.budgetExceeded) {
-				ctx.ui.notify(`Agent ${agent.config.name} exceeded budget — not retrying`, "warning");
-			} else if (!result.success) {
-				ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
-				result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
-				usedRetry = true;
-				validateAgentResult(result);
+			// Track audit score
+			const auditInfo = trackAuditScore(result.textOnly, stageState);
+			if (auditInfo) {
+				ctx.ui.notify(
+					`Audit #${auditInfo.cycleCount} score: ${auditInfo.score.passing}/${auditInfo.score.total}${auditInfo.trend ? ` (${auditInfo.trend})` : ""}`,
+					"info",
+				);
 			}
 
-			const statusLabel = !result.success
-				? "FAILED"
-				: usedRetry
-					? "SUCCESS (after retry)"
-					: "SUCCESS";
-
-			const currentAuditScore = extractAuditScore(result.textOnly);
-			if (currentAuditScore) {
-				auditCycleCount++;
-			}
-
+			// Send result to UI
 			sendAgentResultMessage(
 				pi,
 				{
 					agentName: result.agentName,
 					success: result.success,
-					statusLabel,
+					statusLabel: !result.success ? "FAILED" : usedRetry ? "SUCCESS (after retry)" : "SUCCESS",
 					toolCount: result.toolCount,
 					tokenCount: result.tokenCount,
 					durationMs: result.durationMs,
@@ -366,111 +243,33 @@ export async function handleSupervisorCommand(
 					summaryLine: result.summaryLine,
 					thinkingOutput: result.thinkingOutput,
 				},
-				currentAuditScore ? `${currentAuditScore.passing}/${currentAuditScore.total}` : undefined,
+				auditInfo ? `${auditInfo.score.passing}/${auditInfo.score.total}` : undefined,
 			);
 
-			// ── Post issue comments deterministically ──
+			// Post-processing
 			if (result.success) {
-				const agentOutput = result.textOutput || result.output || "";
-
-				if (
-					agentName === "architect" ||
-					agentName === "test-designer" ||
-					agentName === "researcher"
-				) {
-					const commentBody = extractAgentCommentBody(agentOutput);
-					if (commentBody) {
-						try {
-							await postIssueComment(pi, issueNum, config.repo, commentBody);
-							ctx.ui.notify(`Posted ${agentName} comment on issue #${issueNum}`, "info");
-						} catch (commentErr: unknown) {
-							const cmtMsg = commentErr instanceof Error ? commentErr.message : String(commentErr);
-							console.warn(`[supervisor] Failed to post ${agentName} comment: ${cmtMsg}`);
-						}
-					}
-				}
-
-				if (agentName === "developer" && worktreePath && worktreeBranch) {
-					const commitMsg = `feat(#${issueNum}): ${issueTitle}`;
-					try {
-						await commitAndPush(pi, worktreePath, config.remote!, worktreeBranch, commitMsg);
-						ctx.ui.notify("Changes committed and pushed to branch", "info");
-					} catch (cpErr: unknown) {
-						const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr);
-						ctx.ui.notify(`commitAndPush failed: ${cpMsg}`, "warning");
-						console.warn(`[supervisor] commitAndPush failed: ${cpMsg}`);
-					}
-				}
-
-				if (agentName === "auditor") {
-					const auditOutput = extractStructuredAuditOutput(agentOutput);
-					if (auditOutput) {
-						if (auditOutput.decision === "APPROVED") {
-							if (auditOutput.commentBody) {
-								try {
-									await postIssueComment(pi, issueNum, config.repo, auditOutput.commentBody);
-									ctx.ui.notify("Audit approval comment posted", "info");
-								} catch (acErr: unknown) {
-									const acMsg = acErr instanceof Error ? acErr.message : String(acErr);
-									console.warn(`[supervisor] Failed to post audit comment: ${acMsg}`);
-								}
-							} else {
-								const fallbackBody = buildAuditCommentFallback(
-									auditOutput.decision,
-									result.textOnly,
-								);
-								if (fallbackBody) {
-									try {
-										await postIssueComment(pi, issueNum, config.repo, fallbackBody);
-										ctx.ui.notify("Audit approval comment posted (deterministic fallback)", "info");
-									} catch (acErr: unknown) {
-										const acMsg = acErr instanceof Error ? acErr.message : String(acErr);
-										console.warn(`[supervisor] Failed to post approval fallback comment: ${acMsg}`);
-									}
-								}
-							}
-						} else if (auditOutput.decision === "REJECTED") {
-							let commentToPost: string | null = null;
-							let source = "";
-							if (auditOutput.commentBody) {
-								commentToPost = auditOutput.commentBody;
-								source = "COMMENT_BODY marker";
-							} else {
-								commentToPost = buildAuditCommentFallback(auditOutput.decision, result.textOnly);
-								source = "deterministic fallback";
-							}
-							if (commentToPost) {
-								try {
-									await postIssueComment(pi, issueNum, config.repo, commentToPost);
-									ctx.ui.notify(`Audit rejection comment posted (${source})`, "info");
-								} catch (rcErr: unknown) {
-									const rcMsg = rcErr instanceof Error ? rcErr.message : String(rcErr);
-									console.warn(`[supervisor] Failed to post rejection ${source} comment: ${rcMsg}`);
-								}
-							} else {
-								console.warn(
-									`[supervisor] Auditor rejected issue #${issueNum} but no COMMENT_BODY marker or structured findings found — no comment posted. ` +
-										"Auditor output may lack structured findings. Update auditor agent to use COMMENT_BODY marker.",
-								);
-							}
-						}
-					}
-				}
+				await handlePostAgentSuccess(
+					pi,
+					ctx,
+					result,
+					agentName,
+					issueNum,
+					config,
+					loopFilteredData,
+					worktreePath,
+					worktreeBranch,
+					issueTitle,
+				);
 			}
 
-			agentResults.push({
-				agentName: result.agentName,
-				status: statusLabel as PipelineAgentResult["status"],
-				durationMs: result.durationMs,
-				tokenCount: result.tokenCount,
-				toolCount: result.toolCount,
-				model: agent?.config?.model,
-			});
+			// Determine next status
+			const { status: nextStatus, stopReason: nsStop } = calculateNextStatus(
+				agentName,
+				result.textOutput,
+				result.textOnly,
+			);
 
-			const nextStatus =
-				resolveNextStatus(step, result.textOnly) ?? resolveNextStatus(step, result.textOutput);
-
-			// ── PR creation on approval ──
+			// PR creation on audit approval
 			if (agentName === "auditor" && result.success && nextStatus === "Done") {
 				await createPrOnApproval(
 					pi,
@@ -490,19 +289,17 @@ export async function handleSupervisorCommand(
 			}
 
 			if (!result.success && nextStatus !== "Audit") {
+				stopReason = `Agent ${agent.config.name} failed`;
 				ctx.ui.notify(
 					`Agent ${agent.config.name} failed. Pipeline stops before ${nextStatus || "next stage"}.`,
 					"warning",
 				);
-				stopReason = `Agent ${agent.config.name} failed`;
 				break;
 			}
+
 			if (!nextStatus) {
-				const unclearNote = result.errorOutput
-					? `Agent ${agent.config.name} output unclear. Stderr: ${result.errorOutput.slice(0, 200)}. Pipeline stopped.`
-					: `Agent ${agent.config.name} output unclear. Pipeline stopped.`;
-				ctx.ui.notify(unclearNote, "warning");
-				stopReason = `Agent ${agent.config.name} output unclear`;
+				stopReason = nsStop || `Agent ${agent.config.name} output unclear`;
+				ctx.ui.notify(stopReason, "warning");
 				break;
 			}
 
@@ -510,37 +307,9 @@ export async function handleSupervisorCommand(
 				ctx.ui.notify(`Feedback loop: ${loopStatus} → ${nextStatus}`, "info");
 			}
 
-			if (currentAuditScore && nextStatus && step.canLoopBackTo?.includes(nextStatus)) {
-				if (auditCycleCount === 1) {
-					ctx.ui.notify(
-						`Audit #${auditCycleCount} score: ${currentAuditScore.passing}/${currentAuditScore.total}`,
-						"info",
-					);
-				} else if (lastAuditScore) {
-					const diff = currentAuditScore.passing - lastAuditScore.passing;
-					let arrow: string;
-					if (diff > 0) {
-						arrow = "↑ improving";
-					} else if (diff < 0) {
-						arrow = "↓ declining";
-					} else {
-						arrow = "→ stable";
-					}
-					ctx.ui.notify(
-						`Audit score: ${lastAuditScore.passing}/${lastAuditScore.total} → ${currentAuditScore.passing}/${currentAuditScore.total} (${arrow})`,
-						"info",
-					);
-				}
-				lastAuditScore = currentAuditScore;
-			}
-
-			// ── Hooks (CI/TSC/LSP) ──
+			// Pre-transition hooks
 			let effectiveNextStatus = nextStatus;
-			if (
-				step.hooks?.includes("ci") ||
-				step.hooks?.includes("tsc") ||
-				step.hooks?.includes("lsp")
-			) {
+			if (step.hooks?.some((h) => ["ci", "tsc", "lsp"].includes(h))) {
 				try {
 					const auditResult = await runTscAndLspAudit(
 						issueNum,
@@ -554,47 +323,44 @@ export async function handleSupervisorCommand(
 					);
 					effectiveNextStatus = auditResult.nextStatus;
 				} catch (auditErr: unknown) {
-					const msg = auditErr instanceof Error ? auditErr.message : String(auditErr);
-					ctx.ui.notify(`Pre-audit error: ${msg}`, "warning");
+					ctx.ui.notify(
+						`Pre-audit error: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`,
+						"warning",
+					);
 				}
 			}
 
-			const nextOptId = findStatusOption(fields, statusField.id, effectiveNextStatus);
-			if (!nextOptId) {
-				ctx.ui.notify(`Cannot find '${effectiveNextStatus}' option on board.`, "warning");
-				stopReason = `Cannot find '${effectiveNextStatus}' option on board.`;
-				break;
-			}
-
+			// Status transition
 			try {
-				await setItemStatus(pi, loopItem.id, projectId, statusField.id, nextOptId);
-				ctx.ui.notify(`Issue #${issueNum} moved: ${loopStatus} → ${effectiveNextStatus}`, "info");
+				const prev = loopStatus;
+				loopStatus = await applyStatusTransition(
+					pi,
+					loopItem.id,
+					projectId,
+					fields,
+					statusField.id,
+					effectiveNextStatus,
+				);
+				ctx.ui.notify(`Issue #${issueNum} moved: ${prev} → ${loopStatus}`, "info");
 			} catch (err: unknown) {
-				const msg = err instanceof Error ? err.message : String(err);
-				ctx.ui.notify(`Failed to update status: ${msg}`, "error");
-				stopReason = `Failed to update status: ${msg}`;
+				stopReason = `Failed to update status: ${err instanceof Error ? err.message : String(err)}`;
+				ctx.ui.notify(stopReason, "error");
 				break;
 			}
-
-			loopStatus = effectiveNextStatus;
 		}
 
-		// ── Post-pipeline: merge conflict check ──
-		if (loopStatus.toLowerCase() === "done" && agentResults.length > 0) {
+		// Post-pipeline
+		if (isDoneStatus(loopStatus) && agentResults.length > 0) {
 			await handlePostPipelineMerge(issueNum, issueTitle, loopStatus, config, pi, ctx);
 		}
 
-		// ── Pipeline completion ──
+		// Completion notification
 		if (agentResults.length > 0 || stopReason !== undefined) {
-			let overallStatus: "success" | "failed" | "stopped";
-			if (loopStatus.toLowerCase() === "done") {
-				overallStatus = "success";
-			} else if (agentResults.some((a) => a.status === "FAILED")) {
-				overallStatus = "failed";
-			} else {
-				overallStatus = "stopped";
-			}
-
+			const overallStatus: "success" | "failed" | "stopped" = isDoneStatus(loopStatus)
+				? "success"
+				: agentResults.some((a) => a.status === "FAILED")
+					? "failed"
+					: "stopped";
 			sendPipelineSummary(
 				pi,
 				ctx,
@@ -609,12 +375,185 @@ export async function handleSupervisorCommand(
 			ctx.ui.setStatus("supervisor", "");
 		}
 	} catch (err: unknown) {
-		const msg = err instanceof Error ? err.message : String(err);
-		sendPipelineError(pi, ctx, agentResults, issueNum, issueTitle, config, msg);
+		sendPipelineError(
+			pi,
+			ctx,
+			agentResults,
+			issueNum,
+			issueTitle,
+			config,
+			err instanceof Error ? err.message : String(err),
+		);
 	}
 
-	// ── Worktree cleanup ──
+	// Worktree cleanup
 	if (worktreePath && worktreeBranch) {
 		await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
 	}
+}
+
+// ─── Extracted Helpers ───────────────────────────────────────────
+
+async function fetchIssue(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	config: SupervisorConfig,
+	issueNum: number,
+): Promise<Record<string, unknown> | null> {
+	try {
+		return await pi
+			.exec("gh", [
+				"issue",
+				"view",
+				String(issueNum),
+				"--repo",
+				config.repo,
+				"--json",
+				"number,title,body,author,comments",
+			])
+			.then((r) => JSON.parse(r.stdout || "{}"));
+	} catch {
+		ctx.ui.notify(`Issue #${issueNum} not found in ${config.repo}`, "error");
+		return null;
+	}
+}
+
+async function readProjectBoard(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	config: SupervisorConfig,
+	issueNum: number,
+): Promise<{
+	fields: ProjectField[] | null;
+	items: ProjectItem[];
+	projectId: string;
+	statusField: ProjectField | null;
+}> {
+	ctx.ui.setStatus("supervisor", "Reading project board...");
+	try {
+		const fields = await getProjectFields(pi, config.projectNumber);
+		const items = await getProjectItems(pi, config.projectNumber);
+		const projectId = await getProjectId(pi, config.projectNumber);
+
+		const statusField =
+			fields.find((f) => f.name.toLowerCase() === config.statusField?.toLowerCase()) || null;
+		if (!statusField) {
+			ctx.ui.notify(
+				`Status field '${config.statusField}' not found. Fields: ${fields.map((f) => f.name).join(", ")}`,
+				"error",
+			);
+			ctx.ui.setStatus("supervisor", "");
+			return { fields: null, items: [], projectId: "", statusField: null };
+		}
+		return { fields, items, projectId, statusField };
+	} catch (err: unknown) {
+		ctx.ui.setStatus("supervisor", "");
+		const msg = err instanceof Error ? err.message : String(err);
+		if (msg.includes("missing required scopes")) {
+			ctx.ui.notify(
+				"GitHub token missing 'project' scope. Run: gh auth refresh -s project",
+				"error",
+			);
+		} else {
+			ctx.ui.notify(`Failed to read project board: ${msg}`, "error");
+		}
+		return { fields: null, items: [], projectId: "", statusField: null };
+	}
+}
+
+async function checkDependencies(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	config: SupervisorConfig,
+	issueNum: number,
+): Promise<boolean> {
+	try {
+		const depsResult = await checkBlockedByDependencies(pi, issueNum, config.repo);
+		if (depsResult.blocked) {
+			const lines = depsResult.blockers.map(
+				(b) => `${b.type === "pullrequest" ? "!" : "#"}${b.number}: ${b.title} (open)`,
+			);
+			ctx.ui.notify(
+				`Issue #${issueNum} is blocked by unresolved dependencies:\n${lines.join("\n")}`,
+				"error",
+			);
+			ctx.ui.setStatus("supervisor", "");
+			return false;
+		}
+		return true;
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		ctx.ui.notify(`Dependency check failed: ${msg}`, "error");
+		ctx.ui.setStatus("supervisor", "");
+		return false;
+	}
+}
+
+async function fetchFreshIssueData(
+	pi: ExtensionAPI,
+	config: SupervisorConfig,
+	issueNum: number,
+	fallbackData: Record<string, unknown>,
+): Promise<FilteredIssueData> {
+	try {
+		const raw = await pi.exec("gh", [
+			"issue",
+			"view",
+			String(issueNum),
+			"--repo",
+			config.repo,
+			"--json",
+			"number,title,body,author,comments",
+		]);
+		return filterIssueData(JSON.parse(raw.stdout || "{}"), config.codeowners);
+	} catch {
+		return filterIssueData(fallbackData, config.codeowners);
+	}
+}
+
+async function loadAgentFile(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	agentName: string,
+): Promise<ParsedAgent | null> {
+	const agentPath = `.pi/extensions/supervisor/agents/${agentName}.md`;
+	try {
+		await pi.exec("test", ["-f", agentPath], { cwd: ctx.cwd });
+	} catch {
+		ctx.ui.notify(`Agent file not found: ${agentPath}`, "error");
+		return null;
+	}
+	try {
+		return parseAgentFile(agentPath);
+	} catch (err: unknown) {
+		ctx.ui.notify(
+			`Failed to parse agent: ${err instanceof Error ? err.message : String(err)}`,
+			"error",
+		);
+		return null;
+	}
+}
+
+async function executeAgent(
+	agent: ReturnType<typeof parseAgentFile>,
+	task: string,
+	ctx: ExtensionCommandContext,
+	pi: ExtensionAPI,
+	timeoutMs: number,
+	agentCwd: string | undefined,
+): Promise<{ result: AgentRunResult; usedRetry: boolean }> {
+	let result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
+	validateAgentResult(result);
+	let usedRetry = false;
+
+	if (result.budgetExceeded) {
+		ctx.ui.notify(`Agent ${agent.config.name} exceeded budget — not retrying`, "warning");
+	} else if (!result.success) {
+		ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
+		result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
+		usedRetry = true;
+		validateAgentResult(result);
+	}
+
+	return { result, usedRetry };
 }

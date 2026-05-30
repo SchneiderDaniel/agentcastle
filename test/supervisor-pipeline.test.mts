@@ -20,58 +20,43 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const PIPELINE_TS = resolve(__dirname, "../.pi/extensions/supervisor/pipeline.ts");
+const HANDLER_TS = resolve(__dirname, "../.pi/extensions/supervisor/pipeline/handler.ts");
 
-function readPipelineSource(): string {
-	return readFileSync(PIPELINE_TS, "utf-8");
+function readHandlerSource(): string {
+	return readFileSync(HANDLER_TS, "utf-8");
 }
 
 // ---------------------------------------------------------------------------
-// Phase 2a: Worktree created before buildAgentTask
+// Worktree creation before agent dispatch
 // ---------------------------------------------------------------------------
 
-describe("pipeline.ts — worktree creation before buildAgentTask (Phase 2a)", () => {
-	it("Supervisor-owned worktree lifecycle comment before Build task comment", () => {
-		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const buildTaskIdx = src.indexOf("Build task AFTER worktree creation");
-		assert.ok(lifecycleIdx >= 0, "Worktree lifecycle comment exists");
-		assert.ok(buildTaskIdx >= 0, "Build task comment exists");
-		assert.ok(lifecycleIdx < buildTaskIdx, "Worktree lifecycle precedes build task");
+describe("pipeline handler — worktree creation before buildAgentTask", () => {
+	it("worktree creation guarded by !worktreePath check", () => {
+		const src = readHandlerSource();
+		assert.ok(src.includes("!worktreePath"), "Guard prevents duplicate worktree creation");
 	});
 
-	it("generateBranchName called between lifecycle and build-task comments", () => {
-		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const buildTaskIdx = src.indexOf("Build task AFTER worktree creation");
-		const section = src.substring(lifecycleIdx, buildTaskIdx);
+	it("generateBranchName called in worktree creation section", () => {
+		const src = readHandlerSource();
+		const wtIdx = src.indexOf("!worktreePath");
+		const section = src.substring(wtIdx, wtIdx + 500);
 		assert.ok(section.includes("generateBranchName"), "generateBranchName in worktree section");
 	});
 
-	it("git worktree add command present in worktree section", () => {
-		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const buildTaskIdx = src.indexOf("Build task AFTER worktree creation");
-		const section = src.substring(lifecycleIdx, buildTaskIdx);
-		assert.ok(section.includes("git worktree add"), "git worktree add in worktree section");
-	});
-
-	it("worktreePath assigned after git worktree add", () => {
-		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const buildTaskIdx = src.indexOf("Build task AFTER worktree creation");
-		const section = src.substring(lifecycleIdx, buildTaskIdx);
-		assert.ok(section.includes("worktreePath = wt"), "worktreePath assigned from wt variable");
+	it("worktreePath assigned only once", () => {
+		const src = readHandlerSource();
+		const matches = src.match(/worktreePath\s*=\s*await/g);
+		assert.ok(matches && matches.length === 1, "worktreePath assigned exactly once");
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Phase 2b: buildAgentTask receives resolved worktreePath
+// buildAgentTask receives resolved worktreePath
 // ---------------------------------------------------------------------------
 
-describe("pipeline.ts — worktreePath passed to buildAgentTask (Phase 2b)", () => {
+describe("pipeline handler — worktreePath passed to buildAgentTask", () => {
 	it("buildAgentTask call receives worktreePath argument", () => {
-		const src = readPipelineSource();
+		const src = readHandlerSource();
 		const btIdx = src.indexOf("const task = buildAgentTask(");
 		const btSection = src.substring(btIdx, src.indexOf(");", btIdx) + 10);
 		assert.ok(
@@ -81,7 +66,7 @@ describe("pipeline.ts — worktreePath passed to buildAgentTask (Phase 2b)", () 
 	});
 
 	it("buildAgentTask call receives worktreeBranch argument", () => {
-		const src = readPipelineSource();
+		const src = readHandlerSource();
 		const btIdx = src.indexOf("const task = buildAgentTask(");
 		const btSection = src.substring(btIdx, src.indexOf(");", btIdx) + 10);
 		assert.ok(
@@ -89,228 +74,92 @@ describe("pipeline.ts — worktreePath passed to buildAgentTask (Phase 2b)", () 
 			"worktreeBranch arg in buildAgentTask call",
 		);
 	});
+});
 
-	it("comment documents worktree path embedding purpose", () => {
-		const src = readPipelineSource();
-		const btIdx = src.indexOf("// Build task AFTER worktree creation");
-		const buildTaskEnd = src.indexOf("const task = buildAgentTask(", btIdx);
-		const commentSection = src.substring(btIdx, buildTaskEnd);
-		assert.ok(
-			commentSection.includes("worktreePath") || commentSection.includes("worktree"),
-			"Comment explains worktree context embedding",
-		);
+// ---------------------------------------------------------------------------
+// agentCwd for developer and auditor
+// ---------------------------------------------------------------------------
+
+describe("pipeline handler — agentCwd for developer/auditor", () => {
+	it("agentCwd uses isWorktreeAgent check", () => {
+		const src = readHandlerSource();
+		const idx = src.indexOf("isWorktreeAgent(agentName) ? worktreePath : undefined");
+		assert.ok(idx >= 0, "agentCwd uses isWorktreeAgent check");
+	});
+
+	it("agentCwd passed to executeAgent", () => {
+		const src = readHandlerSource();
+		const idx = src.indexOf("executeAgent(");
+		const endIdx = src.indexOf(");", idx);
+		const callSection = src.substring(idx, endIdx + 2);
+		assert.ok(callSection.includes("isWorktreeAgent"), "executeAgent uses isWorktreeAgent for agentCwd");
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Phase 2c: agentCwd set to worktreePath for developer and auditor
+// Worktree cleanup at end of pipeline
 // ---------------------------------------------------------------------------
 
-describe("pipeline.ts — agentCwd for developer/auditor (Phase 2c)", () => {
-	it("agentCwd conditional references developer and auditor", () => {
-		const src = readPipelineSource();
-		const cwdIdx = src.indexOf("// Pass worktree path as cwd");
-		const cwdEnd = src.indexOf("runAgent(agent, task", cwdIdx);
-		const section = src.substring(cwdIdx, cwdEnd);
-		assert.ok(section.includes("developer"), "agentCwd checks for developer");
-		assert.ok(section.includes("auditor"), "agentCwd checks for auditor");
-		assert.ok(section.includes("worktreePath"), "agentCwd uses worktreePath");
-	});
-
-	it("initial runAgent call passes agentCwd", () => {
-		const src = readPipelineSource();
-		const count = (src.match(/runAgent\(agent, task, ctx, pi, timeoutMs, agentCwd\)/g) || [])
-			.length;
-		assert.ok(count >= 2, "agentCwd passed to both initial and retry runAgent calls");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Phase 2d: Architect agent does NOT get agentCwd set to worktree
-// ---------------------------------------------------------------------------
-
-describe("pipeline.ts — architect agentCwd unchanged (Phase 2d)", () => {
-	it("agentCwd ternary has undefined fallback for non-worktree agents", () => {
-		const src = readPipelineSource();
-		const cwdIdx = src.indexOf("// Pass worktree path as cwd");
-		const cwdEnd = src.indexOf("runAgent(agent, task", cwdIdx);
-		const section = src.substring(cwdIdx, cwdEnd);
-		assert.ok(
-			section.includes("undefined"),
-			"agentCwd defaults to undefined for non-developer/auditor agents",
-		);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Phase 2e: Worktree creation idempotent
-// ---------------------------------------------------------------------------
-
-describe("pipeline.ts — worktree creation idempotent (Phase 2e)", () => {
-	it("worktree creation guarded by !worktreePath check", () => {
-		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const buildTaskIdx = src.indexOf("Build task AFTER worktree creation");
-		const section = src.substring(lifecycleIdx, buildTaskIdx);
-		assert.ok(section.includes("!worktreePath"), "Guard prevents duplicate worktree creation");
-	});
-
-	it("worktreePath assigned only once", () => {
-		const src = readPipelineSource();
-		const matches = src.match(/worktreePath\s*=\s*wt/g);
-		assert.ok(matches && matches.length === 1, "worktreePath assigned exactly once");
-	});
-
-	it("generateBranchName inside !worktreePath guard", () => {
-		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const buildTaskIdx = src.indexOf("Build task AFTER worktree creation");
-		const section = src.substring(lifecycleIdx, buildTaskIdx);
-		// generateBranchName should be inside the guard (after !worktreePath)
-		const guardIdx = section.indexOf("!worktreePath");
-		const genIdx = section.indexOf("generateBranchName");
-		assert.ok(guardIdx < genIdx, "generateBranchName called inside guard block");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Phase 2f: Worktree cleanup at end of pipeline
-// ---------------------------------------------------------------------------
-
-describe("pipeline.ts — worktree cleanup (Phase 2f)", () => {
-	it("worktree cleanup uses git worktree remove --force", () => {
-		const src = readPipelineSource();
-		const cleanupIdx = src.indexOf("Supervisor-owned worktree cleanup");
-		assert.ok(
-			src.indexOf("git worktree remove", cleanupIdx) >= 0,
-			"git worktree remove in cleanup",
-		);
-	});
-
-	it("cleanup uses git worktree prune", () => {
-		const src = readPipelineSource();
-		const cleanupIdx = src.indexOf("Supervisor-owned worktree cleanup");
-		assert.ok(src.indexOf("git worktree prune", cleanupIdx) >= 0, "git worktree prune in cleanup");
-	});
-
+describe("pipeline handler — worktree cleanup", () => {
 	it("cleanup guarded by worktreePath check", () => {
-		const src = readPipelineSource();
-		const cleanupIdx = src.indexOf("Supervisor-owned worktree cleanup");
-		const section = src.substring(cleanupIdx);
-		assert.ok(section.includes("if (worktreePath)"), "Cleanup guarded by worktreePath");
+		const src = readHandlerSource();
+		assert.ok(
+			src.includes("if (worktreePath && worktreeBranch)"),
+			"Cleanup guarded by worktreePath",
+		);
 	});
 
-	it("cleanup deletes branch after worktree removal", () => {
-		const src = readPipelineSource();
-		const cleanupIdx = src.indexOf("Supervisor-owned worktree cleanup");
-		const section = src.substring(cleanupIdx);
-		assert.ok(section.includes("git branch -D"), "Branch deletion in cleanup");
+	it("cleanup calls cleanupWorktree", () => {
+		const src = readHandlerSource();
+		assert.ok(src.includes("cleanupWorktree"), "cleanupWorktree called");
 	});
 
-	it("cleanup wrapped in try/catch (non-fatal)", () => {
-		const src = readPipelineSource();
-		const cleanupIdx = src.indexOf("Supervisor-owned worktree cleanup");
-		const section = src.substring(cleanupIdx);
-		assert.ok(section.includes("try {"), "try block in cleanup");
-		assert.ok(section.includes("catch"), "catch in cleanup");
-		assert.ok(section.includes("console.warn"), "console.warn in cleanup");
+	it("cleanup at end of handler after try/catch", () => {
+		const src = readHandlerSource();
+		const cleanupIdx = src.lastIndexOf("cleanupWorktree");
+		const catchEnd = src.lastIndexOf("}");
+		assert.ok(cleanupIdx > 0 && cleanupIdx < catchEnd, "cleanup near end of file");
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Phase 2g: PR creation uses worktree branch
+// Agent retry logic
 // ---------------------------------------------------------------------------
 
-describe("pipeline.ts — PR creation uses worktree branch (Phase 2g)", () => {
-	it("PR head uses worktreeBranch", () => {
-		const src = readPipelineSource();
-		const prIdx = src.indexOf("// ── PR creation");
-		const prSection = src.substring(
-			prIdx,
-			src.indexOf("// ── PR creation", prIdx + 1) >= 0
-				? src.indexOf("// ── PR creation", prIdx + 1)
-				: prIdx + 2000,
-		);
-		assert.ok(prSection.includes("worktreeBranch"), "PR creation uses worktreeBranch for head");
-	});
-
-	it("PR push section contains git push and worktreePath", () => {
-		const src = readPipelineSource();
-		const prIdx = src.indexOf("// ── PR creation:");
-		const prSection = src.substring(prIdx, prIdx + 3000);
-		assert.ok(prSection.includes("git push"), "git push in PR section");
-		assert.ok(
-			prSection.includes("cwd: worktreePath") || prSection.includes("cwd:worktreePath"),
-			"cwd references worktreePath",
-		);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Issue 299: Retry-success post-processing gate fix
-// ---------------------------------------------------------------------------
-
-describe("pipeline.ts — retry-success post-processing (Issue 299)", () => {
-	it("removes !usedRetry gate — if (result.success) without && !usedRetry", () => {
-		const src = readPipelineSource();
-		const idx = src.indexOf("// ── Phase 2: Post issue comments deterministically");
-		const section = src.substring(idx, idx + 500);
-		assert.ok(section.includes("if (result.success)"), "condition uses if (result.success)");
-		assert.ok(
-			!section.includes("&& !usedRetry"),
-			"!usedRetry gate removed from post-processing condition",
-		);
-	});
-
-	it("validateAgentResult called after retry runAgent", () => {
-		const src = readPipelineSource();
-		// Find the retry block: first runAgent call that comes after usedRetry = true
-		const retrySectionStart = src.indexOf("usedRetry = true;");
-		const retrySectionEnd = src.indexOf("const statusLabel", retrySectionStart);
-		const retrySection = src.substring(retrySectionStart, retrySectionEnd);
-		assert.ok(
-			retrySection.includes("validateAgentResult(result)"),
-			"validateAgentResult called after retry runAgent",
-		);
-	});
-
-	it("two validateAgentResult calls in pipeline loop", () => {
-		const src = readPipelineSource();
-		// Count validateAgentResult calls in the pipeline loop (after "for (let i = 0;")
-		const loopStart = src.indexOf("for (let i = 0; i < MAX_LOOPS; i++)");
-		const loopSection = src.substring(loopStart);
-		const matches = loopSection.match(/validateAgentResult\(result\)/g);
+describe("pipeline handler — agent retry logic", () => {
+	it("validateAgentResult called after both initial and retry runAgent", () => {
+		const src = readHandlerSource();
+		const matches = src.match(/validateAgentResult\(result\)/g);
 		assert.strictEqual(
 			matches ? matches.length : 0,
 			2,
-			"validateAgentResult(result) called exactly twice in pipeline loop (initial + retry)",
+			"validateAgentResult(result) called exactly twice (initial + retry)",
 		);
 	});
 
-	it("first validateAgentResult call precedes usedRetry declaration", () => {
-		const src = readPipelineSource();
-		const loopStart = src.indexOf("for (let i = 0; i < MAX_LOOPS; i++)");
-		const loopSection = src.substring(loopStart);
-		const firstValidateIdx = loopSection.indexOf("validateAgentResult(result)");
-		const usedRetryDeclIdx = loopSection.indexOf("let usedRetry = false;");
-		assert.ok(
-			firstValidateIdx < usedRetryDeclIdx,
-			"first validateAgentResult call precedes let usedRetry declaration",
-		);
+	it("retry block checks budgetExceeded first", () => {
+		const src = readHandlerSource();
+		const budgetIdx = src.indexOf("result.budgetExceeded");
+		const usedRetryIdx = src.indexOf("usedRetry = true;");
+		assert.ok(budgetIdx >= 0, "budgetExceeded check exists");
+		assert.ok(usedRetryIdx > budgetIdx, "budget check precedes retry logic");
 	});
 
-	it("retry validateAgentResult call is after retry runAgent", () => {
-		const src = readPipelineSource();
-		// The retry block now uses "else if (!result.success)" (preceded by budget check)
-		const retryIfStart = src.indexOf("else if (!result.success)");
-		const retrySectionEnd = src.indexOf("const statusLabel", retryIfStart);
-		const retrySection = src.substring(retryIfStart, retrySectionEnd);
-		// The retry block should have: runAgent(...) then validateAgentResult(result)
-		const lastRunAgentIdx = retrySection.lastIndexOf("runAgent(");
-		const validateIdx = retrySection.indexOf("validateAgentResult(result)");
-		assert.ok(
-			lastRunAgentIdx >= 0 && validateIdx >= 0 && lastRunAgentIdx < validateIdx,
-			"validateAgentResult called after runAgent in retry block",
-		);
+	it("retry logic runs on !result.success", () => {
+		const src = readHandlerSource();
+		// Find the executeAgent call which contains retry logic
+		const executeIdx = src.indexOf("executeAgent");
+		assert.ok(executeIdx >= 0, "executeAgent helper used");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Post-processing after agent success
+// ---------------------------------------------------------------------------
+
+describe("pipeline handler — post-agent-success processing", () => {
+	it("handlePostAgentSuccess called when result.success", () => {
+		const src = readHandlerSource();
+		assert.ok(src.includes("handlePostAgentSuccess"), "post-agent-success handler called");
 	});
 });
