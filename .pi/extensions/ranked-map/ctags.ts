@@ -1,0 +1,123 @@
+/**
+ * ranked-map — Ctags parsing and symbol index building
+ *
+ * Pure module — no pi SDK imports, no async I/O.
+ * Parses ctags JSONL output, builds command arguments, constructs symbol index.
+ */
+
+import type { CtagsTag, CachedIndex, SymbolEntry } from "./types.ts";
+
+/**
+ * Parse raw ctags JSONL output into CtagsTag[].
+ *
+ * ctags --output-format=json emits one JSON object per line.
+ * Lines with _type: "ptag" are metadata pseudo-tags — skip them.
+ * Lines that are empty, malformed, or missing required fields are skipped.
+ */
+export function parseCtagsOutput(raw: string): CtagsTag[] {
+	if (!raw || typeof raw !== "string") return [];
+
+	const lines = raw.split("\n");
+	const tags: CtagsTag[] = [];
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(trimmed);
+		} catch {
+			continue; // skip malformed lines
+		}
+
+		if (typeof parsed !== "object" || parsed === null) continue;
+
+		const tag = parsed as Record<string, unknown>;
+
+		// Skip pseudo-tags (metadata like JSON_OUTPUT_VERSION)
+		if (tag._type === "ptag") continue;
+
+		// Must have _type: "tag" and required fields
+		if (tag._type !== "tag") continue;
+		if (typeof tag.name !== "string" || !tag.name) continue;
+		if (typeof tag.kind !== "string" || !tag.kind) continue;
+		if (typeof tag.path !== "string" || !tag.path) continue;
+
+		// Filter out JSON-value kinds (defense-in-depth against data file noise)
+		const NON_CODE_KINDS = new Set(["number", "array", "object", "boolean", "string", "null"]);
+		if (NON_CODE_KINDS.has(tag.kind)) continue;
+
+		tags.push({
+			_type: "tag",
+			name: tag.name,
+			kind: tag.kind,
+			path: tag.path,
+			pattern: typeof tag.pattern === "string" ? tag.pattern : "",
+			line: typeof tag.line === "number" ? tag.line : undefined,
+		});
+	}
+
+	return tags;
+}
+
+/**
+ * Build ctags command arguments.
+ *
+ * Default excludes: node_modules, .git (common sources of noise).
+ * max_depth: 0 = unlimited (ctags default).
+ */
+export function buildCtagsArgs(
+	targetDir: string,
+	maxDepth: number,
+): { command: string; args: string[] } {
+	const args = [
+		"-R",
+		"--output-format=json",
+		"--exclude=node_modules",
+		"--exclude=.git",
+		"--exclude=*.json",
+		"--exclude=*.min.js",
+		"--exclude=*.css",
+		"--exclude=static",
+	];
+
+	if (maxDepth > 0) {
+		args.push(`--maxdepth=${maxDepth}`);
+	}
+
+	args.push(targetDir);
+
+	return { command: "ctags", args };
+}
+
+/**
+ * Build symbol index from ctags JSONL output.
+ * Groups symbols by file path and sorts by line number.
+ */
+export function buildSymbolIndex(
+	ctagsJsonl: string,
+	head: string,
+	now: number = Date.now(),
+): CachedIndex {
+	const tags = parseCtagsOutput(ctagsJsonl);
+	const symbols: Record<string, SymbolEntry[]> = {};
+
+	for (const tag of tags) {
+		if (!symbols[tag.path]) {
+			symbols[tag.path] = [];
+		}
+		symbols[tag.path]!.push({
+			type: tag.kind,
+			name: tag.name,
+			line: tag.line ?? 0,
+		});
+	}
+
+	// Sort by line number
+	for (const file of Object.keys(symbols)) {
+		symbols[file]!.sort((a, b) => a.line - b.line);
+	}
+
+	return { head, builtAt: now, symbols };
+}
