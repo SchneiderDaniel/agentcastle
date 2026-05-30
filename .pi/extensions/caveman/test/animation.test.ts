@@ -11,36 +11,36 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createAnimationController, type AnimationController } from "../animation.ts";
 import type { Level } from "../types.ts";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
 // Stale ctx mock — throws like real assertActive
 // ---------------------------------------------------------------------------
 
-function makeFreshCtx(): {
-	ui: {
-		setStatus: (k: string, t: string | undefined) => void;
-		theme: { fg: (s: string, t: string) => string };
-	};
-} {
-	return {
-		ui: {
-			setStatus: (_key: string, _text: string | undefined) => {},
-			theme: { fg: (_s: string, t: string) => t },
-		},
-	};
+/** Helper: cast a minimal ui mock to the type expected by syncStatus */
+function mockCtx(ui: {
+	setStatus: (key: string, text: string | undefined) => void;
+	theme: { fg: (s: string, t: string) => string };
+}): Pick<ExtensionContext, "ui"> {
+	return { ui } as Pick<ExtensionContext, "ui">;
+}
+
+function makeFreshCtx(): Pick<ExtensionContext, "ui"> {
+	return mockCtx({
+		setStatus: (_key: string, _text: string | undefined) => {},
+		theme: { fg: (_s: string, t: string) => t },
+	});
 }
 
 // Tracks setStatus calls
 function makeTrackingCtx() {
 	const calls: Array<{ key: string; text: string }> = [];
-	const ctx = {
-		ui: {
-			setStatus: (key: string, text: string | undefined) => {
-				calls.push({ key, text: text ?? "" });
-			},
-			theme: { fg: (_s: string, t: string) => t },
+	const ctx = mockCtx({
+		setStatus: (key: string, text: string | undefined) => {
+			calls.push({ key, text: text ?? "" });
 		},
-	};
+		theme: { fg: (_s: string, t: string) => t },
+	});
 	return { ctx, calls };
 }
 
@@ -152,7 +152,7 @@ describe("AnimationController", () => {
 					throw new Error("This extension ctx is stale after session replacement or reload.");
 				},
 			},
-		};
+		} as unknown as Pick<ExtensionContext, "ui">;
 
 		const fresh = makeFreshCtx();
 
@@ -187,16 +187,14 @@ describe("AnimationController", () => {
 	it("renderFrame catches stale ctx error and stops animation gracefully", () => {
 		// Create a ctx that works initially, then goes stale
 		let stale = false;
-		const toggleableCtx = {
-			ui: {
-				setStatus: (_key: string, _text: string | undefined) => {
-					if (stale) {
-						throw new Error("This extension ctx is stale after session replacement or reload.");
-					}
-				},
-				theme: { fg: (_s: string, t: string) => t },
+		const toggleableCtx = mockCtx({
+			setStatus: (_key: string, _text: string | undefined) => {
+				if (stale) {
+					throw new Error("This extension ctx is stale after session replacement or reload.");
+				}
 			},
-		};
+			theme: { fg: (_s: string, t: string) => t },
+		});
 
 		ctrl.setActive(true);
 		ctrl.syncStatus(toggleableCtx);
