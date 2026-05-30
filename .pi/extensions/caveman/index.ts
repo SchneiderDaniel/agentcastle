@@ -7,19 +7,28 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createConfigStore } from "./config.ts";
-import { createAnimationController } from "./animation.ts";
 import { registerCavemanCommand } from "./command.ts";
 import { resolveSessionLevel, resetSessionLevel } from "./session.ts";
-import { LEVELS } from "./types.ts";
 import { CAVEMAN_BASE, INTENSITY } from "./prompts.ts";
-import type { Level } from "./types.ts";
 
 export default function caveman(pi: ExtensionAPI): void {
 	const configStore = createConfigStore();
-	const animController = createAnimationController({
-		getShowStatus: () => configStore.getConfig().showStatus,
-		getLevel: () => configStore.getLevel(),
-	});
+
+	const syncStatus = (ctx: Pick<ExtensionContext, "ui">) => {
+		const theme = ctx.ui.theme;
+		const level = configStore.getLevel();
+		const showStatus = configStore.getConfig().showStatus;
+
+		if (level === "off" || !showStatus) {
+			ctx.ui.setStatus("caveman", "");
+			return;
+		}
+
+		ctx.ui.setStatus(
+			"caveman",
+			theme.fg("muted", "caveman: ") + theme.fg("text", level.toUpperCase()),
+		);
+	};
 
 	// -- Restore state on session load --
 
@@ -32,28 +41,24 @@ export default function caveman(pi: ExtensionAPI): void {
 			pi.appendEntry("caveman-level", { level: result.level });
 		}
 
-		animController.syncStatus(ctx);
+		syncStatus(ctx);
 	});
 
 	pi.on("agent_start", async (_event, ctx) => {
-		animController.setActive(true);
-		animController.syncStatus(ctx);
+		syncStatus(ctx);
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
-		animController.setActive(false);
-		animController.syncStatus(ctx);
+		syncStatus(ctx);
 	});
 
 	pi.on("session_shutdown", async () => {
 		configStore.setLevel(resetSessionLevel(configStore.getLevel()));
-		animController.stopAnimation();
-		animController.setActive(false);
 	});
 
 	// -- /caveman command --
 
-	registerCavemanCommand(pi, configStore, animController);
+	registerCavemanCommand(pi, configStore, syncStatus);
 
 	// -- Inject caveman rules into system prompt --
 
