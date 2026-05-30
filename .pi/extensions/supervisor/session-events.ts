@@ -101,8 +101,8 @@ export function processSessionEvent(
 							const trimmed = t.trim();
 							if (trimmed) pushLog(state, `💭 ${trimmed}`);
 						}
-						state.thinkingPushedThisTurn = true;
 					}
+					state.thinkingPushedThisTurn = true;
 					state.liveThinking = "";
 					state.phase = "idle";
 					return { flush: true, workingChange: true };
@@ -114,8 +114,8 @@ export function processSessionEvent(
 							const trimmed = t.trim();
 							if (trimmed) pushLog(state, trimmed);
 						}
-						state.textPushedThisTurn = true;
 					}
+					state.textPushedThisTurn = true;
 					if (ev.message?.usage) {
 						state.tokenCount =
 							ev.message.usage.totalTokens ||
@@ -224,6 +224,19 @@ export function processSessionEvent(
 					pushLog(state, `📋 ${label}: (no output)`);
 				}
 				state.lastToolName = undefined;
+			}
+			// Budget check: tool call limit
+			if (state.maxToolCalls > 0 && state.toolCount >= state.maxToolCalls) {
+				state.budgetExceeded = true;
+				state.budgetExceededReason = `Tool call limit reached: ${state.toolCount}/${state.maxToolCalls}`;
+			}
+			// Budget check: token budget
+			if (state.agentTokenBudget > 0 && state.tokenCount >= state.agentTokenBudget) {
+				state.budgetExceeded = true;
+				const reason = `Token budget exceeded: ${state.tokenCount}/${state.agentTokenBudget}`;
+				state.budgetExceededReason = state.budgetExceededReason
+					? `${state.budgetExceededReason}; ${reason}`
+					: reason;
 			}
 			state.phase = "idle";
 			state.thinkingPushedThisTurn = false;

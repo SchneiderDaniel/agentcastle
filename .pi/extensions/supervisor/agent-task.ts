@@ -4,7 +4,11 @@
 // markers instead of running gh/git commands themselves.
 // Pipeline reads markers and executes git/gh operations deterministically.
 
-import type { FilteredIssueData } from "./types";
+import type { FilteredIssueData } from "./types.ts";
+
+// ─── Constants ─────────────────────────────────────────────────────
+
+const MAX_COMMENT_CHARS = 2000;
 
 export function generateBranchName(
 	issueNum: number,
@@ -20,6 +24,54 @@ export function generateBranchName(
 	return `${prefix}${issueNum}-${slug}`;
 }
 
+/**
+ * Truncate a comment body to `maxLength` chars with an overflow note.
+ */
+function truncateComment(body: string, maxLength: number = MAX_COMMENT_CHARS): string {
+	if (body.length <= maxLength) return body;
+	const overflow = body.length - maxLength;
+	return body.slice(0, maxLength) + `\n…[+${overflow} more chars]`;
+}
+
+/**
+ * Summarize a list of trusted comments.
+ * When >1 comment: first n-1 are summarized into bullet list, latest is in full.
+ * When ≤1 comment: passes through verbatim.
+ * Comments >2000 chars are truncated with overflow note.
+ */
+export function summarizeComments(comments: Array<{ author: string; body: string }>): string {
+	if (comments.length === 0) return "(no trusted comments)";
+
+	if (comments.length === 1) {
+		const c = comments[0];
+		const body = truncateComment(c.body);
+		return `--- Comment #1 by @${c.author} ---\n${body}`;
+	}
+
+	// >1 comment: summarize all but the latest
+	const latest = comments[comments.length - 1];
+	const earlier = comments.slice(0, -1);
+
+	// Build summarized bullet list for earlier comments
+	const bullets = earlier
+		.map((c) => {
+			const preview = truncateComment(c.body);
+			// Take first meaningful line for the summary
+			const firstLine =
+				preview.split("\n").find((l) => l.trim() && !l.startsWith("---")) || preview;
+			return `- @${c.author}: ${firstLine.slice(0, 200)}`;
+		})
+		.join("\n");
+
+	const summaryBlock = ["### Previous Comments (summarized)", bullets].join("\n");
+
+	// Latest comment in full (also truncate if needed)
+	const latestBody = truncateComment(latest.body);
+	const latestBlock = `--- Comment #${comments.length} by @${latest.author} ---\n${latestBody}`;
+
+	return `${summaryBlock}\n\n${latestBlock}`;
+}
+
 export function buildAgentTask(
 	agentName: string,
 	issueNum: number,
@@ -33,12 +85,20 @@ export function buildAgentTask(
 	branchPrefix: string,
 	worktreePath?: string,
 	branchName?: string,
+	summarizedRejections?: string,
 ): string {
 	// Build trusted comments block
+	// If summarizedRejections is provided, use it (pre-summarized by pipeline).
+	// Otherwise, build from raw comments (backward compatible).
 	let commentsBlock: string;
-	if (filteredData.comments.length > 0) {
+	if (summarizedRejections !== undefined) {
+		commentsBlock = summarizedRejections;
+	} else if (filteredData.comments.length > 0) {
 		commentsBlock = filteredData.comments
-			.map((c, i) => `--- Comment #${i + 1} by @${c.author} ---\n${c.body}`)
+			.map((c, i) => {
+				const body = truncateComment(c.body);
+				return `--- Comment #${i + 1} by @${c.author} ---\n${body}`;
+			})
 			.join("\n\n");
 	} else {
 		commentsBlock = "(no trusted comments)";

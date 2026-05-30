@@ -78,6 +78,10 @@ export async function runAgentInProcess(
 		contextInfoReceived: false,
 		thinkingPushedThisTurn: false,
 		textPushedThisTurn: false,
+		budgetExceeded: false,
+		budgetExceededReason: undefined,
+		maxToolCalls: 0,
+		agentTokenBudget: 0,
 	};
 
 	// Hoist cleanup variables so they're accessible in try, catch, and finally
@@ -265,6 +269,15 @@ export async function runAgentInProcess(
 				try {
 					await promptPromise;
 				} catch {}
+			}
+		}
+
+		// Budget exceeded check: abort session if budget (token/tool limit) was exceeded
+		if (state.budgetExceeded) {
+			try {
+				await session!.abort();
+			} catch {
+				// session already aborted or disposed
 			}
 		}
 

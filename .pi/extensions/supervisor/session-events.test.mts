@@ -9,7 +9,7 @@ import type { AgentRunState } from "./types";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
-function createState(): AgentRunState {
+function createState(overrides?: Partial<AgentRunState>): AgentRunState {
 	return {
 		currentTool: undefined,
 		currentToolArgs: undefined,
@@ -28,10 +28,192 @@ function createState(): AgentRunState {
 		contextInfoReceived: false,
 		thinkingPushedThisTurn: false,
 		textPushedThisTurn: false,
+		budgetExceeded: false,
+		budgetExceededReason: undefined,
+		maxToolCalls: 0,
+		agentTokenBudget: 0,
+		...overrides,
 	};
 }
 
-// ─── Phase 1: fix effect — dedup flags set in done handler ─────────────────
+// ─── Phase 1: text_end/thinking_end dedup flag fix (flag outside if) ──────
+
+describe("text_end and thinking_end — dedup flag fix (Phase 3)", () => {
+	it("text_end sets textPushedThisTurn=true even when liveText is empty", () => {
+		const state = createState();
+		state.liveText = ""; // empty — all content streamed as complete lines
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_end" },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.textPushedThisTurn, true, "flag should be set even when buffer empty");
+		assert.equal(state.liveText, "", "liveText should be cleared");
+		assert.equal(state.textOutputLines.length, 0, "no text output (buffer was empty)");
+	});
+
+	it("thinking_end sets thinkingPushedThisTurn=true even when liveThinking is empty", () => {
+		const state = createState();
+		state.liveThinking = ""; // empty
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_end" },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.thinkingPushedThisTurn, true, "flag should be set even when buffer empty");
+		assert.equal(state.liveThinking, "", "liveThinking should be cleared");
+	});
+
+	it("text_end sets textPushedThisTurn=true when liveText has content (existing behavior preserved)", () => {
+		const state = createState();
+		state.liveText = "some text";
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: { type: "text_end" },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.textPushedThisTurn, true);
+		assert.equal(state.textOutputLines[0], "some text");
+	});
+
+	it("thinking_end sets thinkingPushedThisTurn=true when liveThinking has content (existing behavior preserved)", () => {
+		const state = createState();
+		state.liveThinking = "some thinking";
+		const ev = {
+			type: "message_update",
+			assistantMessageEvent: { type: "thinking_end" },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.thinkingPushedThisTurn, true);
+		assert.ok(state.thinkingOutputLines[0]?.includes("some thinking"));
+	});
+
+	it("empty buffer text_end + message_end does not produce duplicate push", () => {
+		const state = createState();
+		// text_end with empty buffer
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_end" },
+			},
+			state,
+		);
+		assert.equal(state.textPushedThisTurn, true);
+
+		// message_end follows
+		processSessionEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "streamed content" }],
+				},
+			},
+			state,
+		);
+		// textOutputLines should be empty (text_end had empty buffer, message_end
+		// should NOT push because textPushedThisTurn flag blocks it)
+		assert.equal(state.textOutputLines.length, 0, "no duplicate from empty text_end + message_end");
+	});
+});
+
+// ─── Phase 2: Budget check at message_end (Phase 1) ────────────────────
+
+describe("message_end — budget check (Phase 1)", () => {
+	it("sets budgetExceeded when toolCount >= maxToolCalls", () => {
+		const state = createState({
+			toolCount: 30,
+			maxToolCalls: 30,
+		});
+		const ev = {
+			type: "message_end",
+			message: { role: "assistant", content: [] },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.budgetExceeded, true);
+		assert.ok(state.budgetExceededReason?.includes("30"));
+	});
+
+	it("sets budgetExceeded when tokenCount >= agentTokenBudget", () => {
+		const state = createState({
+			tokenCount: 500000,
+			agentTokenBudget: 500000,
+		});
+		const ev = {
+			type: "message_end",
+			message: { role: "assistant", content: [] },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.budgetExceeded, true);
+		assert.ok(state.budgetExceededReason?.includes("500000"));
+	});
+
+	it("sets budgetExceeded and reason covers both when both limits exceeded", () => {
+		const state = createState({
+			toolCount: 35,
+			maxToolCalls: 30,
+			tokenCount: 600000,
+			agentTokenBudget: 500000,
+		});
+		const ev = {
+			type: "message_end",
+			message: { role: "assistant", content: [] },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.budgetExceeded, true);
+		assert.ok(state.budgetExceededReason);
+		assert.ok(state.budgetExceededReason!.includes("35"), "reason should mention tool count");
+		assert.ok(state.budgetExceededReason!.includes("600000"), "reason should mention token count");
+	});
+
+	it("does NOT set budgetExceeded when maxToolCalls=0 (unlimited) regardless of toolCount", () => {
+		const state = createState({
+			toolCount: 100,
+			maxToolCalls: 0,
+		});
+		const ev = {
+			type: "message_end",
+			message: { role: "assistant", content: [] },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.budgetExceeded, false);
+		assert.equal(state.budgetExceededReason, undefined);
+	});
+
+	it("does NOT set budgetExceeded when toolCount < maxToolCalls and tokenCount < agentTokenBudget", () => {
+		const state = createState({
+			toolCount: 15,
+			maxToolCalls: 30,
+			tokenCount: 200000,
+			agentTokenBudget: 500000,
+		});
+		const ev = {
+			type: "message_end",
+			message: { role: "assistant", content: [] },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.budgetExceeded, false);
+	});
+
+	it("budgetExceeded remains true when already set (idempotent)", () => {
+		const state = createState({
+			budgetExceeded: true,
+			budgetExceededReason: "Previous check",
+			toolCount: 30,
+			maxToolCalls: 30,
+		});
+		const ev = {
+			type: "message_end",
+			message: { role: "assistant", content: [] },
+		};
+		processSessionEvent(ev, state);
+		assert.equal(state.budgetExceeded, true);
+		// Reason should still mention "Previous check" or be overwritten — either is fine as long as it's truthy
+		assert.ok(state.budgetExceededReason);
+	});
+});
+
+// ─── Phase 3: fix effect — dedup flags set in done handler ─────────────────
 
 describe("done handler — dedup flag fix", () => {
 	it("sets textPushedThisTurn=true and clears liveText when done has text content", () => {

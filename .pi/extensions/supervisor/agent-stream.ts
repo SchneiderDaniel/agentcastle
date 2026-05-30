@@ -206,8 +206,8 @@ export function processJsonLine(
 								const trimmed = t.trim();
 								if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 500)}`);
 							}
-							state.thinkingPushedThisTurn = true;
 						}
+						state.thinkingPushedThisTurn = true;
 						state.liveThinking = "";
 						state.phase = "idle";
 						return { flush: true, workingChange: true };
@@ -220,8 +220,8 @@ export function processJsonLine(
 								const trimmed = t.trim();
 								if (trimmed) pushLog(state, trimmed);
 							}
-							state.textPushedThisTurn = true;
 						}
+						state.textPushedThisTurn = true;
 						if (ev.usage) {
 							state.tokenCount =
 								ev.usage.totalTokens || ev.usage.input + ev.usage.output || state.tokenCount;
@@ -279,6 +279,19 @@ export function processJsonLine(
 						pushLog(state, `📋 ${label}: (no output)`);
 					}
 					state.lastToolName = undefined;
+				}
+				// Budget check: tool call limit
+				if (state.maxToolCalls > 0 && state.toolCount >= state.maxToolCalls) {
+					state.budgetExceeded = true;
+					state.budgetExceededReason = `Tool call limit reached: ${state.toolCount}/${state.maxToolCalls}`;
+				}
+				// Budget check: token budget
+				if (state.agentTokenBudget > 0 && state.tokenCount >= state.agentTokenBudget) {
+					state.budgetExceeded = true;
+					const reason = `Token budget exceeded: ${state.tokenCount}/${state.agentTokenBudget}`;
+					state.budgetExceededReason = state.budgetExceededReason
+						? `${state.budgetExceededReason}; ${reason}`
+						: reason;
 				}
 				state.phase = "idle";
 				state.thinkingPushedThisTurn = false;
