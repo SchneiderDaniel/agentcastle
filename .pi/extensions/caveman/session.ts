@@ -5,18 +5,13 @@
  * testable without mock infrastructure. Part of use-case layer.
  */
 
+import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Level, CavemanConfig } from "./types.ts";
 import { LEVELS } from "./types.ts";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export interface SessionEntry {
-	type: string;
-	customType: string;
-	data: Record<string, unknown>;
-}
 
 export interface ResolvedSessionLevel {
 	level: Level;

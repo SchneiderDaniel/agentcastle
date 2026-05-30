@@ -105,7 +105,14 @@ describe("Full lifecycle integration", () => {
 		await store.ensureConfigLoaded();
 
 		const sessionEntries = [
-			{ type: "custom", customType: "caveman-level", data: { level: "full" as Level } },
+			{
+				id: "1",
+				parentId: null,
+				timestamp: new Date().toISOString(),
+				type: "custom",
+				customType: "caveman-level",
+				data: { level: "full" as Level },
+			},
 		];
 		const capture: MockCapture = { setLevelCalls: [], appendEntryCalls: [] };
 

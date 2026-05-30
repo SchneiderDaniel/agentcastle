@@ -17,7 +17,14 @@ import type { CavemanConfig } from "../types.ts";
 // ---------------------------------------------------------------------------
 
 function entry(level: Level) {
-	return { type: "custom", customType: "caveman-level", data: { level } };
+	return {
+		id: "1",
+		parentId: null,
+		timestamp: new Date().toISOString(),
+		type: "custom",
+		customType: "caveman-level",
+		data: { level },
+	};
 }
 
 function config(overrides: Partial<CavemanConfig> = {}): CavemanConfig {
@@ -73,7 +80,14 @@ describe("resolveSessionLevel (pure function)", () => {
 
 	it("session entries contain non-caveman entries only → treats as new session, applies defaultLevel", () => {
 		const result = resolveSessionLevel(config({ defaultLevel: "full" }), [
-			{ type: "custom", customType: "other-type", data: { foo: "bar" } },
+			{
+				id: "1",
+				parentId: null,
+				timestamp: new Date().toISOString(),
+				type: "custom",
+				customType: "other-type",
+				data: { foo: "bar" },
+			},
 		]);
 		assert.equal(result.level, "full");
 		assert.equal(result.shouldAppendEntry, true);
