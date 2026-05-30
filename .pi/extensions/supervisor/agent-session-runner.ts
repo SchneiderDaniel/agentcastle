@@ -623,9 +623,31 @@ export async function runAgentInProcess(
 			}
 		};
 
-		// Heartbeat: ensure widget updates even during long idle periods (model cold start)
+		// ── Bug 4 fix: Smart heartbeat — clear when idle > 60s ──
+		// Track last non-idle phase time; if idle > 60s, clear heartbeat
+		// to allow event loop drain when agent hangs on model API stall.
+		let idleStartTime: number | null = null;
+		const MIN_IDLE_MS = 60_000;
+
+		const maybeClearHeartbeat = () => {
+			if (state.phase === "idle") {
+				if (!idleStartTime) idleStartTime = Date.now();
+				if (Date.now() - idleStartTime >= MIN_IDLE_MS && heartbeat) {
+					clearInterval(heartbeat);
+					heartbeat = undefined;
+				}
+			} else {
+				idleStartTime = null;
+				// Re-arm heartbeat if it was cleared
+				if (!heartbeat) {
+					heartbeat = setInterval(() => flushWidget(), 5000);
+				}
+			}
+		};
+
 		heartbeat = setInterval(() => {
 			flushWidget();
+			maybeClearHeartbeat();
 		}, 5000);
 
 		unsubscribe = session.subscribe((event: any) => {
@@ -635,26 +657,50 @@ export async function runAgentInProcess(
 				const wm = getWorkingMessage(state, agentName);
 				ctx.ui.setWorkingMessage(wm ?? undefined);
 			}
+			// Reset idle timer on activity
+			if (result.workingChange) {
+				idleStartTime = null;
+				if (!heartbeat) {
+					heartbeat = setInterval(() => {
+						flushWidget();
+						maybeClearHeartbeat();
+					}, 5000);
+				}
+			}
 		});
 
-		// Run prompt with timeout via Promise.race (Bug A)
+		// ── Bug 2 fix: Properly settle session.prompt() on timeout ──
+		// When timeout fires, session.abort() is called but session.prompt()
+		// stays pending forever — leaked promise. Fix: wrap prompt so we can
+		// await its settlement after the race completes.
 		let timedOut = false;
+		let promptSettled = false;
 		let timeoutRef: NodeJS.Timeout | undefined;
+
 		const timeoutPromise = new Promise<void>((_, reject) => {
-			timeoutRef = setTimeout(() => {
+			timeoutRef = setTimeout(async () => {
 				timedOut = true;
-				session!.abort();
+				try {
+					await session!.abort();
+				} catch {
+					// abort already handled — prompt will reject
+				}
 				reject(new Error(`Agent ${agentName} timed out after ${timeoutMs}ms`));
 			}, timeoutMs);
 		});
 
+		// Wrap prompt to track settlement
+		const promptPromise = session
+			.prompt(task, { streamingBehavior: "steer" })
+			.then(() => {
+				promptSettled = true;
+			})
+			.catch(() => {
+				promptSettled = true;
+			});
+
 		try {
-			await Promise.race([
-				session.prompt(task, {
-					streamingBehavior: "steer",
-				}),
-				timeoutPromise,
-			]);
+			await Promise.race([promptPromise, timeoutPromise]);
 		} catch (promptErr: unknown) {
 			// Check if this was a timeout
 			if (timedOut) {
@@ -668,6 +714,16 @@ export async function runAgentInProcess(
 					state.thinkingOutputLines.push(state.liveThinking.trim());
 				}
 
+				// Wait for prompt to settle (abort should resolve/reject it)
+				// This prevents the leaked promise chain from Bug 2
+				if (!promptSettled) {
+					try {
+						await promptPromise;
+					} catch {
+						// Prompt settled via abort — expected
+					}
+				}
+
 				// Cleanup
 				try {
 					session?.dispose();
@@ -676,7 +732,7 @@ export async function runAgentInProcess(
 					unsubscribe?.();
 				} catch {}
 				if (flushTimer) clearTimeout(flushTimer);
-				clearInterval(heartbeat);
+				if (heartbeat) clearInterval(heartbeat);
 				ctx.ui.setWidget(widgetId, undefined);
 				ctx.ui.setWorkingMessage(undefined);
 				ctx.ui.setStatus("supervisor", "");
@@ -688,6 +744,12 @@ export async function runAgentInProcess(
 			throw promptErr;
 		} finally {
 			if (timeoutRef) clearTimeout(timeoutRef);
+			// Ensure prompt is settled even on non-timeout errors
+			if (!promptSettled) {
+				try {
+					await promptPromise;
+				} catch {}
+			}
 		}
 
 		// Success path
@@ -703,7 +765,7 @@ export async function runAgentInProcess(
 			clearTimeout(flushTimer);
 			flushTimer = null;
 		}
-		clearInterval(heartbeat);
+		if (heartbeat) clearInterval(heartbeat);
 		flushWidget();
 
 		// Unsubscribe and dispose
@@ -731,7 +793,7 @@ export async function runAgentInProcess(
 			unsubscribe?.();
 		} catch {}
 		if (flushTimer) clearTimeout(flushTimer);
-		clearInterval(heartbeat);
+		if (heartbeat) clearInterval(heartbeat);
 
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);

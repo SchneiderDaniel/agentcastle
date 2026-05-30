@@ -29,7 +29,13 @@ export async function runTscAndLspAudit(
 	// Step 0: CI gating — poll check runs before running local hooks
 	if (config.ciGatingTimeoutSec && config.ciGatingTimeoutSec > 0) {
 		ctx.ui.setStatus("supervisor", "Polling CI checks...");
-		const ciResult = await pollCiChecks(pi, branch, config.repo, config.ciGatingTimeoutSec);
+		const ciResult = await pollCiChecks(
+			pi,
+			branch,
+			config.repo,
+			config.ciGatingTimeoutSec,
+			worktreePath,
+		);
 
 		if (ciResult.status === "failing") {
 			const failedNames = ciResult.checks

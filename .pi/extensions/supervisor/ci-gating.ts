@@ -27,35 +27,90 @@ export interface CiPollResult {
  * - No checks configured → returns { status: "error" } (fail-open)
  * - `gh api` permission error → returns { status: "error" }
  * - Checks re-triggered mid-poll → stays in loop until all terminal or timeout
+ * - Branch SHA not found on remote → attempts push from local worktree (Bug 5)
  */
 export async function pollCiChecks(
 	pi: ExtensionAPI,
 	branch: string,
 	repo: string,
 	timeoutSec: number,
+	/** Worktree path to attempt push recovery if remote SHA not found */
+	worktreePath?: string,
 ): Promise<CiPollResult> {
 	const POLL_INTERVAL_MS = 15_000;
 	const startTime = Date.now();
 	const deadline = startTime + timeoutSec * 1000;
 
-	// Resolve branch SHA
+	// Resolve branch SHA — may not exist if commitAndPush failed
 	let sha: string;
 	try {
 		const result = await pi.exec("git", ["rev-parse", `origin/${branch}`], { timeout: 10_000 });
 		sha = (result.stdout || "").trim();
 		if (!sha) {
+			// ── Bug 5 fix: attempt push recovery from worktree ──
+			// If commitAndPush failed silently, origin/${branch} SHA won't exist.
+			// Try pushing from local worktree to recover, then re-check SHA.
+			if (worktreePath) {
+				try {
+					await pi.exec("git", ["push", "origin", branch], {
+						cwd: worktreePath,
+						timeout: 15_000,
+					});
+					// Retry SHA resolution after push
+					const retryResult = await pi.exec("git", ["rev-parse", `origin/${branch}`], {
+						timeout: 10_000,
+					});
+					sha = (retryResult.stdout || "").trim();
+				} catch {
+					// Push recovery failed — proceed with error
+					return {
+						status: "error",
+						checks: [],
+						message: `Branch '${branch}' SHA not found on remote and push recovery failed. Proceeding without CI gating.`,
+					};
+				}
+			}
+			if (!sha) {
+				return {
+					status: "error",
+					checks: [],
+					message: `Could not resolve branch '${branch}' SHA.`,
+				};
+			}
+		}
+	} catch {
+		// ── Bug 5 fix: same push recovery on catch ──
+		if (worktreePath) {
+			try {
+				await pi.exec("git", ["push", "origin", branch], {
+					cwd: worktreePath,
+					timeout: 15_000,
+				});
+				const retryResult = await pi.exec("git", ["rev-parse", `origin/${branch}`], {
+					timeout: 10_000,
+				});
+				sha = (retryResult.stdout || "").trim();
+				if (!sha) {
+					return {
+						status: "error",
+						checks: [],
+						message: `Branch '${branch}' not found on remote even after push recovery.`,
+					};
+				}
+			} catch {
+				return {
+					status: "error",
+					checks: [],
+					message: `Branch '${branch}' not found on remote and push recovery failed.`,
+				};
+			}
+		} else {
 			return {
 				status: "error",
 				checks: [],
-				message: `Could not resolve branch '${branch}' SHA.`,
+				message: `Branch '${branch}' not found or not pushed to remote.`,
 			};
 		}
-	} catch {
-		return {
-			status: "error",
-			checks: [],
-			message: `Branch '${branch}' not found or not pushed to remote.`,
-		};
 	}
 
 	let lastChecks: CiCheckInfo[] = [];
@@ -68,7 +123,7 @@ export async function pollCiChecks(
 					"api",
 					`repos/${repo}/commits/${sha}/check-runs`,
 					"--jq",
-					'.check_runs[] | {name, status, conclusion}',
+					".check_runs[] | {name, status, conclusion}",
 				],
 				{ timeout: 15_000 },
 			);
@@ -131,9 +186,7 @@ export async function pollCiChecks(
 
 			// If any check failed — short-circuit immediately
 			if (anyFailure) {
-				const failingChecks = checks.filter((c) =>
-					failureConclusions.has(c.conclusion || ""),
-				);
+				const failingChecks = checks.filter((c) => failureConclusions.has(c.conclusion || ""));
 				const failedNames = failingChecks.map((c) => c.name).join(", ");
 				return {
 					status: "failing",

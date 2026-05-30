@@ -16,7 +16,8 @@ import type {
 } from "./types";
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath, join as joinPath } from "node:path";
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { loadConfig, resolveTimeoutMs } from "./config";
 import {
@@ -43,6 +44,37 @@ import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from 
 import { countRejections, formatDuration, formatTokens } from "./formatting";
 import { runTscAndLspAudit } from "./pipeline-audit";
 import { handlePostPipelineMerge } from "./pipeline-merge";
+
+// ─── Async exec with AbortSignal (Bug 1 fix) ─────────────────────
+
+const execAsync = promisify(exec);
+
+async function execWithSignal(
+	command: string,
+	options: { cwd?: string; timeout?: number } = {},
+): Promise<{ stdout: string; stderr: string }> {
+	const controller = new AbortController();
+	const timer =
+		options.timeout && options.timeout > 0
+			? setTimeout(
+					() =>
+						controller.abort(
+							new Error(`Command timed out after ${options.timeout}ms: ${command.slice(0, 120)}`),
+						),
+					options.timeout,
+				)
+			: undefined;
+	try {
+		const result = await execAsync(command, {
+			cwd: options.cwd,
+			signal: controller.signal,
+			env: process.env as Record<string, string>,
+		});
+		return { stdout: result.stdout || "", stderr: result.stderr || "" };
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
 
 // ─── validateAgentResult ────────────────────────────────────────────
 
@@ -371,14 +403,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						worktreeBranch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 						const wt = resolvePath(ctx.cwd, config.worktreeBase!, worktreeBranch);
 						try {
-							execSync(
+							await execWithSignal(
 								`git worktree add -b "${worktreeBranch}" "${wt}" "${config.defaultBranch!}"`,
 								{ cwd: ctx.cwd, timeout: 15000 },
 							);
 						} catch {
 							// Branch or worktree may already exist — try add without -b
 							try {
-								execSync(`git worktree add "${wt}" "${worktreeBranch}"`, {
+								await execWithSignal(`git worktree add "${wt}" "${worktreeBranch}"`, {
 									cwd: ctx.cwd,
 									timeout: 15000,
 								});
@@ -389,7 +421,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						worktreePath = wt;
 						// Install deps in worktree so TSC can resolve imports
 						try {
-							execSync(`npm ci`, {
+							await execWithSignal(`npm ci`, {
 								cwd: worktreePath,
 								timeout: 120_000,
 							});
@@ -565,12 +597,11 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						// Check branch has commits ahead of base before creating PR
 						let aheadCommits = 0;
 						try {
-							const ahead = execSync(
+							const aheadResult = await execWithSignal(
 								`git rev-list --count "${config.defaultBranch!}..${headBranch}"`,
 								{ cwd: ctx.cwd, timeout: 5000 },
-							)
-								.toString()
-								.trim();
+							);
+							const ahead = aheadResult.stdout.trim();
 							aheadCommits = parseInt(ahead, 10) || 0;
 						} catch {
 							// Branch may not exist locally — can't create PR
@@ -598,7 +629,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								// Push branch before creating PR so remote ref exists
 								if (worktreePath) {
 									try {
-										execSync(`git push "${config.remote!}" "${headBranch}"`, {
+										await execWithSignal(`git push "${config.remote!}" "${headBranch}"`, {
 											cwd: worktreePath,
 											timeout: 15000,
 										});
@@ -685,7 +716,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								config,
 								agentName,
 								loopFilteredData,
-								worktreePath,
+								worktreePath!,
 								pi,
 								ctx,
 							);
@@ -837,7 +868,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 			// Uses --force in case agent left uncommitted changes.
 			if (worktreePath) {
 				try {
-					execSync(
+					await execWithSignal(
 						`git worktree remove --force "${worktreePath}" 2>/dev/null; ` +
 							`git worktree prune 2>/dev/null`,
 						{ cwd: ctx.cwd, timeout: 15000 },
@@ -847,7 +878,10 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				}
 				if (worktreeBranch) {
 					try {
-						execSync(`git branch -D "${worktreeBranch}"`, { cwd: ctx.cwd, timeout: 10000 });
+						await execWithSignal(`git branch -D "${worktreeBranch}"`, {
+							cwd: ctx.cwd,
+							timeout: 10000,
+						});
 					} catch {
 						console.warn(`[supervisor] Failed to delete branch ${worktreeBranch}`);
 					}

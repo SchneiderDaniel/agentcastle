@@ -116,6 +116,7 @@ export async function runAgentSubprocess(
 		let rawStdout = "";
 		let stderr = "";
 		let jsonBuffer = "";
+		let childExited = false;
 
 		let flushTimer: NodeJS.Timeout | null = null;
 
@@ -134,9 +135,31 @@ export async function runAgentSubprocess(
 			}
 		};
 
-		// Heartbeat: ensure widget updates even during long idle periods (model cold start)
-		const heartbeat = setInterval(() => {
+		// ── Bug 4 fix: Smart heartbeat ──
+		let idleStartTime: number | null = null;
+		const MIN_IDLE_MS = 60_000;
+
+		const maybeClearHeartbeat = () => {
+			if (state.phase === "idle") {
+				if (!idleStartTime) idleStartTime = Date.now();
+				if (Date.now() - idleStartTime >= MIN_IDLE_MS && heartbeat) {
+					clearInterval(heartbeat);
+					heartbeat = undefined;
+				}
+			} else {
+				idleStartTime = null;
+				if (!heartbeat) {
+					heartbeat = setInterval(() => {
+						flushWidget();
+						maybeClearHeartbeat();
+					}, 5000);
+				}
+			}
+		};
+
+		let heartbeat: ReturnType<typeof setInterval> | undefined = setInterval(() => {
 			flushWidget();
+			maybeClearHeartbeat();
 		}, 5000);
 
 		const handleLine = (line: string) => {
@@ -145,6 +168,14 @@ export async function runAgentSubprocess(
 			if (result.workingChange) {
 				const wm = getWorkingMessage(state, agentName);
 				ctx.ui.setWorkingMessage(wm ?? undefined);
+				// Reset idle timer on activity
+				idleStartTime = null;
+				if (!heartbeat) {
+					heartbeat = setInterval(() => {
+						flushWidget();
+						maybeClearHeartbeat();
+					}, 5000);
+				}
 			}
 		};
 
@@ -169,13 +200,25 @@ export async function runAgentSubprocess(
 			}
 		});
 
-		child.on("close", (code, signal) => {
+		// ── Bug 3 fix: Proper child reaping ──
+		// Register 'exit' to reap child process entry (prevents zombie).
+		// 'close' fires after stdio drains — use it for final resolve with code/signal.
+		// Guard with resolved flag to prevent double-resolve.
+		let resolved = false;
+
+		const doResolve = (code: number | null, signal: string | null) => {
+			if (resolved) return;
+			resolved = true;
+
 			if (jsonBuffer.trim()) handleLine(jsonBuffer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			clearInterval(heartbeat);
+			if (heartbeat) {
+				clearInterval(heartbeat);
+				heartbeat = undefined;
+			}
 
 			if (state.liveText.trim()) {
 				state.textOutputLines.push(state.liveText.trim());
@@ -220,6 +263,17 @@ export async function runAgentSubprocess(
 				errorOutput: filteredStderr,
 				thinkingOutput,
 			});
+		};
+
+		// 'exit' reaps process table entry — prevents zombie
+		child.on("exit", () => {
+			childExited = true;
+		});
+
+		// 'close' fires after stdio drains — resolve with actual code/signal
+		child.on("close", (code, signal) => {
+			childExited = true;
+			doResolve(code, signal);
 		});
 
 		child.on("error", (err) => {
@@ -227,7 +281,10 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			clearInterval(heartbeat);
+			if (heartbeat) {
+				clearInterval(heartbeat);
+				heartbeat = undefined;
+			}
 			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setWorkingMessage(undefined);
 			ctx.ui.setStatus("supervisor", "");
