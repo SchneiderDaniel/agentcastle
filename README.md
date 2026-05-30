@@ -185,9 +185,9 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 
 | File/Path | What it is |
 |-----------|------------|
-| `.pi/extensions/ranked-map.ts` | `ranked_map` tool — unified codebase mapper (auto-mode: ranked/full dump) via ctags + rg + git recency |
+| `.pi/extensions/ranked-map/` | `ranked_map` tool — modular (cache, ctags, git, scoring, search). Unified codebase mapper via ctags + rg + git recency |
 | `.pi/extensions/structural-analyzer.ts` | `structural_search` tool via ast-grep |
-| `.pi/extensions/ripgrep-search/` | `ripgrep_search` tool via ripgrep |
+| `.pi/extensions/ripgrep-search/` | `ripgrep_search` tool via ripgrep (modular: args, config, parse, temp, validate) |
 | `.pi/extensions/crawl4ai/` | `web_crawl` tool: local crawl4ai → Apify → HTTP fallback |
 | `.pi/extensions/supervisor/` | Kanban-driven multi-agent orchestration |
 | `.pi/extensions/context-info/` | Rich TUI status bar, welcome banner, TPS |
@@ -201,13 +201,16 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/tsc-checkpoint.ts` | `/check` command: `tsc --noEmit` |
 | `.pi/extensions/session-advice/` | Session advice — improvement recommendations per session |
 | `.pi/extensions/check-extensions/` | `/check-extensions` — AST-based extension audit with migration snippets + impact scoring |
-| `.pi/agents/researcher.md` | Researcher agent (pipeline step 1) |
-| `.pi/agents/architect.md` | Architect agent (pipeline step 2) |
-| `.pi/agents/test-designer.md` | TestDesigner agent (pipeline step 3) |
-| `.pi/agents/developer.md` | Developer agent (pipeline step 4) |
-| `.pi/agents/auditor.md` | Auditor agent (pipeline step 5) |
+| `.pi/extensions/worktree-sandbox/` | Enforces agents operate only within assigned git worktree (path rewriting, cd enforcement) |
+| `.pi/extensions/supervisor/agents/researcher.md` | Researcher agent (pipeline step 1) |
+| `.pi/extensions/supervisor/agents/architect.md` | Architect agent (pipeline step 2) |
+| `.pi/extensions/supervisor/agents/test-designer.md` | TestDesigner agent (pipeline step 3) |
+| `.pi/extensions/supervisor/agents/developer.md` | Developer agent (pipeline step 4) |
+| `.pi/extensions/supervisor/agents/auditor.md` | Auditor agent (pipeline step 5) |
 | `scripts/session-advice.ts` | Post-hoc batch session analysis runner |
 | `scripts/session-advice.sh` | Shell wrapper for session-advice.ts |
+| `scripts/pr-review.ts` | PR review workflow — security checks, philosophy validation, structured comments |
+| `scripts/pi_update` | Updates pi npm package, verifies models.json symlink, extensible step array |
 | `.pi/settings.json` | Supervisor + context status bar config |
 | `.pi/themes/agentcastle.json` | Dark cyberpunk TUI theme |
 | `.pi/prompts/issue-cutter.md` | Epic → sub-issues with layer labels |
@@ -215,12 +218,17 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/prompts/extension-spec.md` | Extension design PRD generator |
 | `.pi/prompts/handover.md` | Session handover document |
 | `.pi/prompts/quiz-master.md` | PR review quiz + auto-merge |
+| `.pi/prompts/package-extension.md` | Package extension as npm pi-package, publish to npm |
 | `.piignore` | Agent path blocking (gitignore syntax) |
 | `AGENTS.md` | Caveman protocol (active every session) |
 | `scripts/setup-github-project.sh` | Create GitHub Project from settings |
 | `scripts/session-query.sh` | Query JSONL session logs with jq |
 | `Makefile` | Deprecated — see `./agent-castle.sh` for Docker-based launch |
-| `test/` | 27+ unit/integration test files |
+| `test/` | 64 unit/integration test files |
+| `.pi/lib/` | Shared library (harness-rules, harness-state, lsp-types, types, github-types) |
+| `.pi/state/session-extensions.json` | Tracks extension on/off state |
+| `.pi/specs/` | PRD specs (ranked-map, ripgrep-search, supervisor-refactor) |
+| `.pi/npm/` | Local npm package cache |
 | `flask_blogs/` | Submodule: Flask blog apps |
 
 #### 5.4 Extensions Deep Dive
@@ -244,11 +252,12 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **PiIgnore** | Blocks paths matching `.piignore` patterns from read/write/edit/bash. Supports negation (`!`). |
 | **TSC Checkpoint** | `/check` command runs `tsc --noEmit` on worktree. Used in pipeline Implementation→Audit. |
 | **Check Extensions** | `/check-extensions` parses pi CHANGELOG.md, scans `.pi/extensions/` with **ast-grep AST analysis** (replacing regex grep). Classifies findings by context (runtime-call, import-type, import-value). Filters false positives via call-arg comparison. Generates migration snippets and impact scores per extension. Creates GitHub issues with `extension-audit` label. |
+| **Worktree Sandbox** | Enforces developer/auditor agents operate ONLY within assigned git worktree. Intercepts read/write/edit/bash — rewrites relative paths, blocks absolute paths outside worktree. Deterministic enforcement (tool input mutation before execution). Activated by `WORKTREE_SANDBOX_PATH` env var. |
 | **LSP Auditor** | Runs real LSP diagnostics on modified files before merge. Groups by server, auto-retry (max 3). Called by supervisor. |
 
 #### 5.5 Agent Definitions
 
-Agents are Markdown files in `.pi/agents/` with YAML frontmatter. The supervisor reads them at runtime.
+Agents are Markdown files in `.pi/extensions/supervisor/agents/` with YAML frontmatter. The supervisor reads them at runtime.
 
 | Agent | File | Tools |
 |-------|------|-------|
@@ -260,7 +269,52 @@ Agents are Markdown files in `.pi/agents/` with YAML frontmatter. The supervisor
 
 All agents use `opencode-go/deepseek-v4-flash` model. Developer additionally uses format-on-save and tsc-checkpoint extensions.
 
-#### 5.6 Prompt Templates
+#### 5.6 Git Worktrees
+
+AgentCastle uses [git worktrees](https://git-scm.com/docs/git-worktree) to give each issue its **own isolated working directory** with its own branch. This keeps `main` clean and prevents agents from interfering with each other.
+
+**Key concepts:**
+
+- A worktree is a separate checkout of the repo at a different path (default: `../worktree-git-issue-<number>-<title-slug>/`)
+- Each worktree has its own branch — changes in one worktree never affect another
+- Worktrees share the same Git object store (no wasted disk space for history)
+- The supervisor pipeline creates worktrees before dispatching the Developer agent
+- Worktrees are cleaned up after the pipeline completes (success, failure, or stop)
+
+**Worktree paths:** All worktrees live **outside** the main repo directory (one level up by default, configurable via `supervisor.worktreeBase` in `.pi/settings.json`).
+
+**Lifecycle at a glance:**
+
+```
+1. Supervisor:  git worktree add -b <branch> ../<branch> main
+2. Developer:   Works inside worktree, commits, pushes
+3. Auditor:     Reviews diff via git diff main inside worktree
+4. Supervisor:  git worktree remove --force ../<branch> (post-pipeline)
+```
+
+**Working with worktrees manually (outside supervisor):**
+
+```bash
+# Create a worktree for feature work
+git worktree add -b feature/my-feature ../feature-my-feature main
+
+# Work in it
+cd ../feature-my-feature
+git add -A && git commit -m "feat: my feature"
+git push origin feature/my-feature
+
+# Remove when done
+cd /home/miria/git/main
+git worktree remove --force ../feature-my-feature
+git worktree prune
+git branch -D feature/my-feature
+```
+
+**Why worktrees over branches alone?** Switching branches in-place means committing or stashing unfinished work. Worktrees let you have multiple branches checked out simultaneously — switch between contexts instantly.
+
+**Tip:** The agent footer shows the worktree name in brackets next to the branch when inside a git worktree, so you always know where you are.
+
+#### 5.7 Prompt Templates
 
 Invocable via `/name` in Pi's editor:
 
@@ -272,8 +326,9 @@ Invocable via `/name` in Pi's editor:
 | **handover** | `/handover` | Write handover doc summarizing conversation. Saves to `tmp/` with datetime prefix. |
 | **model-select** | `/model-select <objective>` | Research + recommend models per agent role. Crawls providers, benchmarks, pricing. Three objectives: cost-optimized, performance-optimized, balanced. Applies `model:` field in agent files. |
 | **quiz-master** | `/quiz-master` | List open PRs across repo + submodules, quiz reviewer on diff with MC questions, auto-merge if score ≥80%. |
+| **package-extension** | `/package-extension` | Package selected extension from monorepo as individual npm pi-package. Sets up package.json with pi manifest, guides through publishing. |
 
-#### 5.7 Tool Benchmark
+#### 5.8 Tool Benchmark
 
 Empirical token consumption comparing tool configurations on a real audit task ("Audit test coverage of chart/figure generation methods"). Config 4 (ripgrep) is the most token-efficient tool-enabled config.
 
@@ -291,7 +346,7 @@ The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming
 
 > Run with `scripts/benchmark-tools.sh` (2 runs per config). Results saved to `scripts/benchmark-results/`.
 
-#### 5.8 Published Pi Packages
+#### 5.9 Published Pi Packages
 
 Selected extensions from AgentCastle are published as individual npm packages under the `@agentcastle` scope. They appear on the [pi.dev package gallery](https://pi.dev/packages) and install via `pi install`.
 
@@ -314,9 +369,9 @@ Selected extensions from AgentCastle are published as individual npm packages un
 ```
 Or after install, run `pi config` to enable/disable individual extensions.
 
-#### 5.9 Skills
+#### 5.10 Skills
 
-Currently **5 skills installed**:
+Currently **6 skills installed**:
 
 | Skill | Purpose |
 |-------|---------|
@@ -325,6 +380,7 @@ Currently **5 skills installed**:
 | **extension-spec** | Designs pi extensions — new or refactoring — with full PRD, TypeScript best practices, anti-pattern audit, migration plan. |
 | **improve-codebase-architecture** | Surface architectural friction — shallow modules, leaky seams, low locality. Creates umbrella + sub-issues with Mermaid diagrams. |
 | **duplicate-code-hunter** | Systematic duplicate code detection — exact clones (Type 1), renamed clones (Type 2), near-miss (Type 3), semantic clones (Type 4). Uses jscpd for token-based scanning. Hunt loop with three-way-match proof. |
+| **pr-review** | Review external PRs — automated security/quality checks, validates against AgentCastle philosophy + pi docs, formats structured review comment. Asks user confirmation before posting. |
 
 Skills are loaded on-demand via `/skill:<name>` invocation. Every skill's description injects ~50-150 tokens into the context window on every turn, causing [context rot](https://docs.anthropic.com/en/docs/build-with-claude/context-windows). Use sparingly. Prefer extensions (concise prompt snippets) or prompt templates (lazy-loaded) over skills.
 
@@ -910,7 +966,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 1. Fork the repository
 2. Create a feature branch (`git worktree add -b feature/amazing feature-amazing` is the recommended workflow)
 3. Make your changes
-4. Run tests: `npm test` (runs all 27+ test files)
+4. Run tests: `npm test` (runs 14 listed test files; 64 total in `test/`)
 5. Submit a PR
 
 ---
@@ -1058,4 +1114,4 @@ Built on top of these excellent projects:
 - [ast-grep](https://ast-grep.github.io) — Structural code search via Tree-sitter AST
 - [ripgrep](https://github.com/BurntSushi/ripgrep) — Ultra-fast literal/regex code search
 - [universal-ctags](https://ctags.io) — Codebase symbol indexing
-test change
+
