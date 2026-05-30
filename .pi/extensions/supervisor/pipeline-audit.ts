@@ -20,11 +20,11 @@ export async function runTscAndLspAudit(
 	config: SupervisorConfig,
 	agentName: string,
 	filteredData: { comments: Array<{ body: string }> },
+	worktreePath: string,
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 ): Promise<{ nextStatus: string; note: string }> {
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
-	const wt = `${config.worktreeBase!}${branch}`;
 
 	// Step 0: CI gating — poll check runs before running local hooks
 	if (config.ciGatingTimeoutSec && config.ciGatingTimeoutSec > 0) {
@@ -66,14 +66,14 @@ export async function runTscAndLspAudit(
 	}
 
 	// Step 1: TSC checkpoint (Tier 2)
-	// Run from main repo cwd, not worktree. Worktree has source files but
-	// no node_modules — imports to typebox, pi-coding-agent would fail.
-	// Main repo has all deps and same tsconfig.
+	// Run against worktree path so type-checking covers feature branch code,
+	// not main branch. worktreePath is resolved and passed from pipeline.ts.
+	// npm ci is run on worktree creation so node_modules are available.
 	const runTscCheckpointFn = await getRunTscCheckpoint();
 
 	if (runTscCheckpointFn) {
 		ctx.ui.setStatus("supervisor", "Running TSC checkpoint...");
-		const tscResult = await runTscCheckpointFn(pi, ctx.cwd);
+		const tscResult = await runTscCheckpointFn(pi, worktreePath);
 		const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
 
 		if (tscDecision.nextStatus !== "Audit") {
@@ -92,7 +92,7 @@ export async function runTscAndLspAudit(
 	}
 
 	// Step 2: LSP pre-audit (Tier 3)
-	return runLspPreAudit(issueNum, issueTitle, config, pi, ctx, branch, wt);
+	return runLspPreAudit(issueNum, issueTitle, config, pi, ctx, worktreePath);
 }
 
 /**
@@ -105,8 +105,7 @@ async function runLspPreAudit(
 	config: SupervisorConfig,
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
-	branch: string,
-	wt: string,
+	worktreePath: string,
 ): Promise<{ nextStatus: string; note: string }> {
 	const runPreAuditFn = await getRunPreAudit();
 	let preAuditResult: any = null;
@@ -116,7 +115,7 @@ async function runLspPreAudit(
 	if (runPreAuditFn) {
 		try {
 			const diffResult = await pi.exec("git", ["diff", config.defaultBranch!, "--name-only"], {
-				cwd: resolvePath(wt),
+				cwd: resolvePath(worktreePath),
 				timeout: 10_000,
 			});
 			hasModifiedFiles = (diffResult.stdout || "").trim().length > 0;
@@ -141,7 +140,7 @@ async function runLspPreAudit(
 			preAuditResult = await runPreAuditFn(
 				{
 					issueNum,
-					worktreePath: wt,
+					worktreePath: worktreePath,
 					defaultBranch: config.defaultBranch!,
 					repo: config.repo,
 				},
