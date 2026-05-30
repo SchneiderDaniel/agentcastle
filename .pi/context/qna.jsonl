@@ -61,3 +61,4 @@
 {"datetime":"2026-05-29T17:47:47.738Z","question":"Welcher Ordner in `custom/data/` soll analysiert werden?","answer":"böblingen-diezenhalde"}
 {"datetime":"2026-05-29T18:55:26.548Z","question":"Which direction you want explore deeper?","answer":"None of the options is good. I want the extensions in rust, i do not want to build it from grund up and i want rust. Can you dig deeper if you find someting that fits?"}
 {"datetime":"2026-05-29T19:02:55.569Z","question":"Which Rust option you want explore deeper?","answer":"ok, i am suprised. I would have expected that it is possible to use pi and its externsions, but the externsion then call rust code. can you explain me why that is a bad idea?"}
+{"datetime":"2026-05-30T05:47:31.685Z","question":"Welcher Ordner in `custom/data/` soll analysiert werden?","answer":"böblingen-diezenhalde"}
