@@ -55,9 +55,6 @@ export function createConfigStore(configPath?: string): ConfigStore {
 				} catch {
 					config = { ...DEFAULT_CONFIG };
 				}
-				if (currentLevel === "off" && config.defaultLevel !== "off") {
-					currentLevel = config.defaultLevel;
-				}
 			})();
 		}
 		await configLoadPromise;
