@@ -8,7 +8,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createConfigStore } from "./config.ts";
 import { registerCavemanCommand } from "./command.ts";
-import { resolveSessionLevel, resetSessionLevel } from "./session.ts";
+import { resolveSessionLevel, resetSessionLevel, type SessionEntry } from "./session.ts";
 import { CAVEMAN_BASE, INTENSITY } from "./prompts.ts";
 
 export default function caveman(pi: ExtensionAPI): void {
@@ -35,7 +35,10 @@ export default function caveman(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		await configStore.ensureConfigLoaded();
 
-		const result = resolveSessionLevel(configStore.getConfig(), ctx.sessionManager.getEntries());
+		const result = resolveSessionLevel(
+			configStore.getConfig(),
+			ctx.sessionManager.getEntries() as SessionEntry[],
+		);
 		configStore.setLevel(result.level);
 		if (result.shouldAppendEntry) {
 			pi.appendEntry("caveman-level", { level: result.level });
