@@ -9,7 +9,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { createConfigStore } from "./config.ts";
 import { createAnimationController } from "./animation.ts";
 import { registerCavemanCommand } from "./command.ts";
-import { LEVELS, DEFAULT_CONFIG } from "./types.ts";
+import { resolveSessionLevel, resetSessionLevel } from "./session.ts";
+import { LEVELS } from "./types.ts";
 import { CAVEMAN_BASE, INTENSITY } from "./prompts.ts";
 import type { Level } from "./types.ts";
 
@@ -25,33 +26,10 @@ export default function caveman(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		await configStore.ensureConfigLoaded();
 
-		// Check for session-level override first (resuming a session)
-		let sessionLevel: Level | null = null;
-
-		function isCavemanLevelData(data: unknown): data is { level: Level } {
-			return (
-				typeof data === "object" &&
-				data !== null &&
-				"level" in data &&
-				typeof (data as Record<string, unknown>).level === "string" &&
-				LEVELS.includes((data as Record<string, unknown>).level as Level)
-			);
-		}
-		for (const entry of ctx.sessionManager.getEntries()) {
-			if (entry.type === "custom" && entry.customType === "caveman-level") {
-				if (isCavemanLevelData(entry.data)) {
-					sessionLevel = entry.data.level;
-				}
-			}
-		}
-
-		if (sessionLevel !== null) {
-			// Resuming — use session state
-			configStore.setLevel(sessionLevel);
-		} else if (configStore.getConfig().defaultLevel !== "off") {
-			// New session — apply default from config
-			configStore.setLevel(configStore.getConfig().defaultLevel);
-			pi.appendEntry("caveman-level", { level: configStore.getLevel() });
+		const result = resolveSessionLevel(configStore.getConfig(), ctx.sessionManager.getEntries());
+		configStore.setLevel(result.level);
+		if (result.shouldAppendEntry) {
+			pi.appendEntry("caveman-level", { level: result.level });
 		}
 
 		animController.syncStatus(ctx);
@@ -68,6 +46,7 @@ export default function caveman(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async () => {
+		configStore.setLevel(resetSessionLevel(configStore.getLevel()));
 		animController.stopAnimation();
 		animController.setActive(false);
 	});
