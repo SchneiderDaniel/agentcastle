@@ -101,8 +101,8 @@ export function processSessionEvent(
 							const trimmed = t.trim();
 							if (trimmed) pushLog(state, `💭 ${trimmed}`);
 						}
-						state.thinkingPushedThisTurn = true;
 					}
+					state.thinkingPushedThisTurn = true; // Always set — delta handlers already pushed complete lines
 					state.liveThinking = "";
 					state.phase = "idle";
 					return { flush: true, workingChange: true };
@@ -114,8 +114,8 @@ export function processSessionEvent(
 							const trimmed = t.trim();
 							if (trimmed) pushLog(state, trimmed);
 						}
-						state.textPushedThisTurn = true;
 					}
+					state.textPushedThisTurn = true; // Always set — delta handlers already pushed complete lines
 					if (ev.message?.usage) {
 						state.tokenCount =
 							ev.message.usage.totalTokens ||
