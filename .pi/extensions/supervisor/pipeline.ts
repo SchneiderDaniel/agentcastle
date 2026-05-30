@@ -387,6 +387,16 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							}
 						}
 						worktreePath = wt;
+						// Install deps in worktree so TSC can resolve imports
+						try {
+							execSync(`npm ci`, {
+								cwd: worktreePath,
+								timeout: 120_000,
+							});
+						} catch {
+							// npm ci failure is non-fatal — worktree still usable,
+							// TSC will skip if tsconfig.json not found or deps missing
+						}
 					}
 
 					// Build task AFTER worktree creation so worktreePath + branch info
@@ -675,6 +685,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								config,
 								agentName,
 								loopFilteredData,
+								worktreePath,
 								pi,
 								ctx,
 							);
