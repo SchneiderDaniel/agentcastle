@@ -36,6 +36,7 @@ import {
 	createPullRequest,
 	extractAgentCommentBody,
 	extractStructuredAuditOutput,
+	buildAuditCommentFallback,
 } from "./github";
 import { parseAgentFile } from "./agent-loader";
 import { buildAgentTask, generateBranchName } from "./agent-task";
@@ -470,17 +471,56 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 											const acMsg = acErr instanceof Error ? acErr.message : String(acErr);
 											console.warn(`[supervisor] Failed to post audit comment: ${acMsg}`);
 										}
+									} else {
+										// Deterministic fallback for APPROVED when COMMENT_BODY marker missing
+										const fallbackBody = buildAuditCommentFallback(
+											auditOutput.decision,
+											result.textOnly,
+										);
+										if (fallbackBody) {
+											try {
+												await postIssueComment(pi, issueNum, config.repo, fallbackBody);
+												ctx.ui.notify(
+													"Audit approval comment posted (deterministic fallback)",
+													"info",
+												);
+											} catch (acErr: unknown) {
+												const acMsg = acErr instanceof Error ? acErr.message : String(acErr);
+												console.warn(
+													`[supervisor] Failed to post approval fallback comment: ${acMsg}`,
+												);
+											}
+										}
 									}
 								} else if (auditOutput.decision === "REJECTED") {
-									// Post rejection comment
+									// Post rejection comment — try COMMENT_BODY marker first, then deterministic fallback
+									let commentToPost: string | null = null;
+									let source = "";
 									if (auditOutput.commentBody) {
+										commentToPost = auditOutput.commentBody;
+										source = "COMMENT_BODY marker";
+									} else {
+										commentToPost = buildAuditCommentFallback(
+											auditOutput.decision,
+											result.textOnly,
+										);
+										source = "deterministic fallback";
+									}
+									if (commentToPost) {
 										try {
-											await postIssueComment(pi, issueNum, config.repo, auditOutput.commentBody);
-											ctx.ui.notify("Audit rejection comment posted", "info");
+											await postIssueComment(pi, issueNum, config.repo, commentToPost);
+											ctx.ui.notify(`Audit rejection comment posted (${source})`, "info");
 										} catch (rcErr: unknown) {
 											const rcMsg = rcErr instanceof Error ? rcErr.message : String(rcErr);
-											console.warn(`[supervisor] Failed to post rejection comment: ${rcMsg}`);
+											console.warn(
+												`[supervisor] Failed to post rejection ${source} comment: ${rcMsg}`,
+											);
 										}
+									} else {
+										console.warn(
+											`[supervisor] Auditor rejected issue #${issueNum} but no COMMENT_BODY marker or structured findings found — no comment posted. ` +
+												"Auditor output may lack structured findings. Update auditor agent to use COMMENT_BODY marker.",
+										);
 									}
 								}
 							}

@@ -244,11 +244,41 @@ The score marker is always emitted regardless of APPROVE or REJECT. It does not 
 
    Replace `<test commands>` with the actual command(s) executed. If multiple suites were run, list them separated by ` && ` or newlines.
 
-   **For trivial PRs** (single-line, typo, config): write a minimal summary with `## Audit Approved` + checklist + 1-line description.
+   **For trivial PRs** (single-line, typo, config): write a minimal summary with `## Audit Approval` + checklist + 1-line description.
 
    **Omit empty sections:** Before each optional section (Key decisions, Review findings, Diagram), add a shell conditional to skip it if there's nothing to report. Only sections with content should appear in the summary.
 
-2. **Create a Pull Request** with the summary as body:
+2. **Output the same summary as COMMENT_BODY:** so the supervisor posts the comment via API (reliable — avoids gh CLI auth/sandbox issues in agent subprocess). Do NOT use `gh issue comment` — the supervisor handles this.
+
+   ```
+   COMMENT_BODY:
+   ## Audit Approved
+
+   ### Summary
+   [1-2 sentences: what changed, why]
+
+   ### How it works
+   [Brief approach. Code snippets only when they clarify. Keep short.]
+
+   ### Key decisions
+   [Trade-offs, 1 sentence each. Omit section if none.]
+
+   ### Review findings
+   [🟢/🟡 non-blocking notes. Omit section if none.]
+
+   ### Diagram
+   [Optional mermaid. Omit section if no value.]
+
+   - Architecture compliance: ✓
+   - Ticket fulfillment: ✓
+   - Tests passed: ✓ (ran: <test commands>)
+   - Test quality: ✓
+   - Correctness & Safety: ✓
+   - Code quality: ✓
+   - Completeness: ✓
+   ```
+
+3. **Create a Pull Request** with the summary as body (the SUMMARY_FILE from step 1):
    ```
    if [ -s "$SUMMARY_FILE" ]; then
      gh pr create --repo <owner/repo> --base main --head <branch-name> \
@@ -261,23 +291,20 @@ The score marker is always emitted regardless of APPROVE or REJECT. It does not 
    fi
    ```
 
-3. **Post the approval comment** using the same summary file:
+4. Output decision markers (last occurrence wins — the supervisor uses these to transition status and post comment):
    ```
-   if [ -s "$SUMMARY_FILE" ]; then
-     gh issue comment <N> --repo <owner/repo> --body-file "$SUMMARY_FILE"
-   else
-     gh issue comment <N> --repo <owner/repo> --body "## Audit Approved\n\nThe implementation has been reviewed and meets all requirements."
-   fi
+   AUDIT_DECISION: APPROVED
+   AUDIT_APPROVED
    ```
-
-4. Output `AUDIT_APPROVED` on its own line
 
 #### If REJECT:
 
-1. Add a rejection comment. Use the structured finding format for each issue:
+1. Output structured rejection comment. Use the structured finding format for each issue.
+   The supervisor posts this as a GitHub comment via API (more reliable than gh CLI inside agent subprocess):
 
    ```
-   gh issue comment <N> --repo <owner/repo> --body "## Audit Rejected
+   COMMENT_BODY:
+   ## Audit Rejected
 
    ### Critical (must fix)
 
@@ -295,14 +322,18 @@ The score marker is always emitted regardless of APPROVE or REJECT. It does not 
       - Remedy: [how]
       - Location: \`file:line\`
 
-   Fix and resubmit."
+   Fix and resubmit.
    ```
 
    - Group findings by severity: Critical first, then Warnings
    - Each finding must include Symptom, Consequence, Remedy, and Location
    - If rejecting due to warnings threshold (3+), state: "Rejected: 3+ warnings threshold exceeded"
 
-2. Output `AUDIT_REJECTED` on its own line
+2. Output decision markers (last occurrence wins):
+   ```
+   AUDIT_DECISION: REJECTED
+   AUDIT_REJECTED
+   ```
 
 ### 6. Self-Reflection (Before Final Decision)
 

@@ -1,7 +1,10 @@
 # Agent Castle: The Pi Stack
 
 Pi coding agent for multiple git submodules.
-Core philosophy: Tool output is evidence. LLM opinion is speculation.
+Core philosophies: 
+- Tool output is evidence. LLM opinion is speculation.
+- Prefer deterministic code before putting is to LLM, if possible.
+
 
 ## Rules
 - Read/edit `.pi` folder: consult https://pi.dev/docs/latest, update @README.me
