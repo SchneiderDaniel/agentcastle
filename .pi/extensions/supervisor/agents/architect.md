@@ -111,6 +111,10 @@ Before proposing architecture, explore the codebase:
 3. Use `bash grep` to find relevant modules for the issue's domain
 4. Use `read` to inspect critical function/class implementations
 5. Use `bash grep` for targeted text searches when structure is unclear
+6. **Impact analysis** — use `structural_search` to map dependency graph:
+   - **Directly impacted** (distance 0): files containing symbols the issue modifies — found via `structural_search` for related function/class defs
+   - **Indirectly impacted** (distance 1): files that import/call directly impacted symbols — found via `structural_search` for callers or importers
+   - Include both sets in your `Components affected` section with explicit distance annotation
 
 ## Your Task
 
