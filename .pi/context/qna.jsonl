@@ -83,3 +83,6 @@
 {"datetime":"2026-05-30T19:48:59.492Z","question":"Responsive behavior: the welcome banner uses fixed 64-char width. No breakpoints or mobile concerns since this is a terminal TUI. OK to keep as-is?","answer":"fixed_ok"}
 {"datetime":"2026-05-30T19:49:18.531Z","question":"Accessibility: The indicator uses colored circles 🟢🔴❓ which are Unicode emoji. These are visible in terminal text. Should the label text also include \"(ON)\" / \"(OFF)\" for screen readers or colorblind users?","answer":"circles_only"}
 {"datetime":"2026-05-30T19:50:06.430Z","question":"Issue #199 is refined and updated on GitHub. What's next?","answer":"done"}
+{"datetime":"2026-05-30T20:40:57.488Z","question":"What extension should I design? Describe the idea — what problem it solves, who uses it, key functionality. Or prefix with `refactor:`, `update:`, `fix:` followed by an existing extension name from `.pi/extensions/`.","answer":"refactor:existing"}
+{"datetime":"2026-05-30T20:41:07.474Z","question":"Which existing extension should I refactor? Pick from list below or describe target.","answer":"supervisor"}
+{"datetime":"2026-05-30T20:43:35.251Z","question":"PRD complete. What next?","answer":"create-issue"}
