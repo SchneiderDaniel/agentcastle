@@ -13,14 +13,18 @@ import { LEVELS } from "./types.ts";
 // ---------------------------------------------------------------------------
 
 /**
- * Minimal entry shape compatible with SDK SessionEntry union type.
- * Only exposes fields used by resolveSessionLevel.
+ * Shape of session entries that resolveSessionLevel inspects.
+ *
+ * Accepts a broader type than the pi agent's SessionEntry union so that
+ * callers (index.ts) can pass ctx.sessionManager.getEntries() directly
+ * without a cast. The function only accesses .type, .customType, and .data,
+ * narrowing at runtime to entries matching its contract.
  */
-export interface SessionEntry {
+export type SessionEntry = {
 	type: string;
 	customType?: string;
 	data?: unknown;
-}
+};
 
 export interface ResolvedSessionLevel {
 	level: Level;
