@@ -8,7 +8,7 @@
 import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./types";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { resolveTools, resolveExtensions } from "./extensions";
+import { resolveTools, resolveExtensions, resolveSkillPaths } from "./extensions";
 import { formatDuration, extractSummaryLine, formatTokens } from "./formatting";
 import { resolveTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } from "./config";
 import {
@@ -64,6 +64,7 @@ export async function runAgentSubprocess(
 	const tools = resolveTools(rawTools, agent.config.extensions, effectiveCwd);
 	const model = agent.config.model || "";
 	const extFlags = resolveExtensions(agent.config.extensions);
+	const skillPaths = resolveSkillPaths(agent.config.skills, effectiveCwd);
 
 	const args: string[] = [
 		"-p",
@@ -76,6 +77,7 @@ export async function runAgentSubprocess(
 		tools,
 		...extFlags,
 		"--no-skills",
+		...skillPaths.flatMap((p) => ["--skill", p]),
 		"--no-context-files",
 	];
 	if (model) args.push("--model", model);

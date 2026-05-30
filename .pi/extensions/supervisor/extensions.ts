@@ -56,6 +56,73 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 	return result;
 }
 
+// ─── Skill path resolution ───────────────────────────────────────────
+
+/**
+ * Resolve comma-separated skill names from agent frontmatter to absolute
+ * file paths suitable for --skill CLI flags.
+ *
+ * Resolution order:
+ * 1. Try `.pi/skills/<name>.md` first
+ * 2. Fall back to `.pi/skills/<name>/SKILL.md`
+ * 3. If neither exists, throw an error with skill name and both paths
+ *
+ * Empty/undefined input returns empty array (noop).
+ */
+/**
+ * Internal version of resolveSkillPaths that accepts a custom existsSync
+ * function for testing. Public API wraps this with real existsSync.
+ */
+export function resolveSkillPathsWithFs(
+	skillsRaw: string | undefined,
+	cwd: string,
+	existsSyncFn: (path: string) => boolean,
+): string[] {
+	if (!skillsRaw || !skillsRaw.trim()) {
+		return [];
+	}
+
+	const skills = skillsRaw
+		.split(",")
+		.map((s) => s.trim())
+		.filter((s) => s.length > 0);
+
+	if (skills.length === 0) {
+		return [];
+	}
+
+	const result: string[] = [];
+	for (const name of skills) {
+		const mdPath = resolvePath(cwd, `.pi/skills/${name}.md`);
+		const skillDirPath = resolvePath(cwd, `.pi/skills/${name}/SKILL.md`);
+
+		if (existsSyncFn(mdPath)) {
+			result.push(mdPath);
+		} else if (existsSyncFn(skillDirPath)) {
+			result.push(skillDirPath);
+		} else {
+			throw new Error(`Skill "${name}" not found: tried "${mdPath}" and "${skillDirPath}"`);
+		}
+	}
+
+	return result;
+}
+
+/**
+ * Resolve comma-separated skill names from agent frontmatter to absolute
+ * file paths suitable for --skill CLI flags.
+ *
+ * Resolution order:
+ * 1. Try `.pi/skills/<name>.md` first
+ * 2. Fall back to `.pi/skills/<name>/SKILL.md`
+ * 3. If neither exists, throw an error with skill name and both paths
+ *
+ * Empty/undefined input returns empty array (noop).
+ */
+export function resolveSkillPaths(skillsRaw: string | undefined, cwd?: string): string[] {
+	return resolveSkillPathsWithFs(skillsRaw, cwd || process.cwd(), existsSync);
+}
+
 // ─── Tool discovery ────────────────────────────────────────────────
 
 let _extToolsCache: Map<string, string[]> | null = null;
