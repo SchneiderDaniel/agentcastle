@@ -185,7 +185,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 |-----------|------------|
 | `.pi/extensions/ranked-map.ts` | `ranked_map` tool — unified codebase mapper (auto-mode: ranked/full dump) via ctags + rg + git recency |
 | `.pi/extensions/structural-analyzer.ts` | `structural_search` tool via ast-grep |
-| `.pi/extensions/ripgrep-search.ts` | `ripgrep_search` tool via ripgrep |
+| `.pi/extensions/ripgrep-search/` | `ripgrep_search` tool via ripgrep |
 | `.pi/extensions/crawl4ai/` | `web_crawl` tool: local crawl4ai → Apify → HTTP fallback |
 | `.pi/extensions/supervisor/` | Kanban-driven multi-agent orchestration |
 | `.pi/extensions/context-info/` | Rich TUI status bar, welcome banner, TPS |
@@ -940,7 +940,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | **Project Extensions (`.pi/extensions/`)** | | | | |
 | ranked-map.ts | — | MIT | project | This repository (unified ctags mapper)
 | structural-analyzer.ts | — | MIT | project | This repository |
-| ripgrep-search.ts | — | MIT | project | This repository |
+| ripgrep-search/ | — | MIT | project | This repository |
 | caveman/ | — | MIT | project | This repository |
 | crawl4ai/ | — | MIT | project | This repository |
 | session-logger/ | — | MIT | project | This repository |
