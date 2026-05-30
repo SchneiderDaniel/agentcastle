@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# ─── pi_update — Update pi and related project config ───────────────────
+# Run this script after pi is updated via npm to sync project config.
+# Extensible: add new update steps as functions in the UPDATE_STEPS array.
+#
+# Usage: ./scripts/pi_update [--dry-run]
+#   --dry-run  Show what would be done without making changes.
+
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# ─── Config ────────────────────────────────────────────────────────────
+MODELS_JSON_SRC="$ROOT/.pi/agent/models.json"
+MODELS_JSON_DST="$HOME/.pi/agent/models.json"
+PI_NPM_PACKAGE="@earendil-works/pi-coding-agent"
+
+# ─── Helpers ───────────────────────────────────────────────────────────
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+info()  { echo -e "${GREEN}[✓]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
+error() { echo -e "${RED}[✗]${NC} $*"; }
+
+DRY_RUN=false
+[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
+
+run() {
+	if $DRY_RUN; then
+		echo "    (dry-run) $*"
+	else
+		"$@"
+	fi
+}
+
+# ─── Update Steps ──────────────────────────────────────────────────────
+# Each step is a bash function. Add new steps below and register in
+# UPDATE_STEPS array at the bottom.
+
+step_npm_update_pi() {
+	echo ""
+	echo "  ── Step: Update pi npm package ──"
+	if command -v npm &>/dev/null; then
+		local current wanted
+		current=$(npm list -g "$PI_NPM_PACKAGE" --depth=0 2>/dev/null | grep -oP '@\K[\d.]+' || echo "unknown")
+		wanted=$(npm outdated -g "$PI_NPM_PACKAGE" 2>/dev/null | awk "NR>1 && \$1 == \"$PI_NPM_PACKAGE\" {print \$4}" || echo "")
+
+		if [[ -n "$wanted" && "$wanted" != "$current" ]]; then
+			info "Updating $PI_NPM_PACKAGE: $current → $wanted"
+			run npm update -g "$PI_NPM_PACKAGE"
+		else
+			info "$PI_NPM_PACKAGE already at latest ($current)"
+		fi
+	else
+		warn "npm not found — skip pi update"
+	fi
+}
+
+step_sync_models_json() {
+	echo ""
+	echo "  ── Step: Sync models.json symlink ──"
+	if [[ -L "$MODELS_JSON_DST" ]]; then
+		local target
+		target=$(readlink "$MODELS_JSON_DST")
+		if [[ "$target" == "$MODELS_JSON_SRC" ]]; then
+			info "Symlink already points to project models.json"
+		else
+			warn "Symlink points to $target — relinking to $MODELS_JSON_SRC"
+			run ln -sf "$MODELS_JSON_SRC" "$MODELS_JSON_DST"
+		fi
+	elif [[ -f "$MODELS_JSON_DST" ]]; then
+		warn "File exists at $MODELS_JSON_DST (not a symlink) — replace with symlink?"
+		echo "    Run: ln -sf $MODELS_JSON_SRC $MODELS_JSON_DST"
+	elif [[ ! -e "$MODELS_JSON_DST" ]]; then
+		info "Creating symlink: $MODELS_JSON_DST → $MODELS_JSON_SRC"
+		run ln -sf "$MODELS_JSON_SRC" "$MODELS_JSON_DST"
+	fi
+
+	if [[ -f "$MODELS_JSON_SRC" ]]; then
+		info "models.json exists at project source"
+	else
+		warn "Project models.json missing at $MODELS_JSON_SRC — no-op"
+	fi
+}
+
+# ─── Registry — Add new step functions here ────────────────────────────
+UPDATE_STEPS=(
+	step_npm_update_pi
+	step_sync_models_json
+)
+
+# ─── Main ──────────────────────────────────────────────────────────────
+echo "═══════════════════════════════════════════════════════"
+echo "  pi_update — Pi + Project Config Sync"
+echo "═══════════════════════════════════════════════════════"
+$DRY_RUN && echo "  DRY RUN — no changes will be made"
+echo ""
+
+for step in "${UPDATE_STEPS[@]}"; do
+	$step
+done
+
+echo ""
+echo "═══════════════════════════════════════════════════════"
+echo "  Done"
+echo "═══════════════════════════════════════════════════════"

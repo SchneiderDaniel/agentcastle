@@ -976,6 +976,24 @@ For users who prefer a host-level install (Node.js, apt packages, Pi on bare met
 
 These scripts are **deprecated** — the Docker workflow is the supported path. They remain for reference and for users who cannot run Docker.
 
+### Project Model Config (host-level)
+
+The project defines model costs and compat settings in `.pi/agent/models.json`. This file is symlinked to `~/.pi/agent/models.json` so pi picks it up:
+
+```bash
+ln -sf $(pwd)/.pi/agent/models.json ~/.pi/agent/models.json
+```
+
+**Keep it in sync after every pi update.** Built-in model definitions (costs, `compat` flags like `thinkingFormat`) change between pi releases. If the custom models.json drifts from built-in, caching breaks and token waste increases — especially for Qwen (`thinkingFormat: "qwen"`) and DeepSeek models.
+
+Run `scripts/pi_update` after updating pi:
+
+```bash
+./scripts/pi_update
+```
+
+This updates the pi npm package, verifies the models.json symlink, and is extensible — add new update steps as functions in the `UPDATE_STEPS` array.
+
 ### Acknowledgments
 
 Built on top of these excellent projects:
