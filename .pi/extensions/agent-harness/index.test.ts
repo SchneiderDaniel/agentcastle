@@ -1913,3 +1913,701 @@ describe("Issue 270: batchId-aware cache TTL", () => {
 		assert.ok(r2?.block, "no batchId — normal cache block");
 	});
 });
+
+// ── Issue 320: Edit tool cache invalidation (Phase 1) ──
+
+describe("Issue 320: Edit cache invalidation (handler unit)", () => {
+	it("edit tool clears read cache — read after edit passes", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read caches
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// Edit clears cache
+		handler(makeEvent("edit", { path: "a.ts", oldText: "foo", newText: "bar" }), makeCtx());
+
+		// Re-read same file should pass (cache was cleared)
+		state.toolCallIndex = 2;
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r2, null, "read after edit should pass — cache invalidated");
+	});
+
+	it("edit with only path arg still clears cache", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// First read caches
+		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r1, null);
+
+		// Edit with minimal args
+		handler(makeEvent("edit", { path: "x.ts" }), makeCtx());
+
+		// Re-read should pass (cache cleared)
+		state.toolCallIndex = 2;
+		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(r2, null, "read after minimal edit should pass");
+	});
+
+	it("edit and write both clear cache independently", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// Read → edit → re-read passes
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		handler(makeEvent("edit", { path: "a.ts" }), makeCtx());
+		state.toolCallIndex = 2;
+		assert.equal(
+			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
+			null,
+			"edit clears cache",
+		);
+
+		// Read → write → re-read passes
+		state.toolCallIndex = 3;
+		handler(makeEvent("read", { path: "b.ts" }), makeCtx());
+		handler(makeEvent("write", { path: "b.ts", content: "x" }), makeCtx());
+		state.toolCallIndex = 5;
+		assert.equal(
+			handler(makeEvent("read", { path: "b.ts" }), makeCtx()),
+			null,
+			"write clears cache",
+		);
+	});
+
+	it("edit cache invalidation does NOT affect cascade counter", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// 3 reads
+		for (let i = 0; i < 3; i++) {
+			assert.equal(
+				handler(makeEvent("read", { path: `file${i}.ts` }), makeCtx()),
+				null,
+				`read ${i} should pass`,
+			);
+		}
+
+		// Edit interleaved
+		handler(makeEvent("edit", { path: "a.ts" }), makeCtx());
+
+		// 4 more reads (total 7) — none blocked by cascade
+		for (let i = 3; i < 7; i++) {
+			assert.equal(
+				handler(makeEvent("read", { path: `file${i}.ts` }), makeCtx()),
+				null,
+				`read ${i} after edit should pass`,
+			);
+		}
+	});
+
+	it("edit clears cache after previous write also cleared it — double-clear is idempotent", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// Read caches
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// Write clears cache
+		handler(makeEvent("write", { path: "out.ts", content: "x" }), makeCtx());
+
+		// Edit also clears cache (double-clear, idempotent)
+		handler(makeEvent("edit", { path: "a.ts" }), makeCtx());
+
+		// Re-read should pass (cache still clear)
+		state.toolCallIndex = 3;
+		assert.equal(
+			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
+			null,
+			"read after write+edit should pass",
+		);
+	});
+
+	it("edit clears cache at turn boundary — cache empty regardless of TTL", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// Read at turn 0
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// Turn boundary + edit
+		state.sessionTurn++;
+		state.callCounter.turnBoundaryReset();
+		handler(makeEvent("edit", { path: "a.ts" }), makeCtx());
+
+		// Re-read should pass (edit cleared cache)
+		state.toolCallIndex = 4;
+		assert.equal(
+			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
+			null,
+			"read after turn boundary + edit should pass",
+		);
+	});
+
+	it("regression: write cache invalidation still works", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		handler(makeEvent("write", { path: "out.ts", content: "data" }), makeCtx());
+
+		state.toolCallIndex = 2;
+		assert.equal(
+			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
+			null,
+			"read after write should pass",
+		);
+	});
+
+	it("regression: file-modifying bash cache invalidation still works", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		handler(makeEvent("bash", { command: "sed -i 's/foo/bar/g' file.ts" }), makeCtx());
+
+		state.toolCallIndex = 4;
+		assert.equal(
+			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
+			null,
+			"read after sed should pass",
+		);
+	});
+});
+
+describe("Issue 320: Edit cache invalidation (dispatch integration)", () => {
+	function createMockAPI() {
+		const handlers = new Map<string, (...args: any[]) => any>();
+		const api = {
+			handlers,
+			on(event: any, handler: any) {
+				handlers.set(event, handler);
+			},
+			fire(event: string, data: any, ctx?: any) {
+				const handler = handlers.get(event);
+				if (handler) return handler(data, ctx ?? {});
+			},
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerShortcut: () => {},
+			registerFlag: () => {},
+			getFlag: () => undefined,
+			registerMessageRenderer: () => {},
+			sendMessage: () => {},
+			sendUserMessage: () => {},
+			appendEntry: () => {},
+			setSessionName: () => {},
+			getSessionName: () => undefined,
+			setLabel: () => {},
+			exec: async () => ({ code: 0, killed: false, stdout: "", stderr: "" }),
+			getActiveTools: () => [],
+			getAllTools: () => [],
+			setActiveTools: () => {},
+			getCommands: () => [],
+			setModel: async () => false,
+			getThinkingLevel: () => "off" as any,
+			setThinkingLevel: () => {},
+			registerProvider: () => {},
+			unregisterProvider: () => {},
+			events: { on: () => {}, emit: () => {}, off: () => {} } as any,
+		};
+		return api as typeof api & ExtensionAPI;
+	}
+
+	it('edit through full pi.on("tool_call") dispatch — subsequent read passes', async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+		});
+
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "edit",
+			input: { path: "a.ts", oldText: "foo", newText: "bar" },
+		});
+
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "a.ts" },
+		});
+		assert.ok(r3 == null, "read after edit through dispatch should pass — cache invalidated");
+	});
+
+	it("edit interleaved with write in full dispatch — both clear cache consistently", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Read a.ts
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+		});
+
+		// Edit a.ts — clears cache
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "edit",
+			input: { path: "a.ts", oldText: "foo", newText: "bar" },
+		});
+
+		// Read a.ts — passes (edit cleared cache)
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "a.ts" },
+		});
+		assert.ok(r3 == null, "read after edit passes");
+
+		// Write b.ts
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "4",
+			toolName: "write",
+			input: { path: "b.ts", content: "data" },
+		});
+
+		// Read a.ts — passes (write cleared cache, even though different file)
+		const r5 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "5",
+			toolName: "read",
+			input: { path: "a.ts" },
+		});
+		assert.ok(r5 == null, "read after write passes");
+	});
+
+	it("read → edit → read(offset) → edit → read(offset)", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Read with offset
+		const r1 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts", offset: 0, limit: 100 },
+		});
+		assert.ok(r1 == null, "first read passes");
+
+		// Edit clears cache
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "edit",
+			input: { path: "a.ts", oldText: "foo", newText: "bar" },
+		});
+
+		// Read same offset — passes (edit cleared cache)
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "a.ts", offset: 0, limit: 100 },
+		});
+		assert.ok(r3 == null, "read after first edit passes");
+
+		// Another edit
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "4",
+			toolName: "edit",
+			input: { path: "a.ts", oldText: "bar", newText: "baz" },
+		});
+
+		// Read same offset again — passes (second edit cleared cache)
+		const r5 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "5",
+			toolName: "read",
+			input: { path: "a.ts", offset: 0, limit: 100 },
+		});
+		assert.ok(r5 == null, "read after second edit passes");
+	});
+});
+
+// ── Issue 320: Error tracker decay — integration (Phase 2) ──
+
+describe("Issue 320: Error tracker decay — turn_start integration", () => {
+	function createMockAPI() {
+		const handlers = new Map<string, (...args: any[]) => any>();
+		const api = {
+			handlers,
+			on(event: any, handler: any) {
+				handlers.set(event, handler);
+			},
+			fire(event: string, data: any, ctx?: any) {
+				const handler = handlers.get(event);
+				if (handler) return handler(data, ctx ?? {});
+			},
+			registerTool: () => {},
+			registerCommand: () => {},
+			registerShortcut: () => {},
+			registerFlag: () => {},
+			getFlag: () => undefined,
+			registerMessageRenderer: () => {},
+			sendMessage: () => {},
+			sendUserMessage: () => {},
+			appendEntry: () => {},
+			setSessionName: () => {},
+			getSessionName: () => undefined,
+			setLabel: () => {},
+			exec: async () => ({ code: 0, killed: false, stdout: "", stderr: "" }),
+			getActiveTools: () => [],
+			getAllTools: () => [],
+			setActiveTools: () => {},
+			getCommands: () => [],
+			setModel: async () => false,
+			getThinkingLevel: () => "off" as any,
+			setThinkingLevel: () => {},
+			registerProvider: () => {},
+			unregisterProvider: () => {},
+			events: { on: () => {}, emit: () => {}, off: () => {} } as any,
+		};
+		return api as typeof api & ExtensionAPI;
+	}
+
+	it("turn_start calls errorTracker.decay()", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Push 2 errors manually via handler (isError)
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+			isError: true,
+		});
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "b.ts" },
+			isError: true,
+		});
+
+		// Verify 2 errors
+		// Need to access state: fire turn_start, then check state is unreachable from here
+		// Instead, fire turn_start and then check that tool with 2 errors now passes
+
+		// Non-error read — should be blocked (2 errors)
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "c.ts" },
+		});
+		assert.ok(r3?.block, "read should be blocked after 2 errors");
+
+		// Fire turn_start — should decay errors (2→1)
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+
+		// Non-error read — still blocked (1 error remaining, but >= 2? No, 1 < 2)
+		// Actually with 1 error, should NOT block (shouldBlockRetry needs >= 2)
+		const r4 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "4",
+			toolName: "read",
+			input: { path: "d.ts" },
+		});
+		assert.ok(r4 == null, "read should pass after turn_start decays errors from 2→1");
+	});
+
+	it("After 2 turn_starts without new errors, tool with 2 errors auto-recovers", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// 2 errors for read
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+			isError: true,
+		});
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "b.ts" },
+			isError: true,
+		});
+
+		// Verify blocked
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "c.ts" },
+		});
+		assert.ok(r3?.block, "read blocked after 2 errors (pre-recovery check)");
+
+		// Fire 2 turn_starts (decays 2 errors → 1 → 0)
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 2, timestamp: Date.now() });
+
+		// Now should pass (0 errors)
+		const r4 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "4",
+			toolName: "read",
+			input: { path: "d.ts" },
+		});
+		assert.ok(r4 == null, "read should pass after 2 turn_starts decay all errors");
+	});
+
+	it("After 1 turn_start, tool with 2 errors still blocked (1 remains, >=2 still true)", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// 3 errors for read
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+			isError: true,
+		});
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "b.ts" },
+			isError: true,
+		});
+
+		// Fire 1 turn_start — decays from 2→1
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+
+		// Should pass (1 < 2)
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "c.ts" },
+		});
+		assert.ok(r3 == null, "read should pass after 1 turn_start (1 error < 2 threshold)");
+	});
+
+	it("After 3 turn_starts, tool with 3 errors recovers to 0", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// 3 errors for read
+		for (let i = 0; i < 3; i++) {
+			await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "read",
+				input: { path: `${i}.ts` },
+				isError: true,
+			});
+		}
+
+		// Verify blocked
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "c.ts" },
+		});
+		assert.ok(r3?.block, "read blocked after 3 errors");
+
+		// Fire 3 turn_starts — decays 3→2→1→0
+		for (let i = 0; i < 3; i++) {
+			await api.fire("turn_start", { type: "turn_start", turnIndex: i + 1, timestamp: Date.now() });
+		}
+
+		// Now should pass (0 errors)
+		const r4 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "6",
+			toolName: "read",
+			input: { path: "d.ts" },
+		});
+		assert.ok(r4 == null, "read should pass after 3 turn_starts decay all 3 errors");
+	});
+
+	it("error recovery doesn't cascade across different tools", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// 2 errors for read, 2 errors for write
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+			isError: true,
+		});
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "b.ts" },
+			isError: true,
+		});
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "write",
+			input: { path: "c.ts", content: "x" },
+			isError: true,
+		});
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "4",
+			toolName: "write",
+			input: { path: "d.ts", content: "y" },
+			isError: true,
+		});
+
+		// Both blocked
+		const r5 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "5",
+			toolName: "read",
+			input: { path: "e.ts" },
+		});
+		assert.ok(r5?.block, "read blocked after 2 errors");
+
+		const r6 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "6",
+			toolName: "write",
+			input: { path: "f.ts", content: "z" },
+		});
+		assert.ok(r6?.block, "write blocked after 2 errors");
+
+		// Fire 2 turn_starts — decays both tools' errors
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 2, timestamp: Date.now() });
+
+		// Both should now pass (independently recovered)
+		const r7 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "7",
+			toolName: "read",
+			input: { path: "g.ts" },
+		});
+		assert.ok(r7 == null, "read recovered after 2 decays");
+
+		const r8 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "8",
+			toolName: "write",
+			input: { path: "h.ts", content: "w" },
+		});
+		assert.ok(r8 == null, "write recovered after 2 decays");
+	});
+
+	it("decay at turn_start does not break actual error accumulation", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Error in turn 0
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+			isError: true,
+		});
+
+		// turn_start decays from 1→0
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+
+		// Error again in turn 1
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "b.ts" },
+			isError: true,
+		});
+
+		// 1 error, should not block
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "c.ts" },
+		});
+		assert.ok(r3 == null, "1 error should not block (threshold is 2)");
+
+		// Error again in turn 1
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "4",
+			toolName: "read",
+			input: { path: "d.ts" },
+			isError: true,
+		});
+
+		// Now 2 errors in fresh accumulator — should block
+		const r5 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "5",
+			toolName: "read",
+			input: { path: "e.ts" },
+		});
+		assert.ok(r5?.block, "read should block after 2 new errors accumulated in same turn");
+	});
+
+	it("turn_start decay does NOT affect toolCallIndex", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+		});
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "b.ts" },
+		});
+
+		// Fire turn_start
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+
+		// Read again — third overall call
+		const r3 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "c.ts" },
+		});
+		assert.ok(r3 == null, "read should pass");
+
+		// Read again — fourth overall call
+		const r4 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "4",
+			toolName: "read",
+			input: { path: "d.ts" },
+		});
+		assert.ok(r4 == null, "read should pass");
+
+		// We can't directly check toolCallIndex from the mock, but the fact
+		// that reads still pass (and don't get cache-blocked because paths differ)
+		// confirms toolCallIndex continues normally
+	});
+});

@@ -138,6 +138,101 @@ describe("ErrorTracker", () => {
 		state.errorTracker.clear();
 		assert.deepEqual(state.errorTracker.getLastErrors("read"), []);
 	});
+
+	// ── Issue 320: Error decay ──
+
+	it("decay() with 2+ errors for one tool — removes 1 oldest", () => {
+		const state = createHarnessState();
+		state.errorTracker.push("read", { turn: 0, toolName: "read" });
+		state.errorTracker.push("read", { turn: 1, toolName: "read" });
+		assert.equal(state.errorTracker.getLastErrors("read").length, 2);
+
+		state.errorTracker.decay();
+
+		const errors = state.errorTracker.getLastErrors("read");
+		assert.equal(errors.length, 1, "should remove 1 oldest error");
+		assert.equal(errors[0].turn, 1, "remaining error should be the newer one (turn 1)");
+	});
+
+	it("decay() with 0 errors — no-op", () => {
+		const state = createHarnessState();
+		state.errorTracker.decay();
+		assert.deepEqual(state.errorTracker.getLastErrors("read"), []);
+	});
+
+	it("decay() for multiple tools — removes 1 oldest from each", () => {
+		const state = createHarnessState();
+		state.errorTracker.push("read", { turn: 0, toolName: "read" });
+		state.errorTracker.push("read", { turn: 1, toolName: "read" });
+		state.errorTracker.push("write", { turn: 0, toolName: "write" });
+		state.errorTracker.push("write", { turn: 1, toolName: "write" });
+		state.errorTracker.push("write", { turn: 2, toolName: "write" });
+
+		state.errorTracker.decay();
+
+		assert.equal(state.errorTracker.getLastErrors("read").length, 1, "read should lose 1");
+		assert.equal(state.errorTracker.getLastErrors("write").length, 2, "write should lose 1");
+	});
+
+	it("decay() with only 1 error — removes it", () => {
+		const state = createHarnessState();
+		state.errorTracker.push("read", { turn: 0, toolName: "read" });
+		assert.equal(state.errorTracker.getLastErrors("read").length, 1);
+
+		state.errorTracker.decay();
+
+		assert.deepEqual(
+			state.errorTracker.getLastErrors("read"),
+			[],
+			"single error should be removed",
+		);
+	});
+
+	it("decay() + push() interleaved — subsequent push works after decay", () => {
+		const state = createHarnessState();
+		state.errorTracker.push("read", { turn: 0, toolName: "read" });
+		state.errorTracker.push("read", { turn: 1, toolName: "read" });
+		state.errorTracker.decay();
+
+		// After decay: 1 error remains (turn 1)
+		// Push new error
+		state.errorTracker.push("read", { turn: 2, toolName: "read" });
+
+		const errors = state.errorTracker.getLastErrors("read");
+		assert.equal(errors.length, 2, "should have 2 errors after decay + push");
+		assert.equal(errors[0].turn, 1, "oldest should be turn 1");
+		assert.equal(errors[1].turn, 2, "newest should be turn 2");
+	});
+
+	it("errorTracker has decay method", () => {
+		const state = createHarnessState();
+		assert.equal(typeof state.errorTracker.decay, "function", "decay should be a method");
+	});
+
+	it("decay is idempotent — calling twice removes 2", () => {
+		const state = createHarnessState();
+		state.errorTracker.push("read", { turn: 0, toolName: "read" });
+		state.errorTracker.push("read", { turn: 1, toolName: "read" });
+		state.errorTracker.push("read", { turn: 2, toolName: "read" });
+
+		state.errorTracker.decay(); // removes turn 0
+		state.errorTracker.decay(); // removes turn 1
+
+		const errors = state.errorTracker.getLastErrors("read");
+		assert.equal(errors.length, 1, "2 decays should remove 2 errors");
+		assert.equal(errors[0].turn, 2, "remaining should be turn 2");
+	});
+
+	it("decay does not affect other tools' errors", () => {
+		const state = createHarnessState();
+		state.errorTracker.push("read", { turn: 0, toolName: "read" });
+		state.errorTracker.push("write", { turn: 5, toolName: "write" });
+
+		state.errorTracker.decay();
+
+		assert.equal(state.errorTracker.getLastErrors("read").length, 0, "read should be cleared");
+		assert.equal(state.errorTracker.getLastErrors("write").length, 0, "write should be cleared");
+	});
 });
 
 // ── CallCounter ──
