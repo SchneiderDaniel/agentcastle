@@ -4,7 +4,7 @@
 // No side effects, no subprocess imports — fully testable.
 
 import type { AgentRunState, AgentPhase } from "./types";
-import { formatTokens, extractTextFromContent } from "./formatting";
+import { formatTokens, extractTextFromContent } from "./formatting.ts";
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -251,11 +251,13 @@ export function processJsonLine(
 								}
 							}
 						}
+						state.thinkingPushedThisTurn = true;
 					}
 					if (!state.textPushedThisTurn) {
 						const text = extractTextFromContent(msg.content);
 						if (text && text.trim()) {
 							state.textOutputLines.push(text.trim());
+							state.textPushedThisTurn = true;
 							for (const t of text.split("\n")) {
 								if (t.trim()) pushLog(state, t);
 							}

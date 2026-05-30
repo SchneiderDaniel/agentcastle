@@ -52,6 +52,14 @@ export async function runAgentInProcess(
 	const agentName = agent.config.name;
 	const widgetId = `agent-${agentName}`;
 
+	// Set sandbox env var for worktree confinement extension (restored in finally)
+	const _prevSandboxEnv = process.env.WORKTREE_SANDBOX_PATH;
+	if (cwd) {
+		process.env.WORKTREE_SANDBOX_PATH = cwd;
+	} else {
+		delete process.env.WORKTREE_SANDBOX_PATH;
+	}
+
 	ctx.ui.notify(`Running agent (in-process): ${agentName}...`, "info");
 	ctx.ui.setStatus("supervisor", `Running ${agentName}...`);
 
@@ -74,7 +82,7 @@ export async function runAgentInProcess(
 
 	// Hoist cleanup variables so they're accessible in try, catch, and finally
 	let flushTimer: NodeJS.Timeout | null = null;
-	// Event-driven flush only — no heartbeat interval (terminal freeze fix)
+	let heartbeatTimer: NodeJS.Timeout | null = null;
 
 	// Resolve model
 	const modelInfo = await resolveModel(agent.config.model || "");
@@ -90,8 +98,10 @@ export async function runAgentInProcess(
 	// Build tool list
 	const tools = buildToolList(agent, effectiveCwd);
 
-	// Resolve extension paths for resource loader
-	const extPaths = resolveExtensionPaths(agent.config.extensions, effectiveCwd);
+	// Resolve extension paths for resource loader.
+	// Use supervisor cwd (ctx.cwd) so brand-new extensions like worktree-sandbox
+	// are found even before they're committed to the worktree branch.
+	const extPaths = resolveExtensionPaths(agent.config.extensions, ctx.cwd);
 
 	let session;
 	let unsubscribe: (() => void) | undefined;
@@ -132,10 +142,13 @@ export async function runAgentInProcess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName, agent.config.model), {
-				placement: "aboveEditor",
-			});
-			ctx.ui.setStatus("supervisor", undefined);
+			try {
+				ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName, agent.config.model));
+				ctx.ui.setStatus("supervisor", undefined);
+			} catch (renderErr: unknown) {
+				const msg = renderErr instanceof Error ? renderErr.message : String(renderErr);
+				console.error(`[supervisor] widget render error for ${agentName}: ${msg}`);
+			}
 		};
 
 		const scheduleFlush = () => {
@@ -144,16 +157,31 @@ export async function runAgentInProcess(
 			}
 		};
 
-		// Event-driven flush only — no heartbeat interval.
-		// TUI re-renders triggered by session events via scheduleFlush().
-		// Terminal freeze fix: stop interval-based forced re-renders.
+		// 2s heartbeat ensures terminal updates during quiet periods (LLM thinking).
+		// Regular requestRender (not force=true) — TUI debounces internally to 16ms.
+		// Try-catch prevents uncaught exceptions from killing the interval.
+		heartbeatTimer = setInterval(() => {
+			try {
+				if (!flushTimer) flushWidget();
+			} catch (hbErr: unknown) {
+				const msg = hbErr instanceof Error ? hbErr.message : String(hbErr);
+				console.error(`[supervisor] heartbeat error for ${agentName}: ${msg}`);
+			}
+		}, 2000);
 
 		unsubscribe = session.subscribe((event: any) => {
-			const result = processSessionEvent(event, state);
-			if (result.flush) scheduleFlush();
-			if (result.workingChange) {
-				const wm = getWorkingMessage(state, agentName);
-				ctx.ui.setWorkingMessage(wm ?? undefined);
+			try {
+				const result = processSessionEvent(event, state);
+				if (result.flush) scheduleFlush();
+				if (result.workingChange) {
+					const wm = getWorkingMessage(state, agentName);
+					ctx.ui.setWorkingMessage(wm ?? undefined);
+				}
+			} catch (evErr: unknown) {
+				const msg = evErr instanceof Error ? evErr.message : String(evErr);
+				console.error(
+					`[supervisor] session event error for ${agentName}: ${msg} (event type: ${event?.type})`,
+				);
 			}
 		});
 
@@ -179,7 +207,7 @@ export async function runAgentInProcess(
 
 		// Wrap prompt to track settlement
 		const promptPromise = session
-			.prompt(task, { streamingBehavior: "steer" })
+			.prompt(task)
 			.then(() => {
 				promptSettled = true;
 			})
@@ -220,6 +248,7 @@ export async function runAgentInProcess(
 					unsubscribe?.();
 				} catch {}
 				if (flushTimer) clearTimeout(flushTimer);
+				if (heartbeatTimer) clearInterval(heartbeatTimer);
 				ctx.ui.setWidget(widgetId, undefined);
 				ctx.ui.setWorkingMessage(undefined);
 				ctx.ui.setStatus("supervisor", "");
@@ -254,6 +283,11 @@ export async function runAgentInProcess(
 		}
 		flushWidget();
 
+		if (heartbeatTimer) {
+			clearInterval(heartbeatTimer);
+			heartbeatTimer = null;
+		}
+
 		// Unsubscribe and dispose
 		try {
 			unsubscribe?.();
@@ -279,6 +313,7 @@ export async function runAgentInProcess(
 			unsubscribe?.();
 		} catch {}
 		if (flushTimer) clearTimeout(flushTimer);
+		if (heartbeatTimer) clearInterval(heartbeatTimer);
 
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);
@@ -301,5 +336,14 @@ export async function runAgentInProcess(
 			thinkingOutput:
 				state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined,
 		};
+	} finally {
+		// Restore sandbox env var
+		if (cwd) {
+			if (_prevSandboxEnv) {
+				process.env.WORKTREE_SANDBOX_PATH = _prevSandboxEnv;
+			} else {
+				delete process.env.WORKTREE_SANDBOX_PATH;
+			}
+		}
 	}
 }

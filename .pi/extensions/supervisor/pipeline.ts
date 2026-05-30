@@ -419,7 +419,9 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 
 					// ── Phase 2: Post issue comments deterministically ──
 					// Pipeline posts the comment instead of the agent running gh CLI.
-					if (result.success && !usedRetry) {
+					// Note: gates on result.success only, NOT !usedRetry — retry-success
+					// should still post output (fixes #299).
+					if (result.success) {
 						const agentOutput = result.textOutput || result.output || "";
 
 						// Phase 2: Post COMMENT_BODY for architect/test-designer/researcher

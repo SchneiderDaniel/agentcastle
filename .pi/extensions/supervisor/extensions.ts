@@ -41,11 +41,11 @@ export function resolveExtensions(extensionsRaw: string | undefined): string[] {
 	const result: string[] = [];
 	for (const ext of extensions) {
 		// Try single-file extension first, then directory-based
-		const filePath = `.pi/extensions/${ext}.ts`;
-		const dirPath = `.pi/extensions/${ext}/index.ts`;
-		if (existsSync(resolvePath(process.cwd(), filePath))) {
+		const filePath = resolvePath(process.cwd(), `.pi/extensions/${ext}.ts`);
+		const dirPath = resolvePath(process.cwd(), `.pi/extensions/${ext}/index.ts`);
+		if (existsSync(filePath)) {
 			result.push("--extension", filePath);
-		} else if (existsSync(resolvePath(process.cwd(), dirPath))) {
+		} else if (existsSync(dirPath)) {
 			result.push("--extension", dirPath);
 		} else {
 			// Default to single-file path (will fail at runtime, but preserves existing behavior)

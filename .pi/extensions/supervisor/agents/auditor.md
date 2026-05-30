@@ -2,9 +2,9 @@
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
 tools: read, bash, structural_search, ripgrep_search, ranked_map
-model: opencode-go/deepseek-v4-flash
+model: opencode-go/deepseek-v4-pro
 thinking: high
-extensions: "agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer"
+extensions: "agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer,worktree-sandbox"
 ---
 
 🛠 Tool Discipline — Auditor

@@ -5,83 +5,86 @@
 import type { AgentRunState } from "./types";
 import { formatTokens, formatDuration, boldText, getTermWidth } from "./formatting";
 import { Container, Spacer, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { WIDGET_LINES, MAX_LIVE_THINKING, pushLog } from "./agent-stream";
+import { WIDGET_LINES, MAX_LIVE_THINKING } from "./agent-stream";
 
 // Re-export constants for backward compatibility
 export { WIDGET_LINES, MAX_LIVE_THINKING } from "./agent-stream";
 
 /**
  * Build widget lines from state. Pure function — no side effects.
- * Returns at most WIDGET_LINES (20) lines. Kept for backward compat (subprocess path).
+ * pi caps string-array widgets at MAX_WIDGET_LINES (10).
+ * We reserve space for fixed content + footer so stats are never truncated.
  */
 export function buildWidgetLines(
 	state: AgentRunState,
 	agentName: string,
 	model?: string,
 ): string[] {
-	const lines: string[] = [];
 	const now = Date.now();
 
-	// Header
-	lines.push(`⚙ ${agentName}`);
+	// pi caps string-array widgets at 10 lines. Keep footer always visible.
+	const MAX = 10;
 
-	// Context line
+	// ── Fixed lines (always present) ──
+	const fixed: string[] = [];
+	fixed.push(`⚙ ${agentName}`);
+
 	if (
 		state.contextInfoReceived &&
 		state.contextTokens !== undefined &&
 		state.contextWindow !== undefined
 	) {
-		lines.push(
+		fixed.push(
 			`  Context: ${formatTokens(state.contextTokens)}/${formatTokens(state.contextWindow)}`,
 		);
 	} else {
-		lines.push("  Context: computing...");
+		fixed.push("  Context: computing...");
 	}
 
-	// Live thinking (unconsumed part — stays in buffer until newline)
+	// ── Phase-specific lines (0-2) ──
 	if (state.phase === "thinking" && state.liveThinking.trim()) {
-		const preview = state.liveThinking.trimEnd().slice(-200);
-		lines.push(`  💭 ${preview}`);
+		fixed.push(`  💭 ${state.liveThinking.trimEnd().slice(-200)}`);
 	}
-
-	// Current tool display
 	if (state.currentTool) {
 		const toolLabel = state.currentToolArgs
 			? `${state.currentTool}: ${state.currentToolArgs.slice(0, 80)}`
 			: state.currentTool;
-		lines.push(`  🔧 ${toolLabel}`);
+		fixed.push(`  🔧 ${toolLabel}`);
 	}
 
-	// Recent fullLog entries (lines streamed in real-time)
-	const remaining = WIDGET_LINES - lines.length - 1;
-	if (remaining > 0 && state.fullLog.length > 0) {
-		const recent = state.fullLog.slice(-remaining);
+	// ── Live text (0-1 line, between logs and footer) ──
+	const hasLiveText = state.phase === "text" && state.liveText.trim();
+	const liveTextLine = hasLiveText ? `  ${state.liveText.trimEnd().slice(-200)}` : undefined;
+
+	// ── Stats footer (always included) ──
+	const shortModel = model ? model.split("/").pop() || model : undefined;
+	const statsParts: string[] = [`subagent:${agentName}`];
+	if (shortModel) statsParts.push(`🧠 ${shortModel}`);
+	if (state.tokenCount > 0) statsParts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
+	if (state.toolCount > 0) statsParts.push(`🔧 ${state.toolCount} tools`);
+	statsParts.push(`⏱ ${formatDuration(now - state.startedAt)}`);
+	const footer = `  ${statsParts.join(" · ")}`;
+
+	// ── Compute space for log entries ──
+	const fixedCount = fixed.length;
+	const footerCount = 1;
+	const liveTextCount = liveTextLine ? 1 : 0;
+	const maxLogLines = MAX - fixedCount - liveTextCount - footerCount;
+
+	const lines: string[] = [...fixed];
+
+	if (maxLogLines > 0 && state.fullLog.length > 0) {
+		const recent = state.fullLog.slice(-maxLogLines);
 		for (const entry of recent) {
 			const display = entry.length > 200 ? entry.slice(0, 197) + "..." : entry;
 			lines.push(`  ${display}`);
 		}
 	}
 
-	// Live text (unconsumed part — partial line waiting for newline)
-	if (state.phase === "text" && state.liveText.trim()) {
-		const partial = state.liveText.trimEnd().slice(-200);
-		lines.push(`  ${partial}`);
-	}
+	if (liveTextLine) lines.push(liveTextLine);
+	lines.push(footer);
 
-	// Stats footer
-	const statsParts: string[] = [];
-	const shortModel = model ? model.split("/").pop() || model : undefined;
-	statsParts.push(`subagent:${agentName}`);
-	if (shortModel) statsParts.push(`🧠 ${shortModel}`);
-	if (state.tokenCount > 0) statsParts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
-	if (state.toolCount > 0) statsParts.push(`🔧 ${state.toolCount} tools`);
-	const elapsed = formatDuration(now - state.startedAt);
-	statsParts.push(`⏱ ${elapsed}`);
-	if (statsParts.length > 0) {
-		lines.push(`  ${statsParts.join(" · ")}`);
-	}
-
-	return lines.slice(0, WIDGET_LINES);
+	return lines;
 }
 
 /**
