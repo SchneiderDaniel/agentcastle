@@ -811,6 +811,219 @@ describe("Bug 3 fix: CallCounter subKey cascade", () => {
 	});
 });
 
+// ── Issue 282: cd-prefix in getBashSubKey ──
+
+describe("Issue 282: getBashSubKey cd-prefix extraction", () => {
+	it("cd /repo && git status → subKey 'git status'", () => {
+		assert.equal(getBashSubKey("cd /repo && git status"), "git status");
+	});
+
+	it("cd ~/src && ls -la → subKey 'ls'", () => {
+		assert.equal(getBashSubKey("cd ~/src && ls -la"), "ls");
+	});
+
+	it("cd relative/path && gh issue view 271 → subKey 'gh issue'", () => {
+		assert.equal(getBashSubKey("cd relative/path && gh issue view 271"), "gh issue");
+	});
+
+	it("cd /repo && npm install express → subKey 'npm install'", () => {
+		assert.equal(getBashSubKey("cd /repo && npm install express"), "npm install");
+	});
+
+	it("cd /repo && echo hi → subKey 'echo'", () => {
+		assert.equal(getBashSubKey("cd /repo && echo hi"), "echo");
+	});
+
+	it("cd /repo → subKey 'cd' (bare cd, no &&)", () => {
+		assert.equal(getBashSubKey("cd /repo"), "cd");
+	});
+
+	it("cd /repo; git status → subKey 'cd' (semicolons not handled)", () => {
+		assert.equal(getBashSubKey("cd /repo; git status"), "cd");
+	});
+
+	it("cd \"path with spaces\" && cmd → subKey 'cmd'", () => {
+		assert.equal(getBashSubKey('cd "path with spaces" && cmd'), "cmd");
+	});
+
+	it("git status → git status (backward compat)", () => {
+		assert.equal(getBashSubKey("git status"), "git status");
+	});
+
+	it("npm install → npm install (backward compat)", () => {
+		assert.equal(getBashSubKey("npm install"), "npm install");
+	});
+
+	it("echo hi → echo (backward compat)", () => {
+		assert.equal(getBashSubKey("echo hi"), "echo");
+	});
+
+	it("'' → undefined (backward compat)", () => {
+		assert.equal(getBashSubKey(""), undefined);
+	});
+
+	it("'   ' → undefined (backward compat)", () => {
+		assert.equal(getBashSubKey("   "), undefined);
+	});
+});
+
+describe("Issue 282: Cascade behavior with cd-prefixed commands", () => {
+	it("8 cd /repo && git status calls — 8th blocked", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "cd /repo && git status" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `cd-prefixed git status call ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th cd-prefixed git status should block (same subKey 'git status')");
+	});
+
+	it("8 diverse cd-prefixed commands — all 8 pass", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const commands = [
+			"cd /repo && git status",
+			"cd /repo && ls",
+			"cd /repo && npm install",
+			"cd /repo && docker ps",
+			"cd /repo && gh issue list",
+			"cd /repo && echo hi",
+			"cd /repo && pwd",
+			"cd /repo && cat file",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `diverse cd-prefixed cmd ${i} should pass`);
+		}
+		assert.equal(state.currentTurn, 8, "all 8 diverse cd-prefixed calls should pass");
+	});
+
+	it("Mix bare cd and cd-prefixed — both pass (different subKeys)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// bare cd — subKey 'cd'
+		const r1 = handler(makeEvent("bash", { command: "cd /repo" }), makeCtx());
+		assert.equal(r1, null);
+
+		// cd-prefixed ls — subKey 'ls', different from 'cd'
+		const r2 = handler(makeEvent("bash", { command: "cd /repo && ls" }), makeCtx());
+		assert.equal(r2, null);
+
+		assert.equal(state.currentTurn, 2);
+	});
+
+	it("cd /repo && npm install ×8 — 8th blocked (same subKey 'npm install')", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "cd /repo && npm install" }), makeCtx());
+			if (i < 7) {
+				assert.equal(result, null, `npm install with cd prefix ${i + 1} should pass`);
+			}
+		}
+		assert.ok(result?.block, "8th npm install with cd prefix should block (same subKey)");
+	});
+
+	it("cd /repo && npm install then cd /repo && npm test — both pass (different subKeys)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		const r1 = handler(makeEvent("bash", { command: "cd /repo && npm install" }), makeCtx());
+		assert.equal(r1, null);
+
+		const r2 = handler(makeEvent("bash", { command: "cd /repo && npm test" }), makeCtx());
+		assert.equal(r2, null);
+
+		assert.equal(state.currentTurn, 2);
+	});
+
+	it("7 ls calls then 1 cd /repo && ls — 8th blocked (same subKey 'ls')", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		// 7 bare ls calls → subKey 'ls'
+		for (let i = 0; i < 7; i++) {
+			result = handler(makeEvent("bash", { command: "ls" }), makeCtx());
+			assert.equal(result, null, `bare ls call ${i + 1} should pass`);
+		}
+
+		// 8th call: cd /repo && ls — same subKey 'ls', should be blocked
+		result = handler(makeEvent("bash", { command: "cd /repo && ls" }), makeCtx());
+		assert.ok(result?.block, "8th call (cd /repo && ls) should block — same subKey 'ls'");
+	});
+});
+
+describe("Issue 282: Error message suggestion split", () => {
+	it("Blocked bash WITHOUT && suggests 'Combine bash calls with &&'", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+		}
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("Combine bash calls with &&"),
+			"blocked echo hi should suggest combined bash calls",
+		);
+	});
+
+	it("Blocked bash WITH && suggests 'Write a script file'", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "cd /repo && git status" }), makeCtx());
+		}
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("Write a script file instead of repeated bash calls"),
+			"blocked cd-prefixed command should suggest script file instead of &&",
+		);
+	});
+
+	it("Non-bash cascade unchanged suggestion text", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+		}
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("Batch write calls"),
+			"non-bash cascade should keep existing suggestion",
+		);
+	});
+
+	it("Blocked bash WITH && in middle of command suggests script file", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "npm install && npm test" }), makeCtx());
+		}
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("Write a script file instead of repeated bash calls"),
+			"blocked npm && command should suggest script file",
+		);
+	});
+});
+
 // ── Phase 2: Multi-verb CLI diversity (npm, docker, gh) ──
 
 describe("Phase 2: Multi-verb CLI diversity — 2-token subKey", () => {
