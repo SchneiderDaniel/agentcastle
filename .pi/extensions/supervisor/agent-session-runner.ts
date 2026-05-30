@@ -90,8 +90,10 @@ export async function runAgentInProcess(
 	// Build tool list
 	const tools = buildToolList(agent, effectiveCwd);
 
-	// Resolve extension paths for resource loader
-	const extPaths = resolveExtensionPaths(agent.config.extensions, effectiveCwd);
+	// Resolve extension paths for resource loader.
+	// Use supervisor cwd (ctx.cwd) so brand-new extensions like worktree-sandbox
+	// are found even before they're committed to the worktree branch.
+	const extPaths = resolveExtensionPaths(agent.config.extensions, ctx.cwd);
 
 	let session;
 	let unsubscribe: (() => void) | undefined;
