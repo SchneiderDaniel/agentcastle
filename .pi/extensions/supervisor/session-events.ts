@@ -151,6 +151,7 @@ export function processSessionEvent(
 							const allText = textParts.join("\n").trim();
 							if (allText) {
 								state.textOutputLines.push(allText);
+								state.textPushedThisTurn = true;
 								for (const t of allText.split("\n")) {
 									if (t.trim()) pushLog(state, t);
 								}
@@ -161,6 +162,7 @@ export function processSessionEvent(
 							const allThinking = thinkingParts.join("\n").trim();
 							if (allThinking) {
 								state.thinkingOutputLines.push(allThinking);
+								state.thinkingPushedThisTurn = true;
 								for (const t of allThinking.split("\n")) {
 									if (t.trim()) pushLog(state, `💭 ${t}`);
 								}
@@ -194,11 +196,13 @@ export function processSessionEvent(
 							}
 						}
 					}
+					state.thinkingPushedThisTurn = true;
 				}
 				if (!state.textPushedThisTurn) {
 					const text = extractTextFromContent(msg.content);
 					if (text && text.trim()) {
 						state.textOutputLines.push(text.trim());
+						state.textPushedThisTurn = true;
 						for (const t of text.split("\n")) {
 							if (t.trim()) pushLog(state, t);
 						}
