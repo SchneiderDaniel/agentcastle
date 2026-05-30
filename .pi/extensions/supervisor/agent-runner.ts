@@ -17,12 +17,11 @@ import {
 	filterStderr,
 	phasePriority,
 	pushLog,
-	buildWidgetLines,
-	getWorkingMessage,
 	MAX_FULL_LOG,
 	WIDGET_LINES,
 	MAX_LIVE_THINKING,
 } from "./agent-stream";
+import { buildWidgetLines, getWorkingMessage } from "./session-widget";
 import { runAgentInProcess } from "./agent-session-runner";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
@@ -135,47 +134,14 @@ export async function runAgentSubprocess(
 			}
 		};
 
-		// ── Bug 4 fix: Smart heartbeat ──
-		let idleStartTime: number | null = null;
-		const MIN_IDLE_MS = 60_000;
-
-		const maybeClearHeartbeat = () => {
-			if (state.phase === "idle") {
-				if (!idleStartTime) idleStartTime = Date.now();
-				if (Date.now() - idleStartTime >= MIN_IDLE_MS && heartbeat) {
-					clearInterval(heartbeat);
-					heartbeat = undefined;
-				}
-			} else {
-				idleStartTime = null;
-				if (!heartbeat) {
-					heartbeat = setInterval(() => {
-						flushWidget();
-						maybeClearHeartbeat();
-					}, 5000);
-				}
-			}
-		};
-
-		let heartbeat: ReturnType<typeof setInterval> | undefined = setInterval(() => {
-			flushWidget();
-			maybeClearHeartbeat();
-		}, 5000);
-
+		// Event-driven flush only — no heartbeat interval (terminal freeze fix).
+		// Each stdout data event triggers handleLine → scheduleFlush at 80ms debounce.
 		const handleLine = (line: string) => {
 			const result = processJsonLine(line, state);
 			if (result.flush) scheduleFlush();
 			if (result.workingChange) {
 				const wm = getWorkingMessage(state, agentName);
 				ctx.ui.setWorkingMessage(wm ?? undefined);
-				// Reset idle timer on activity
-				idleStartTime = null;
-				if (!heartbeat) {
-					heartbeat = setInterval(() => {
-						flushWidget();
-						maybeClearHeartbeat();
-					}, 5000);
-				}
 			}
 		};
 
@@ -215,11 +181,6 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			if (heartbeat) {
-				clearInterval(heartbeat);
-				heartbeat = undefined;
-			}
-
 			if (state.liveText.trim()) {
 				state.textOutputLines.push(state.liveText.trim());
 			}
@@ -280,10 +241,6 @@ export async function runAgentSubprocess(
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
-			}
-			if (heartbeat) {
-				clearInterval(heartbeat);
-				heartbeat = undefined;
 			}
 			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setWorkingMessage(undefined);
