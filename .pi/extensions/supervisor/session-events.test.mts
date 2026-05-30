@@ -117,6 +117,219 @@ describe("text_end and thinking_end — dedup flag fix (Phase 3)", () => {
 	});
 });
 
+// ─── Phase 2: Full streaming chain — no duplicate output (trigger scenario) ──
+// Reproduce exact trigger: text_delta with complete newline-delimited chunks
+// empties buffer, text_end fires with empty liveText, flag is set unconditionally,
+// message_end does NOT re-push.
+
+describe("full streaming chain — no duplicate output (Phase 2)", () => {
+	it('text_delta("Hello\\nWorld\\n") → text_end → message_end does not re-push to fullLog', () => {
+		const state = createState();
+
+		// Step 1: text_delta with complete lines — delta handler consumes all
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "text_delta",
+					delta: "Hello\nWorld\n",
+				},
+			},
+			state,
+		);
+		// After delta: complete lines pushed to fullLog, buffer cleared
+		assert.equal(state.liveText, "", "liveText should be empty after consuming newlines");
+		assert.equal(
+			state.fullLog.filter((l) => l === "Hello").length,
+			1,
+			"fullLog has 'Hello' once from delta handler",
+		);
+		assert.equal(
+			state.fullLog.filter((l) => l === "World").length,
+			1,
+			"fullLog has 'World' once from delta handler",
+		);
+
+		// Step 2: text_end with empty buffer — flag set unconditionally
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_end" },
+			},
+			state,
+		);
+		assert.equal(state.textPushedThisTurn, true, "flag set even though buffer was empty");
+		// textOutputLines NOT pushed (buffer was empty at text_end)
+		assert.equal(state.textOutputLines.length, 0, "no textOutputLines from empty buffer");
+
+		// Step 3: message_end — flag is true, so message_end should NOT re-push
+		const fullLogLengthBefore = state.fullLog.length;
+		processSessionEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "Hello\nWorld" }],
+				},
+			},
+			state,
+		);
+
+		// fullLog length must not increase (no duplicates)
+		assert.equal(state.fullLog.length, fullLogLengthBefore, "fullLog did not grow (no duplicates)");
+		assert.equal(
+			state.fullLog.filter((l) => l === "Hello").length,
+			1,
+			"'Hello' still exactly once in fullLog",
+		);
+		assert.equal(
+			state.fullLog.filter((l) => l === "World").length,
+			1,
+			"'World' still exactly once in fullLog",
+		);
+	});
+
+	it('thinking_delta("Step 1\\nStep 2\\n") → thinking_end → message_end does not re-push to fullLog', () => {
+		const state = createState();
+
+		// Step 1: thinking_delta with complete lines
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "thinking_delta",
+					delta: "Step 1\nStep 2\n",
+				},
+			},
+			state,
+		);
+		assert.equal(state.liveThinking, "", "liveThinking empty after consuming newlines");
+		assert.equal(
+			state.fullLog.filter((l) => l.includes("Step 1")).length,
+			1,
+			"fullLog has 'Step 1' once from delta handler",
+		);
+		assert.equal(
+			state.fullLog.filter((l) => l.includes("Step 2")).length,
+			1,
+			"fullLog has 'Step 2' once from delta handler",
+		);
+
+		// Step 2: thinking_end with empty buffer — flag set unconditionally
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_end" },
+			},
+			state,
+		);
+		assert.equal(state.thinkingPushedThisTurn, true, "flag set even though buffer was empty");
+
+		// Step 3: message_end — flag is true, should NOT re-push
+		const fullLogLengthBefore = state.fullLog.length;
+		processSessionEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "thinking", thinking: "Step 1\nStep 2" }],
+				},
+			},
+			state,
+		);
+
+		assert.equal(state.fullLog.length, fullLogLengthBefore, "fullLog did not grow (no duplicates)");
+	});
+
+	it("mixed text + thinking streaming with complete lines — both flags block message_end", () => {
+		const state = createState();
+
+		// Phase: thinking
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_start" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "thinking_delta",
+					delta: "thought 1\nthought 2\n",
+				},
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_end" },
+			},
+			state,
+		);
+		assert.equal(state.thinkingPushedThisTurn, true);
+
+		// Phase: text
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_start" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "text_delta",
+					delta: "result 1\nresult 2\n",
+				},
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_end" },
+			},
+			state,
+		);
+		assert.equal(state.textPushedThisTurn, true);
+
+		// Capture fullLog size before message_end
+		const fullLogLenBefore = state.fullLog.length;
+
+		// message_end has both — should NOT add anything (both flags set)
+		processSessionEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "thought 1\nthought 2" },
+						{ type: "text", text: "result 1\nresult 2" },
+					],
+				},
+			},
+			state,
+		);
+
+		assert.equal(state.fullLog.length, fullLogLenBefore, "no new log entries from message_end");
+		assert.equal(
+			state.textOutputLines.length,
+			0,
+			"no text output lines (buffer was empty at text_end)",
+		);
+		assert.equal(
+			state.thinkingOutputLines.length,
+			0,
+			"no thinking output lines (buffer was empty at thinking_end)",
+		);
+	});
+});
+
 // ─── Phase 2: Budget check at message_end (Phase 1) ────────────────────
 
 describe("message_end — budget check (Phase 1)", () => {
@@ -664,5 +877,247 @@ describe("existing behavior preserved (regression)", () => {
 		};
 		processSessionEvent(thinkingStartEv, state);
 		assert.equal(state.thinkingPushedThisTurn, false, "thinking_start reset flag");
+	});
+});
+
+// ─── Phase 3: Multi-turn dedup — fullLog grows linearly, not 2× ──────────
+
+describe("multi-turn dedup — fullLog does not accumulate duplicates (Phase 3)", () => {
+	it("two back-to-back text turns with complete-line streaming — no duplicates", () => {
+		const state = createState();
+
+		// Turn 1
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_start" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "text_delta",
+					delta: "line A\nline B\n",
+				},
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_end" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "line A\nline B" }],
+				},
+			},
+			state,
+		);
+
+		// Turn 2
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_start" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "text_delta",
+					delta: "line C\nline D\n",
+				},
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "text_end" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "line C\nline D" }],
+				},
+			},
+			state,
+		);
+
+		// fullLog should have exactly 4 entries (one per unique line)
+		// Each turn's delta handler pushes 2 lines, text_end skips push (buffer empty),
+		// message_end skips (flag set). No duplicates.
+		assert.equal(state.fullLog.filter((l) => l === "line A").length, 1, "'line A' appears once");
+		assert.equal(state.fullLog.filter((l) => l === "line B").length, 1, "'line B' appears once");
+		assert.equal(state.fullLog.filter((l) => l === "line C").length, 1, "'line C' appears once");
+		assert.equal(state.fullLog.filter((l) => l === "line D").length, 1, "'line D' appears once");
+	});
+
+	it("two back-to-back thinking turns with complete-line streaming — no duplicates", () => {
+		const state = createState();
+
+		// Turn 1
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_start" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "thinking_delta",
+					delta: "thought X\nthought Y\n",
+				},
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_end" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "thinking", thinking: "thought X\nthought Y" }],
+				},
+			},
+			state,
+		);
+
+		// Turn 2
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_start" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: {
+					type: "thinking_delta",
+					delta: "thought Z\nthought W\n",
+				},
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_update",
+				assistantMessageEvent: { type: "thinking_end" },
+			},
+			state,
+		);
+		processSessionEvent(
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "thinking", thinking: "thought Z\nthought W" }],
+				},
+			},
+			state,
+		);
+
+		assert.equal(
+			state.fullLog.filter((l) => l.includes("thought X")).length,
+			1,
+			"'thought X' once",
+		);
+		assert.equal(
+			state.fullLog.filter((l) => l.includes("thought Y")).length,
+			1,
+			"'thought Y' once",
+		);
+		assert.equal(
+			state.fullLog.filter((l) => l.includes("thought Z")).length,
+			1,
+			"'thought Z' once",
+		);
+		assert.equal(
+			state.fullLog.filter((l) => l.includes("thought W")).length,
+			1,
+			"'thought W' once",
+		);
+	});
+
+	it("ten turns of text streaming — fullLog grows linearly (10×2=20 lines)", () => {
+		const state = createState();
+
+		for (let turn = 0; turn < 10; turn++) {
+			// Simulate streaming where each turn produces 2 content lines
+			processSessionEvent(
+				{
+					type: "message_update",
+					assistantMessageEvent: { type: "text_start" },
+				},
+				state,
+			);
+			processSessionEvent(
+				{
+					type: "message_update",
+					assistantMessageEvent: {
+						type: "text_delta",
+						delta: `turn ${turn} line 1\nturn ${turn} line 2\n`,
+					},
+				},
+				state,
+			);
+			processSessionEvent(
+				{
+					type: "message_update",
+					assistantMessageEvent: { type: "text_end" },
+				},
+				state,
+			);
+			processSessionEvent(
+				{
+					type: "message_end",
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: `turn ${turn} line 1\nturn ${turn} line 2` }],
+					},
+				},
+				state,
+			);
+		}
+
+		// 10 turns × 2 lines each = 20 entries, no duplicates
+		assert.equal(state.fullLog.length, 20, "fullLog has exactly 20 entries (10 turns × 2 lines)");
+		for (let turn = 0; turn < 10; turn++) {
+			assert.equal(
+				state.fullLog.filter((l) => l === `turn ${turn} line 1`).length,
+				1,
+				`turn ${turn} line 1 appears once`,
+			);
+			assert.equal(
+				state.fullLog.filter((l) => l === `turn ${turn} line 2`).length,
+				1,
+				`turn ${turn} line 2 appears once`,
+			);
+		}
 	});
 });
