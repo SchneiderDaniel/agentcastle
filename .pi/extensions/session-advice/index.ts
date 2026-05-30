@@ -66,8 +66,25 @@ const DEFAULT_FIX: FixSuggestion = {
 	effort: "Medium",
 };
 
+// Module-level state for external access to session-advice toggle state.
+// Updated in sync with the closure variable inside the default export.
+let _sessionAdviceEnabled = true;
+
+/**
+ * Get the current on/off state of session-advice.
+ * Returns `true` if enabled, `false` if disabled.
+ * Always returns a boolean since this module is always loaded when called.
+ */
+export function getSessionAdviceState(): boolean | null {
+	return _sessionAdviceEnabled;
+}
+
 export default function (pi: ExtensionAPI): void {
 	let enabled = true;
+
+	function syncAdviceState() {
+		_sessionAdviceEnabled = enabled;
+	}
 
 	pi.registerCommand("session-advice", {
 		description:
@@ -194,6 +211,7 @@ export default function (pi: ExtensionAPI): void {
 			if (cmd === "on") enabled = true;
 			else if (cmd === "off") enabled = false;
 			else enabled = !enabled;
+			syncAdviceState();
 			ctx.ui.notify(`Session advice: ${enabled ? "ON" : "OFF"} (applies to next session)`, "info");
 		},
 	});
@@ -201,6 +219,7 @@ export default function (pi: ExtensionAPI): void {
 	// ── Recovery: generate advice for past sessions missing .advice.md ──
 
 	pi.on("session_start", async (_event, ctx) => {
+		syncAdviceState();
 		if (!enabled) return;
 
 		const sm = ctx.sessionManager;

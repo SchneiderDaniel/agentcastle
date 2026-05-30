@@ -43,8 +43,26 @@ export function beginSessionLoggerSession(gate: SessionLoggerGate): boolean {
 	return gate.sessionEnabled;
 }
 
+/**
+ * Get the effective session-logger state for the current session.
+ * Returns the value of `sessionEnabled` from the gate.
+ * Returns `null` if the gate is null or undefined (extension not loaded).
+ */
+export function getSessionLoggerState(gate: SessionLoggerGate | null | undefined): boolean | null {
+	if (gate == null) return null;
+	return gate.sessionEnabled;
+}
+
+/**
+ * Module-level reference to the runtime session-logger gate.
+ * Set when the extension loads (default export is called).
+ * Used by context-info to query the current toggle state.
+ */
+export let sessionLoggerGate: SessionLoggerGate | null = null;
+
 export default function (pi: ExtensionAPI): void {
 	const gate = createSessionLoggerGate();
+	sessionLoggerGate = gate;
 
 	pi.registerCommand("session-logger", {
 		description: "Toggle session report on/off (takes effect next session)",
