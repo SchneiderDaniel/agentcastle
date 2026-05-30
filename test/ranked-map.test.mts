@@ -1,9 +1,8 @@
 /**
  * Tests for Ranked Repo Map (keyword + recency scoring for token-efficient codebase context)
  *
- * Pure function tests for computeKeywordScores(), computeRecencyScores(),
- * rankFiles(), formatOutput(), loadRankedMapConfig().
- * Local copies match source at .pi/extensions/ranked-map.ts exactly.
+ * Imports pure modules and adapters from the modular ranked-map extension.
+ * Pure functions tested directly; adapter functions tested with mockExec.
  *
  * Run with:
  *   node --experimental-strip-types --test test/ranked-map.test.mts
@@ -16,507 +15,114 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // ═══════════════════════════════════════════════════════════════════════
-// Types (match source at .pi/extensions/ranked-map.ts)
+// Module Imports
 // ═══════════════════════════════════════════════════════════════════════
 
-export interface RankedMapConfig {
-	tokenBudget: number;
-	recencyWindowDays: number;
-	cacheTtlHours: number;
-	autoThreshold: number;
-	weights: { keyword: number; recency: number };
-}
+// Types
+import type {
+	RankedMapConfig,
+	CachedIndex,
+	SymbolEntry,
+	RankedFileScore,
+	RankedMapResult,
+	CtagsTag,
+	ExecFn,
+} from "../.pi/extensions/ranked-map/types.ts";
 
-export interface CachedIndex {
-	head: string;
-	builtAt: number;
-	symbols: Record<string, SymbolEntry[]>;
-}
+// Config
+import {
+	loadRankedMapConfig,
+	DEFAULT_CONFIG,
+	MAX_RECENCY_WINDOW_DAYS,
+} from "../.pi/extensions/ranked-map/config.ts";
 
-export interface SymbolEntry {
-	type: string;
-	name: string;
-	line: number;
-}
+// Ctags
+import {
+	parseCtagsOutput,
+	buildCtagsArgs,
+	buildSymbolIndex,
+} from "../.pi/extensions/ranked-map/ctags.ts";
 
-export interface RankedFileScore {
-	path: string;
-	score: number;
-	symbols: string;
-	preview: string;
-}
+// Cache
+import { loadCachedIndex } from "../.pi/extensions/ranked-map/cache.ts";
 
-export interface RankedMapResult {
-	files: RankedFileScore[];
-	total_tokens: number;
-	budget: number;
-	truncated: boolean;
-	mode: "ranked" | "full_dump";
-}
+// Format
+import {
+	estimateTokens,
+	selectMode,
+	dumpAllFiles,
+	formatSymbols,
+	formatOutput,
+} from "../.pi/extensions/ranked-map/format.ts";
+
+// Scoring
+import {
+	computeKeywordScores,
+	computeRecencyScores,
+	rankFiles,
+} from "../.pi/extensions/ranked-map/scoring.ts";
+
+// Adapters
+import { runKeywordSearch } from "../.pi/extensions/ranked-map/search.ts";
+import { runGitRecency, getGitHead } from "../.pi/extensions/ranked-map/git.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Pure functions under test (match source at .pi/extensions/ranked-map.ts)
+// Mock ExecFn for adapter tests
 // ═══════════════════════════════════════════════════════════════════════
 
-const DEFAULT_CONFIG: RankedMapConfig = {
-	tokenBudget: 2048,
-	recencyWindowDays: 30,
-	cacheTtlHours: 24,
-	autoThreshold: 20000,
-	weights: { keyword: 0.5, recency: 0.3 },
-};
-
-const MAX_RECENCY_WINDOW_DAYS = 365;
-
-/**
- * Estimate tokens from text (~4 chars per token heuristic).
- */
-function estimateTokens(text: string): number {
-	return Math.ceil(text.length / 4);
-}
-
-/**
- * Determine tool mode based on query presence, symbol count, and autoThreshold.
- * query provided → ranked (keyword + recency)
- * no query, totalSymbols <= autoThreshold → full_dump (path-sorted)
- * no query, totalSymbols > autoThreshold → ranked (recency-only)
- */
-export function selectMode(
-	query: string,
-	totalSymbols: number,
-	autoThreshold: number,
-): "ranked" | "full_dump" {
-	if (query.trim()) return "ranked";
-	if (totalSymbols <= autoThreshold) return "full_dump";
-	return "ranked";
-}
-
-/**
- * Dump all symbols sorted by file path, filling greedily within token budget.
- * Each file gets score=0 and empty preview.
- */
-export function dumpAllFiles(
-	symbols: Record<string, SymbolEntry[]>,
-	tokenBudget: number,
-): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
-	const filePaths = Object.keys(symbols).sort();
-	const files: RankedFileScore[] = [];
-	let totalTokens = 0;
-	let truncated = false;
-	const PREVIEW_TOKEN_ESTIMATE = 50;
-
-	for (const path of filePaths) {
-		const syms = symbols[path] ?? [];
-		const symText = formatSymbols(syms, path);
-		const entryTokens = estimateTokens(symText) + PREVIEW_TOKEN_ESTIMATE;
-
-		if (tokenBudget <= 0) {
-			truncated = true;
-			break;
-		}
-
-		if (totalTokens + entryTokens > tokenBudget && totalTokens > 0) {
-			truncated = true;
-			break;
-		}
-
-		files.push({
-			path,
-			score: 0,
-			symbols: symText,
-			preview: "",
+/** Create a mock ExecFn that returns canned stdout. */
+function mockExecFn(result: {
+	stdout?: string;
+	stderr?: string;
+	code?: number;
+	killed?: boolean;
+}): ExecFn {
+	return async () =>
+		Promise.resolve({
+			stdout: result.stdout ?? "",
+			stderr: result.stderr ?? "",
+			code: result.code ?? 0,
+			killed: result.killed ?? false,
 		});
-		totalTokens += entryTokens;
-	}
-
-	return { files, totalTokens, truncated };
 }
 
-/**
- * Load ranked map configuration from .pi/settings.json.
- * Falls back to defaults on missing file, parse errors, or missing keys.
- */
-export function loadRankedMapConfig(cwd: string): RankedMapConfig {
-	try {
-		const settingsPath = join(cwd, ".pi", "settings.json");
-		const raw = readFileSync(settingsPath, "utf-8");
-		const settings = JSON.parse(raw);
-		const rm = settings?.rankedMap;
-
-		if (!rm) return { ...DEFAULT_CONFIG };
-
-		// tokenBudget: must be positive integer
-		let tokenBudget = DEFAULT_CONFIG.tokenBudget;
-		if (
-			typeof rm.tokenBudget === "number" &&
-			Number.isFinite(rm.tokenBudget) &&
-			Number.isInteger(rm.tokenBudget) &&
-			rm.tokenBudget > 0
-		) {
-			tokenBudget = rm.tokenBudget;
-		}
-
-		// recencyWindowDays: clamp to [1, MAX_RECENCY_WINDOW_DAYS]
-		let recencyWindowDays = DEFAULT_CONFIG.recencyWindowDays;
-		if (
-			typeof rm.recencyWindowDays === "number" &&
-			Number.isFinite(rm.recencyWindowDays) &&
-			Number.isInteger(rm.recencyWindowDays) &&
-			rm.recencyWindowDays > 0
-		) {
-			recencyWindowDays = Math.min(rm.recencyWindowDays, MAX_RECENCY_WINDOW_DAYS);
-		}
-
-		// autoThreshold: non-negative integer (0 = always-ranked)
-		let autoThreshold = DEFAULT_CONFIG.autoThreshold;
-		if (
-			typeof rm.autoThreshold === "number" &&
-			Number.isFinite(rm.autoThreshold) &&
-			Number.isInteger(rm.autoThreshold) &&
-			rm.autoThreshold >= 0
-		) {
-			autoThreshold = rm.autoThreshold;
-		}
-
-		// cacheTtlHours: must be positive
-		let cacheTtlHours = DEFAULT_CONFIG.cacheTtlHours;
-		if (
-			typeof rm.cacheTtlHours === "number" &&
-			Number.isFinite(rm.cacheTtlHours) &&
-			rm.cacheTtlHours > 0
-		) {
-			cacheTtlHours = rm.cacheTtlHours;
-		}
-
-		// weights: validate and normalize
-		let kwWeight = DEFAULT_CONFIG.weights.keyword;
-		let recWeight = DEFAULT_CONFIG.weights.recency;
-
-		if (rm.weights && typeof rm.weights === "object") {
-			const w = rm.weights;
-
-			if (
-				typeof w.keyword === "number" &&
-				Number.isFinite(w.keyword) &&
-				w.keyword >= 0 &&
-				w.keyword <= 1
-			) {
-				kwWeight = w.keyword;
-			}
-
-			if (
-				typeof w.recency === "number" &&
-				Number.isFinite(w.recency) &&
-				w.recency >= 0 &&
-				w.recency <= 1
-			) {
-				recWeight = w.recency;
-			}
-
-			// Normalize if sum > 1
-			const sum = kwWeight + recWeight;
-			if (sum > 1) {
-				kwWeight = kwWeight / sum;
-				recWeight = recWeight / sum;
-			}
-		}
-
-		return {
-			tokenBudget,
-			recencyWindowDays,
-			cacheTtlHours,
-			autoThreshold,
-			weights: { keyword: kwWeight, recency: recWeight },
-		};
-	} catch {
-		return { ...DEFAULT_CONFIG };
-	}
+/** Create a mock ExecFn that rejects with an error. */
+function mockExecFnError(error: Error): ExecFn {
+	return async () => Promise.reject(error);
 }
 
-/**
- * Compute keyword relevance scores per file using Jaccard overlap.
- *
- * For each file, score = matchedTerms / queryTerms (fraction of query terms present in file).
- * Returns 0 for files with no matches.
- */
-export function computeKeywordScores(
-	fileTermMatches: Record<string, string[]>,
-	queryTerms: string[],
-): Record<string, number> {
-	const scores: Record<string, number> = {};
-	const totalTerms = queryTerms.length;
-
-	for (const [file, matched] of Object.entries(fileTermMatches)) {
-		scores[file] = totalTerms > 0 ? matched.length / totalTerms : 0;
-	}
-
-	return scores;
-}
-
-/**
- * Compute recency scores using linear decay.
- *
- * Score = max(0, 1 - ageInDays / windowDays)
- * - file touched today → score 1.0
- * - file touched at windowDays boundary → ~0.0
- * - file never touched → score 0.0
- */
-export function computeRecencyScores(
-	fileLastTouched: Record<string, string>, // ISO date strings
-	windowDays: number,
-	now: Date = new Date(),
-): Record<string, number> {
-	const scores: Record<string, number> = {};
-	const nowMs = now.getTime();
-
-	for (const [file, dateStr] of Object.entries(fileLastTouched)) {
-		const fileDate = new Date(dateStr);
-		const ageMs = nowMs - fileDate.getTime();
-		const ageDays = ageMs / (1000 * 60 * 60 * 24);
-
-		if (windowDays <= 0) {
-			// When window is 0, only files touched on same calendar day get 1.0
-			const todayStr = now.toISOString().split("T")[0];
-			const fileDateStr = dateStr.split("T")[0];
-			scores[file] = fileDateStr === todayStr ? 1.0 : 0.0;
-		} else if (ageDays <= 0) {
-			scores[file] = 1.0;
-		} else if (ageDays >= windowDays) {
-			scores[file] = 0.0;
-		} else {
-			scores[file] = Math.round((1 - ageDays / windowDays) * 100) / 100;
+/** Create a mock ExecFn with conditional response based on command. */
+function mockExecConditional(
+	matchFn: (
+		cmd: string,
+		args: string[],
+	) => {
+		stdout?: string;
+		stderr?: string;
+		code?: number;
+		killed?: boolean;
+	} | null,
+): ExecFn {
+	return async (command, args, _opts) => {
+		const matched = matchFn(command, args);
+		if (matched !== null) {
+			return {
+				stdout: matched.stdout ?? "",
+				stderr: matched.stderr ?? "",
+				code: matched.code ?? 0,
+				killed: matched.killed ?? false,
+			};
 		}
-	}
-
-	return scores;
-}
-
-/**
- * Format symbol entries into a compact string for tool output.
- */
-export function formatSymbols(symbols: SymbolEntry[], path: string): string {
-	if (!symbols || symbols.length === 0) return `${path}\n  (no symbols)`;
-
-	const lines: string[] = [];
-	for (const sym of symbols) {
-		lines.push(`  ${sym.type} ${sym.name}`);
-	}
-	return `${path}\n${lines.join("\n")}`;
-}
-
-/**
- * Get preview (first 5 lines) of file contents.
- * Returns empty string if file can't be read.
- */
-export function getFilePreview(filePath: string, cwd: string): string {
-	try {
-		const fullPath = resolve(cwd, filePath);
-		if (!existsSync(fullPath)) return "";
-		const content = readFileSync(fullPath, "utf-8");
-		const lines = content.split("\n").slice(0, 5);
-		return lines.join("\n");
-	} catch {
-		return "";
-	}
-}
-
-/**
- * Rank files by combined score (weighted sum of keyword + recency),
- * sort descending, and fill within token budget (greedy).
- */
-export function rankFiles(
-	keywordScores: Record<string, number>,
-	recencyScores: Record<string, number>,
-	weights: { keyword: number; recency: number },
-	tokenBudget: number,
-	symbolEntries: Record<string, SymbolEntry[]>,
-): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
-	// Collect all file paths
-	const allFiles = new Set([
-		...Object.keys(keywordScores),
-		...Object.keys(recencyScores),
-		...Object.keys(symbolEntries),
-	]);
-
-	// Compute weighted scores
-	type FileScore = { path: string; score: number; symbols: SymbolEntry[] };
-	const scored: FileScore[] = [];
-
-	for (const file of allFiles) {
-		const kw = keywordScores[file] ?? 0;
-		const rec = recencyScores[file] ?? 0;
-		const syms = symbolEntries[file] ?? [];
-		// Combined score = kw * weight.keyword + rec * weight.recency
-		const score = kw * weights.keyword + rec * weights.recency;
-		scored.push({ path: file, score: Math.round(score * 100) / 100, symbols: syms });
-	}
-
-	// Sort descending by score, tie-break by path alphabetically
-	scored.sort((a, b) => {
-		if (b.score !== a.score) return b.score - a.score;
-		return a.path.localeCompare(b.path);
-	});
-
-	// Greedy fill within token budget
-	const files: RankedFileScore[] = [];
-	let totalTokens = 0;
-	let truncated = false;
-
-	// Estimate tokens: symbol header + 5 lines of preview (~200 chars average)
-	const PREVIEW_TOKEN_ESTIMATE = 50; // 5 lines × 10 tokens/line
-
-	for (const entry of scored) {
-		const symText = formatSymbols(entry.symbols, entry.path);
-		const entryTokens = estimateTokens(symText) + PREVIEW_TOKEN_ESTIMATE;
-
-		if (tokenBudget <= 0) {
-			truncated = true;
-			break;
-		}
-
-		if (totalTokens + entryTokens > tokenBudget && totalTokens > 0) {
-			truncated = true;
-			break;
-		}
-
-		files.push({
-			path: entry.path,
-			score: entry.score,
-			symbols: symText,
-			preview: "", // Will be filled by caller with actual file contents
-		});
-		totalTokens += entryTokens;
-	}
-
-	return { files, totalTokens, truncated };
-}
-
-/**
- * Format ranked results into output shape.
- */
-export function formatOutput(
-	rankedFiles: RankedFileScore[],
-	budget: number,
-	truncated: boolean,
-	mode: "ranked" | "full_dump" = "ranked",
-): RankedMapResult {
-	return {
-		files: rankedFiles.map((f) => ({
-			...f,
-			score: Math.round(f.score * 100) / 100,
-		})),
-		total_tokens: rankedFiles.reduce(
-			(sum, f) => sum + estimateTokens(f.symbols) + estimateTokens(f.preview),
-			0,
-		),
-		budget,
-		truncated,
-		mode,
+		return { stdout: "", stderr: "", code: 0, killed: false };
 	};
-}
-
-/**
- * Load cached index from disk.
- * Returns null if cache missing, malformed, HEAD mismatch, or missing required keys.
- */
-export function loadCachedIndex(cachePath: string, currentHead: string): CachedIndex | null {
-	try {
-		if (!existsSync(cachePath)) return null;
-		const raw = readFileSync(cachePath, "utf-8");
-		const parsed = JSON.parse(raw);
-
-		if (!parsed || typeof parsed !== "object") return null;
-		if (typeof parsed.head !== "string") return null;
-		if (typeof parsed.builtAt !== "number") return null;
-		if (!parsed.symbols || typeof parsed.symbols !== "object") return null;
-
-		// HEAD mismatch → stale
-		if (parsed.head !== currentHead) return null;
-
-		return {
-			head: parsed.head,
-			builtAt: parsed.builtAt,
-			symbols: parsed.symbols as Record<string, SymbolEntry[]>,
-		};
-	} catch {
-		return null;
-	}
-}
-
-/**
- * Build symbol index from ctags JSONL output.
- */
-export function buildSymbolIndex(
-	ctagsJsonl: string,
-	head: string,
-	now: number = Date.now(),
-): CachedIndex {
-	// Reuse parseCtagsOutput logic — in the real extension this is imported
-	// from codebase-mapper.ts. For tests, we inline a minimal version.
-	const tags = parseTags(ctagsJsonl);
-	const symbols: Record<string, SymbolEntry[]> = {};
-
-	for (const tag of tags) {
-		if (!symbols[tag.path]) {
-			symbols[tag.path] = [];
-		}
-		symbols[tag.path]!.push({
-			type: tag.kind,
-			name: tag.name,
-			line: tag.line ?? 0,
-		});
-	}
-
-	// Sort by line number
-	for (const file of Object.keys(symbols)) {
-		symbols[file]!.sort((a, b) => a.line - b.line);
-	}
-
-	return { head, builtAt: now, symbols };
-}
-
-/** Minimal ctags JSONL parser (subset of parseCtagsOutput). */
-interface MinCtagsTag {
-	name: string;
-	kind: string;
-	path: string;
-	line?: number;
-}
-
-function parseTags(raw: string): MinCtagsTag[] {
-	if (!raw) return [];
-	const lines = raw.split("\n");
-	const tags: MinCtagsTag[] = [];
-
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
-
-		let parsed: any;
-		try {
-			parsed = JSON.parse(trimmed);
-		} catch {
-			continue;
-		}
-
-		if (parsed._type !== "tag") continue;
-		if (typeof parsed.name !== "string" || !parsed.name) continue;
-		if (typeof parsed.kind !== "string" || !parsed.kind) continue;
-		if (typeof parsed.path !== "string" || !parsed.path) continue;
-
-		tags.push({
-			name: parsed.name,
-			kind: parsed.kind,
-			path: parsed.path,
-			line: typeof parsed.line === "number" ? parsed.line : undefined,
-		});
-	}
-
-	return tags;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -576,6 +182,80 @@ const SAMPLE_CTAGS_JSONL = [
 ].join("\n");
 
 const SAMPLE_HEAD = "abc123def456";
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 0: Type Verification (compile-time checks)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("types module exports", () => {
+	it("RankedMapConfig is a valid type interface", () => {
+		// Compile-time check — verify shape at runtime
+		const config: RankedMapConfig = {
+			tokenBudget: 2048,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3 },
+		};
+		assert.strictEqual(config.tokenBudget, 2048);
+	});
+
+	it("CachedIndex is a valid type interface", () => {
+		const ci: CachedIndex = {
+			head: "abc",
+			builtAt: 1000,
+			symbols: { "a.ts": [{ type: "function", name: "foo", line: 1 }] },
+		};
+		assert.strictEqual(ci.head, "abc");
+	});
+
+	it("SymbolEntry is a valid type interface", () => {
+		const se: SymbolEntry = { type: "function", name: "bar", line: 5 };
+		assert.strictEqual(se.name, "bar");
+	});
+
+	it("RankedFileScore is a valid type interface", () => {
+		const rfs: RankedFileScore = {
+			path: "a.ts",
+			score: 0.5,
+			symbols: "a.ts\n  function foo",
+			preview: "",
+		};
+		assert.strictEqual(rfs.path, "a.ts");
+	});
+
+	it("RankedMapResult is a valid type interface", () => {
+		const rmr: RankedMapResult = {
+			files: [],
+			total_tokens: 0,
+			budget: 2048,
+			truncated: false,
+			mode: "ranked",
+		};
+		assert.strictEqual(rmr.mode, "ranked");
+	});
+
+	it("CtagsTag is a valid type interface", () => {
+		const ct: CtagsTag = {
+			_type: "tag",
+			name: "foo",
+			kind: "function",
+			path: "a.ts",
+			pattern: "",
+		};
+		assert.strictEqual(ct.name, "foo");
+	});
+
+	it("ExecFn is a valid type", () => {
+		const fn: ExecFn = async (_cmd, _args, _opts) => ({
+			stdout: "",
+			stderr: "",
+			code: 0,
+			killed: false,
+		});
+		assert.strictEqual(typeof fn, "function");
+	});
+});
 
 // ═══════════════════════════════════════════════════════════════════════
 // Phase 1: Settings & Config Loading
@@ -744,10 +424,6 @@ describe("loadRankedMapConfig", () => {
 				JSON.stringify({ rankedMap: { weights: { keyword: -0.1, recency: 0.3 } } }),
 			);
 			const result = loadRankedMapConfig(dir);
-			// keyword=-0.1 falls back to 0.5, recency=0.3 is valid
-			// But recency is set explicitly to 0.3, keyword falls back to default
-			// Wait — recency=0.3 is explicitly set, keyword falls back to default 0.5
-			// But then sum = 0.5 + 0.3 = 0.8 < 1, so no normalization
 			assert.strictEqual(result.weights.keyword, 0.5);
 			assert.strictEqual(result.weights.recency, 0.3);
 		} finally {
@@ -857,6 +533,34 @@ describe("loadRankedMapConfig", () => {
 	});
 });
 
+describe("DEFAULT_CONFIG", () => {
+	it("exports a constant with correct shape", () => {
+		assert.strictEqual(DEFAULT_CONFIG.tokenBudget, 2048);
+		assert.strictEqual(DEFAULT_CONFIG.recencyWindowDays, 30);
+		assert.strictEqual(DEFAULT_CONFIG.cacheTtlHours, 24);
+		assert.strictEqual(DEFAULT_CONFIG.autoThreshold, 20000);
+		assert.strictEqual(DEFAULT_CONFIG.weights.keyword, 0.5);
+		assert.strictEqual(DEFAULT_CONFIG.weights.recency, 0.3);
+	});
+
+	it("MAX_RECENCY_WINDOW_DAYS is 365", () => {
+		assert.strictEqual(MAX_RECENCY_WINDOW_DAYS, 365);
+	});
+});
+
+describe("config module has no pi SDK imports", () => {
+	it("does not import from @earendil-works/pi-coding-agent", async () => {
+		const content = readFileSync(
+			resolve(__dirname, "../.pi/extensions/ranked-map/config.ts"),
+			"utf-8",
+		);
+		assert.ok(
+			!content.includes("@earendil-works/pi-coding-agent"),
+			"config.ts should not import from pi-coding-agent",
+		);
+	});
+});
+
 // ═══════════════════════════════════════════════════════════════════════
 // Phase 1b: Mode Selection Logic
 // ═══════════════════════════════════════════════════════════════════════
@@ -882,8 +586,7 @@ describe("selectMode", () => {
 		assert.strictEqual(mode, "ranked");
 	});
 
-	it("no query, autoThreshold=0 → always ranked (totalSymbols 0 > 0 is false, but 0 <= 0 is true, so full_dump)", () => {
-		// 0 symbols <= 0 threshold => full_dump
+	it("no query, autoThreshold=0, totalSymbols=0 → full_dump", () => {
 		const mode = selectMode("", 0, 0);
 		assert.strictEqual(mode, "full_dump");
 	});
@@ -905,7 +608,129 @@ describe("selectMode", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 2: Symbol Index Build & Cache
+// Phase 2a: Ctags Parsing (parseCtagsOutput — formerly internal)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("parseCtagsOutput", () => {
+	it("parses valid ctags JSONL into CtagsTag[]", () => {
+		const tags = parseCtagsOutput(SAMPLE_CTAGS_JSONL);
+		assert.strictEqual(tags.length, 6);
+		assert.strictEqual(tags[0]!.name, "login_handler");
+		assert.strictEqual(tags[0]!.kind, "function");
+		assert.strictEqual(tags[0]!.path, "api/routes.py");
+	});
+
+	it("skips pseudo-tags", () => {
+		const input =
+			JSON.stringify({ _type: "ptag", name: "JSON_OUTPUT_VERSION", kind: "pseudo", path: "" }) +
+			"\n" +
+			JSON.stringify({
+				_type: "tag",
+				name: "foo",
+				kind: "function",
+				path: "a.ts",
+				pattern: "",
+				line: 1,
+			});
+		const tags = parseCtagsOutput(input);
+		assert.strictEqual(tags.length, 1);
+		assert.strictEqual(tags[0]!.name, "foo");
+	});
+
+	it("skips malformed JSON lines", () => {
+		const input =
+			"not json\n" +
+			JSON.stringify({ _type: "tag", name: "foo", kind: "function", path: "a.ts", pattern: "" });
+		const tags = parseCtagsOutput(input);
+		assert.strictEqual(tags.length, 1);
+		assert.strictEqual(tags[0]!.name, "foo");
+	});
+
+	it("handles empty input returns empty array", () => {
+		assert.strictEqual(parseCtagsOutput("").length, 0);
+	});
+
+	it("handles non-string input returns empty array", () => {
+		assert.strictEqual(parseCtagsOutput(null as unknown as string).length, 0);
+		assert.strictEqual(parseCtagsOutput(undefined as unknown as string).length, 0);
+	});
+
+	it("skips tags with missing required fields", () => {
+		const input = JSON.stringify({ _type: "tag", name: "foo" }); // missing kind, path
+		assert.strictEqual(parseCtagsOutput(input).length, 0);
+	});
+
+	it("filters out JSON-value kinds (defense-in-depth)", () => {
+		const input = JSON.stringify({
+			_type: "tag",
+			name: "myNumber",
+			kind: "number",
+			path: "data.json",
+			pattern: "",
+		});
+		assert.strictEqual(parseCtagsOutput(input).length, 0);
+	});
+
+	it("preserves line field when present", () => {
+		const tags = parseCtagsOutput(SAMPLE_CTAGS_JSONL);
+		const loginHandler = tags.find((t) => t.name === "login_handler")!;
+		assert.strictEqual(loginHandler.line, 12);
+	});
+
+	it("line field is undefined when not present in input", () => {
+		const input = JSON.stringify({
+			_type: "tag",
+			name: "foo",
+			kind: "function",
+			path: "a.ts",
+			pattern: "",
+		});
+		const tags = parseCtagsOutput(input);
+		assert.strictEqual(tags[0]!.line, undefined);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2b: Ctags Args Building
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("buildCtagsArgs", () => {
+	it("returns command='ctags' and args array", () => {
+		const result = buildCtagsArgs(".", 0);
+		assert.strictEqual(result.command, "ctags");
+		assert.ok(Array.isArray(result.args));
+	});
+
+	it("includes standard excludes", () => {
+		const result = buildCtagsArgs("/some/dir", 0);
+		assert.ok(result.args.includes("--exclude=node_modules"));
+		assert.ok(result.args.includes("--exclude=.git"));
+		assert.ok(result.args.includes("--exclude=*.json"));
+	});
+
+	it("includes maxDepth arg when > 0", () => {
+		const result = buildCtagsArgs(".", 3);
+		assert.ok(result.args.includes("--maxdepth=3"));
+	});
+
+	it("omits maxDepth when 0 (unlimited)", () => {
+		const result = buildCtagsArgs(".", 0);
+		assert.ok(!result.args.some((a) => a.startsWith("--maxdepth")));
+	});
+
+	it("target directory is last arg", () => {
+		const result = buildCtagsArgs("src", 0);
+		assert.strictEqual(result.args[result.args.length - 1], "src");
+	});
+
+	it("includes --output-format=json", () => {
+		const result = buildCtagsArgs(".", 0);
+		assert.ok(result.args.includes("--output-format=json"));
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2c: Symbol Index Build
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("buildSymbolIndex", () => {
@@ -944,13 +769,11 @@ describe("buildSymbolIndex", () => {
 		const result = buildSymbolIndex(ptagOutput, SAMPLE_HEAD);
 		assert.strictEqual(Object.keys(result.symbols).length, 0);
 	});
-
-	it("ctags non-zero exit but valid stdout still parses output", () => {
-		// Same as valid input — we only parse stdout, not exit code
-		const result = buildSymbolIndex(SAMPLE_CTAGS_JSONL, SAMPLE_HEAD);
-		assert.strictEqual(Object.keys(result.symbols).length, 3);
-	});
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2d: Cache
+// ═══════════════════════════════════════════════════════════════════════
 
 describe("loadCachedIndex", () => {
 	function setupCacheDir(): string {
@@ -1140,14 +963,12 @@ describe("computeRecencyScores", () => {
 	});
 
 	it("file touched exactly recencyWindowDays ago → score ~0.0", () => {
-		// 30 days ago → at boundary, should be ~0
 		const past = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 		const scores = computeRecencyScores({ "a.ts": past.toISOString() }, 30, now);
 		assert.strictEqual(scores["a.ts"], 0.0);
 	});
 
 	it("file halfway through window → score ~0.5", () => {
-		// 15 days ago
 		const past = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
 		const scores = computeRecencyScores({ "a.ts": past.toISOString() }, 30, now);
 		assert.strictEqual(scores["a.ts"], 0.5);
@@ -1165,9 +986,9 @@ describe("computeRecencyScores", () => {
 
 	it("multiple files with different recency → scores ordered newest > mid > oldest", () => {
 		const dates: Record<string, string> = {
-			newest: "2026-05-23T10:00:00Z", // today → 1.0
-			mid: "2026-05-08T10:00:00Z", // 15 days ago → 0.5
-			oldest: "2026-04-23T10:00:00Z", // 30 days ago → 0.0
+			newest: "2026-05-23T10:00:00Z",
+			mid: "2026-05-08T10:00:00Z",
+			oldest: "2026-04-23T10:00:00Z",
 		};
 		const scores = computeRecencyScores(dates, 30, now);
 		assert.ok(scores["newest"]! >= scores["mid"]!);
@@ -1182,11 +1003,6 @@ describe("computeRecencyScores", () => {
 		);
 		assert.strictEqual(scores["a.ts"], 1.0);
 		assert.strictEqual(scores["b.ts"], 0.0);
-	});
-
-	it("single file touched multiple times → uses most recent date", () => {
-		const scores = computeRecencyScores({ "a.ts": "2026-05-23T10:00:00Z" }, 30, now);
-		assert.strictEqual(scores["a.ts"], 1.0);
 	});
 });
 
@@ -1209,9 +1025,9 @@ describe("rankFiles", () => {
 		const a = result.files.find((f) => f.path === "a.ts")!;
 		const b = result.files.find((f) => f.path === "b.ts")!;
 		const c = result.files.find((f) => f.path === "c.ts")!;
-		assert.strictEqual(a.score, 0.5); // 1.0*0.5 + 0.0*0.3 = 0.5
-		assert.strictEqual(b.score, 0.4); // 0.5*0.5 + 0.5*0.3 = 0.25 + 0.15 = 0.4
-		assert.strictEqual(c.score, 0.3); // 0.0*0.5 + 1.0*0.3 = 0.3
+		assert.strictEqual(a.score, 0.5);
+		assert.strictEqual(b.score, 0.4);
+		assert.strictEqual(c.score, 0.3);
 	});
 
 	it("sorts descending by final score", () => {
@@ -1236,28 +1052,10 @@ describe("rankFiles", () => {
 		assert.strictEqual(result.files[1]!.path, "b.ts");
 	});
 
-	it("token budget greedy fill: includes highest-score files first until budget exhausted", () => {
-		const kw = { "large.ts": 1.0, "small.ts": 0.8, "tiny.ts": 0.6 };
-		const rec = { "large.ts": 0, "small.ts": 0, "tiny.ts": 0 };
-		const lsyms: Record<string, SymbolEntry[]> = {
-			"large.ts": Array.from({ length: 50 }, (_, i) => ({
-				type: "function",
-				name: `f${i}`,
-				line: i,
-			})),
-			"small.ts": [{ type: "function", name: "g", line: 1 }],
-			"tiny.ts": [{ type: "class", name: "H", line: 1 }],
-		};
-		// Very tight budget — should only include highest score file
-		const result = rankFiles(kw, rec, weights, 50, lsyms);
-		assert.ok(result.truncated || result.files.length <= 3);
-	});
-
 	it("sets truncated=true when some files excluded due to budget", () => {
 		const kw = { "a.ts": 1.0, "b.ts": 0.5, "c.ts": 0.3, "d.ts": 0.1 };
 		const rec = { "a.ts": 0, "b.ts": 0, "c.ts": 0, "d.ts": 0 };
 		const result = rankFiles(kw, rec, weights, 10, syms);
-		// Budget of 10 tokens should only fit 1 file max
 		assert.ok(result.truncated || result.files.length < 4);
 	});
 
@@ -1282,19 +1080,15 @@ describe("rankFiles", () => {
 	});
 
 	it("missing scores for a file treated as 0", () => {
-		// recencyScores missing "a.ts" — treated as 0
-		const result = rankFiles(
-			{ "a.ts": 1.0 },
-			{ "b.ts": 1.0 }, // "a.ts" not in recencyScores
-			weights,
-			5000,
-			{ "a.ts": syms["a.ts"]!, "b.ts": syms["b.ts"]! },
-		);
+		const result = rankFiles({ "a.ts": 1.0 }, { "b.ts": 1.0 }, weights, 5000, {
+			"a.ts": syms["a.ts"]!,
+			"b.ts": syms["b.ts"]!,
+		});
 		const a = result.files.find((f) => f.path === "a.ts")!;
-		assert.strictEqual(a.score, 0.5); // 1.0*0.5 + 0*0.3 = 0.5
+		assert.strictEqual(a.score, 0.5);
 	});
 
-	it("all scores 0 → input order preserved in ranking (or alphabetical)", () => {
+	it("all scores 0 → alphabetical order preserved in ranking", () => {
 		const inputSyms: Record<string, SymbolEntry[]> = {
 			"z.ts": [{ type: "function", name: "z", line: 1 }],
 			"a.ts": [{ type: "function", name: "a", line: 1 }],
@@ -1307,7 +1101,6 @@ describe("rankFiles", () => {
 			5000,
 			inputSyms,
 		);
-		// Should be alphabetical order (tie-break)
 		assert.strictEqual(result.files[0]!.path, "a.ts");
 		assert.strictEqual(result.files[1]!.path, "m.ts");
 		assert.strictEqual(result.files[2]!.path, "z.ts");
@@ -1365,7 +1158,6 @@ describe("formatOutput", () => {
 			},
 		];
 		const result = formatOutput(ranked, 2048, false);
-		// score should be rounded
 		assert.strictEqual(result.files[0]!.score, 0.67);
 	});
 
@@ -1415,10 +1207,6 @@ describe("formatSymbols", () => {
 		assert.strictEqual(result, "a.ts\n  function foo");
 	});
 });
-
-// ═══════════════════════════════════════════════════════════════════════
-// Phase 6b: dumpAllFiles
-// ═══════════════════════════════════════════════════════════════════════
 
 describe("dumpAllFiles", () => {
 	it("returns all files sorted alphabetically by path", () => {
@@ -1507,7 +1295,212 @@ describe("dumpAllFiles", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 7: Integration (real ctags, rg, git — skip if missing)
+// Phase 7: Adapter Functions (async with mockExec)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("runKeywordSearch (async, mockExec)", () => {
+	it("returns fileMatches for matching terms", async () => {
+		const mockExec = mockExecFn({
+			stdout: "src/app.ts\napi/routes.py\n",
+			code: 0,
+		});
+		const result = await runKeywordSearch(mockExec, "auth login", ".", "/test", undefined);
+		assert.ok(result.terms.length > 0);
+		// Both terms should find files in the mock output
+		assert.ok(Object.keys(result.fileMatches).length > 0);
+	});
+
+	it("returns empty when rg fails (non-zero exit)", async () => {
+		const mockExec = mockExecFn({
+			stdout: "",
+			stderr: "",
+			code: 1,
+		});
+		const result = await runKeywordSearch(mockExec, "nonexistent", ".", "/test", undefined);
+		assert.strictEqual(Object.keys(result.fileMatches).length, 0);
+	});
+
+	it("handles empty query string", async () => {
+		const mockExec = mockExecFn({ stdout: "", code: 0 });
+		const result = await runKeywordSearch(mockExec, "", ".", "/test", undefined);
+		assert.strictEqual(result.terms.length, 0);
+		assert.strictEqual(Object.keys(result.fileMatches).length, 0);
+	});
+
+	it("calls rg with expected args", async () => {
+		let capturedArgs: string[] = [];
+		const mockExec = mockExecConditional((cmd, args) => {
+			if (cmd === "rg") {
+				capturedArgs = args;
+				return { stdout: "file.ts\n", code: 0 };
+			}
+			return null;
+		});
+		await runKeywordSearch(mockExec, "queryTerm", "src", "/cwd", undefined);
+		assert.ok(capturedArgs.includes("--files-with-matches"));
+		assert.ok(capturedArgs.includes("--ignore-case"));
+		assert.ok(capturedArgs.includes("queryTerm"));
+		assert.ok(capturedArgs.includes("src"));
+	});
+
+	it("escapes regex special characters in query terms", async () => {
+		let capturedTerm = "";
+		const mockExec = mockExecConditional((cmd, args) => {
+			if (cmd === "rg") {
+				capturedTerm = args[args.length - 2]!; // second-to-last is the escaped term
+				return { stdout: "", code: 1 };
+			}
+			return null;
+		});
+		await runKeywordSearch(mockExec, "file.ts", ".", "/cwd", undefined);
+		// The dot should be escaped
+		assert.ok(capturedTerm.includes("\\."));
+	});
+});
+
+describe("runGitRecency (async, mockExec)", () => {
+	it("parses git log output into file-date map", async () => {
+		const mockStdout = [
+			"2026-05-23T10:00:00Z",
+			"src/app.ts",
+			"src/utils.ts",
+			"2026-05-22T10:00:00Z",
+			"src/old.ts",
+		].join("\n");
+		const mockExec = mockExecFn({ stdout: mockStdout, code: 0 });
+		const result = await runGitRecency(mockExec, 30, "/test", undefined);
+		assert.strictEqual(result["src/app.ts"], "2026-05-23T10:00:00Z");
+		assert.strictEqual(result["src/utils.ts"], "2026-05-23T10:00:00Z");
+		assert.strictEqual(result["src/old.ts"], "2026-05-22T10:00:00Z");
+	});
+
+	it("returns empty map when git log fails", async () => {
+		const mockExec = mockExecFn({ stdout: "", code: 128 });
+		const result = await runGitRecency(mockExec, 30, "/test", undefined);
+		assert.strictEqual(Object.keys(result).length, 0);
+	});
+
+	it("returns empty map for empty output", async () => {
+		const mockExec = mockExecFn({ stdout: "", code: 0 });
+		const result = await runGitRecency(mockExec, 30, "/test", undefined);
+		assert.strictEqual(Object.keys(result).length, 0);
+	});
+
+	it("only captures most recent date per file (first occurrence)", async () => {
+		const mockStdout = [
+			"2026-05-23T10:00:00Z",
+			"src/app.ts",
+			"2026-05-22T10:00:00Z",
+			"src/app.ts", // same file, older date — should be ignored
+		].join("\n");
+		const mockExec = mockExecFn({ stdout: mockStdout, code: 0 });
+		const result = await runGitRecency(mockExec, 30, "/test", undefined);
+		assert.strictEqual(result["src/app.ts"], "2026-05-23T10:00:00Z");
+	});
+
+	it("calls git log with expected args", async () => {
+		let capturedArgs: string[] = [];
+		const mockExec = mockExecConditional((cmd, args) => {
+			if (cmd === "git" && args[0] === "log") {
+				capturedArgs = args;
+				return { stdout: "", code: 0 };
+			}
+			return null;
+		});
+		await runGitRecency(mockExec, 14, "/test", undefined);
+		assert.ok(capturedArgs.some((a) => a.includes("14 days ago")));
+		assert.ok(capturedArgs.includes("--name-only"));
+		assert.ok(capturedArgs.includes("--diff-filter=AM"));
+	});
+});
+
+describe("getGitHead (async, mockExec)", () => {
+	it("returns HEAD hash on success", async () => {
+		const mockExec = mockExecFn({ stdout: "abc123def456\n", code: 0 });
+		const result = await getGitHead(mockExec, "/test", undefined);
+		assert.strictEqual(result, "abc123def456");
+	});
+
+	it("returns null on non-zero exit", async () => {
+		const mockExec = mockExecFn({ stdout: "", code: 128 });
+		const result = await getGitHead(mockExec, "/test", undefined);
+		assert.strictEqual(result, null);
+	});
+
+	it("calls git rev-parse HEAD", async () => {
+		let capturedArgs: string[] = [];
+		const mockExec = mockExecConditional((cmd, args) => {
+			if (cmd === "git") {
+				capturedArgs = args;
+				return { stdout: "abc\n", code: 0 };
+			}
+			return null;
+		});
+		await getGitHead(mockExec, "/test", undefined);
+		assert.deepStrictEqual(capturedArgs, ["rev-parse", "HEAD"]);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 8: Edge Cases & Error Paths
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("edge cases", () => {
+	it("empty codebase → empty ranking, no crash", () => {
+		const result = rankFiles({}, {}, { keyword: 0.5, recency: 0.3 }, 2048, {});
+		assert.strictEqual(result.files.length, 0);
+		assert.strictEqual(result.totalTokens, 0);
+	});
+
+	it("token estimate: ~4 chars per token heuristic", () => {
+		const text = "hello world this is a test";
+		const tokens = estimateTokens(text);
+		assert.strictEqual(tokens, Math.ceil(text.length / 4));
+	});
+
+	it("empty string token estimate = 0", () => {
+		assert.strictEqual(estimateTokens(""), 0);
+	});
+
+	it("estimateTokens handles short strings", () => {
+		assert.strictEqual(estimateTokens("ab"), 1);
+	});
+
+	it("null/undefined keywordScores keys handled as missing", () => {
+		const result = rankFiles(
+			{ "a.ts": 1.0 },
+			{ "a.ts": 0.5, "missing.ts": 1.0 },
+			{ keyword: 0.5, recency: 0.3 },
+			5000,
+			{
+				"a.ts": [{ type: "function", name: "foo", line: 1 }],
+				"missing.ts": [{ type: "function", name: "bar", line: 1 }],
+			},
+		);
+		const missing = result.files.find((f) => f.path === "missing.ts")!;
+		assert.strictEqual(missing.score, 0.3);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 9: Entry Point Verification
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("entry point (index.ts)", () => {
+	it("module can be imported without errors", async () => {
+		// Dynamic import to verify the module loads
+		const mod = await import("../.pi/extensions/ranked-map/index.ts");
+		assert.ok(mod !== undefined);
+	});
+
+	it("default export is a function", async () => {
+		const mod = await import("../.pi/extensions/ranked-map/index.ts");
+		assert.strictEqual(typeof mod.default, "function");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 10: Integration (real ctags, rg, git — skip if missing)
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("integration: real tools", () => {
@@ -1605,7 +1598,6 @@ describe("integration: real tools", () => {
 		"real git log returns file paths with dates",
 		{ skip: !hasGit ? "git not installed" : false },
 		() => {
-			// Run from repo root — will always have git history
 			const stdout = execSync(
 				'git log --since="365 days ago" --pretty=format:"%ad" --date=iso --name-only',
 				{
@@ -1614,7 +1606,6 @@ describe("integration: real tools", () => {
 					timeout: 10_000,
 				},
 			);
-			// Should have some output in a real repo
 			assert.ok(stdout.length > 0, "git log should produce output");
 		},
 	);
@@ -1636,7 +1627,6 @@ describe("integration: real tools", () => {
 			const index = buildSymbolIndex(stdout, "test");
 			const allFiles = Object.keys(index.symbols);
 
-			// Build keyword scores (simulate rg results)
 			const fileMatches: Record<string, string[]> = {};
 			const queryTerms = ["login", "handler"];
 			for (const f of allFiles) {
@@ -1648,7 +1638,6 @@ describe("integration: real tools", () => {
 			}
 			const kwScores = computeKeywordScores(fileMatches, queryTerms);
 
-			// Build recency scores (all touched today for fixture)
 			const recScores: Record<string, string> = {};
 			for (const f of allFiles) {
 				recScores[f] = new Date().toISOString();
@@ -1670,46 +1659,4 @@ describe("integration: real tools", () => {
 			assert.ok(output.files.length > 0);
 		},
 	);
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// Phase 8: Edge Cases & Error Paths
-// ═══════════════════════════════════════════════════════════════════════
-
-describe("edge cases", () => {
-	it("empty codebase → empty ranking, no crash", () => {
-		const result = rankFiles({}, {}, { keyword: 0.5, recency: 0.3 }, 2048, {});
-		assert.strictEqual(result.files.length, 0);
-		assert.strictEqual(result.totalTokens, 0);
-	});
-
-	it("token estimate: ~4 chars per token heuristic", () => {
-		const text = "hello world this is a test";
-		const tokens = estimateTokens(text);
-		assert.strictEqual(tokens, Math.ceil(text.length / 4));
-	});
-
-	it("empty string token estimate = 0", () => {
-		assert.strictEqual(estimateTokens(""), 0);
-	});
-
-	it("estimateTokens handles short strings", () => {
-		assert.strictEqual(estimateTokens("ab"), 1); // ceil(2/4) = 1
-	});
-
-	it("null/undefined keywordScores keys handled as missing", () => {
-		// file "missing" in recency but not in keyword → score uses 0 for keyword
-		const result = rankFiles(
-			{ "a.ts": 1.0 },
-			{ "a.ts": 0.5, "missing.ts": 1.0 },
-			{ keyword: 0.5, recency: 0.3 },
-			5000,
-			{
-				"a.ts": [{ type: "function", name: "foo", line: 1 }],
-				"missing.ts": [{ type: "function", name: "bar", line: 1 }],
-			},
-		);
-		const missing = result.files.find((f) => f.path === "missing.ts")!;
-		assert.strictEqual(missing.score, 0.3); // 0*0.5 + 1.0*0.3 = 0.3
-	});
 });
