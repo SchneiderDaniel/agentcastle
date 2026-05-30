@@ -43,6 +43,7 @@ export function createAnimationController(options: {
 			timer = null;
 		}
 		frameIndex = 0;
+		generation++; // invalidate pending timer callbacks queued before clearInterval
 	}
 
 	function syncStatus(ctx: Pick<ExtensionContext, "ui">) {
@@ -72,7 +73,13 @@ export function createAnimationController(options: {
 		const myGen = ++generation;
 		const renderFrame = () => {
 			if (myGen !== generation) return; // stale ctx after session replacement
-			setFrame(anim.frames[frameIndex % anim.frames.length]!);
+			try {
+				setFrame(anim.frames[frameIndex % anim.frames.length]!);
+			} catch {
+				// ctx is stale — stop animation gracefully
+				stopAnimation();
+				return;
+			}
 			frameIndex++;
 		};
 
