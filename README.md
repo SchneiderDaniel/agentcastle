@@ -289,7 +289,30 @@ The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming
 
 > Run with `scripts/benchmark-tools.sh` (2 runs per config). Results saved to `scripts/benchmark-results/`.
 
-#### 5.8 Skills
+#### 5.8 Published Pi Packages
+
+Selected extensions from AgentCastle are published as individual npm packages under the `@agentcastle` scope. They appear on the [pi.dev package gallery](https://pi.dev/packages) and install via `pi install`.
+
+| Package | What it is | Install |
+|---------|-----------|---------|
+| `@agentcastle/ask-user` | Interactive ask_user tool with typed dialogs, Q&A log, and `/qna` command | `pi install npm:@agentcastle/ask-user` |
+
+**Why publish separately?** Not all extensions belong on pi.dev — some are AgentCastle-specific (supervisor, session-logger, context-info). Published packages are self-contained, useful in any Pi setup.
+
+**Package structure:** Each published extension has its own `package.json` with `keywords: ["pi-package"]` and a `pi` manifest pointing to its entry file. The README.md renders as the pi.dev detail page. The `package.json` `description` feeds the gallery card.
+
+**Load only what you need:** Users can filter via `settings.json` object form:
+```json
+{
+  "packages": [{
+    "source": "npm:@agentcastle/ask-user",
+    "extensions": ["./index.ts"]
+  }]
+}
+```
+Or after install, run `pi config` to enable/disable individual extensions.
+
+#### 5.9 Skills
 
 Currently **5 skills installed**:
 
