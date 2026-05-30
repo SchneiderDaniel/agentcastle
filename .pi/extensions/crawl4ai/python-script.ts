@@ -14,17 +14,18 @@ import signal
 signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(130))
 
 async def main():
-    config = json.loads(sys.argv[1])
-    url = config["url"]
-    max_pages = min(max(1, config.get("maxPages", 1)), 10)
-
     try:
+        with open(sys.argv[1]) as f:
+            config = json.load(f)
         from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
-    except ImportError as e:
+    except (ImportError, json.JSONDecodeError, OSError, FileNotFoundError) as e:
         print("CRAWL4AI_OK")
-        print(json.dumps({"ok": False, "error": f"crawl4ai not installed: {e}"}))
+        print(json.dumps({"ok": False, "error": f"config/import error: {e}"}))
         print("CRAWL4AI_DONE")
         return
+
+    url = config["url"]
+    max_pages = min(max(1, config.get("maxPages", 1)), 10)
 
     results = []
     visited = set()
