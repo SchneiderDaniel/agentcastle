@@ -8,24 +8,16 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveSessionLevel, resetSessionLevel } from "../session.ts";
+import { resolveSessionLevel, resetSessionLevel, type SessionEntry } from "../session.ts";
 import type { Level } from "../types.ts";
 import type { CavemanConfig } from "../types.ts";
-import type { CustomEntry } from "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function entry(level: Level): CustomEntry<{ level: Level }> {
-	return {
-		id: "1",
-		parentId: null,
-		timestamp: new Date().toISOString(),
-		type: "custom",
-		customType: "caveman-level",
-		data: { level },
-	};
+function entry(level: Level): SessionEntry {
+	return { type: "custom", customType: "caveman-level", data: { level } };
 }
 
 function config(overrides: Partial<CavemanConfig> = {}): CavemanConfig {
@@ -81,14 +73,7 @@ describe("resolveSessionLevel (pure function)", () => {
 
 	it("session entries contain non-caveman entries only → treats as new session, applies defaultLevel", () => {
 		const result = resolveSessionLevel(config({ defaultLevel: "full" }), [
-			{
-				id: "1",
-				parentId: null,
-				timestamp: new Date().toISOString(),
-				type: "custom",
-				customType: "other-type",
-				data: { foo: "bar" },
-			} as CustomEntry,
+			{ type: "custom", customType: "other-type", data: { foo: "bar" } } as SessionEntry,
 		]);
 		assert.equal(result.level, "full");
 		assert.equal(result.shouldAppendEntry, true);
