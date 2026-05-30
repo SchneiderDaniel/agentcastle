@@ -10,6 +10,27 @@
 
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { dirname } from "node:path";
+
+// ── Shared extension state writer (file-based to avoid dual-module hazard) ──
+
+function writeExtState(value: boolean): void {
+	try {
+		const statePath = ".pi/state/session-extensions.json";
+		fs.mkdirSync(dirname(statePath), { recursive: true });
+		let data: Record<string, boolean | null> = {};
+		try {
+			const raw = fs.readFileSync(statePath, "utf-8");
+			data = JSON.parse(raw);
+		} catch {
+			// Fresh file
+		}
+		data.advice = value;
+		fs.writeFileSync(statePath, JSON.stringify(data, null, 2) + "\n", "utf-8");
+	} catch {
+		// Best-effort, don't crash extension
+	}
+}
 import { execSync } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { parseJsonlFile, analyzeSession, renderAdviceToMarkdown } from "./advisor.ts";
@@ -66,24 +87,12 @@ const DEFAULT_FIX: FixSuggestion = {
 	effort: "Medium",
 };
 
-// Module-level state for external access to session-advice toggle state.
-// Updated in sync with the closure variable inside the default export.
-let _sessionAdviceEnabled = true;
-
-/**
- * Get the current on/off state of session-advice.
- * Returns `true` if enabled, `false` if disabled.
- * Always returns a boolean since this module is always loaded when called.
- */
-export function getSessionAdviceState(): boolean | null {
-	return _sessionAdviceEnabled;
-}
-
 export default function (pi: ExtensionAPI): void {
 	let enabled = true;
+	writeExtState(true);
 
 	function syncAdviceState() {
-		_sessionAdviceEnabled = enabled;
+		writeExtState(enabled);
 	}
 
 	pi.registerCommand("session-advice", {
