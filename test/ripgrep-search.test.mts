@@ -1,9 +1,8 @@
 /**
  * Tests for Ripgrep Search (ripgrep literal text search)
  *
- * Pure function tests for validateQuery(), buildRgArgs(), parseVimgrepOutput(),
- * buildGrepArgs(), parseGrepOutput(), loadSearchConfig(), resolveBackend().
- * Local copies match source at .pi/extensions/ripgrep-search.ts exactly.
+ * Pure function tests import from .pi/extensions/ripgrep-search/ modules
+ * instead of maintaining inline copies (avoids divergence risk).
  *
  * Run with:
  *   node --experimental-strip-types --test test/ripgrep-search.test.mts
@@ -20,306 +19,23 @@ import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Types (match source at .pi/extensions/ripgrep-search.ts)
+// Imports from extension modules (replaces inline copies)
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Single parsed vimgrep result entry. */
-interface RgMatch {
-	file: string;
-	line: number;
-	column: number;
-	text: string;
-}
-
-/** Shaped output for tool result. */
-interface RgResult {
-	total_returned: number;
-	results: RgMatch[];
-	truncated?: boolean;
-}
-
-interface SearchConfig {
-	searchBackend: "auto" | "ripgrep" | "grep";
-	maxLineLength: number;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Pure functions under test (match source exactly)
-// ═══════════════════════════════════════════════════════════════════════
-
-const DEFAULT_CONFIG: SearchConfig = {
-	searchBackend: "auto",
-	maxLineLength: 200,
-};
-
-const MAX_LINE_LENGTH_MAX = 2000;
-const MAX_LINE_LENGTH_DEFAULT = 200;
-
-/**
- * Load search configuration from .pi/settings.json.
- */
-function loadSearchConfig(cwd: string): SearchConfig {
-	try {
-		const settingsPath = join(cwd, ".pi", "settings.json");
-		const raw = readFileSync(settingsPath, "utf-8");
-		const settings = JSON.parse(raw);
-		const search = settings?.search;
-
-		if (!search) return { ...DEFAULT_CONFIG };
-
-		let searchBackend: SearchConfig["searchBackend"] = DEFAULT_CONFIG.searchBackend;
-		if (
-			search.searchBackend === "ripgrep" ||
-			search.searchBackend === "grep" ||
-			search.searchBackend === "auto"
-		) {
-			searchBackend = search.searchBackend;
-		}
-
-		let maxLineLength = MAX_LINE_LENGTH_DEFAULT;
-		if (
-			typeof search.maxLineLength === "number" &&
-			Number.isInteger(search.maxLineLength) &&
-			search.maxLineLength > 0
-		) {
-			maxLineLength = Math.min(search.maxLineLength, MAX_LINE_LENGTH_MAX);
-		}
-
-		return { searchBackend, maxLineLength };
-	} catch {
-		return { ...DEFAULT_CONFIG };
-	}
-}
-
-/**
- * Resolve the active search backend based on user config and rg availability.
- */
-function resolveBackend(
-	config: SearchConfig,
-	rgAvailable: boolean,
-): { backend: "ripgrep" | "grep"; error?: string } {
-	if (config.searchBackend === "ripgrep") {
-		if (!rgAvailable) {
-			return {
-				backend: "ripgrep",
-				error:
-					"ripgrep not found on PATH. Install rg or set searchBackend to 'auto' or 'grep' in .pi/settings.json.",
-			};
-		}
-		return { backend: "ripgrep" };
-	}
-	if (config.searchBackend === "grep") {
-		return { backend: "grep" };
-	}
-	// auto
-	return { backend: rgAvailable ? "ripgrep" : "grep" };
-}
-
-/**
- * Validate that a query is suitable for ripgrep (literal/regex text search)
- * rather than structural/syntax-aware search.
- */
-function validateQuery(query: string): string | null {
-	if (!query || typeof query !== "string") {
-		return "Query must be a non-empty string";
-	}
-
-	const trimmed = query.trim();
-	if (!trimmed) {
-		return "Query must be a non-empty string";
-	}
-
-	// Reject patterns that look like structural/symbol searches
-	if (trimmed.startsWith("class ")) {
-		return `Query "${trimmed}" looks like a class definition search. Use ranked_map (ctags) to find class definitions, not ripgrep_search.`;
-	}
-
-	if (trimmed.startsWith("def ")) {
-		return `Query "${trimmed}" looks like a function definition search. Use ranked_map (ctags) to find function definitions, not ripgrep_search.`;
-	}
-
-	if (trimmed.startsWith("function ")) {
-		return `Query "${trimmed}" looks like a function definition search. Use ranked_map (ctags) to find function definitions, not ripgrep_search.`;
-	}
-
-	// Reject patterns with structural AST syntax ($ or {)
-	if (trimmed.includes("$") || trimmed.includes("{")) {
-		return `Query "${trimmed}" contains structural syntax ($ or {). Use structural_search (ast-grep) for structural code pattern matching, not ripgrep_search.`;
-	}
-
-	return null;
-}
-
-/**
- * Build ripgrep command arguments for a text search.
- */
-function buildRgArgs(
-	query: string,
-	directory: string,
-	maxCount: number,
-	maxLineLength: number = 200,
-): { command: string; args: string[] } {
-	const args = [
-		"--vimgrep",
-		`--max-columns=${maxLineLength}`,
-		`--max-count=${maxCount}`,
-		"--no-heading",
-		"-j1",
-		query,
-		directory,
-	];
-	return { command: "rg", args };
-}
-
-/**
- * Build grep command arguments as fallback when ripgrep unavailable.
- */
-function buildGrepArgs(
-	query: string,
-	directory: string,
-	maxCount: number,
-): { command: string; args: string[] } {
-	const excludedDirs = [
-		"--exclude-dir=.git",
-		"--exclude-dir=node_modules",
-		"--exclude-dir=venv",
-		"--exclude-dir=__pycache__",
-		"--exclude-dir=.mypy_cache",
-		"--exclude-dir=.pytest_cache",
-		"--exclude-dir=dist",
-		"--exclude-dir=build",
-	];
-	const args = [
-		"-rnH",
-		"-m",
-		`${maxCount}`,
-		"--color=never",
-		...excludedDirs,
-		"-e",
-		query,
-		directory,
-	];
-	return { command: "grep", args };
-}
-
-/**
- * Parse raw ripgrep --vimgrep output into RgResult.
- */
-function parseVimgrepOutput(
-	raw: string | null | undefined,
-	maxResults: number = Infinity,
-): RgResult {
-	if (!raw) {
-		return { total_returned: 0, results: [] };
-	}
-
-	const lines = raw.split("\n");
-	const results: RgMatch[] = [];
-	let totalMatches = 0;
-
-	const vimgrepRegex = /^(.+?):(\d+):(\d+):(.*)$/;
-
-	for (const line of lines) {
-		if (!line.trim()) continue;
-
-		const match = line.match(vimgrepRegex);
-		if (!match) continue;
-
-		const file = match[1]!;
-		const lineNum = parseInt(match[2]!, 10);
-		const column = parseInt(match[3]!, 10);
-		const text = match[4]!;
-
-		if (isNaN(lineNum) || isNaN(column)) continue;
-
-		totalMatches++;
-
-		if (results.length < maxResults) {
-			results.push({
-				file,
-				line: lineNum,
-				column,
-				text,
-			});
-		}
-	}
-
-	return {
-		total_returned: totalMatches,
-		results,
-		truncated: totalMatches > maxResults,
-	};
-}
-
-/**
- * Parse generic grep -rnH output into RgResult.
- */
-function parseGrepOutput(raw: string | null | undefined, maxResults: number = Infinity): RgResult {
-	if (!raw) {
-		return { total_returned: 0, results: [] };
-	}
-
-	const lines = raw.split("\n");
-	const results: RgMatch[] = [];
-	let totalMatches = 0;
-
-	const grepRegex = /^(.+?):(\d+):(.*)$/;
-
-	for (const line of lines) {
-		if (!line.trim()) continue;
-
-		const match = line.match(grepRegex);
-		if (!match) continue;
-
-		const file = match[1]!;
-		const lineNum = parseInt(match[2]!, 10);
-		const text = match[3]!;
-
-		if (isNaN(lineNum)) continue;
-
-		totalMatches++;
-
-		if (results.length < maxResults) {
-			results.push({
-				file,
-				line: lineNum,
-				column: 1,
-				text,
-			});
-		}
-	}
-
-	return {
-		total_returned: totalMatches,
-		results,
-		truncated: totalMatches > maxResults,
-	};
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Temp directory tracking (match source after fix)
-// ═══════════════════════════════════════════════════════════════════════
-
-/** Tracked temp directories for session-scoped cleanup. */
-const trackedTempDirs = new Set<string>();
-
-/** Register a temp directory for deferred cleanup. */
-function registerTempDir(dir: string): void {
-	trackedTempDirs.add(dir);
-}
-
-/**
- * Clean up all tracked temp directories.
- * Accepts rm function to allow mock injection in tests.
- */
-async function cleanupTrackedTempDirs(
-	rm: (path: string, opts?: { recursive?: boolean; force?: boolean }) => Promise<void>,
-): Promise<void> {
-	for (const dir of trackedTempDirs) {
-		await rm(dir, { recursive: true, force: true });
-	}
-	trackedTempDirs.clear();
-}
+import type { RgMatch, RgResult, SearchConfig } from "../.pi/extensions/ripgrep-search/types.ts";
+import {
+	loadSearchConfig,
+	resolveBackend,
+	ripgrepAvailable,
+} from "../.pi/extensions/ripgrep-search/config.ts";
+import { buildRgArgs, buildGrepArgs } from "../.pi/extensions/ripgrep-search/args.ts";
+import { parseVimgrepOutput, parseGrepOutput } from "../.pi/extensions/ripgrep-search/parse.ts";
+import { validateQuery } from "../.pi/extensions/ripgrep-search/validate.ts";
+import {
+	registerTempDir,
+	cleanupTrackedTempDirs,
+	trackedTempDirs,
+} from "../.pi/extensions/ripgrep-search/temp.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Fixtures
@@ -1018,7 +734,7 @@ describe("resolveBackend", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Temp directory tracking lifecycle (Phase 1 — unit, Phase 2 — mock-based)
+// Temp directory tracking lifecycle (imported from temp.ts)
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("temp dir tracking", () => {
