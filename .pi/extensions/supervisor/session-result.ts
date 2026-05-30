@@ -144,17 +144,22 @@ export function buildAgentRunResult(
 		state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined;
 	const summaryLine = extractSummaryLine(textOutput, success, agentName);
 
-	// Token fallback: scan messages for assistant usage data
+	// Token fallback: scan messages for assistant usage data.
+	// Per-message usage is CUMULATIVE (tokens consumed for entire conversation
+	// up to that point, per @earendil-works/pi-ai Usage type). Last assistant
+	// message gives total session cost. Summing cumulative values across all
+	// messages produces O(N²/2) overcount — root cause of 28M token report
+	// for moderate refactor session (GH #314).
 	let tokenCount = state.tokenCount;
 	if (Array.isArray(messages) && messages.length > 0) {
-		const scannedSum = messages
-			.filter((m) => m && m.role === "assistant" && m.usage)
-			.reduce((sum, m) => {
-				const u = m.usage;
-				const total = u.totalTokens ?? (u.input ?? 0) + (u.output ?? 0);
-				return sum + (typeof total === "number" && !Number.isNaN(total) ? total : 0);
-			}, 0);
-		tokenCount = Math.max(state.tokenCount, scannedSum);
+		const lastAsstMsg = [...messages].reverse().find((m) => m && m.role === "assistant" && m.usage);
+		if (lastAsstMsg?.usage) {
+			const u = lastAsstMsg.usage;
+			const lastTotal = u.totalTokens ?? (u.input ?? 0) + (u.output ?? 0);
+			if (typeof lastTotal === "number" && !Number.isNaN(lastTotal) && lastTotal > 0) {
+				tokenCount = Math.max(state.tokenCount, lastTotal);
+			}
+		}
 	}
 
 	return {
