@@ -4,7 +4,7 @@
 // No side effects, no subprocess imports — fully testable.
 
 import type { AgentRunState, AgentPhase } from "./types";
-import { formatTokens, extractTextFromContent } from "./formatting";
+import { formatTokens, extractTextFromContent } from "./formatting.ts";
 
 // ─── Constants ──────────────────────────────────────────────────────
 

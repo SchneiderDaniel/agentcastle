@@ -3,8 +3,8 @@
 // Extracted from agent-session-runner.ts to keep files modular.
 
 import type { AgentRunState, AgentPhase } from "./types";
-import { pushLog } from "./agent-stream";
-import { extractTextFromContent } from "./formatting";
+import { pushLog } from "./agent-stream.ts";
+import { extractTextFromContent } from "./formatting.ts";
 
 // ─── Event → State Mapping ─────────────────────────────────────────
 
