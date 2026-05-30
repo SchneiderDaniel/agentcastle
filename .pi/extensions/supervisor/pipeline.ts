@@ -379,6 +379,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
 						result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
 						usedRetry = true;
+						// Validate retry result — same check as initial attempt (Issue 299)
+						validateAgentResult(result);
 					}
 
 					const statusLabel = !result.success
@@ -419,7 +421,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 
 					// ── Phase 2: Post issue comments deterministically ──
 					// Pipeline posts the comment instead of the agent running gh CLI.
-					if (result.success && !usedRetry) {
+					// Retry-success output is valid and should be posted (Issue 299).
+					if (result.success) {
 						const agentOutput = result.textOutput || result.output || "";
 
 						// Phase 2: Post COMMENT_BODY for architect/test-designer/researcher
