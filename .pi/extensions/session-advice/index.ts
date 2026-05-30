@@ -210,33 +210,7 @@ export default function (pi: ExtensionAPI): void {
 		const sessionsDir = path.resolve(cwd, ".pi", "sessions");
 		if (!fs.existsSync(sessionsDir)) return;
 
-		// Find all .jsonl files that lack a matching .advice.md
-		let files: string[] = [];
-		try {
-			files = fs
-				.readdirSync(sessionsDir)
-				.filter((f) => f.endsWith(".jsonl") && !f.includes("latest"));
-		} catch {
-			return;
-		}
-
-		// Skip current in-progress session — file may be incomplete
-		const currentSessionFile = sm.getSessionFile();
-
-		for (const file of files) {
-			const jsonlPath = path.join(sessionsDir, file);
-
-			// Skip if this is the current in-progress session
-			if (currentSessionFile && jsonlPath === currentSessionFile) continue;
-
-			const prefix = file.replace(/\.jsonl$/, "");
-			const advicePath = path.join(sessionsDir, `${prefix}.advice.md`);
-
-			if (fs.existsSync(advicePath)) continue;
-
-			// Defer to next tick — don't block session start with sync I/O
-			Promise.resolve().then(() => writeAdvice(jsonlPath, advicePath, sessionsDir));
-		}
+		backfillMissingAdvice(sessionsDir, sm.getSessionFile());
 	});
 
 	// ── Generate advice for current closing session ──
@@ -244,16 +218,7 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (!enabled) return;
 
-		const sm = ctx.sessionManager;
-		const sessionFile = sm.getSessionFile();
-		if (!sessionFile) return;
-
-		const sessionDir = path.dirname(sessionFile);
-		const advicePath = sessionFile.replace(/\.jsonl$/, ".advice.md");
-
-		if (fs.existsSync(advicePath)) return;
-
-		writeAdvice(sessionFile, advicePath, sessionDir);
+		handleShutdown(ctx.sessionManager.getSessionFile());
 	});
 
 	// ── before_agent_start: inject past session lessons into system prompt ──
@@ -551,7 +516,12 @@ function short(s: string, n: number): string {
 }
 
 /** Generate .advice.md for a session .jsonl file. */
-function writeAdvice(jsonlPath: string, advicePath: string, symlinkDir: string): void {
+export function writeAdvice(
+	jsonlPath: string,
+	advicePath: string,
+	symlinkDir: string,
+	updateSymlink: boolean = true,
+): void {
 	try {
 		const data = parseJsonlFile(jsonlPath);
 		if (!data) return;
@@ -561,11 +531,62 @@ function writeAdvice(jsonlPath: string, advicePath: string, symlinkDir: string):
 
 		fs.writeFileSync(advicePath, md, "utf-8");
 
-		// Update latest symlink atomically
-		updateLatestAdviceSymlink(symlinkDir, advicePath);
+		if (updateSymlink) {
+			// Update latest symlink atomically
+			updateLatestAdviceSymlink(symlinkDir, advicePath);
+		}
 	} catch (err) {
 		console.error(`[session-advice] Failed for ${jsonlPath}: ${(err as Error).message}`);
 	}
+}
+
+/**
+ * Backfill .advice.md for past session .jsonl files that lack one.
+ * Does NOT update latest.advice.md — that is reserved for session_shutdown.
+ * Skips the current in-progress session (file may be incomplete).
+ */
+export function backfillMissingAdvice(
+	sessionsDir: string,
+	currentSessionFile?: string | null,
+): void {
+	let files: string[] = [];
+	try {
+		files = fs
+			.readdirSync(sessionsDir)
+			.filter((f) => f.endsWith(".jsonl") && !f.includes("latest"));
+	} catch {
+		return;
+	}
+
+	for (const file of files) {
+		const jsonlPath = path.join(sessionsDir, file);
+
+		// Skip if this is the current in-progress session
+		if (currentSessionFile && jsonlPath === currentSessionFile) continue;
+
+		const prefix = file.replace(/\.jsonl$/, "");
+		const advicePath = path.join(sessionsDir, `${prefix}.advice.md`);
+
+		if (fs.existsSync(advicePath)) continue;
+
+		writeAdvice(jsonlPath, advicePath, sessionsDir, false);
+	}
+}
+
+/**
+ * Handle session shutdown: write .advice.md for the closing session
+ * and update latest.advice.md symlink.
+ * No-op if sessionFile is null/undefined or .advice.md already exists.
+ */
+export function handleShutdown(sessionFile: string | null | undefined): void {
+	if (!sessionFile) return;
+
+	const sessionDir = path.dirname(sessionFile);
+	const advicePath = sessionFile.replace(/\.jsonl$/, ".advice.md");
+
+	if (fs.existsSync(advicePath)) return;
+
+	writeAdvice(sessionFile, advicePath, sessionDir);
 }
 
 /**

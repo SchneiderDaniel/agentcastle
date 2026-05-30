@@ -10,7 +10,12 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { generateAdviceReport } from "./index.ts";
+import {
+	generateAdviceReport,
+	writeAdvice,
+	backfillMissingAdvice,
+	handleShutdown,
+} from "./index.ts";
 
 // ── Helpers ──
 
@@ -478,5 +483,285 @@ describe("Phase 3: Recency-weighted priority calculation", () => {
 		assert.ok(report.includes("3"), "should show 3 findings for tool-mismatch");
 		// No crash, report generated
 		assert.ok(report, "report generated successfully");
+	});
+});
+
+// ── Phase 4: writeAdvice updateSymlink parameter — unit tests ──
+
+describe("Phase 4: writeAdvice updateSymlink parameter", () => {
+	const tmpDirs4: string[] = [];
+
+	after(() => {
+		for (const d of tmpDirs4) {
+			try {
+				fs.rmSync(d, { recursive: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	function makeDir(): string {
+		const dir = fs.mkdtempSync("/tmp/session-advice-test-");
+		tmpDirs4.push(dir);
+		return dir;
+	}
+
+	it("updateSymlink=false, no prior symlink → symlink does NOT exist, advice file created", () => {
+		const dir = makeDir();
+		writeJsonl(dir, "session.jsonl", "uuid-test", makeSessionBody());
+		const advicePath = path.join(dir, "session.advice.md");
+		const symlinkPath = path.join(dir, "latest.advice.md");
+
+		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, false);
+
+		assert.ok(fs.existsSync(advicePath), "advice file should be created");
+		assert.ok(!fs.existsSync(symlinkPath), "symlink should NOT be created");
+	});
+
+	it("updateSymlink=false and existing symlink → symlink unchanged", () => {
+		const dir = makeDir();
+		// Create prior advice + symlink
+		fs.writeFileSync(path.join(dir, "prior.advice.md"), "# Prior", "utf-8");
+		fs.symlinkSync("prior.advice.md", path.join(dir, "latest.advice.md"));
+
+		writeJsonl(dir, "session.jsonl", "uuid-test", makeSessionBody());
+		const advicePath = path.join(dir, "session.advice.md");
+
+		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, false);
+
+		const symlinkTarget = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+		assert.equal(symlinkTarget, "prior.advice.md", "symlink should still point to prior.advice.md");
+	});
+
+	it("updateSymlink=true (default, no 4th arg) → symlink created", () => {
+		const dir = makeDir();
+		writeJsonl(dir, "session.jsonl", "uuid-test", makeSessionBody());
+		const advicePath = path.join(dir, "session.advice.md");
+
+		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir);
+
+		const symlinkTarget = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+		assert.equal(symlinkTarget, "session.advice.md", "symlink should point to session.advice.md");
+	});
+
+	it("updateSymlink=true with existing symlink → symlink updated", () => {
+		const dir = makeDir();
+		// Create prior advice + symlink
+		fs.writeFileSync(path.join(dir, "prior.advice.md"), "# Prior", "utf-8");
+		fs.symlinkSync("prior.advice.md", path.join(dir, "latest.advice.md"));
+
+		writeJsonl(dir, "session.jsonl", "uuid-test", makeSessionBody());
+		const advicePath = path.join(dir, "session.advice.md");
+
+		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, true);
+
+		const symlinkTarget = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+		assert.equal(
+			symlinkTarget,
+			"session.advice.md",
+			"symlink should point to new session.advice.md",
+		);
+	});
+
+	it("updateSymlink=false on invalid .jsonl → no advice created, symlink unchanged, no throw", () => {
+		const dir = makeDir();
+		const jsonlPath = path.join(dir, "corrupt.jsonl");
+		fs.writeFileSync(jsonlPath, "NOT VALID JSON\n", "utf-8");
+		const advicePath = path.join(dir, "corrupt.advice.md");
+		const symlinkPath = path.join(dir, "latest.advice.md");
+
+		// Should not throw
+		writeAdvice(jsonlPath, advicePath, dir, false);
+
+		assert.ok(!fs.existsSync(advicePath), "advice file should NOT be created for corrupt jsonl");
+		assert.ok(!fs.existsSync(symlinkPath), "symlink should NOT exist");
+	});
+});
+
+// ── Phase 5: Backfill preserves symlink — integration tests ──
+
+describe("Phase 5: Backfill preserves symlink", () => {
+	const tmpDirs5: string[] = [];
+
+	after(() => {
+		for (const d of tmpDirs5) {
+			try {
+				fs.rmSync(d, { recursive: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	function makeDir(): string {
+		const dir = fs.mkdtempSync("/tmp/session-advice-test-");
+		tmpDirs5.push(dir);
+		return dir;
+	}
+
+	it("3 past sessions + existing symlink → backfill creates .advice.md files, symlink unchanged", () => {
+		const dir = makeDir();
+		// Existing session with advice + symlink
+		writeJsonl(dir, "existing.jsonl", "uuid-existing", makeSessionBody());
+		const existingAdvicePath = path.join(dir, "existing.advice.md");
+		writeAdvice(path.join(dir, "existing.jsonl"), existingAdvicePath, dir, true);
+		const symlinkTargetBefore = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+
+		// 3 past sessions without .advice.md
+		writeJsonl(dir, "session-a.jsonl", "uuid-a", makeSessionBody());
+		writeJsonl(dir, "session-b.jsonl", "uuid-b", makeSessionBody());
+		writeJsonl(dir, "session-c.jsonl", "uuid-c", makeSessionBody());
+
+		backfillMissingAdvice(dir);
+
+		// All 3 .advice.md files created
+		assert.ok(fs.existsSync(path.join(dir, "session-a.advice.md")));
+		assert.ok(fs.existsSync(path.join(dir, "session-b.advice.md")));
+		assert.ok(fs.existsSync(path.join(dir, "session-c.advice.md")));
+		// Symlink unchanged
+		const symlinkTargetAfter = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+		assert.equal(symlinkTargetAfter, symlinkTargetBefore, "symlink should be unchanged");
+	});
+
+	it("3 past sessions, no prior symlink → backfill creates .advice.md files, no symlink created", () => {
+		const dir = makeDir();
+		writeJsonl(dir, "session-a.jsonl", "uuid-a", makeSessionBody());
+		writeJsonl(dir, "session-b.jsonl", "uuid-b", makeSessionBody());
+		writeJsonl(dir, "session-c.jsonl", "uuid-c", makeSessionBody());
+
+		backfillMissingAdvice(dir);
+
+		assert.ok(fs.existsSync(path.join(dir, "session-a.advice.md")));
+		assert.ok(fs.existsSync(path.join(dir, "session-b.advice.md")));
+		assert.ok(fs.existsSync(path.join(dir, "session-c.advice.md")));
+		assert.ok(!fs.existsSync(path.join(dir, "latest.advice.md")), "no symlink should exist");
+	});
+
+	it("1 past session has .advice.md, 2 don't → only missing ones backfilled, symlink unchanged", () => {
+		const dir = makeDir();
+		// Session A already has .advice.md
+		writeJsonl(dir, "session-a.jsonl", "uuid-a", makeSessionBody());
+		fs.writeFileSync(path.join(dir, "session-a.advice.md"), "# Existing advice", "utf-8");
+		fs.symlinkSync("session-a.advice.md", path.join(dir, "latest.advice.md"));
+
+		// Sessions B, C without .advice.md
+		writeJsonl(dir, "session-b.jsonl", "uuid-b", makeSessionBody());
+		writeJsonl(dir, "session-c.jsonl", "uuid-c", makeSessionBody());
+
+		backfillMissingAdvice(dir);
+
+		// Session A advice unchanged
+		const aContent = fs.readFileSync(path.join(dir, "session-a.advice.md"), "utf-8");
+		assert.equal(aContent, "# Existing advice", "existing advice should not be overwritten");
+		// Sessions B, C advice created
+		assert.ok(fs.existsSync(path.join(dir, "session-b.advice.md")));
+		assert.ok(fs.existsSync(path.join(dir, "session-c.advice.md")));
+		// Symlink unchanged
+		const symlinkTarget = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+		assert.equal(symlinkTarget, "session-a.advice.md", "symlink should still point to session-a");
+	});
+
+	it("current in-progress session → skipped during backfill", () => {
+		const dir = makeDir();
+		// Current session file (in progress)
+		const currentFile = path.join(dir, "session-current.jsonl");
+		writeJsonl(dir, "session-current.jsonl", "uuid-current", makeSessionBody());
+		// Past session without advice
+		writeJsonl(dir, "session-past.jsonl", "uuid-past", makeSessionBody());
+
+		backfillMissingAdvice(dir, currentFile);
+
+		// Past session gets advice
+		assert.ok(fs.existsSync(path.join(dir, "session-past.advice.md")));
+		// Current session should NOT get advice via backfill
+		assert.ok(
+			!fs.existsSync(path.join(dir, "session-current.advice.md")),
+			"current session should be skipped",
+		);
+	});
+});
+
+// ── Phase 6: Shutdown sets correct symlink — integration tests ──
+
+describe("Phase 6: Shutdown sets correct symlink", () => {
+	const tmpDirs6: string[] = [];
+
+	after(() => {
+		for (const d of tmpDirs6) {
+			try {
+				fs.rmSync(d, { recursive: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	function makeDir(): string {
+		const dir = fs.mkdtempSync("/tmp/session-advice-test-");
+		tmpDirs6.push(dir);
+		return dir;
+	}
+
+	it("shutdown with valid session file → .advice.md created, symlink points to this session", () => {
+		const dir = makeDir();
+		const sessionFile = path.join(dir, "current.jsonl");
+		writeJsonl(dir, "current.jsonl", "uuid-current", makeSessionBody());
+
+		handleShutdown(sessionFile);
+
+		assert.ok(fs.existsSync(path.join(dir, "current.advice.md")), "advice file should be created");
+		assert.ok(fs.existsSync(path.join(dir, "latest.advice.md")), "symlink should exist");
+		const symlinkTarget = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+		assert.equal(symlinkTarget, "current.advice.md", "symlink should point to current session");
+	});
+
+	it("shutdown after backfill → symlink points to shutdown session, not backfilled", () => {
+		const dir = makeDir();
+		// 3 past sessions backfilled
+		writeJsonl(dir, "session-a.jsonl", "uuid-a", makeSessionBody());
+		writeJsonl(dir, "session-b.jsonl", "uuid-b", makeSessionBody());
+		writeJsonl(dir, "session-c.jsonl", "uuid-c", makeSessionBody());
+		backfillMissingAdvice(dir);
+
+		// No symlink after backfill
+		assert.ok(!fs.existsSync(path.join(dir, "latest.advice.md")), "no symlink after backfill");
+
+		// Current session shuts down
+		const sessionFile = path.join(dir, "current.jsonl");
+		writeJsonl(dir, "current.jsonl", "uuid-current", makeSessionBody());
+		handleShutdown(sessionFile);
+
+		// Symlink points to current session
+		const symlinkTarget = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+		assert.equal(
+			symlinkTarget,
+			"current.advice.md",
+			"symlink should point to current shutdown session",
+		);
+	});
+
+	it("shutdown when .advice.md already exists → early return, symlink unchanged", () => {
+		const dir = makeDir();
+		const sessionFile = path.join(dir, "current.jsonl");
+		writeJsonl(dir, "current.jsonl", "uuid-current", makeSessionBody());
+		// Pre-create .advice.md (not by writeAdvice)
+		fs.writeFileSync(path.join(dir, "current.advice.md"), "# Manual advice", "utf-8");
+		fs.symlinkSync("current.advice.md", path.join(dir, "latest.advice.md"));
+
+		const symlinkTargetBefore = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+
+		handleShutdown(sessionFile);
+
+		// Symlink unchanged (early return means no symlink update)
+		const symlinkTargetAfter = fs.readlinkSync(path.join(dir, "latest.advice.md"));
+		assert.equal(symlinkTargetAfter, symlinkTargetBefore, "symlink should be unchanged");
+	});
+
+	it("shutdown with null/undefined sessionFile → no-op", () => {
+		// Should not throw
+		handleShutdown(null);
+		handleShutdown(undefined);
+		assert.ok(true, "no-op on null/undefined");
 	});
 });
