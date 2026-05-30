@@ -35,7 +35,7 @@ export function registerCavemanCommand(
 
 			// Open config dialog
 			if (arg === "config") {
-				await openConfig(ctx, configStore, animController);
+				await openConfig(ctx, configStore, syncStatus);
 				return;
 			}
 
