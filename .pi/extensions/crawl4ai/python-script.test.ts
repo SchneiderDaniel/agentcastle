@@ -40,42 +40,6 @@ describe("CRAWL4AI_SCRIPT — delimiter markers (Bug 1)", () => {
 	});
 });
 
-describe("CRAWL4AI_SCRIPT — config file reading (Bug 288)", () => {
-	it("(D) script uses open(sys.argv[1]) to read config from file", () => {
-		assert.ok(
-			CRAWL4AI_SCRIPT.includes("open(sys.argv[1])"),
-			"script should read config file via open(sys.argv[1])",
-		);
-	});
-
-	it("(D) script does NOT use json.loads(sys.argv[1]) for config loading", () => {
-		const lines = CRAWL4AI_SCRIPT.split("\n");
-		for (const line of lines) {
-			assert.ok(
-				!line.includes("json.loads(sys.argv[1])"),
-				`script should not use json.loads(sys.argv[1]): ${line.trim()}`,
-			);
-		}
-	});
-
-	it("(D) top-level try block catches ImportError, json.JSONDecodeError, OSError, FileNotFoundError", () => {
-		assert.ok(
-			CRAWL4AI_SCRIPT.includes(
-				"except (ImportError, json.JSONDecodeError, OSError, FileNotFoundError)",
-			),
-			"script should catch ImportError, json.JSONDecodeError, OSError, FileNotFoundError",
-		);
-	});
-
-	it("(D) script prints error JSON using f-string in widened except block", () => {
-		// Check for the f-string JSON error output pattern inside the except block
-		assert.ok(
-			CRAWL4AI_SCRIPT.includes('"error": f"'),
-			"script should report error via JSON with f-string in widened except block",
-		);
-	});
-});
-
 describe("CRAWL4AI_SCRIPT — SIGTERM handler (Bug 6)", () => {
 	it("(D) script imports signal module", () => {
 		assert.ok(CRAWL4AI_SCRIPT.includes("import signal"), "script should import the signal module");

@@ -3,8 +3,8 @@
 // Extracted from agent-session-runner.ts to keep files modular.
 
 import type { AgentRunState, AgentPhase } from "./types";
-import { pushLog } from "./agent-stream";
-import { extractTextFromContent } from "./formatting";
+import { pushLog } from "./agent-stream.ts";
+import { extractTextFromContent } from "./formatting.ts";
 
 // ─── Event → State Mapping ─────────────────────────────────────────
 
@@ -101,8 +101,8 @@ export function processSessionEvent(
 							const trimmed = t.trim();
 							if (trimmed) pushLog(state, `💭 ${trimmed}`);
 						}
+						state.thinkingPushedThisTurn = true;
 					}
-					state.thinkingPushedThisTurn = true; // Always set — delta handlers already pushed complete lines
 					state.liveThinking = "";
 					state.phase = "idle";
 					return { flush: true, workingChange: true };
@@ -114,8 +114,8 @@ export function processSessionEvent(
 							const trimmed = t.trim();
 							if (trimmed) pushLog(state, trimmed);
 						}
+						state.textPushedThisTurn = true;
 					}
-					state.textPushedThisTurn = true; // Always set — delta handlers already pushed complete lines
 					if (ev.message?.usage) {
 						state.tokenCount =
 							ev.message.usage.totalTokens ||
@@ -151,21 +151,27 @@ export function processSessionEvent(
 							const allText = textParts.join("\n").trim();
 							if (allText) {
 								state.textOutputLines.push(allText);
+								state.textPushedThisTurn = true;
 								for (const t of allText.split("\n")) {
 									if (t.trim()) pushLog(state, t);
 								}
+								state.textPushedThisTurn = true;
 							}
 						}
 						if (!state.thinkingPushedThisTurn && thinkingParts.length > 0) {
 							const allThinking = thinkingParts.join("\n").trim();
 							if (allThinking) {
 								state.thinkingOutputLines.push(allThinking);
+								state.thinkingPushedThisTurn = true;
 								for (const t of allThinking.split("\n")) {
 									if (t.trim()) pushLog(state, `💭 ${t}`);
 								}
+								state.thinkingPushedThisTurn = true;
 							}
 						}
 					}
+					state.liveText = "";
+					state.liveThinking = "";
 					state.phase = "idle";
 					return { flush: true, workingChange: true };
 				}
@@ -190,11 +196,13 @@ export function processSessionEvent(
 							}
 						}
 					}
+					state.thinkingPushedThisTurn = true;
 				}
 				if (!state.textPushedThisTurn) {
 					const text = extractTextFromContent(msg.content);
 					if (text && text.trim()) {
 						state.textOutputLines.push(text.trim());
+						state.textPushedThisTurn = true;
 						for (const t of text.split("\n")) {
 							if (t.trim()) pushLog(state, t);
 						}
