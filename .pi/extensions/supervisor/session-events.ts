@@ -154,6 +154,7 @@ export function processSessionEvent(
 								for (const t of allText.split("\n")) {
 									if (t.trim()) pushLog(state, t);
 								}
+								state.textPushedThisTurn = true;
 							}
 						}
 						if (!state.thinkingPushedThisTurn && thinkingParts.length > 0) {
@@ -163,9 +164,12 @@ export function processSessionEvent(
 								for (const t of allThinking.split("\n")) {
 									if (t.trim()) pushLog(state, `💭 ${t}`);
 								}
+								state.thinkingPushedThisTurn = true;
 							}
 						}
 					}
+					state.liveText = "";
+					state.liveThinking = "";
 					state.phase = "idle";
 					return { flush: true, workingChange: true };
 				}
