@@ -6,6 +6,8 @@
 
 **Kanban-centred Pi agent with token-efficient tools, security guardrails, and efficient workflow enhancements.** Docker + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback.
 
+![AgentCastle TUI — multi-agent Kanban pipeline](agentcastletui.png)
+
 ---
 
 ## Table of Contents
