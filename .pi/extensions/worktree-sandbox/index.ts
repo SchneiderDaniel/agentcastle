@@ -43,11 +43,11 @@ function isPathWithinSandbox(absolutePath: string, sandboxRoot: string): boolean
 	return absolutePath === sandboxRoot || absolutePath.startsWith(sandboxRoot + "/");
 }
 
-function isCdSafe(cdTarget: string, sandboxRoot: string): boolean {
-	if (cdTarget.startsWith("/")) {
-		return isPathWithinSandbox(cdTarget, sandboxRoot);
+function isPathSafe(target: string, sandboxRoot: string): boolean {
+	if (target.startsWith("/")) {
+		return isPathWithinSandbox(target, sandboxRoot);
 	}
-	const resolved = resolvePath(sandboxRoot, cdTarget);
+	const resolved = resolvePath(sandboxRoot, target);
 	return isPathWithinSandbox(resolved, sandboxRoot);
 }
 
@@ -57,10 +57,49 @@ function findUnsafeCd(command: string, sandboxRoot: string): string | null {
 	while ((match = cdRegex.exec(command)) !== null) {
 		const target = match[1]!;
 		if (target === "-") continue;
-		if (!isCdSafe(target, sandboxRoot)) {
+		if (!isPathSafe(target, sandboxRoot)) {
 			return target;
 		}
 	}
+	return null;
+}
+
+/**
+ * Detect bash file writes to absolute paths outside the sandbox.
+ * Catches: echo > /abs/path, cp /src /abs/dst, mv /src /abs/dst, touch /abs/file
+ */
+function findUnsafeWriteInBash(command: string, sandboxRoot: string): string | null {
+	// Shell redirects: > /abs/path or >> /abs/path (with optional fd number like 2>)
+	const redirectRegex = /(?:^|[^a-zA-Z])(?:\d*[>]|[>][>])\s*(\/[^\s"'|;&]+)/g;
+	let match: RegExpExecArray | null;
+	while ((match = redirectRegex.exec(command)) !== null) {
+		const target = match[1]!;
+		if (!isPathSafe(target, sandboxRoot)) {
+			return target;
+		}
+	}
+
+	// cp destination: `cp <src> <dst>` — the last non-flag arg is the destination
+	const cpMatch = command.match(/\bcp\s+.*\s+(\/[^\s"'|;&]+)\s*$/);
+	if (cpMatch && !isPathSafe(cpMatch[1]!, sandboxRoot)) {
+		return cpMatch[1]!;
+	}
+
+	// mv destination: same as cp
+	const mvMatch = command.match(/\bmv\s+.*\s+(\/[^\s"'|;&]+)\s*$/);
+	if (mvMatch && !isPathSafe(mvMatch[1]!, sandboxRoot)) {
+		return mvMatch[1]!;
+	}
+
+	// touch path
+	const touchRegex = /\btouch\s+(\/[^\s"'|;&]+)/g;
+	while ((match = touchRegex.exec(command)) !== null) {
+		const target = match[1]!;
+		if (!isPathSafe(target, sandboxRoot)) {
+			return target;
+		}
+	}
+
 	return null;
 }
 
@@ -159,14 +198,30 @@ export default function (pi: ExtensionAPI) {
 			const originalCommand = event.input.command as string;
 			if (!originalCommand) return undefined;
 
-			const unsafeTarget = findUnsafeCd(originalCommand, sandboxRoot);
-			if (unsafeTarget) {
+			// Block cd commands that escape worktree
+			const unsafeCd = findUnsafeCd(originalCommand, sandboxRoot);
+			if (unsafeCd) {
 				if (ctx.hasUI) {
-					ctx.ui.notify(`[sandbox] Blocked cd to outside worktree: ${unsafeTarget}`, "warning");
+					ctx.ui.notify(`[sandbox] Blocked cd to outside worktree: ${unsafeCd}`, "warning");
 				}
 				return {
 					block: true,
-					reason: `Command tries to cd to "${unsafeTarget}" which is outside the worktree. Working directory cannot escape the worktree (${sandboxRoot}).`,
+					reason: `Command tries to cd to "${unsafeCd}" which is outside the worktree. Working directory cannot escape the worktree (${sandboxRoot}).`,
+				};
+			}
+
+			// Block file writes via bash to absolute paths outside worktree
+			const unsafeWrite = findUnsafeWriteInBash(originalCommand, sandboxRoot);
+			if (unsafeWrite) {
+				if (ctx.hasUI) {
+					ctx.ui.notify(
+						`[sandbox] Blocked bash write to outside worktree: ${unsafeWrite}`,
+						"warning",
+					);
+				}
+				return {
+					block: true,
+					reason: `Command writes to "${unsafeWrite}" which is outside the worktree. All file writes via bash must target paths within the worktree (${sandboxRoot}).`,
 				};
 			}
 
