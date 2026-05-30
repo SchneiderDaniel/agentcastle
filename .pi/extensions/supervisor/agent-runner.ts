@@ -17,12 +17,11 @@ import {
 	filterStderr,
 	phasePriority,
 	pushLog,
-	buildWidgetLines,
-	getWorkingMessage,
 	MAX_FULL_LOG,
 	WIDGET_LINES,
 	MAX_LIVE_THINKING,
 } from "./agent-stream";
+import { buildWidgetLines, getWorkingMessage } from "./session-widget";
 import { runAgentInProcess } from "./agent-session-runner";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
@@ -116,6 +115,7 @@ export async function runAgentSubprocess(
 		let rawStdout = "";
 		let stderr = "";
 		let jsonBuffer = "";
+		let childExited = false;
 
 		let flushTimer: NodeJS.Timeout | null = null;
 
@@ -134,11 +134,8 @@ export async function runAgentSubprocess(
 			}
 		};
 
-		// Heartbeat: ensure widget updates even during long idle periods (model cold start)
-		const heartbeat = setInterval(() => {
-			flushWidget();
-		}, 5000);
-
+		// Event-driven flush only — no heartbeat interval (terminal freeze fix).
+		// Each stdout data event triggers handleLine → scheduleFlush at 80ms debounce.
 		const handleLine = (line: string) => {
 			const result = processJsonLine(line, state);
 			if (result.flush) scheduleFlush();
@@ -169,14 +166,21 @@ export async function runAgentSubprocess(
 			}
 		});
 
-		child.on("close", (code, signal) => {
+		// ── Bug 3 fix: Proper child reaping ──
+		// Register 'exit' to reap child process entry (prevents zombie).
+		// 'close' fires after stdio drains — use it for final resolve with code/signal.
+		// Guard with resolved flag to prevent double-resolve.
+		let resolved = false;
+
+		const doResolve = (code: number | null, signal: string | null) => {
+			if (resolved) return;
+			resolved = true;
+
 			if (jsonBuffer.trim()) handleLine(jsonBuffer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			clearInterval(heartbeat);
-
 			if (state.liveText.trim()) {
 				state.textOutputLines.push(state.liveText.trim());
 			}
@@ -220,6 +224,17 @@ export async function runAgentSubprocess(
 				errorOutput: filteredStderr,
 				thinkingOutput,
 			});
+		};
+
+		// 'exit' reaps process table entry — prevents zombie
+		child.on("exit", () => {
+			childExited = true;
+		});
+
+		// 'close' fires after stdio drains — resolve with actual code/signal
+		child.on("close", (code, signal) => {
+			childExited = true;
+			doResolve(code, signal);
 		});
 
 		child.on("error", (err) => {
@@ -227,7 +242,6 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
-			clearInterval(heartbeat);
 			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setWorkingMessage(undefined);
 			ctx.ui.setStatus("supervisor", "");

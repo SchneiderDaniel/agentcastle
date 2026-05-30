@@ -9,10 +9,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 import type { ConfigStore } from "./config.ts";
-import type { AnimationController } from "./animation.ts";
 import type { Level } from "./types.ts";
 import { LEVELS, STOP_ALIASES, CAVEMAN_COMMAND_OPTIONS, DEFAULT_CONFIG } from "./types.ts";
-import { ANIMATIONS } from "./prompts.ts";
+
 import type { CavemanConfig } from "./types.ts";
 
 /**
@@ -21,7 +20,7 @@ import type { CavemanConfig } from "./types.ts";
 export function registerCavemanCommand(
 	pi: ExtensionAPI,
 	configStore: ConfigStore,
-	animController: AnimationController,
+	syncStatus: (ctx: Pick<ExtensionContext, "ui">) => void,
 ): void {
 	pi.registerCommand("caveman", {
 		description:
@@ -58,12 +57,9 @@ export function registerCavemanCommand(
 
 			const level = configStore.getLevel();
 			pi.appendEntry("caveman-level", { level });
-			animController.syncStatus(ctx);
+			syncStatus(ctx);
 
-			ctx.ui.notify(
-				level === "off" ? "Caveman off" : `Caveman: ${ANIMATIONS[level].label}`,
-				"info",
-			);
+			ctx.ui.notify(level === "off" ? "Caveman off" : `Caveman: ${level.toUpperCase()}`, "info");
 		},
 	});
 }
@@ -73,7 +69,7 @@ export function registerCavemanCommand(
 async function openConfig(
 	ctx: ExtensionContext,
 	configStore: ConfigStore,
-	animController: AnimationController,
+	syncStatus: (ctx: Pick<ExtensionContext, "ui">) => void,
 ): Promise<void> {
 	await configStore.ensureConfigLoaded();
 
@@ -89,7 +85,7 @@ async function openConfig(
 			},
 			{
 				id: "showStatus",
-				label: "Show animated status bar",
+				label: "Show status bar",
 				currentValue: config.showStatus ? "on" : "off",
 				values: ["on", "off"],
 			},
@@ -112,7 +108,7 @@ async function openConfig(
 				updated.showStatus = newValue === "on";
 			}
 			configStore.saveConfig(updated);
-			animController.syncStatus(ctx);
+			syncStatus(ctx);
 		};
 
 		const settingsList = new SettingsList(

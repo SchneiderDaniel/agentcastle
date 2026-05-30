@@ -56,10 +56,16 @@ export const WORKFLOW: WorkflowStep[] = [
 	},
 
 	// Audit → Done (approve) or Implementation (reject/loop back)
+	// Uses both AUDIT_DECISION (structured output) and standalone
+	// AUDIT_APPROVED/AUDIT_REJECTED markers for backward compatibility.
+	// AUDIT_DECISION is the canonical marker; standalone markers kept
+	// for agents not yet updated to use structured output.
 	{
 		status: "Audit",
 		agentName: "auditor",
 		markerMap: {
+			"AUDIT_DECISION: APPROVED": "Done",
+			"AUDIT_DECISION: REJECTED": "Implementation",
 			AUDIT_APPROVED: "Done",
 			AUDIT_REJECTED: "Implementation",
 		},

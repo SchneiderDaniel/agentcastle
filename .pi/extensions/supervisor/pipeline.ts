@@ -16,7 +16,8 @@ import type {
 } from "./types";
 import { existsSync, writeFileSync } from "node:fs";
 import { resolve as resolvePath, join as joinPath } from "node:path";
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { loadConfig, resolveTimeoutMs } from "./config";
 import {
@@ -42,91 +43,38 @@ import { runAgent } from "./agent-runner";
 import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "./workflow";
 import { countRejections, formatDuration, formatTokens } from "./formatting";
 import { runTscAndLspAudit } from "./pipeline-audit";
+import { buildPipelineSummary, validateAgentResult } from "./pipeline-output";
 import { handlePostPipelineMerge } from "./pipeline-merge";
 
-// ─── validateAgentResult ────────────────────────────────────────────
+// ─── Async exec with AbortSignal (Bug 1 fix) ─────────────────────
 
-/**
- * Sanity-check agent result: if success=true with 0 tokens and >5 tool calls,
- * the agent likely timed out or aborted before completion. Derate to failed.
- */
-function validateAgentResult(result: AgentRunResult): void {
-	if (result.success && result.tokenCount === 0 && result.toolCount > 5) {
-		result.success = false;
-		const existingError = result.errorOutput ? result.errorOutput + "\n" : "";
-		result.errorOutput = `${existingError}Sanity check failed: success=true with tokenCount=0 and toolCount=${result.toolCount}. This indicates a timeout or abort before completion.`;
+const execAsync = promisify(exec);
+
+async function execWithSignal(
+	command: string,
+	options: { cwd?: string; timeout?: number } = {},
+): Promise<{ stdout: string; stderr: string }> {
+	const controller = new AbortController();
+	const timer =
+		options.timeout && options.timeout > 0
+			? setTimeout(
+					() =>
+						controller.abort(
+							new Error(`Command timed out after ${options.timeout}ms: ${command.slice(0, 120)}`),
+						),
+					options.timeout,
+				)
+			: undefined;
+	try {
+		const result = await execAsync(command, {
+			cwd: options.cwd,
+			signal: controller.signal,
+			env: process.env as Record<string, string>,
+		});
+		return { stdout: result.stdout || "", stderr: result.stderr || "" };
+	} finally {
+		if (timer) clearTimeout(timer);
 	}
-}
-
-// ─── Pipeline summary builder ───────────────────────────────────────
-
-function buildPipelineSummary(
-	agentResults: PipelineAgentResult[],
-	overallStatus: "success" | "failed" | "stopped",
-	issueNum: number,
-	issueTitle: string,
-	config: SupervisorConfig,
-	stopReason?: string,
-): string {
-	const lines: string[] = [];
-
-	// Header
-	const headerEmoji = overallStatus === "success" ? "✅" : overallStatus === "failed" ? "❌" : "⏹";
-	const headerText =
-		overallStatus === "success"
-			? "Pipeline Complete"
-			: overallStatus === "failed"
-				? "Pipeline Failed"
-				: "Pipeline Stopped";
-	lines.push(`## ${headerEmoji} ${headerText} — Issue #${issueNum}`);
-	lines.push("");
-
-	// Helper to extract short model name (after slash)
-	const shortModel = (m?: string) => (m ? m.split("/").pop() || m : "—");
-
-	// Agent table
-	lines.push("| Agent | Status | Duration | Tokens | Tools | Model |");
-	lines.push("|-------|--------|----------|--------|-------|-------|");
-	if (agentResults.length > 0) {
-		for (const ar of agentResults) {
-			const statusIcon = ar.status === "FAILED" ? "✗" : "✓";
-			lines.push(
-				`| ${ar.agentName} | ${statusIcon} ${ar.status} | ${formatDuration(ar.durationMs)} | ${formatTokens(ar.tokenCount)} | ${ar.toolCount} | ${shortModel(ar.model)} |`,
-			);
-		}
-	} else {
-		lines.push("| (none) | — | — | — | — | — |");
-	}
-	lines.push("");
-
-	// Total stats
-	const totalTokens = agentResults.reduce((sum, a) => sum + a.tokenCount, 0);
-	const totalDurationMs = agentResults.reduce((sum, a) => sum + a.durationMs, 0);
-	const totalToolCalls = agentResults.reduce((sum, a) => sum + a.toolCount, 0);
-	lines.push(
-		`**Total:** ${agentResults.length} agents · ${formatDuration(totalDurationMs)} · ${formatTokens(totalTokens)} tokens · ${totalToolCalls} tool calls`,
-	);
-
-	// Issue link
-	lines.push(`**Issue:** https://github.com/${config.repo}/issues/${issueNum}`);
-
-	// Stop reason for stopped pipelines
-	if (overallStatus === "stopped" && stopReason) {
-		lines.push("");
-		lines.push(`**Stopped at:** ${stopReason}`);
-	}
-
-	// Failure info
-	if (overallStatus === "failed") {
-		const failedAgent = [...agentResults].reverse().find((a) => a.status === "FAILED");
-		if (failedAgent) {
-			lines.push("");
-			lines.push(`**Stopped at:** ${failedAgent.agentName} — agent failed`);
-		}
-		lines.push("**Manual intervention required.**");
-	}
-
-	return lines.join("\n");
 }
 
 export function registerSupervisorCommand(pi: ExtensionAPI): void {
@@ -371,14 +319,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						worktreeBranch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 						const wt = resolvePath(ctx.cwd, config.worktreeBase!, worktreeBranch);
 						try {
-							execSync(
+							await execWithSignal(
 								`git worktree add -b "${worktreeBranch}" "${wt}" "${config.defaultBranch!}"`,
 								{ cwd: ctx.cwd, timeout: 15000 },
 							);
 						} catch {
 							// Branch or worktree may already exist — try add without -b
 							try {
-								execSync(`git worktree add "${wt}" "${worktreeBranch}"`, {
+								await execWithSignal(`git worktree add "${wt}" "${worktreeBranch}"`, {
 									cwd: ctx.cwd,
 									timeout: 15000,
 								});
@@ -387,6 +335,16 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 							}
 						}
 						worktreePath = wt;
+						// Install deps in worktree so TSC can resolve imports
+						try {
+							await execWithSignal(`npm ci`, {
+								cwd: worktreePath,
+								timeout: 120_000,
+							});
+						} catch {
+							// npm ci failure is non-fatal — worktree still usable,
+							// TSC will skip if tsconfig.json not found or deps missing
+						}
 					}
 
 					// Build task AFTER worktree creation so worktreePath + branch info
@@ -536,15 +494,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						model: agent?.config?.model,
 					});
 
-					// Resolve next status from agent output markers (config-driven)
-					// Check all output sources: textOnly may miss marker if it was consumed
-					// from liveText by newline splitting in text_delta and not picked up
-					// by text_end (empty liveText) or message_end (missing msg.content).
-					// Fall back to textOutput (fullLog) and output (raw messages).
+					// Resolve next status from agent output markers (config-driven).
+					// Check both textOnly and textOutput in case marker straddles
+					// a text_delta boundary. Do NOT fall back to result.output (raw
+					// message history) — that includes the task template text which
+					// contains both AUDIT_APPROVED and AUDIT_REJECTED, causing
+					// lastIndexOf to pick the wrong marker (Issue #281).
 					const nextStatus =
-						resolveNextStatus(step, result.textOnly) ??
-						resolveNextStatus(step, result.textOutput) ??
-						resolveNextStatus(step, result.output);
+						resolveNextStatus(step, result.textOnly) ?? resolveNextStatus(step, result.textOutput);
 
 					// ── PR creation: when auditor approves and transitions to Done ──
 					// Decoupled from auditOutput marker parsing — triggers reliably on workflow transition.
@@ -555,12 +512,11 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						// Check branch has commits ahead of base before creating PR
 						let aheadCommits = 0;
 						try {
-							const ahead = execSync(
+							const aheadResult = await execWithSignal(
 								`git rev-list --count "${config.defaultBranch!}..${headBranch}"`,
 								{ cwd: ctx.cwd, timeout: 5000 },
-							)
-								.toString()
-								.trim();
+							);
+							const ahead = aheadResult.stdout.trim();
 							aheadCommits = parseInt(ahead, 10) || 0;
 						} catch {
 							// Branch may not exist locally — can't create PR
@@ -588,7 +544,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								// Push branch before creating PR so remote ref exists
 								if (worktreePath) {
 									try {
-										execSync(`git push "${config.remote!}" "${headBranch}"`, {
+										await execWithSignal(`git push "${config.remote!}" "${headBranch}"`, {
 											cwd: worktreePath,
 											timeout: 15000,
 										});
@@ -675,6 +631,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								config,
 								agentName,
 								loopFilteredData,
+								worktreePath!,
 								pi,
 								ctx,
 							);
@@ -826,7 +783,7 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 			// Uses --force in case agent left uncommitted changes.
 			if (worktreePath) {
 				try {
-					execSync(
+					await execWithSignal(
 						`git worktree remove --force "${worktreePath}" 2>/dev/null; ` +
 							`git worktree prune 2>/dev/null`,
 						{ cwd: ctx.cwd, timeout: 15000 },
@@ -836,7 +793,10 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 				}
 				if (worktreeBranch) {
 					try {
-						execSync(`git branch -D "${worktreeBranch}"`, { cwd: ctx.cwd, timeout: 10000 });
+						await execWithSignal(`git branch -D "${worktreeBranch}"`, {
+							cwd: ctx.cwd,
+							timeout: 10000,
+						});
 					} catch {
 						console.warn(`[supervisor] Failed to delete branch ${worktreeBranch}`);
 					}

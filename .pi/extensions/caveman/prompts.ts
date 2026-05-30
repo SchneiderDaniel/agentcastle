@@ -6,33 +6,6 @@
 
 import type { Level } from "./types.ts";
 
-const R = "\x1b[38;5;196m";
-const O = "\x1b[38;5;208m";
-const Y = "\x1b[38;5;220m";
-const W = "\x1b[38;5;230m";
-const E = "\x1b[38;5;52m";
-const X = "\x1b[0m";
-
-export const FIRE_FRAMES = [
-	`${R}⠠${O}⠄${X}`,
-	`${O}⠔${Y}⠂${X}`,
-	`${Y}⠊${W}⠑${X}`,
-	`${W}⠑${Y}⠊${X}`,
-	`${Y}⠂${O}⠔${X}`,
-	`${O}⠄${R}⠠${X}`,
-	`${R}⠠${E}⠄${X}`,
-	`${E}⠔${R}⠂${X}`,
-];
-
-export const ANIMATIONS: Record<
-	Exclude<Level, "off">,
-	{ frames: string[]; label: string; interval: number }
-> = {
-	lite: { frames: FIRE_FRAMES, label: "LITE", interval: 300 },
-	full: { frames: FIRE_FRAMES, label: "FULL", interval: 200 },
-	ultra: { frames: FIRE_FRAMES, label: "ULTRA", interval: 100 },
-};
-
 export const CAVEMAN_BASE = `## Caveman Mode — Active
 
 IMPORTANT: You are in CAVEMAN MODE. Respond terse like smart caveman.
