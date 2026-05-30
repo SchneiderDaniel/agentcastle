@@ -536,6 +536,18 @@ The supervisor (`/supervisor <issue-number>`) is the heart of this harness. It t
 - Auditor can reject → sends back to Implementation (counts as 1 rejection)
 - LSP/TSC errors → sends back to Implementation (does NOT count as rejection, max 3 retries)
 - `maxRejections` (default 5) stops the loop to prevent infinite cycles
+- `agentTokenBudget` sets a soft cap on total tokens per agent (0 = unlimited). When exceeded, the agent session is flagged and the pipeline stops without retrying.
+- `maxToolCalls` sets a hard cap on tool invocations per agent (0 = unlimited). When exceeded, the agent is terminated and the pipeline stops.
+- Both `agentTokenBudget` and `maxToolCalls` are configured under `supervisor` in `.pi/settings.json`.
+  ```jsonc
+  // .pi/settings.json
+  {
+    "supervisor": {
+      "agentTokenBudget": 500000,  // Optional, 0 = unlimited
+      "maxToolCalls": 30           // Optional, 0 = unlimited
+    }
+  }
+  ```
 
 #### 8.2 Agent Deep Dive
 

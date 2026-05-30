@@ -103,6 +103,10 @@ export async function runAgentSubprocess(
 		contextInfoReceived: false,
 		thinkingPushedThisTurn: false,
 		textPushedThisTurn: false,
+		budgetExceeded: false,
+		budgetExceededReason: undefined,
+		maxToolCalls: 0,
+		agentTokenBudget: 0,
 	};
 
 	return new Promise((resolve) => {
@@ -164,6 +168,10 @@ export async function runAgentSubprocess(
 				if (result.workingChange) {
 					const wm = getWorkingMessage(state, agentName);
 					ctx.ui.setWorkingMessage(wm ?? undefined);
+				}
+				// Budget exceeded — kill subprocess to prevent further turns
+				if (state.budgetExceeded && !childExited) {
+					child.kill("SIGTERM");
 				}
 			} catch (lineErr: unknown) {
 				const msg = lineErr instanceof Error ? lineErr.message : String(lineErr);

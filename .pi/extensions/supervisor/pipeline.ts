@@ -38,7 +38,7 @@ import {
 	extractStructuredAuditOutput,
 } from "./github";
 import { parseAgentFile } from "./agent-loader";
-import { buildAgentTask, generateBranchName } from "./agent-task";
+import { buildAgentTask, generateBranchName, summarizeComments } from "./agent-task";
 import { runAgent } from "./agent-runner";
 import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "./workflow";
 import { countRejections, formatDuration, formatTokens } from "./formatting";
@@ -350,6 +350,15 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					// Build task AFTER worktree creation so worktreePath + branch info
 					// can be embedded in the task text (fixes auditor checking main checkout).
 					const submodules = config.submodules || [];
+
+					// Pre-compute comment summary for Phase 2 (context-aware task prompt).
+					// When >1 comment exists, summarize all but the latest into a bullet list
+					// to reduce token consumption from stale rejection comments.
+					const summarizedRejections =
+						loopFilteredData.comments.length > 1
+							? summarizeComments(loopFilteredData.comments)
+							: undefined;
+
 					const task = buildAgentTask(
 						agentName,
 						issueNum,
@@ -364,6 +373,8 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						// Pass worktree path + branch name for auditor/developer task embedding
 						worktreePath,
 						worktreeBranch,
+						// Pass pre-computed summarized rejections (or undefined for backward compat)
+						summarizedRejections,
 					);
 
 					// Pass worktree path as cwd so agent tools resolve against isolated worktree
@@ -375,10 +386,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 					validateAgentResult(result);
 					let usedRetry = false;
 
-					if (!result.success) {
+					if (result.budgetExceeded) {
+						ctx.ui.notify(`Agent ${agent.config.name} exceeded budget — not retrying`, "warning");
+						// Skip retry, use current result
+					} else if (!result.success) {
 						ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
 						result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
 						usedRetry = true;
+						validateAgentResult(result);
 					}
 
 					const statusLabel = !result.success
@@ -570,6 +585,12 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 								console.warn(`[supervisor] createPullRequest failed: ${prMsg}`);
 							}
 						}
+					}
+
+					// Budget exceeded: stop pipeline (no retry, fail-fast)
+					if (result.budgetExceeded) {
+						stopReason = `Agent ${result.agentName} exceeded budget (${result.toolCount} tools, ${result.tokenCount} tokens)`;
+						break;
 					}
 
 					if (!result.success && nextStatus !== "Audit") {

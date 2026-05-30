@@ -19,6 +19,10 @@ export interface SupervisorConfig {
 	ciGatingTimeoutSec?: number;
 	/** Emit terminal bell (\x07) on pipeline completion */
 	bellOnComplete?: boolean;
+	/** Soft cap on total tokens per agent session. 0 = unlimited. */
+	agentTokenBudget?: number;
+	/** Hard cap on tool invocations per agent session. 0 = unlimited. */
+	maxToolCalls?: number;
 }
 
 export interface AgentFrontmatter {
@@ -76,6 +80,8 @@ export interface AgentRunResult {
 	textOnly: string;
 	/** Thinking output from sub-agent (for expanded message renderer view) */
 	thinkingOutput?: string;
+	/** Whether budget (token/tool limit) was exceeded */
+	budgetExceeded?: boolean;
 }
 
 // ─── AgentRunState: mutable state during agent execution ────────────
@@ -102,6 +108,14 @@ export interface AgentRunState {
 	thinkingPushedThisTurn: boolean;
 	/** Whether text was already pushed via streaming (dedup message_end) */
 	textPushedThisTurn: boolean;
+	/** Whether budget (token/tool limit) was exceeded */
+	budgetExceeded: boolean;
+	/** Human-readable reason for budget exceeded */
+	budgetExceededReason?: string;
+	/** Max tool calls allowed (0 = unlimited, populated from config) */
+	maxToolCalls: number;
+	/** Max tokens allowed (0 = unlimited, populated from config) */
+	agentTokenBudget: number;
 }
 
 // ─── Message renderer details type ───────────────────────────────────

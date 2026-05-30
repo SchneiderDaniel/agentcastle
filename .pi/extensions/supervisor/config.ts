@@ -64,6 +64,27 @@ export function loadConfig(): SupervisorConfig {
 	}
 	const knownAgents = Object.values(cfg.statusMapping) as string[];
 	const agentTimeoutsMin = validateAgentTimeouts(cfg.agentTimeoutsMin, knownAgents);
+
+	// Validate agentTokenBudget (optional, non-negative integer)
+	const agentTokenBudget = cfg.agentTokenBudget;
+	if (agentTokenBudget !== undefined) {
+		if (
+			typeof agentTokenBudget !== "number" ||
+			!Number.isInteger(agentTokenBudget) ||
+			agentTokenBudget < 0
+		) {
+			throw new Error("supervisor.agentTokenBudget must be a non-negative integer");
+		}
+	}
+
+	// Validate maxToolCalls (optional, non-negative integer)
+	const maxToolCalls = cfg.maxToolCalls;
+	if (maxToolCalls !== undefined) {
+		if (typeof maxToolCalls !== "number" || !Number.isInteger(maxToolCalls) || maxToolCalls < 0) {
+			throw new Error("supervisor.maxToolCalls must be a non-negative integer");
+		}
+	}
+
 	return {
 		repo: cfg.repo,
 		projectNumber: cfg.projectNumber,
@@ -79,6 +100,8 @@ export function loadConfig(): SupervisorConfig {
 		agentTimeoutsMin,
 		ciGatingTimeoutSec: cfg.ciGatingTimeoutSec ?? 300,
 		bellOnComplete: cfg.bellOnComplete ?? false,
+		agentTokenBudget: agentTokenBudget,
+		maxToolCalls: maxToolCalls,
 	};
 }
 

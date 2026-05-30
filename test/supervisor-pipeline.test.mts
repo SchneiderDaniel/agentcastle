@@ -301,7 +301,8 @@ describe("pipeline.ts — retry-success post-processing (Issue 299)", () => {
 
 	it("retry validateAgentResult call is after retry runAgent", () => {
 		const src = readPipelineSource();
-		const retryIfStart = src.indexOf("if (!result.success)");
+		// The retry block now uses "else if (!result.success)" (preceded by budget check)
+		const retryIfStart = src.indexOf("else if (!result.success)");
 		const retrySectionEnd = src.indexOf("const statusLabel", retryIfStart);
 		const retrySection = src.substring(retryIfStart, retrySectionEnd);
 		// The retry block should have: runAgent(...) then validateAgentResult(result)
