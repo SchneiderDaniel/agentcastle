@@ -40,6 +40,8 @@ export function showWelcomeBanner(
 	ctx: ExtensionContext,
 	startupWidgetActive: { value: boolean },
 	sessionId: string,
+	loggerState?: boolean | null,
+	adviceState?: boolean | null,
 ): void {
 	const extCount = countExtensions();
 	const promptCount = listNames(".pi/prompts", ".md").length;
@@ -104,6 +106,23 @@ export function showWelcomeBanner(
 					return dim("| ") + labelStr + valueStr + " ".repeat(Math.max(0, padding)) + dim(" |");
 				}
 
+				// ── Session status line (extension on/off) ────
+				function sessionLine(
+					logger: boolean | null | undefined,
+					advice: boolean | null | undefined,
+				): string {
+					const lIcon = logger == null ? "❓" : logger ? "🟢" : "🔴";
+					const aIcon = advice == null ? "❓" : advice ? "🟢" : "🔴";
+					const label = muted("Session: ");
+					const value = `${lIcon} ${accent("Logger")}  ${aIcon} ${accent("Advice")}`;
+					const rawLabelW = visibleWidth("Session: ");
+					const rawValueW = visibleWidth(value);
+					const padding = 60 - rawLabelW - rawValueW;
+					return dim("| ") + label + value + " ".repeat(Math.max(0, padding)) + dim(" |");
+				}
+
+				const sessionStatusLine = sessionLine(loggerState, adviceState);
+
 				const statLines: string[] = [
 					// Extensions line with /explain-extensions hint
 					(() => {
@@ -164,7 +183,7 @@ export function showWelcomeBanner(
 				// Bottom wall
 				const bottom = dim("|" + "_".repeat(62) + "|");
 
-				return [titleLine, sidLine, "", ...castleLines, ...statLines, bottom];
+				return [titleLine, sidLine, "", ...castleLines, sessionStatusLine, ...statLines, bottom];
 			},
 		};
 	});
