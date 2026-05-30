@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { buildAuditCommentFallback } from "../.pi/extensions/supervisor/github.ts";
+import { buildAuditCommentFallback } from "../.pi/extensions/supervisor/github/comment.ts";
 
 // ─── REJECTED fallback tests ──────────────────────────────────────
 

@@ -13,8 +13,8 @@ import {
 	pushBranch,
 	commitChanges,
 	commitAndPush,
-	createPullRequest,
-} from "../.pi/extensions/supervisor/github.ts";
+} from "../.pi/extensions/supervisor/github/git.ts";
+import { createPullRequest } from "../.pi/extensions/supervisor/github/pr.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -126,16 +126,14 @@ describe("commitAndPush", () => {
 		assert.strictEqual(calls.length, 1); // only add, not commit/push
 	});
 
-	it("does not push if commit fails (short-circuit)", async () => {
+	it("handles 'nothing to commit' gracefully (continues to push)", async () => {
 		const { pi, calls } = makeMockPi([
 			{ code: 0, stdout: "" },
 			{ code: 1, stderr: "nothing to commit" },
+			{ code: 0, stdout: "Everything up-to-date" },
 		]);
-		await assert.rejects(
-			() => commitAndPush(pi as any, "/cwd", "origin", "branch", "msg"),
-			/git commit failed/i,
-		);
-		assert.strictEqual(calls.length, 2); // add + commit, not push
+		await commitAndPush(pi as any, "/cwd", "origin", "branch", "msg");
+		assert.strictEqual(calls.length, 3); // add + commit(ignored) + push
 	});
 });
 

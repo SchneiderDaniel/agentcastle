@@ -90,10 +90,13 @@ export async function runAgentInProcess(
 
 	// Resolve model
 	const modelInfo = await resolveModel(agent.config.model || "");
-	let resolvedModel: any;
+	let resolvedModel: ReturnType<typeof getModel> | undefined;
 	if (modelInfo) {
 		try {
-			resolvedModel = getModel(modelInfo.provider as any, modelInfo.modelId as any);
+			resolvedModel = getModel(
+				modelInfo.provider as Parameters<typeof getModel>[0],
+				modelInfo.modelId as Parameters<typeof getModel>[1],
+			);
 		} catch {
 			// getModel threw — try fallback
 		}
