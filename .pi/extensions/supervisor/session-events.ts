@@ -6,6 +6,33 @@ import type { AgentRunState, AgentPhase } from "./types";
 import { pushLog } from "./agent-stream.ts";
 import { extractTextFromContent } from "./formatting.ts";
 
+// ─── Session Event Types ───────────────────────────────────────────
+
+/** Typed session event union for SDK events. */
+export type SessionEvent = Record<string, unknown> & {
+	type: string;
+	toolName?: string;
+	toolCallId?: string;
+	args?: Record<string, unknown>;
+	isError?: boolean;
+	result?: unknown;
+	assistantMessageEvent?: Record<string, unknown> & {
+		type: string;
+		delta?: string;
+		message?: Record<string, unknown> & {
+			role?: string;
+			content?: Array<Record<string, unknown> & { type: string; text?: string; thinking?: string }>;
+			usage?: { totalTokens?: number; input?: number; output?: number };
+		};
+	};
+	message?: Record<string, unknown> & {
+		role?: string;
+		content?: Array<Record<string, unknown> & { type: string; text?: string; thinking?: string }>;
+		toolName?: string;
+		usage?: { totalTokens?: number; input?: number; output?: number };
+	};
+};
+
 // ─── Event → State Mapping ─────────────────────────────────────────
 
 /**
@@ -13,7 +40,7 @@ import { extractTextFromContent } from "./formatting.ts";
  * but receives typed SDK events instead of parsed JSON lines.
  */
 export function processSessionEvent(
-	ev: any,
+	ev: SessionEvent,
 	state: AgentRunState,
 ): { flush: boolean; workingChange: boolean } {
 	const prevPhase = state.phase;
@@ -119,7 +146,7 @@ export function processSessionEvent(
 					if (ev.message?.usage) {
 						state.tokenCount =
 							ev.message.usage.totalTokens ||
-							ev.message.usage.input + ev.message.usage.output ||
+							(ev.message.usage.input ?? 0) + (ev.message.usage.output ?? 0) ||
 							state.tokenCount;
 					}
 					state.liveText = "";
@@ -130,7 +157,9 @@ export function processSessionEvent(
 					const msg = ae.message;
 					if (msg?.usage) {
 						state.tokenCount =
-							msg.usage.totalTokens || msg.usage.input + msg.usage.output || state.tokenCount;
+							msg.usage.totalTokens ||
+							(msg.usage.input ?? 0) + (msg.usage.output ?? 0) ||
+							state.tokenCount;
 					}
 					if (msg?.content && Array.isArray(msg.content)) {
 						const textParts: string[] = [];
@@ -209,7 +238,8 @@ export function processSessionEvent(
 					}
 				}
 				if (msg.usage) {
-					state.tokenCount = msg.usage.totalTokens || msg.usage.input + msg.usage.output;
+					state.tokenCount =
+						msg.usage.totalTokens || (msg.usage.input ?? 0) + (msg.usage.output ?? 0);
 				}
 			} else if (msg.role === "toolResult") {
 				const resultText = extractTextFromContent(msg.content);
@@ -269,7 +299,7 @@ export function phasePriority(phase: AgentPhase): number {
 }
 
 /** Determine phase from a session event */
-export function getEventPhase(ev: any): AgentPhase {
+export function getEventPhase(ev: SessionEvent): AgentPhase {
 	if (!ev) return "idle";
 	if (ev.type === "tool_execution_start") return "tool";
 	if (ev.type === "tool_execution_end") return "idle";

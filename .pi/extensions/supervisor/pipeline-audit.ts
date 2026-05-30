@@ -135,7 +135,10 @@ async function runLspPreAudit(
 			if (
 				e.type === "custom" &&
 				e.customType === "lsp-audit-retry" &&
-				(e.data as any)?.issueNum === issueNum
+				e.data &&
+				typeof e.data === "object" &&
+				"issueNum" in e.data &&
+				(e.data as Record<string, unknown>).issueNum === issueNum
 			) {
 				retryCount++;
 			}
