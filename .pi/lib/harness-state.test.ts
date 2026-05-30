@@ -140,7 +140,7 @@ describe("ErrorTracker", () => {
 	});
 });
 
-// ── Call Counter ──
+// ── CallCounter ──
 
 describe("CallCounter", () => {
 	it("starts with no consecutive", () => {
@@ -149,28 +149,28 @@ describe("CallCounter", () => {
 		assert.equal(info.count, 0);
 	});
 
-	it("record tracks consecutive calls", () => {
+	it("record tracks consecutive calls (using sessionTurn for sinceTurn)", () => {
 		const state = createHarnessState();
-		state.callCounter.record("read", 0);
+		state.callCounter.record("read", 0, 0);
 		assert.equal(state.callCounter.getConsecutive("read").count, 1);
-		state.callCounter.record("read", 1);
+		state.callCounter.record("read", 0, 1);
 		assert.equal(state.callCounter.getConsecutive("read").count, 2);
 	});
 
 	it("different tools reset consecutive", () => {
 		const state = createHarnessState();
-		state.callCounter.record("read", 0);
-		state.callCounter.record("write", 1);
+		state.callCounter.record("read", 0, 0);
+		state.callCounter.record("write", 0, 1);
 		assert.equal(state.callCounter.getConsecutive("read").count, 0);
 		assert.equal(state.callCounter.getConsecutive("write").count, 1);
 	});
 
 	it("subKey creates separate counter for bash", () => {
 		const state = createHarnessState();
-		state.callCounter.record("bash", 0, "git status");
+		state.callCounter.record("bash", 0, 0, "git status");
 		assert.equal(state.callCounter.getConsecutive("bash", "git status").count, 1);
 
-		state.callCounter.record("bash", 1, "git diff");
+		state.callCounter.record("bash", 0, 1, "git diff");
 		// Different subKey resets the "git status" chain
 		assert.equal(state.callCounter.getConsecutive("bash", "git status").count, 0);
 		assert.equal(state.callCounter.getConsecutive("bash", "git diff").count, 1);
@@ -178,16 +178,89 @@ describe("CallCounter", () => {
 
 	it("same subKey increments consecutive", () => {
 		const state = createHarnessState();
-		state.callCounter.record("bash", 0, "ls");
-		state.callCounter.record("bash", 1, "ls");
+		state.callCounter.record("bash", 0, 0, "ls");
+		state.callCounter.record("bash", 0, 1, "ls");
 		assert.equal(state.callCounter.getConsecutive("bash", "ls").count, 2);
 	});
 
 	it("reset clears all", () => {
 		const state = createHarnessState();
-		state.callCounter.record("read", 0);
+		state.callCounter.record("read", 0, 0);
 		state.callCounter.reset();
 		assert.equal(state.callCounter.getConsecutive("read").count, 0);
+	});
+
+	// ── New: turnBoundaryReset ──
+
+	it("turnBoundaryReset sets consecutive count to 0 and clears lastKey", () => {
+		const state = createHarnessState();
+		state.callCounter.record("read", 0, 0);
+		state.callCounter.record("read", 0, 1);
+		assert.equal(state.callCounter.getConsecutive("read").count, 2);
+
+		state.callCounter.turnBoundaryReset();
+
+		// After reset, getConsecutive returns 0 for previously tracked key
+		assert.equal(state.callCounter.getConsecutive("read").count, 0);
+	});
+
+	it("record after turnBoundaryReset starts fresh count at 1", () => {
+		const state = createHarnessState();
+		state.callCounter.record("read", 0, 0);
+		state.callCounter.record("read", 0, 1);
+		state.callCounter.turnBoundaryReset();
+
+		state.callCounter.record("read", 1, 2);
+		assert.equal(state.callCounter.getConsecutive("read").count, 1);
+	});
+
+	it("turnBoundaryReset called twice with no records between — no-op", () => {
+		const state = createHarnessState();
+		state.callCounter.turnBoundaryReset();
+		state.callCounter.turnBoundaryReset();
+		// Should not throw, state should be reset
+		assert.equal(state.callCounter.getConsecutive("read").count, 0);
+	});
+
+	it("sinceTurn equals sessionTurn from first record in chain", () => {
+		const state = createHarnessState();
+		state.callCounter.record("read", 5, 0); // sessionTurn=5
+		const info1 = state.callCounter.getConsecutive("read");
+		assert.equal(info1.sinceTurn, 5);
+
+		state.callCounter.record("read", 5, 1);
+		const info2 = state.callCounter.getConsecutive("read");
+		assert.equal(info2.sinceTurn, 5); // still 5, from first record
+	});
+
+	it("sinceTurn updates after turnBoundaryReset + new sessionTurn", () => {
+		const state = createHarnessState();
+		state.callCounter.record("read", 0, 0);
+		const info1 = state.callCounter.getConsecutive("read");
+		assert.equal(info1.sinceTurn, 0);
+
+		state.callCounter.turnBoundaryReset();
+
+		state.callCounter.record("read", 1, 1); // sessionTurn=1
+		const info2 = state.callCounter.getConsecutive("read");
+		assert.equal(info2.sinceTurn, 1); // now 1, from new chain
+	});
+
+	it("sessionTurn passed to record is stored as sinceTurn (independent of toolCallIndex)", () => {
+		const state = createHarnessState();
+		// sessionTurn=3, toolCallIndex=100
+		state.callCounter.record("read", 3, 100);
+		const info = state.callCounter.getConsecutive("read");
+		assert.equal(info.sinceTurn, 3);
+	});
+
+	it("different sessionTurn values do not reset consecutive count for same key", () => {
+		// Within same turn boundary, sessionTurn is same, but toolCallIndex differs
+		const state = createHarnessState();
+		state.callCounter.record("read", 2, 0);
+		state.callCounter.record("read", 2, 1);
+		state.callCounter.record("read", 2, 2);
+		assert.equal(state.callCounter.getConsecutive("read").count, 3);
 	});
 });
 
@@ -198,11 +271,30 @@ describe("HarnessState", () => {
 		const s1 = createHarnessState();
 		const s2 = createHarnessState();
 
-		s1.currentTurn = 5;
+		s1.toolCallIndex = 5;
 		s1.readCache.set("k", "v", 0);
 
-		assert.equal(s2.currentTurn, 0);
+		assert.equal(s2.toolCallIndex, 0);
 		assert.equal(s2.readCache.get("k", 0), null);
+	});
+
+	it("toolCallIndex starts at 0", () => {
+		const state = createHarnessState();
+		assert.equal(state.toolCallIndex, 0);
+	});
+
+	it("sessionTurn starts at 0", () => {
+		const state = createHarnessState();
+		assert.equal(state.sessionTurn, 0);
+	});
+
+	it("toolCallIndex and sessionTurn are independent", () => {
+		const state = createHarnessState();
+		state.toolCallIndex = 5;
+		assert.equal(state.sessionTurn, 0); // not affected
+
+		state.sessionTurn = 3;
+		assert.equal(state.toolCallIndex, 5); // not affected
 	});
 
 	it("batchId is undefined by default", () => {
