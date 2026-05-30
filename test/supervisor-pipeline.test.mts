@@ -245,3 +245,71 @@ describe("pipeline.ts — PR creation uses worktree branch (Phase 2g)", () => {
 		);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Issue 299: Retry-success post-processing gate fix
+// ---------------------------------------------------------------------------
+
+describe("pipeline.ts — retry-success post-processing (Issue 299)", () => {
+	it("removes !usedRetry gate — if (result.success) without && !usedRetry", () => {
+		const src = readPipelineSource();
+		const idx = src.indexOf("// ── Phase 2: Post issue comments deterministically");
+		const section = src.substring(idx, idx + 500);
+		assert.ok(section.includes("if (result.success)"), "condition uses if (result.success)");
+		assert.ok(
+			!section.includes("&& !usedRetry"),
+			"!usedRetry gate removed from post-processing condition",
+		);
+	});
+
+	it("validateAgentResult called after retry runAgent", () => {
+		const src = readPipelineSource();
+		// Find the retry block: first runAgent call that comes after usedRetry = true
+		const retrySectionStart = src.indexOf("usedRetry = true;");
+		const retrySectionEnd = src.indexOf("const statusLabel", retrySectionStart);
+		const retrySection = src.substring(retrySectionStart, retrySectionEnd);
+		assert.ok(
+			retrySection.includes("validateAgentResult(result)"),
+			"validateAgentResult called after retry runAgent",
+		);
+	});
+
+	it("two validateAgentResult calls in pipeline loop", () => {
+		const src = readPipelineSource();
+		// Count validateAgentResult calls in the pipeline loop (after "for (let i = 0;")
+		const loopStart = src.indexOf("for (let i = 0; i < MAX_LOOPS; i++)");
+		const loopSection = src.substring(loopStart);
+		const matches = loopSection.match(/validateAgentResult\(result\)/g);
+		assert.strictEqual(
+			matches ? matches.length : 0,
+			2,
+			"validateAgentResult(result) called exactly twice in pipeline loop (initial + retry)",
+		);
+	});
+
+	it("first validateAgentResult call precedes usedRetry declaration", () => {
+		const src = readPipelineSource();
+		const loopStart = src.indexOf("for (let i = 0; i < MAX_LOOPS; i++)");
+		const loopSection = src.substring(loopStart);
+		const firstValidateIdx = loopSection.indexOf("validateAgentResult(result)");
+		const usedRetryDeclIdx = loopSection.indexOf("let usedRetry = false;");
+		assert.ok(
+			firstValidateIdx < usedRetryDeclIdx,
+			"first validateAgentResult call precedes let usedRetry declaration",
+		);
+	});
+
+	it("retry validateAgentResult call is after retry runAgent", () => {
+		const src = readPipelineSource();
+		const retryIfStart = src.indexOf("if (!result.success)");
+		const retrySectionEnd = src.indexOf("const statusLabel", retryIfStart);
+		const retrySection = src.substring(retryIfStart, retrySectionEnd);
+		// The retry block should have: runAgent(...) then validateAgentResult(result)
+		const lastRunAgentIdx = retrySection.lastIndexOf("runAgent(");
+		const validateIdx = retrySection.indexOf("validateAgentResult(result)");
+		assert.ok(
+			lastRunAgentIdx >= 0 && validateIdx >= 0 && lastRunAgentIdx < validateIdx,
+			"validateAgentResult called after runAgent in retry block",
+		);
+	});
+});
