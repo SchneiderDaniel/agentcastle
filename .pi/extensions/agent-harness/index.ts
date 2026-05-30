@@ -66,11 +66,29 @@ export function getBashSubKey(command: string): string | undefined {
 	const tokens = trimmed.split(/\s+/);
 	if (tokens.length === 0 || (tokens.length === 1 && tokens[0] === "")) return undefined;
 
-	if (MULTI_VERB_TOOLS.has(tokens[0]) && tokens.length > 1) {
-		return `${tokens[0]} ${tokens[1]}`;
+	// Determine which tokens form the sub-command
+	// If command starts with cd <path> &&, strip navigation prefix
+	let subKeyTokens: string[];
+	if (tokens[0] === "cd") {
+		const andAndIndex = tokens.indexOf("&&");
+		if (andAndIndex > 0) {
+			// Extract subKey from tokens after && (the real command)
+			subKeyTokens = tokens.slice(andAndIndex + 1);
+		} else {
+			// Bare cd (no &&) — cd IS the command
+			subKeyTokens = tokens;
+		}
+	} else {
+		subKeyTokens = tokens;
 	}
 
-	return tokens[0];
+	if (subKeyTokens.length === 0) return undefined;
+
+	if (MULTI_VERB_TOOLS.has(subKeyTokens[0]) && subKeyTokens.length > 1) {
+		return `${subKeyTokens[0]} ${subKeyTokens[1]}`;
+	}
+
+	return subKeyTokens[0];
 }
 
 // ── Guard result constants ──
@@ -192,9 +210,12 @@ export function createToolCallHandler(state: HarnessState) {
 			// Add 1 for current call (not yet recorded)
 			const effectiveCount = consecutive.count + 1;
 			if (effectiveCount >= cascadeThreshold) {
+				const commandStr = (args.command ?? "") as string;
 				const suggestion =
 					toolName === "bash"
-						? "Combine bash calls with && or use a script file"
+						? commandStr.includes("&&")
+							? "Write a script file instead of repeated bash calls"
+							: "Combine bash calls with && or use a script file"
 						: toolName === "read"
 							? "Batch reads — read larger portions in one call"
 							: `Batch ${toolName} calls to reduce turns`;
