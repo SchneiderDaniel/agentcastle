@@ -55,8 +55,13 @@ export interface CallCounter {
 	 * Record a tool call. Resets consecutive count if composite key changes.
 	 * Composite key = toolName:subKey (when subKey provided) or just toolName.
 	 * Different subKey within same tool resets the counter.
+	 *
+	 * @param toolName - name of the tool being called
+	 * @param sessionTurn - current session turn number (for sinceTurn tracking)
+	 * @param _toolCallIndex - current tool call index (unused internally, for API symmetry)
+	 * @param subKey - optional sub-key for sub-command-aware cascade
 	 */
-	record(toolName: string, turn: number, subKey?: string): void;
+	record(toolName: string, sessionTurn: number, _toolCallIndex: number, subKey?: string): void;
 	/**
 	 * Get consecutive call info for a composite key.
 	 * Returns count 0 if composite key doesn't match the last recorded key.
@@ -64,6 +69,12 @@ export interface CallCounter {
 	getConsecutive(toolName: string, subKey?: string): ConsecutiveInfo;
 	/** Reset all counters. */
 	reset(): void;
+	/**
+	 * Reset consecutive count on turn boundary.
+	 * Clears lastKey so the next record() starts a fresh consecutive chain.
+	 * Does NOT affect toolCallIndex (cache TTL) — only resets cascade state.
+	 */
+	turnBoundaryReset(): void;
 }
 
 export interface HarnessState {
@@ -71,14 +82,21 @@ export interface HarnessState {
 	errorTracker: ErrorTracker;
 	callCounter: CallCounter;
 	/**
-	 * Current turn counter for cache TTL, error tracking, cascade detection.
+	 * Tool call index for cache TTL and error tracking.
 	 * Incremented on each tool_call event handled by the extension.
+	 * Monotonic — never reset by turn boundaries.
 	 */
-	currentTurn: number;
+	toolCallIndex: number;
+	/**
+	 * Session turn number (conversation response cycle).
+	 * Incremented by turn_start handler.
+	 * Used for cascade detection (sinceTurn tracking).
+	 */
+	sessionTurn: number;
 	/**
 	 * Batch ID for parallel call detection.
 	 * Set by session manager before dispatching parallel calls.
-	 * When undefined, falls back to currentTurn (backward compat).
+	 * When undefined, falls back to toolCallIndex (backward compat).
 	 */
 	batchId?: number;
 }
@@ -186,13 +204,13 @@ export function createHarnessState(): HarnessState {
 	}
 
 	const callCounter: CallCounter = {
-		record(toolName: string, turn: number, subKey?: string): void {
+		record(toolName: string, sessionTurn: number, _toolCallIndex: number, subKey?: string): void {
 			const key = makeKey(toolName, subKey);
 			if (key !== lastKey) {
 				// Composite key changed — reset counter
 				lastKey = key;
 				consecutiveCount = 1;
-				sinceTurn = turn;
+				sinceTurn = sessionTurn;
 			} else {
 				consecutiveCount++;
 			}
@@ -215,7 +233,13 @@ export function createHarnessState(): HarnessState {
 			consecutiveCount = 0;
 			sinceTurn = 0;
 		},
+
+		turnBoundaryReset(): void {
+			lastKey = null;
+			consecutiveCount = 0;
+			sinceTurn = 0;
+		},
 	};
 
-	return { readCache, errorTracker, callCounter, currentTurn: 0 };
+	return { readCache, errorTracker, callCounter, toolCallIndex: 0, sessionTurn: 0 };
 }

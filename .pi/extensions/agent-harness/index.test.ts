@@ -8,6 +8,12 @@
  *   Bug 3: currentTurn advances on bash empty-command
  *   Bug 4: CASCADE_THRESHOLD raised to 8
  *   Bug 5: CACHE_TTL_TURNS unified and raised to 6
+ *
+ * Issue 296 additions:
+ *   - toolCallIndex / sessionTurn split
+ *   - turn_start event binding
+ *   - Cascade reset on turn boundaries
+ *   - Suggestion text fix (&& present vs absent)
  */
 
 import { describe, it } from "node:test";
@@ -89,9 +95,9 @@ describe("agent-harness handler", () => {
 		assert.equal(info.count, 1);
 	});
 
-	// ── Bug 2: currentTurn advances on block paths ──
+	// ── Bug 2: toolCallIndex advances on block paths ──
 
-	it("currentTurn advances on error retry block", () => {
+	it("toolCallIndex advances on error retry block", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
@@ -103,11 +109,11 @@ describe("agent-harness handler", () => {
 		const result = handler(makeEvent("read"), makeCtx());
 		assert.ok(result?.block, "should block on error retry");
 
-		// currentTurn should advance
-		assert.equal(state.currentTurn, 1, "currentTurn should advance on error retry block");
+		// toolCallIndex should advance
+		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on error retry block");
 	});
 
-	it("currentTurn advances on read cache block", () => {
+	it("toolCallIndex advances on read cache block", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
@@ -118,11 +124,11 @@ describe("agent-harness handler", () => {
 		const result = handler(makeEvent("read", { path: "x.ts" }), makeCtx());
 		assert.ok(result?.block, "should block on cache hit");
 
-		// currentTurn should advance to 2 (first call incremented to 1, second to 2)
-		assert.equal(state.currentTurn, 2, "currentTurn should advance on read cache block");
+		// toolCallIndex should advance to 2 (first call incremented to 1, second to 2)
+		assert.equal(state.toolCallIndex, 2, "toolCallIndex should advance on read cache block");
 	});
 
-	it("currentTurn advances on cascade block (non-read tool)", () => {
+	it("toolCallIndex advances on cascade block (non-read tool)", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
@@ -134,61 +140,61 @@ describe("agent-harness handler", () => {
 
 		// Last call should be blocked
 		assert.ok(result?.block, "should block on cascade");
-		// currentTurn should equal CASCADE_THRESHOLD
+		// toolCallIndex should equal CASCADE_THRESHOLD
 		assert.equal(
-			state.currentTurn,
+			state.toolCallIndex,
 			CASCADE_THRESHOLD,
-			"currentTurn should advance on cascade block",
+			"toolCallIndex should advance on cascade block",
 		);
 	});
 
-	it("currentTurn advances on bash mismatch block", () => {
+	it("toolCallIndex advances on bash mismatch block", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
 		const result = handler(makeEvent("bash", { command: "grep something" }), makeCtx());
 		assert.ok(result?.block, "should block bash grep");
 
-		assert.equal(state.currentTurn, 1, "currentTurn should advance on bash mismatch block");
+		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on bash mismatch block");
 	});
 
-	// ── Bug 3: currentTurn advances on bash empty-command ──
+	// ── Bug 3: toolCallIndex advances on bash empty-command ──
 
-	it("currentTurn advances on bash empty command", () => {
+	it("toolCallIndex advances on bash empty command", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
 		// Empty command should pass through (result null) but still increment turn
 		const result = handler(makeEvent("bash", {}), makeCtx());
 		assert.equal(result, null, "empty bash command should pass through");
-		assert.equal(state.currentTurn, 1, "currentTurn should advance on empty bash command");
+		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on empty bash command");
 	});
 
-	it("currentTurn advances on bash null command", () => {
+	it("toolCallIndex advances on bash null command", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
 		const result = handler(makeEvent("bash", { command: "" }), makeCtx());
 		assert.equal(result, null, "null bash command should pass through");
-		assert.equal(state.currentTurn, 1, "currentTurn should advance on null bash command");
+		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on null bash command");
 	});
 
-	// ── currentTurn advances on normal paths (regression) ──
+	// ── toolCallIndex advances on normal paths (regression) ──
 
-	it("currentTurn advances on pass-through tool call", () => {
+	it("toolCallIndex advances on pass-through tool call", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
 		handler(makeEvent("ripgrep_search"), makeCtx());
-		assert.equal(state.currentTurn, 1, "currentTurn should advance on pass-through");
+		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on pass-through");
 	});
 
-	it("currentTurn advances on error tracking path", () => {
+	it("toolCallIndex advances on error tracking path", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
 		handler(makeEvent("read", {}, true), makeCtx());
-		assert.equal(state.currentTurn, 1, "currentTurn should advance on error tracking");
+		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on error tracking");
 	});
 
 	// ── Bug 4: CASCADE_THRESHOLD ──
@@ -272,8 +278,215 @@ describe("agent-harness handler", () => {
 			);
 		}
 
-		// After sequence, currentTurn should be 7
-		assert.equal(state.currentTurn, sequence.length);
+		// After sequence, toolCallIndex should be 7
+		assert.equal(state.toolCallIndex, sequence.length);
+	});
+
+	// ── sessionTurn usage in handler ──
+
+	it("sessionTurn is passed to callCounter.record() as sinceTurn", () => {
+		const state = createHarnessState();
+		state.sessionTurn = 3;
+		const handler = createToolCallHandler(state);
+
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		const info = state.callCounter.getConsecutive("read");
+		assert.equal(info.sinceTurn, 3, "sinceTurn should equal sessionTurn");
+	});
+
+	it("sessionTurn increments independently from toolCallIndex", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
+		handler(makeEvent("write", { path: "b.ts", content: "" }), makeCtx());
+
+		// sessionTurn stays 0 (only changed by turn_start handler)
+		assert.equal(state.sessionTurn, 0);
+		// toolCallIndex advances to 2
+		assert.equal(state.toolCallIndex, 2);
+	});
+});
+
+// ── Issue 296: Suggestion text fix (&& present vs absent) ──
+
+describe("Issue 296: Cascade suggestion text", () => {
+	it("bash cascade WITHOUT && suggests 'Combine bash calls with && or use a script file'", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+		}
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("Combine bash calls with && or use a script file"),
+			"blocked echo hi should suggest combined bash calls",
+		);
+	});
+
+	it("bash cascade WITH && suggests 'Reduce per-turn call count — commands already use && for batching'", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "cd /repo && git status" }), makeCtx());
+		}
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("Reduce per-turn call count"),
+			"blocked && command should suggest reducing per-turn count",
+		);
+		assert.ok(
+			!result!.reason.includes("Write a script file"),
+			"should not suggest writing a script file for && commands",
+		);
+	});
+
+	it("non-bash cascade unchanged suggestion text", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+		}
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("Batch write calls"),
+			"non-bash cascade should keep existing suggestion",
+		);
+	});
+
+	it("bash WITH && in middle of command ('npm install && npm test') suggests Reduce per-turn", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "npm install && npm test" }), makeCtx());
+		}
+		assert.ok(result?.block);
+		assert.ok(
+			result!.reason.includes("Reduce per-turn call count"),
+			"blocked npm && command should suggest reducing per-turn count",
+		);
+	});
+});
+
+// ── Issue 296: Cascade resets on turn boundaries ──
+
+describe("Issue 296: Cascade reset on turn boundaries", () => {
+	it("8 same-subKey bash calls in one turn — 8th blocked", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+		}
+		assert.ok(result?.block, "8th call in same turn should block");
+	});
+
+	it("4 same-subKey bash → turn_start → 4 same-subKey bash → none blocked", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		// 4 calls in sessionTurn 0
+		for (let i = 0; i < 4; i++) {
+			const result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+			assert.equal(result, null, `call ${i + 1} in turn 0 should pass`);
+		}
+
+		// Turn boundary: reset cascade, increment sessionTurn
+		state.sessionTurn++;
+		state.callCounter.turnBoundaryReset();
+
+		// 4 more calls in sessionTurn 1
+		for (let i = 0; i < 4; i++) {
+			const result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+			assert.equal(result, null, `call ${i + 1} in turn 1 should pass (reset by turn boundary)`);
+		}
+	});
+
+	it("8 write calls in one turn — 8th blocked (non-bash unaffected)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		let result: ToolCallResult | null = null;
+		for (let i = 0; i < 8; i++) {
+			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+		}
+		assert.ok(result?.block, "8th write call in same turn should block");
+	});
+
+	it("4 write → turn_start → 4 write → none blocked (non-bash resets across turns too)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		for (let i = 0; i < 4; i++) {
+			const result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+			assert.equal(result, null, `write ${i + 1} in turn 0 should pass`);
+		}
+
+		// Turn boundary
+		state.sessionTurn++;
+		state.callCounter.turnBoundaryReset();
+
+		for (let i = 0; i < 4; i++) {
+			const result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+			assert.equal(result, null, `write ${i + 1} in turn 1 should pass (reset)`);
+		}
+	});
+
+	it("toolCallIndex continues monotonic despite turn_start resets", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx()); // toolCallIndex → 1
+
+		// Turn boundary
+		state.sessionTurn++;
+		state.callCounter.turnBoundaryReset();
+
+		handler(makeEvent("read", { path: "b.ts" }), makeCtx()); // toolCallIndex → 2
+		handler(makeEvent("read", { path: "c.ts" }), makeCtx()); // toolCallIndex → 3
+
+		assert.equal(state.toolCallIndex, 3, "toolCallIndex should be monotonic across turn resets");
+		assert.equal(state.sessionTurn, 1, "sessionTurn should have incremented");
+	});
+
+	it("sessionTurn 0 → 3 turn_starts = 3", () => {
+		const state = createHarnessState();
+		assert.equal(state.sessionTurn, 0);
+
+		state.sessionTurn++;
+		assert.equal(state.sessionTurn, 1);
+
+		state.sessionTurn++;
+		assert.equal(state.sessionTurn, 2);
+
+		state.sessionTurn++;
+		assert.equal(state.sessionTurn, 3);
+	});
+
+	it("toolCallIndex 0 → 5 tool calls + 2 turn_starts = 5 (monotonic)", () => {
+		const state = createHarnessState();
+		const handler = createToolCallHandler(state);
+
+		handler(makeEvent("read", { path: "a.ts" }), makeCtx()); // 1
+		state.sessionTurn++; // turn 1 start
+		state.callCounter.turnBoundaryReset();
+		handler(makeEvent("read", { path: "b.ts" }), makeCtx()); // 2
+		handler(makeEvent("read", { path: "c.ts" }), makeCtx()); // 3
+		state.sessionTurn++; // turn 2 start
+		state.callCounter.turnBoundaryReset();
+		handler(makeEvent("read", { path: "d.ts" }), makeCtx()); // 4
+		handler(makeEvent("read", { path: "e.ts" }), makeCtx()); // 5
+
+		assert.equal(state.toolCallIndex, 5);
 	});
 });
 
@@ -318,10 +531,11 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		return api as typeof api & ExtensionAPI;
 	}
 
-	it("registers session_start and tool_call handlers", () => {
+	it("registers session_start, turn_start, and tool_call handlers", () => {
 		const api = createMockAPI();
 		agentHarness(api);
 		assert.ok(api.handlers.has("session_start"));
+		assert.ok(api.handlers.has("turn_start"));
 		assert.ok(api.handlers.has("tool_call"));
 	});
 
@@ -358,6 +572,183 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			input: { path: "fresh.ts", content: "" },
 		});
 		assert.ok(result == null, "after session_start, state should be fresh — no block");
+	});
+
+	// ── Issue 296: turn_start event integration ──
+
+	it("turn_start handler increments sessionTurn and resets cascade counter", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// 4 same-subKey bash calls in first turn
+		for (let i = 0; i < 4; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "bash",
+				input: { command: "echo turn0" },
+			});
+			assert.ok(result == null, `call ${i} in turn 0 should pass`);
+		}
+
+		// Fire turn_start — resets cascade counter
+		await api.fire("turn_start", {
+			type: "turn_start",
+			turnIndex: 1,
+			timestamp: Date.now(),
+		});
+
+		// 4 more same-subKey bash calls in second turn
+		for (let i = 0; i < 4; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(10 + i),
+				toolName: "bash",
+				input: { command: "echo turn1" },
+			});
+			assert.ok(result == null, `call ${i} in turn 1 should pass (reset by turn boundary)`);
+		}
+	});
+
+	it("turn_start handler resets cascade — 8 same-key across 2 turns bypasses block", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// 4 same-subKey bash in turn 0
+		for (let i = 0; i < 4; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "bash",
+				input: { command: "echo same" },
+			});
+			assert.ok(result == null, `turn 0 call ${i} should pass`);
+		}
+
+		// Turn boundary
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+
+		// 4 more same-subKey bash in turn 1
+		for (let i = 0; i < 4; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(10 + i),
+				toolName: "bash",
+				input: { command: "echo same" },
+			});
+			assert.ok(result == null, `turn 1 call ${i} should pass (reset by turn boundary)`);
+		}
+	});
+
+	it("8 same-subKey bash in single turn via dispatch — 8th blocked", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		let lastResult: any = null;
+		for (let i = 0; i < 8; i++) {
+			lastResult = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "bash",
+				input: { command: "echo same" },
+			});
+		}
+		assert.ok(lastResult?.block, "8th same-key bash in single turn should block");
+	});
+
+	it("turn_start handler does not reset toolCallIndex", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// 2 tool calls
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "a.ts" },
+		});
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "b.ts" },
+		});
+
+		// Turn boundary
+		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+
+		// 2 more tool calls
+		await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "3",
+			toolName: "read",
+			input: { path: "c.ts" },
+		});
+		const result = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "4",
+			toolName: "read",
+			input: { path: "d.ts" },
+		});
+
+		// Read call 4 should NOT be cache-blocked because paths differ
+		// But also, toolCallIndex is preserved across turn boundary
+		assert.ok(result == null, "fourth read should pass (different path)");
+		// We can't directly check toolCallIndex from the mock, but the turn_start
+		// handler just increments sessionTurn and resets callCounter
+	});
+
+	// ── Suggestion text via dispatch ──
+
+	it("8 bash WITHOUT && blocked — reason matches 'Combine bash calls with &&'", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		let lastResult: any = null;
+		for (let i = 0; i < 8; i++) {
+			lastResult = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "bash",
+				input: { command: "echo hi" },
+			});
+		}
+		assert.ok(lastResult?.block);
+		assert.ok(lastResult!.reason.includes("Combine bash calls with && or use a script file"));
+	});
+
+	it("8 bash WITH && blocked — reason matches 'Reduce per-turn call count'", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		let lastResult: any = null;
+		for (let i = 0; i < 8; i++) {
+			lastResult = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "bash",
+				input: { command: "cd /repo && git status" },
+			});
+		}
+		assert.ok(lastResult?.block);
+		assert.ok(lastResult!.reason.includes("Reduce per-turn call count"));
+	});
+
+	it("8 write blocked — reason matches 'Batch write calls'", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		let lastResult: any = null;
+		for (let i = 0; i < 8; i++) {
+			lastResult = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "write",
+				input: { path: `f${i}.ts`, content: "" },
+			});
+		}
+		assert.ok(lastResult?.block);
+		assert.ok(lastResult!.reason.includes("Batch write calls"));
 	});
 
 	it("correct pi event shape triggers read cache through full dispatch", async () => {
@@ -700,6 +1091,38 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		});
 		assert.ok(pass == null, "read after blocked cache hit should pass");
 	});
+
+	// ── Regression: pass-through tools still not blocked after turn_start binding ──
+
+	it("ask_user 15 consecutive calls still not blocked after turn_start binding", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		for (let i = 0; i < 15; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "ask_user",
+				input: { question: `Q${i}?` },
+			});
+			assert.ok(result == null, `ask_user call ${i} should NOT be blocked`);
+		}
+	});
+
+	it("structural_search 15 consecutive calls still not blocked after turn_start binding", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		for (let i = 0; i < 15; i++) {
+			const result = await api.fire("tool_call", {
+				type: "tool_call",
+				toolCallId: String(i),
+				toolName: "structural_search",
+				input: { pattern: "test", language: "ts" },
+			});
+			assert.ok(result == null, `structural_search call ${i} should NOT be blocked`);
+		}
+	});
 });
 
 // ── Phase 2: CallCounter subKey cascade (Bug 3) ──
@@ -757,8 +1180,8 @@ describe("Bug 3 fix: CallCounter subKey cascade", () => {
 			const result = handler(makeEvent("bash", { command: gitCommands[i] }), makeCtx());
 			assert.equal(result, null, `git cmd ${i} (${gitCommands[i]}) should pass`);
 		}
-		// Verify 0 blocks by checking currentTurn == 8
-		assert.equal(state.currentTurn, 8, "all 8 git calls should have passed");
+		// Verify 0 blocks by checking toolCallIndex == 8
+		assert.equal(state.toolCallIndex, 8, "all 8 git calls should have passed");
 	});
 
 	it("bash subKey resets when switching between different first tokens", () => {
@@ -775,7 +1198,7 @@ describe("Bug 3 fix: CallCounter subKey cascade", () => {
 		}
 
 		// Final check: total 12 calls, 0 blocks
-		assert.equal(state.currentTurn, 12);
+		assert.equal(state.toolCallIndex, 12);
 	});
 
 	it("non-bash tool cascade still works (backward compat)", () => {
@@ -807,7 +1230,7 @@ describe("Bug 3 fix: CallCounter subKey cascade", () => {
 		// Since empty command had no subKey and echo has subKey "echo",
 		// they're different keys, so both have count 1.
 		// Total turns: 2
-		assert.equal(state.currentTurn, 2);
+		assert.equal(state.toolCallIndex, 2);
 	});
 });
 
@@ -900,7 +1323,7 @@ describe("Issue 282: Cascade behavior with cd-prefixed commands", () => {
 			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
 			assert.equal(result, null, `diverse cd-prefixed cmd ${i} should pass`);
 		}
-		assert.equal(state.currentTurn, 8, "all 8 diverse cd-prefixed calls should pass");
+		assert.equal(state.toolCallIndex, 8, "all 8 diverse cd-prefixed calls should pass");
 	});
 
 	it("Mix bare cd and cd-prefixed — both pass (different subKeys)", () => {
@@ -915,7 +1338,7 @@ describe("Issue 282: Cascade behavior with cd-prefixed commands", () => {
 		const r2 = handler(makeEvent("bash", { command: "cd /repo && ls" }), makeCtx());
 		assert.equal(r2, null);
 
-		assert.equal(state.currentTurn, 2);
+		assert.equal(state.toolCallIndex, 2);
 	});
 
 	it("cd /repo && npm install ×8 — 8th blocked (same subKey 'npm install')", () => {
@@ -942,7 +1365,7 @@ describe("Issue 282: Cascade behavior with cd-prefixed commands", () => {
 		const r2 = handler(makeEvent("bash", { command: "cd /repo && npm test" }), makeCtx());
 		assert.equal(r2, null);
 
-		assert.equal(state.currentTurn, 2);
+		assert.equal(state.toolCallIndex, 2);
 	});
 
 	it("7 ls calls then 1 cd /repo && ls — 8th blocked (same subKey 'ls')", () => {
@@ -962,7 +1385,9 @@ describe("Issue 282: Cascade behavior with cd-prefixed commands", () => {
 	});
 });
 
-describe("Issue 282: Error message suggestion split", () => {
+// ── Issue 282: Error message suggestion split (now Issue 296 style) ──
+
+describe("Issue 282: Error message suggestion split (migrated to Issue 296 format)", () => {
 	it("Blocked bash WITHOUT && suggests 'Combine bash calls with &&'", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
@@ -978,7 +1403,7 @@ describe("Issue 282: Error message suggestion split", () => {
 		);
 	});
 
-	it("Blocked bash WITH && suggests 'Write a script file'", () => {
+	it("Blocked bash WITH && suggests 'Reduce per-turn call count'", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
@@ -988,8 +1413,8 @@ describe("Issue 282: Error message suggestion split", () => {
 		}
 		assert.ok(result?.block);
 		assert.ok(
-			result!.reason.includes("Write a script file instead of repeated bash calls"),
-			"blocked cd-prefixed command should suggest script file instead of &&",
+			result!.reason.includes("Reduce per-turn call count"),
+			"blocked cd-prefixed command should suggest reducing per-turn call count",
 		);
 	});
 
@@ -1008,7 +1433,7 @@ describe("Issue 282: Error message suggestion split", () => {
 		);
 	});
 
-	it("Blocked bash WITH && in middle of command suggests script file", () => {
+	it("Blocked bash WITH && in middle of command suggests Reduce per-turn", () => {
 		const state = createHarnessState();
 		const handler = createToolCallHandler(state);
 
@@ -1018,8 +1443,8 @@ describe("Issue 282: Error message suggestion split", () => {
 		}
 		assert.ok(result?.block);
 		assert.ok(
-			result!.reason.includes("Write a script file instead of repeated bash calls"),
-			"blocked npm && command should suggest script file",
+			result!.reason.includes("Reduce per-turn call count"),
+			"blocked npm && command should suggest reducing per-turn count",
 		);
 	});
 });
@@ -1072,7 +1497,7 @@ describe("Phase 2: Multi-verb CLI diversity — 2-token subKey", () => {
 			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
 			assert.equal(result, null, `npm cmd ${i} (${commands[i]}) should pass`);
 		}
-		assert.equal(state.currentTurn, 8, "all 8 diverse npm calls should pass");
+		assert.equal(state.toolCallIndex, 8, "all 8 diverse npm calls should pass");
 	});
 
 	it("diverse docker sub-commands — all 8 pass", () => {
@@ -1093,7 +1518,7 @@ describe("Phase 2: Multi-verb CLI diversity — 2-token subKey", () => {
 			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
 			assert.equal(result, null, `docker cmd ${i} (${commands[i]}) should pass`);
 		}
-		assert.equal(state.currentTurn, 8, "all 8 diverse docker calls should pass");
+		assert.equal(state.toolCallIndex, 8, "all 8 diverse docker calls should pass");
 	});
 
 	it("diverse gh sub-commands — all 8 pass", () => {
@@ -1114,7 +1539,7 @@ describe("Phase 2: Multi-verb CLI diversity — 2-token subKey", () => {
 			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
 			assert.equal(result, null, `gh cmd ${i} (${commands[i]}) should pass`);
 		}
-		assert.equal(state.currentTurn, 8, "all 8 diverse gh calls should pass");
+		assert.equal(state.toolCallIndex, 8, "all 8 diverse gh calls should pass");
 	});
 });
 
@@ -1176,7 +1601,7 @@ describe("Phase 3: Backward compatibility and edge cases", () => {
 		assert.equal(r2, null);
 
 		// Different keys, both pass, 2 turns
-		assert.equal(state.currentTurn, 2);
+		assert.equal(state.toolCallIndex, 2);
 	});
 
 	it("mixed CLIs (git/npm/docker/gh) — all 8 pass", () => {
@@ -1197,7 +1622,7 @@ describe("Phase 3: Backward compatibility and edge cases", () => {
 			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
 			assert.equal(result, null, `mixed cmd ${i} (${commands[i]}) should pass`);
 		}
-		assert.equal(state.currentTurn, 8, "all 8 mixed CLI calls should pass");
+		assert.equal(state.toolCallIndex, 8, "all 8 mixed CLI calls should pass");
 	});
 
 	it("git push origin main ×8 — 8th blocked (same 2-token subKey 'git push')", () => {
@@ -1225,10 +1650,10 @@ describe("Bug 5 fix: read cache [pending] same-turn pass-through", () => {
 		// First read at turn 0: cache miss, set [pending], pass
 		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.equal(r1, null);
-		assert.equal(state.currentTurn, 1);
+		assert.equal(state.toolCallIndex, 1);
 
 		// Reset turn to 0 to simulate same-turn re-read
-		state.currentTurn = 0;
+		state.toolCallIndex = 0;
 
 		// Second read at turn 0: cache hit with [pending] at turn 0 → pass through
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
@@ -1241,10 +1666,10 @@ describe("Bug 5 fix: read cache [pending] same-turn pass-through", () => {
 
 		// First read: turn 0, sets [pending]
 		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(state.currentTurn, 1);
+		assert.equal(state.toolCallIndex, 1);
 
 		// Second read at turn 1: cache hit with [pending] at turn 0
-		// Since cached.turn(0) !== currentTurn(1), it blocks
+		// Since cached.turn(0) !== toolCallIndex(1), it blocks
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.ok(r2?.block, "cross-turn [pending] should block");
 	});
@@ -1270,7 +1695,7 @@ describe("Bug 5 fix: read cache [pending] same-turn pass-through", () => {
 		assert.equal(r1, null);
 
 		// Reset turn to 0 for same-turn
-		state.currentTurn = 0;
+		state.toolCallIndex = 0;
 
 		// Read with offset 100, limit 100 — different cache key, should pass
 		const r2 = handler(makeEvent("read", { path: "a.ts", offset: 100, limit: 100 }), makeCtx());
@@ -1285,7 +1710,7 @@ describe("Bug 5 fix: read cache [pending] same-turn pass-through", () => {
 		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 
 		// Set turn to 6 (CACHE_TTL_TURNS = 6, diff >= 6 → TTL expired)
-		state.currentTurn = 6;
+		state.toolCallIndex = 6;
 
 		// Re-read: cache TTL expired, miss, pass through
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
@@ -1308,7 +1733,7 @@ describe("Issue 270: Cache invalidation on write", () => {
 		handler(makeEvent("write", { path: "out.ts", content: "data" }), makeCtx());
 
 		// Re-read same file should pass (cache was cleared)
-		state.currentTurn = 2;
+		state.toolCallIndex = 2;
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.equal(r2, null, "read after write should pass — cache invalidated");
 	});
@@ -1325,7 +1750,7 @@ describe("Issue 270: Cache invalidation on write", () => {
 		handler(makeEvent("bash", { command: "sed -i 's/foo/bar/g' file.ts" }), makeCtx());
 
 		// Re-read same file should pass (cache was cleared)
-		state.currentTurn = 4;
+		state.toolCallIndex = 4;
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.equal(r2, null, "read after sed should pass — cache invalidated");
 	});
@@ -1342,7 +1767,7 @@ describe("Issue 270: Cache invalidation on write", () => {
 		handler(makeEvent("bash", { command: "ls -la" }), makeCtx());
 
 		// Re-read same file — cache still present, should block
-		state.currentTurn = 2;
+		state.toolCallIndex = 2;
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.ok(r2?.block, "read after ls should block — cache not invalidated");
 	});
@@ -1359,7 +1784,7 @@ describe("Issue 270: Cache invalidation on write", () => {
 		handler(makeEvent("bash", { command: "echo 'data' > /tmp/x" }), makeCtx());
 
 		// Cache should be cleared
-		state.currentTurn = 4;
+		state.toolCallIndex = 4;
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.equal(r2, null, "read after echo > should pass — cache invalidated");
 	});
@@ -1450,7 +1875,7 @@ describe("Issue 270: batchId-aware cache TTL", () => {
 		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.equal(r1, null);
 
-		// Simulate same batch — same batchId, currentTurn advanced
+		// Simulate same batch — same batchId, toolCallIndex advanced
 		// Cache entry was stored with batchId=42, now get with batchId=42
 		// Should still be valid (same batch), so blocked
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
@@ -1483,7 +1908,7 @@ describe("Issue 270: batchId-aware cache TTL", () => {
 		assert.equal(r1, null);
 
 		// Same turn — normal blocking
-		state.currentTurn = 1;
+		state.toolCallIndex = 1;
 		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
 		assert.ok(r2?.block, "no batchId — normal cache block");
 	});

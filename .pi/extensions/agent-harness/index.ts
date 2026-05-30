@@ -91,8 +91,6 @@ export function getBashSubKey(command: string): string | undefined {
 	return subKeyTokens[0];
 }
 
-// ── Guard result constants ──
-
 // ── Handler factory (exported for testing) ──
 
 /**
@@ -120,11 +118,12 @@ export function createToolCallHandler(state: HarnessState) {
 	): ToolCallResult | null {
 		const toolName = event.toolName;
 		const args = event.input ?? {};
-		const turn = state.currentTurn;
+		const toolCallIndex = state.toolCallIndex;
+		const sessionTurn = state.sessionTurn;
 
 		// ── Guard: undefined/empty toolName → skip recording, pass through ──
 		if (!toolName) {
-			state.currentTurn++;
+			state.toolCallIndex++;
 			return null;
 		}
 
@@ -132,8 +131,8 @@ export function createToolCallHandler(state: HarnessState) {
 
 		// ── 1. Pass-through tools → always pass, but record for cascade reset ──
 		if (meta.passThrough) {
-			state.callCounter.record(toolName, turn);
-			state.currentTurn++;
+			state.callCounter.record(toolName, sessionTurn, toolCallIndex);
+			state.toolCallIndex++;
 			return null;
 		}
 
@@ -141,7 +140,7 @@ export function createToolCallHandler(state: HarnessState) {
 
 		// ── 2. Error tracking ──
 		if (event.isError) {
-			state.errorTracker.push(toolName, { turn, toolName });
+			state.errorTracker.push(toolName, { turn: toolCallIndex, toolName });
 			// result stays null → pass through
 		}
 
@@ -176,10 +175,10 @@ export function createToolCallHandler(state: HarnessState) {
 					const offset = (args.offset ?? 0) as number;
 					const limit = (args.limit ?? "") as number;
 					const cacheKey = `${path}|${offset}|${limit}`;
-					const cached = state.readCache.get(cacheKey, turn, state.batchId);
+					const cached = state.readCache.get(cacheKey, toolCallIndex, state.batchId);
 					if (cached) {
 						// Same-turn [pending] → pass through (let re-read happen)
-						if (cached.content === "[pending]" && cached.turn === turn) {
+						if (cached.content === "[pending]" && cached.turn === toolCallIndex) {
 							// result stays null, pass through
 						} else {
 							result = {
@@ -189,7 +188,7 @@ export function createToolCallHandler(state: HarnessState) {
 						}
 					} else {
 						// Store marker to track that this path+offset+limit was recently read
-						state.readCache.set(cacheKey, "[pending]", turn, state.batchId);
+						state.readCache.set(cacheKey, "[pending]", toolCallIndex, state.batchId);
 					}
 				}
 			}
@@ -214,7 +213,7 @@ export function createToolCallHandler(state: HarnessState) {
 				const suggestion =
 					toolName === "bash"
 						? commandStr.includes("&&")
-							? "Write a script file instead of repeated bash calls"
+							? "Reduce per-turn call count — commands already use && for batching"
 							: "Combine bash calls with && or use a script file"
 						: toolName === "read"
 							? "Batch reads — read larger portions in one call"
@@ -258,11 +257,11 @@ export function createToolCallHandler(state: HarnessState) {
 		// so they don't inflate the cascade counter.
 		// Uses bashSubKey for sub-command-aware cascade (Bug 3 fix).
 		if (!result) {
-			state.callCounter.record(toolName, turn, bashSubKey);
+			state.callCounter.record(toolName, sessionTurn, toolCallIndex, bashSubKey);
 		}
 
-		// ── 8. Increment turn for every code path, return result ──
-		state.currentTurn++;
+		// ── 8. Increment toolCallIndex for every code path, return result ──
+		state.toolCallIndex++;
 
 		return result;
 	};
@@ -276,6 +275,12 @@ export default function agentHarness(pi: ExtensionAPI): void {
 	// Session start: initialize fresh state
 	pi.on("session_start", async () => {
 		state = createHarnessState();
+	});
+
+	// Turn start: increment session turn and reset cascade counter
+	pi.on("turn_start", async () => {
+		state.sessionTurn++;
+		state.callCounter.turnBoundaryReset();
 	});
 
 	// Tool_call handler

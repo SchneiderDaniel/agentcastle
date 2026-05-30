@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createConfigStore } from "../config.ts";
 import { resetSessionLevel, resolveSessionLevel } from "../session.ts";
+import type { CustomEntry } from "@earendil-works/pi-coding-agent";
 import type { Level } from "../types.ts";
 
 // ---------------------------------------------------------------------------
@@ -104,8 +105,15 @@ describe("Full lifecycle integration", () => {
 		const store = createConfigStore(configPath);
 		await store.ensureConfigLoaded();
 
-		const sessionEntries = [
-			{ type: "custom", customType: "caveman-level", data: { level: "full" as Level } },
+		const sessionEntries: CustomEntry[] = [
+			{
+				id: "1",
+				parentId: null,
+				timestamp: new Date().toISOString(),
+				type: "custom",
+				customType: "caveman-level",
+				data: { level: "full" as Level },
+			},
 		];
 		const capture: MockCapture = { setLevelCalls: [], appendEntryCalls: [] };
 
