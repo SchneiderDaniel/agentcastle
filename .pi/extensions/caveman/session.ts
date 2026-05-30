@@ -12,10 +12,14 @@ import { LEVELS } from "./types.ts";
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Minimal entry shape compatible with SDK SessionEntry union type.
+ * Only exposes fields used by resolveSessionLevel.
+ */
 export interface SessionEntry {
 	type: string;
-	customType: string;
-	data: Record<string, unknown>;
+	customType?: string;
+	data?: unknown;
 }
 
 export interface ResolvedSessionLevel {
