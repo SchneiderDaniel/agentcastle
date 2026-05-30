@@ -5,12 +5,38 @@
  * All file I/O is deferred to function execution time.
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join as joinPath } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { countExtensions } from "./extensions.js";
 import { countSkills } from "./skills.js";
+
+// ── Shared extension state (file-based to avoid dual-module hazard) ──
+
+const STATE_PATH = ".pi/state/session-extensions.json";
+
+interface SessionExtState {
+	logger: boolean | null;
+	advice: boolean | null;
+}
+
+/**
+ * Read session extension state from shared file.
+ * Returns null for missing keys.
+ */
+export function readSessionExtState(): SessionExtState {
+	try {
+		const raw = readFileSync(STATE_PATH, "utf-8");
+		const data = JSON.parse(raw);
+		return {
+			logger: typeof data.logger === "boolean" ? data.logger : null,
+			advice: typeof data.advice === "boolean" ? data.advice : null,
+		};
+	} catch {
+		return { logger: null, advice: null };
+	}
+}
 
 function listNames(dir: string, suffix: string): string[] {
 	try {

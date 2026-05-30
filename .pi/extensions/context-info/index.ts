@@ -14,9 +14,7 @@ import { loadConfig, readPiSetting } from "./config.js";
 import { getWorktreeName } from "./git-helpers.js";
 import { tryEmit } from "./telemetry.js";
 import { processStartTime, installFooter } from "./footer.js";
-import { showWelcomeBanner } from "./welcome.js";
-import { getSessionLoggerState, sessionLoggerGate } from "../session-logger/index.ts";
-import { getSessionAdviceState } from "../session-advice/index.ts";
+import { showWelcomeBanner, readSessionExtState } from "./welcome.js";
 import { listLocalExtensions } from "./extensions.js";
 import { listLocalPrompts } from "./prompts.js";
 import { listLocalSkills } from "./skills.js";
@@ -356,13 +354,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 
 		// ── Startup welcome banner ──────────────────────────────
-		showWelcomeBanner(
-			ctx,
-			startupWidgetActive,
-			sessionId,
-			getSessionLoggerState(sessionLoggerGate),
-			getSessionAdviceState(),
-		);
+		const extState = readSessionExtState();
+		showWelcomeBanner(ctx, startupWidgetActive, sessionId, extState.logger, extState.advice);
 	});
 
 	// Clear welcome banner and explain-* widgets on first user input
