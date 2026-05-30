@@ -4,7 +4,7 @@
 // No side effects, no subprocess imports — fully testable.
 
 import type { AgentRunState, AgentPhase } from "./types";
-import { formatTokens, extractTextFromContent } from "./formatting";
+import { formatTokens, extractTextFromContent } from "./formatting.ts";
 
 // ─── Constants ──────────────────────────────────────────────────────
 
@@ -206,8 +206,8 @@ export function processJsonLine(
 								const trimmed = t.trim();
 								if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 500)}`);
 							}
+							state.thinkingPushedThisTurn = true;
 						}
-						state.thinkingPushedThisTurn = true; // Always set — delta handlers already pushed complete lines
 						state.liveThinking = "";
 						state.phase = "idle";
 						return { flush: true, workingChange: true };
@@ -220,8 +220,8 @@ export function processJsonLine(
 								const trimmed = t.trim();
 								if (trimmed) pushLog(state, trimmed);
 							}
+							state.textPushedThisTurn = true;
 						}
-						state.textPushedThisTurn = true; // Always set — delta handlers already pushed complete lines
 						if (ev.usage) {
 							state.tokenCount =
 								ev.usage.totalTokens || ev.usage.input + ev.usage.output || state.tokenCount;

@@ -3,8 +3,8 @@
 // Extracted from agent-session-runner.ts to keep files modular.
 
 import type { AgentRunState, AgentPhase } from "./types";
-import { pushLog } from "./agent-stream";
-import { extractTextFromContent } from "./formatting";
+import { pushLog } from "./agent-stream.ts";
+import { extractTextFromContent } from "./formatting.ts";
 
 // ─── Event → State Mapping ─────────────────────────────────────────
 
@@ -101,8 +101,8 @@ export function processSessionEvent(
 							const trimmed = t.trim();
 							if (trimmed) pushLog(state, `💭 ${trimmed}`);
 						}
+						state.thinkingPushedThisTurn = true;
 					}
-					state.thinkingPushedThisTurn = true; // Always set — delta handlers already pushed complete lines
 					state.liveThinking = "";
 					state.phase = "idle";
 					return { flush: true, workingChange: true };
@@ -114,8 +114,8 @@ export function processSessionEvent(
 							const trimmed = t.trim();
 							if (trimmed) pushLog(state, trimmed);
 						}
+						state.textPushedThisTurn = true;
 					}
-					state.textPushedThisTurn = true; // Always set — delta handlers already pushed complete lines
 					if (ev.message?.usage) {
 						state.tokenCount =
 							ev.message.usage.totalTokens ||
@@ -155,6 +155,7 @@ export function processSessionEvent(
 								for (const t of allText.split("\n")) {
 									if (t.trim()) pushLog(state, t);
 								}
+								state.textPushedThisTurn = true;
 							}
 						}
 						if (!state.thinkingPushedThisTurn && thinkingParts.length > 0) {
@@ -165,9 +166,12 @@ export function processSessionEvent(
 								for (const t of allThinking.split("\n")) {
 									if (t.trim()) pushLog(state, `💭 ${t}`);
 								}
+								state.thinkingPushedThisTurn = true;
 							}
 						}
 					}
+					state.liveText = "";
+					state.liveThinking = "";
 					state.phase = "idle";
 					return { flush: true, workingChange: true };
 				}

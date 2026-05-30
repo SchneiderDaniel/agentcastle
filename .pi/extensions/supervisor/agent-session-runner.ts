@@ -271,11 +271,12 @@ export async function runAgentInProcess(
 			clearTimeout(flushTimer);
 			flushTimer = null;
 		}
+		flushWidget();
+
 		if (heartbeatTimer) {
 			clearInterval(heartbeatTimer);
 			heartbeatTimer = null;
 		}
-		flushWidget();
 
 		// Unsubscribe and dispose
 		try {
@@ -302,8 +303,8 @@ export async function runAgentInProcess(
 			unsubscribe?.();
 		} catch {}
 		if (flushTimer) clearTimeout(flushTimer);
-
 		if (heartbeatTimer) clearInterval(heartbeatTimer);
+
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);
 		ctx.ui.setStatus("supervisor", "");

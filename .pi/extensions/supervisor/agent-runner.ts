@@ -200,7 +200,6 @@ export async function runAgentSubprocess(
 			if (resolved) return;
 			resolved = true;
 
-			clearInterval(heartbeatTimer);
 			if (jsonBuffer.trim()) handleLine(jsonBuffer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
@@ -263,7 +262,6 @@ export async function runAgentSubprocess(
 		});
 
 		child.on("error", (err) => {
-			clearInterval(heartbeatTimer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;
