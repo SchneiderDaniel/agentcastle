@@ -134,8 +134,15 @@ export async function runAgentSubprocess(
 			}
 		};
 
-		// Event-driven flush only — no heartbeat interval (terminal freeze fix).
-		// Each stdout data event triggers handleLine → scheduleFlush at 300ms debounce.
+		// Gentle 2s heartbeat — keeps terminal alive during quiet periods.
+		// Original freeze was from requestRender(true) + 5s interval, not heartbeat itself.
+		// Without heartbeat, terminal stops rendering between events — "stuck until keystroke".
+		// flushWidget calls setWidget which calls requestRender (coalesced by TUI to 16ms).
+		const heartbeatTimer = setInterval(() => {
+			if (!flushTimer) flushWidget();
+		}, 2000);
+
+		// Event-driven flush at 300ms debounce + 2s heartbeat.
 		const handleLine = (line: string) => {
 			const result = processJsonLine(line, state);
 			if (result.flush) scheduleFlush();
@@ -176,6 +183,7 @@ export async function runAgentSubprocess(
 			if (resolved) return;
 			resolved = true;
 
+			clearInterval(heartbeatTimer);
 			if (jsonBuffer.trim()) handleLine(jsonBuffer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
@@ -238,6 +246,7 @@ export async function runAgentSubprocess(
 		});
 
 		child.on("error", (err) => {
+			clearInterval(heartbeatTimer);
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;

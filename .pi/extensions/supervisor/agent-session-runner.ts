@@ -74,7 +74,7 @@ export async function runAgentInProcess(
 
 	// Hoist cleanup variables so they're accessible in try, catch, and finally
 	let flushTimer: NodeJS.Timeout | null = null;
-	// Event-driven flush only — no heartbeat interval (terminal freeze fix)
+	let heartbeatTimer: NodeJS.Timeout | null = null;
 
 	// Resolve model
 	const modelInfo = await resolveModel(agent.config.model || "");
@@ -144,9 +144,11 @@ export async function runAgentInProcess(
 			}
 		};
 
-		// Event-driven flush only — no heartbeat interval.
-		// TUI re-renders triggered by session events via scheduleFlush().
-		// Terminal freeze fix: stop interval-based forced re-renders.
+		// 2s heartbeat ensures terminal updates during quiet periods (LLM thinking).
+		// Regular requestRender (not force=true) — TUI debounces internally to 16ms.
+		heartbeatTimer = setInterval(() => {
+			if (!flushTimer) flushWidget();
+		}, 2000);
 
 		unsubscribe = session.subscribe((event: any) => {
 			const result = processSessionEvent(event, state);
@@ -220,6 +222,7 @@ export async function runAgentInProcess(
 					unsubscribe?.();
 				} catch {}
 				if (flushTimer) clearTimeout(flushTimer);
+				if (heartbeatTimer) clearInterval(heartbeatTimer);
 				ctx.ui.setWidget(widgetId, undefined);
 				ctx.ui.setWorkingMessage(undefined);
 				ctx.ui.setStatus("supervisor", "");
@@ -252,6 +255,10 @@ export async function runAgentInProcess(
 			clearTimeout(flushTimer);
 			flushTimer = null;
 		}
+		if (heartbeatTimer) {
+			clearInterval(heartbeatTimer);
+			heartbeatTimer = null;
+		}
 		flushWidget();
 
 		// Unsubscribe and dispose
@@ -280,6 +287,7 @@ export async function runAgentInProcess(
 		} catch {}
 		if (flushTimer) clearTimeout(flushTimer);
 
+		if (heartbeatTimer) clearInterval(heartbeatTimer);
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);
 		ctx.ui.setStatus("supervisor", "");
