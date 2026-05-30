@@ -11,12 +11,13 @@ import assert from "node:assert/strict";
 import { resolveSessionLevel, resetSessionLevel } from "../session.ts";
 import type { Level } from "../types.ts";
 import type { CavemanConfig } from "../types.ts";
+import type { CustomEntry } from "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function entry(level: Level) {
+function entry(level: Level): CustomEntry<{ level: Level }> {
 	return {
 		id: "1",
 		parentId: null,
@@ -87,7 +88,7 @@ describe("resolveSessionLevel (pure function)", () => {
 				type: "custom",
 				customType: "other-type",
 				data: { foo: "bar" },
-			},
+			} as CustomEntry,
 		]);
 		assert.equal(result.level, "full");
 		assert.equal(result.shouldAppendEntry, true);
