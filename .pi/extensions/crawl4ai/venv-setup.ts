@@ -53,6 +53,20 @@ function lazyPaths(cwd: string) {
 	};
 }
 
+/**
+ * Shell-safe single-quote escaping for bash -c argument interpolation.
+ *
+ * Wraps `s` in single quotes so that ALL characters except the single quote
+ * are treated literally by bash. Embedded single quotes are escaped via the
+ * `'\''` sequence (end quote, escaped quote, reopen quote).
+ *
+ * This is the same strategy used by executor.ts:shSingleQuote (issue #271 fix).
+ */
+export function shSingleQuote(s: string): string {
+	// Replace each ' with '\'' then wrap in single quotes
+	return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 // ── Cache helpers ──
 
 function cacheGet(
@@ -180,7 +194,7 @@ export async function ensureChromiumDeps(
 
 	// Check if deps already extracted and working
 	const testLib = `${DEPS_LIB_DIR}/libnspr4.so`;
-	const libCheck = await exec("bash", ["-c", `test -f ${testLib}`]);
+	const libCheck = await exec("bash", ["-c", `test -f ${shSingleQuote(testLib)}`]);
 	if (libCheck.code === 0) {
 		cacheMarkSuccess(ready, cwd);
 		return DEPS_LIB_DIR;
@@ -202,9 +216,13 @@ export async function ensureChromiumDeps(
 	for (const group of pkgGroups) {
 		let downloaded = false;
 		for (const pkg of group) {
-			const dl = await exec("bash", ["-c", `cd ${DEPS_DIR} && apt-get download ${pkg}`], {
-				timeout: 30_000,
-			});
+			const dl = await exec(
+				"bash",
+				["-c", `cd ${shSingleQuote(DEPS_DIR)} && apt-get download ${pkg}`],
+				{
+					timeout: 30_000,
+				},
+			);
 			if (dl.code === 0) {
 				downloaded = true;
 				if (pkg !== group[0]) {
@@ -222,7 +240,7 @@ export async function ensureChromiumDeps(
 	}
 
 	// Extract all debs
-	const findResult = await exec("bash", ["-c", `ls ${DEPS_DIR}/*.deb 2>/dev/null`]);
+	const findResult = await exec("bash", ["-c", `ls ${shSingleQuote(DEPS_DIR)}/*.deb 2>/dev/null`]);
 	if (findResult.code === 0 && findResult.stdout.trim()) {
 		for (const deb of findResult.stdout.trim().split("\n")) {
 			await exec("dpkg", ["-x", deb.trim(), DEPS_DIR]);
@@ -230,7 +248,7 @@ export async function ensureChromiumDeps(
 	}
 
 	// Verify
-	const verify = await exec("bash", ["-c", `test -f ${testLib}`]);
+	const verify = await exec("bash", ["-c", `test -f ${shSingleQuote(testLib)}`]);
 	if (verify.code !== 0) {
 		console.error("crawl4ai: failed to set up Chromium system libraries");
 		cacheMarkFailure(ready, cwd);
