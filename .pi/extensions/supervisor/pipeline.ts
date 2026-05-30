@@ -578,15 +578,14 @@ export function registerSupervisorCommand(pi: ExtensionAPI): void {
 						model: agent?.config?.model,
 					});
 
-					// Resolve next status from agent output markers (config-driven)
-					// Check all output sources: textOnly may miss marker if it was consumed
-					// from liveText by newline splitting in text_delta and not picked up
-					// by text_end (empty liveText) or message_end (missing msg.content).
-					// Fall back to textOutput (fullLog) and output (raw messages).
+					// Resolve next status from agent output markers (config-driven).
+					// Check both textOnly and textOutput in case marker straddles
+					// a text_delta boundary. Do NOT fall back to result.output (raw
+					// message history) — that includes the task template text which
+					// contains both AUDIT_APPROVED and AUDIT_REJECTED, causing
+					// lastIndexOf to pick the wrong marker (Issue #281).
 					const nextStatus =
-						resolveNextStatus(step, result.textOnly) ??
-						resolveNextStatus(step, result.textOutput) ??
-						resolveNextStatus(step, result.output);
+						resolveNextStatus(step, result.textOnly) ?? resolveNextStatus(step, result.textOutput);
 
 					// ── PR creation: when auditor approves and transitions to Done ──
 					// Decoupled from auditOutput marker parsing — triggers reliably on workflow transition.
