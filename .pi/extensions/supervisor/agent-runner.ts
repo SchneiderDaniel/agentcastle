@@ -57,6 +57,8 @@ export async function runAgentSubprocess(
 	cwd?: string,
 ): Promise<AgentRunResult> {
 	const effectiveCwd = cwd || ctx.cwd || process.cwd();
+	// Pass worktree path to worktree-sandbox extension for path confinement
+	const sandboxEnv = cwd ? { WORKTREE_SANDBOX_PATH: cwd } : {};
 
 	const rawTools = agent.config.tools || "read,bash,write,edit";
 	const tools = resolveTools(rawTools, agent.config.extensions, effectiveCwd);
@@ -106,7 +108,7 @@ export async function runAgentSubprocess(
 	return new Promise((resolve) => {
 		const child = spawn("/usr/bin/pi", args, {
 			cwd: effectiveCwd,
-			env: { ...process.env, PI_NO_COLOR: "1" },
+			env: { ...process.env, PI_NO_COLOR: "1", ...sandboxEnv },
 			stdio: ["ignore", "pipe", "pipe"],
 			timeout: timeoutMs,
 		});

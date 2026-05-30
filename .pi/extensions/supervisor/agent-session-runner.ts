@@ -52,6 +52,14 @@ export async function runAgentInProcess(
 	const agentName = agent.config.name;
 	const widgetId = `agent-${agentName}`;
 
+	// Set sandbox env var for worktree confinement extension (restored in finally)
+	const _prevSandboxEnv = process.env.WORKTREE_SANDBOX_PATH;
+	if (cwd) {
+		process.env.WORKTREE_SANDBOX_PATH = cwd;
+	} else {
+		delete process.env.WORKTREE_SANDBOX_PATH;
+	}
+
 	ctx.ui.notify(`Running agent (in-process): ${agentName}...`, "info");
 	ctx.ui.setStatus("supervisor", `Running ${agentName}...`);
 
@@ -328,5 +336,14 @@ export async function runAgentInProcess(
 			thinkingOutput:
 				state.thinkingOutputLines.length > 0 ? state.thinkingOutputLines.join("\n\n") : undefined,
 		};
+	} finally {
+		// Restore sandbox env var
+		if (cwd) {
+			if (_prevSandboxEnv) {
+				process.env.WORKTREE_SANDBOX_PATH = _prevSandboxEnv;
+			} else {
+				delete process.env.WORKTREE_SANDBOX_PATH;
+			}
+		}
 	}
 }
