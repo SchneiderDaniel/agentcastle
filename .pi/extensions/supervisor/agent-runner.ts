@@ -23,6 +23,7 @@ import {
 } from "./agent-stream";
 import { buildWidgetLines, getWorkingMessage } from "./session-widget";
 import { runAgentInProcess } from "./agent-session-runner";
+import { buildErrorNotificationContext } from "./diagnostics";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
@@ -38,11 +39,40 @@ export async function runAgent(
 	cwd?: string,
 ): Promise<AgentRunResult> {
 	// Primary: in-process via SDK
+	// Two failure modes:
+	//   1. Thrown error (unexpected exception) — caught by catch block
+	//   2. Non-success result (watchdog stall, agent error) — checked via result.success
+	// Both trigger subprocess fallback for resilience (Phase 3: graceful degradation).
 	try {
-		return await runAgentInProcess(agent, task, ctx, pi, timeoutMs, cwd);
+		const result = await runAgentInProcess(agent, task, ctx, pi, timeoutMs, cwd);
+
+		// Check for non-thrown failures (e.g., watchdog stall, agent error result)
+		if (!result.success) {
+			const reason = result.summaryLine || result.errorOutput || "unknown error";
+			console.error(
+				`[supervisor] In-process runner failed (result.success=false), falling back to subprocess: ${reason}`,
+			);
+			try {
+				const ctx2 = buildErrorNotificationContext("in-process-runner", reason);
+				ctx.ui.notify(`In-process runner failed — falling back to subprocess: ${ctx2}`, "warning");
+			} catch {
+				// notification fallback
+			}
+			return await runAgentSubprocess(agent, task, ctx, timeoutMs, cwd);
+		}
+
+		return result;
 	} catch (err: unknown) {
-		console.error(`[supervisor] In-process runner failed, falling back to subprocess: ${err}`);
-		// Fallback: subprocess (existing code)
+		const errMsg = err instanceof Error ? err.message : String(err);
+		console.error(`[supervisor] In-process runner threw, falling back to subprocess: ${err}`);
+		// Show notification with diagnostic context
+		try {
+			const ctx2 = buildErrorNotificationContext("in-process-runner", errMsg);
+			ctx.ui.notify(`In-process runner threw — falling back to subprocess: ${ctx2}`, "warning");
+		} catch {
+			// notification fallback
+		}
+		// Fallback: subprocess
 		return await runAgentSubprocess(agent, task, ctx, timeoutMs, cwd);
 	}
 }
