@@ -2,7 +2,7 @@
 // Config-driven pipeline: define transitions as data, not code.
 
 import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "./agent-output.ts";
-import type { AgentOutput, ParseResult } from "./types.ts";
+import type { AgentOutput, Finding, FilteredIssueData, ParseResult } from "./types.ts";
 
 export interface WorkflowStep {
 	/** Board status column name (must match config.statusMapping keys) */
@@ -173,6 +173,10 @@ export function extractAuditScore(agentOutput: string): AuditScore | null {
 				total: output.auditScore.total,
 			};
 		}
+		// If we have findings but no explicit auditScore, compute it
+		if (output.findings && output.findings.length > 0) {
+			return computeAuditScoreFromFindings(output.findings);
+		}
 	}
 
 	// Fallback: text marker detection
@@ -187,4 +191,73 @@ export function extractAuditScore(agentOutput: string): AuditScore | null {
 		passing: parseInt(lastMatch[1], 10),
 		total: parseInt(lastMatch[2], 10),
 	};
+}
+
+/**
+ * Known audit dimensions for score computation.
+ * A dimension is passing if there are no 🔴 Critical or 🟡 Warning findings in it.
+ * 🟢 Suggestions do NOT fail a dimension.
+ */
+const KNOWN_AUDIT_DIMENSIONS = [
+	"architecture-compliance",
+	"ticket-fulfillment",
+	"test-quality",
+	"correctness-safety",
+	"code-quality",
+	"completeness",
+] as const;
+
+/**
+ * Compute audit score from structured findings.
+ * This replaces LLM-reasoned scoring with deterministic computation.
+ *
+ * Algorithm:
+ * 1. For each finding with severity "critical" or "warning", mark its dimension as failed.
+ * 2. "suggestion" findings do NOT fail a dimension.
+ * 3. Score = (dimensions without failing findings) / total dimensions.
+ *
+ * @param findings - Structured audit findings from agent output
+ * @returns Computed audit score
+ */
+export function computeAuditScoreFromFindings(findings: Finding[]): AuditScore {
+	const failedDimensions = new Set<string>();
+
+	for (const finding of findings) {
+		// Only critical and warning findings fail a dimension
+		if (finding.severity === "critical" || finding.severity === "warning") {
+			failedDimensions.add(finding.dimension);
+		}
+	}
+
+	// The total is always the number of known dimensions
+	const total = KNOWN_AUDIT_DIMENSIONS.length;
+	const passing = total - failedDimensions.size;
+
+	return { passing: Math.max(0, passing), total };
+}
+
+/**
+ * Check whether the issue data already contains research findings.
+ * This is a pipeline gate — if findings exist, the pipeline can skip
+ * dispatching the researcher agent entirely.
+ *
+ * @param issueData - Filtered issue data (body + comments)
+ * @returns true if research findings marker is found anywhere
+ */
+export function hasResearchFindings(issueData: FilteredIssueData): boolean {
+	const marker = /##\s*Research\s*Findings/i;
+
+	// Check issue body
+	if (marker.test(issueData.body)) {
+		return true;
+	}
+
+	// Check all comments
+	for (const comment of issueData.comments) {
+		if (marker.test(comment.body)) {
+			return true;
+		}
+	}
+
+	return false;
 }

@@ -1,8 +1,10 @@
 // ─── Agent Loader ──────────────────────────────────────────────────
 // Parse .pi/extensions/supervisor/agents/*.md files (YAML frontmatter + system prompt body).
+// Prepends shared tool discipline snippet to every agent's system prompt.
 
 import type { ParsedAgent, AgentFrontmatter } from "./types.ts";
 import { readFileSync } from "node:fs";
+import { buildAgentSystemPrompt } from "./shared-prompts.ts";
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 
@@ -32,5 +34,5 @@ export function parseAgentFile(filePath: string): ParsedAgent {
 			`Invalid thinking level "${config.thinking}". Valid: ${VALID_THINKING_LEVELS.join(", ")}`,
 		);
 	}
-	return { config, systemPrompt: match[2]!.trim() };
+	return { config, systemPrompt: buildAgentSystemPrompt(match[2]!.trim(), config.name) };
 }
