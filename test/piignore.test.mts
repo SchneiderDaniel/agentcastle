@@ -128,6 +128,31 @@ function isIgnored(targetPath: string, entries: IgnoreEntry[], cwd: string): boo
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// Fixed getEntries (cwd-aware caching — matches the fix)
+// ═══════════════════════════════════════════════════════════════════════
+
+function createGetEntries_fixed(): {
+	getEntries: (cwd: string) => IgnoreEntry[];
+	getCallCount: () => number;
+} {
+	let _cachedCwd: string | null = null;
+	let _entries: IgnoreEntry[] | null = null;
+	let _loadCount = 0;
+
+	return {
+		getEntries(cwd: string): IgnoreEntry[] {
+			if (!_entries || _cachedCwd !== cwd) {
+				_entries = loadPiIgnore(cwd);
+				_cachedCwd = cwd;
+				_loadCount++;
+			}
+			return _entries;
+		},
+		getCallCount: () => _loadCount,
+	};
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -241,5 +266,161 @@ describe("piignore extension", () => {
 			const absPath = path.join(nonCwdDir, "secret.txt");
 			assert.strictEqual(isIgnored(absPath, entries, nonCwdDir), true);
 		});
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 1: getEntries caching behavior (cwd-aware cache with reload)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("getEntries caching (Phase 1)", () => {
+	let tmpRoot: string;
+
+	beforeEach(() => {
+		tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "piignore-phase1-"));
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpRoot, { recursive: true, force: true });
+	});
+
+	it("first call with cwd=/a loads from /a and caches result", () => {
+		const dirA = path.join(tmpRoot, "a");
+		fs.mkdirSync(dirA, { recursive: true });
+		fs.writeFileSync(path.join(dirA, ".piignore"), "secret.txt\n");
+
+		const { getEntries, getCallCount } = createGetEntries_fixed();
+		const entries = getEntries(dirA);
+
+		assert.strictEqual(getCallCount(), 1, "should load on first call");
+		assert.strictEqual(entries.length >= 1, true, "should find .piignore entries");
+		assert.strictEqual(isIgnored("secret.txt", entries, dirA), true);
+	});
+
+	it("second call with same cwd=/a returns cached (no re-read from disk)", () => {
+		const dirA = path.join(tmpRoot, "a");
+		fs.mkdirSync(dirA, { recursive: true });
+		fs.writeFileSync(path.join(dirA, ".piignore"), "secret.txt\n");
+
+		const { getEntries, getCallCount } = createGetEntries_fixed();
+
+		getEntries(dirA); // first call — loads
+		assert.strictEqual(getCallCount(), 1, "should load once");
+
+		getEntries(dirA); // second call — cached
+		assert.strictEqual(getCallCount(), 1, "should NOT re-read from disk");
+	});
+
+	it("call with cwd=/b after /a detects cwd change and reloads fresh entries", () => {
+		const dirA = path.join(tmpRoot, "a");
+		const dirB = path.join(tmpRoot, "b");
+		fs.mkdirSync(dirA, { recursive: true });
+		fs.mkdirSync(dirB, { recursive: true });
+		fs.writeFileSync(path.join(dirA, ".piignore"), "only-a.txt\n");
+		fs.writeFileSync(path.join(dirB, ".piignore"), "only-b.txt\n");
+
+		const { getEntries, getCallCount } = createGetEntries_fixed();
+
+		getEntries(dirA); // load /a entries
+		assert.strictEqual(getCallCount(), 1, "first load");
+
+		const entriesB = getEntries(dirB); // should reload for /b
+		// With fixed version: cache detects cwd change, reloads from /b
+		// So only-b.txt IS matched (entries are from dirB)
+		assert.strictEqual(
+			isIgnored("only-b.txt", entriesB, dirB),
+			true,
+			"only-b.txt should be blocked by dirB's .piignore",
+		);
+	});
+
+	it("call with cwd=/a again after /b reloads fresh from /a (not stale cache)", () => {
+		const dirA = path.join(tmpRoot, "a");
+		const dirB = path.join(tmpRoot, "b");
+		fs.mkdirSync(dirA, { recursive: true });
+		fs.mkdirSync(dirB, { recursive: true });
+		fs.writeFileSync(path.join(dirA, ".piignore"), "only-a.txt\n");
+		fs.writeFileSync(path.join(dirB, ".piignore"), "only-b.txt\n");
+
+		const { getEntries } = createGetEntries_fixed();
+
+		getEntries(dirA); // load /a — caches from A
+
+		// Delete dirA/.piignore to detect stale cache
+		fs.rmSync(path.join(dirA, ".piignore"));
+
+		getEntries(dirB); // triggers reload for /b
+
+		const entriesA = getEntries(dirA);
+		// With fixed version: detects cwd change back to /a, reloads fresh
+		// So only-a.txt is NOT blocked because .piignore was deleted
+		assert.strictEqual(
+			isIgnored("only-a.txt", entriesA, dirA),
+			false,
+			"only-a.txt should NOT be blocked after .piignore deleted in dirA",
+		);
+	});
+
+	it("call with cwd=/b (no .piignore) returns empty; switch to /c (with .piignore) returns /c entries", () => {
+		const dirB = path.join(tmpRoot, "b");
+		const dirC = path.join(tmpRoot, "c");
+		fs.mkdirSync(dirB, { recursive: true });
+		fs.mkdirSync(dirC, { recursive: true });
+		// dirB has NO .piignore
+		fs.writeFileSync(path.join(dirC, ".piignore"), "secret.txt\n");
+
+		const { getEntries, getCallCount } = createGetEntries_fixed();
+
+		const entriesB = getEntries(dirB); // no .piignore in dirB → empty
+		assert.strictEqual(entriesB.length, 0, "dirB should have no entries");
+		assert.strictEqual(getCallCount(), 1, "loaded once for dirB");
+
+		const entriesC = getEntries(dirC); // should reload for dirC
+		// With fixed version: detects cwd change, reloads from dirC
+		// entriesC contains dirC's .piignore patterns
+		assert.strictEqual(
+			entriesC.length >= 1,
+			true,
+			"dirC should have .piignore entries (stale cache returns empty)",
+		);
+		assert.strictEqual(isIgnored("secret.txt", entriesC, dirC), true);
+	});
+
+	it("no .piignore tree at all returns empty array for any cwd", () => {
+		const dirEmpty = path.join(tmpRoot, "empty");
+		fs.mkdirSync(dirEmpty, { recursive: true });
+
+		const { getEntries, getCallCount } = createGetEntries_fixed();
+
+		const entries1 = getEntries(dirEmpty);
+		assert.strictEqual(entries1.length, 0, "first cwd: no .piignore");
+		assert.strictEqual(getCallCount(), 1, "loaded once");
+
+		const dirEmpty2 = path.join(tmpRoot, "empty2");
+		fs.mkdirSync(dirEmpty2, { recursive: true });
+
+		const entries2 = getEntries(dirEmpty2);
+		assert.strictEqual(entries2.length, 0, "second cwd: still no .piignore");
+	});
+
+	it("getEntries with cwd=/a returns only /a patterns when /a has its own .piignore", () => {
+		// Create parent dir with .piignore
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), "parent.txt\n");
+		const dirA = path.join(tmpRoot, "a");
+		fs.mkdirSync(dirA, { recursive: true });
+		fs.writeFileSync(path.join(dirA, ".piignore"), "child.txt\n");
+
+		const { getEntries } = createGetEntries_fixed();
+
+		const entries = getEntries(dirA);
+		// Should have both parent and child entries (walks up from cwd)
+		const roots = entries.map((e) => e.root);
+		assert.ok(roots.includes(dirA), "should include child dirA");
+		assert.ok(roots.includes(tmpRoot), "should include parent tmpRoot");
+
+		// Verify child's own patterns work
+		assert.strictEqual(isIgnored("child.txt", entries, dirA), true);
+		// Verify parent's patterns also work
+		assert.strictEqual(isIgnored("parent.txt", entries, dirA), true);
 	});
 });

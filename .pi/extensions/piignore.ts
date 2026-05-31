@@ -291,11 +291,13 @@ function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string):
 
 export default function (pi: ExtensionAPI): void {
 	// Defer sync I/O — load on first use, not at module init
+	let cachedCwd: string | null = null;
 	let entries: IgnoreEntry[] | null = null;
 
 	function getEntries(cwd: string): IgnoreEntry[] {
-		if (!entries) {
+		if (!entries || cachedCwd !== cwd) {
 			entries = loadPiIgnore(cwd);
+			cachedCwd = cwd;
 		}
 		return entries;
 	}
@@ -303,6 +305,7 @@ export default function (pi: ExtensionAPI): void {
 	// Reload patterns on /reload
 	pi.on("resources_discover", (_event, ctx) => {
 		entries = loadPiIgnore(ctx.cwd);
+		cachedCwd = ctx.cwd;
 	});
 
 	// Tools that take a direct path parameter
