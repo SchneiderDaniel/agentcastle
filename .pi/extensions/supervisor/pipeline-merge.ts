@@ -3,7 +3,7 @@
 // Extracted from pipeline.ts to keep that file under 300 lines.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig } from "./types.ts";
+import type { PrConflictInfo, SupervisorConfig } from "./types.ts";
 import { existsSync } from "node:fs";
 import { generateBranchName } from "./agent-task.ts";
 import { tryAutoMerge } from "./merge.ts";
@@ -27,7 +27,14 @@ export async function handlePostPipelineMerge(
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 
 	ctx.ui.setStatus("supervisor", "Checking PR for merge conflicts...");
-	const conflictInfo = await checkPrConflicts(pi, branch, config.repo);
+	let conflictInfo: PrConflictInfo | null;
+	try {
+		conflictInfo = await checkPrConflicts(pi, branch, config.repo);
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		ctx.ui.notify(`PR conflict check failed: ${msg}`, "error");
+		return;
+	}
 
 	if (!conflictInfo) {
 		ctx.ui.notify("No PR found for this branch — skipping conflict check.", "info");
