@@ -5,6 +5,7 @@
  * Fully async with AbortSignal support.
  */
 
+import { normalize } from "node:path";
 import type { ExecFn } from "./types.ts";
 
 /**
@@ -39,10 +40,15 @@ export async function runKeywordSearch(
 		const matchedFiles = result.stdout.trim().split("\n").filter(Boolean);
 
 		for (const file of matchedFiles) {
-			if (!fileMatches[file]) {
-				fileMatches[file] = [];
+			// Normalize path to strip ./ prefix and resolve .. segments.
+			// rg with target directory '.' returns paths as ./src/foo.ts,
+			// while ctags and git return paths without prefix (src/foo.ts).
+			// Normalizing ensures consistent keys across all sources.
+			const normalizedPath = normalize(file);
+			if (!fileMatches[normalizedPath]) {
+				fileMatches[normalizedPath] = [];
 			}
-			fileMatches[file]!.push(term);
+			fileMatches[normalizedPath]!.push(term);
 		}
 	}
 
