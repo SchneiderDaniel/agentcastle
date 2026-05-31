@@ -222,7 +222,7 @@ export async function handleSupervisorCommand(
 				config.agentTokenBudget,
 			);
 
-			agentResults.push(buildAgentResultEntry(result, usedRetry));
+			agentResults.push(buildAgentResultEntry(result, usedRetry, agent.config.model));
 
 			// Track audit score
 			const auditInfo = trackAuditScore(result.textOnly, stageState);
