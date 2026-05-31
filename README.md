@@ -259,13 +259,13 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 
 Agents are Markdown files in `.pi/extensions/supervisor/agents/` with YAML frontmatter. The supervisor reads them at runtime.
 
-| Agent | File | Tools |
-|-------|------|-------|
-| **Researcher** | `researcher.md` | read, bash, structural_search, ripgrep_search |
-| **Architect** | `architect.md` | read, bash, structural_search, ripgrep_search |
-| **TestDesigner** | `test-designer.md` | read, bash, structural_search, ripgrep_search |
-| **Developer** | `developer.md` | read, bash, write, edit, structural_search, ripgrep_search |
-| **Auditor** | `auditor.md` | read, bash, structural_search, ripgrep_search |
+| Agent | File | Tools | Skills |
+|-------|------|-------|--------|
+| **Researcher** | `researcher.md` | read, bash, structural_search, ripgrep_search | — |
+| **Architect** | `architect.md` | read, bash, structural_search, ripgrep_search | `extension-spec` |
+| **TestDesigner** | `test-designer.md` | read, bash, structural_search, ripgrep_search | — |
+| **Developer** | `developer.md` | read, bash, write, edit, structural_search, ripgrep_search | `extension-spec` |
+| **Auditor** | `auditor.md` | read, bash, structural_search, ripgrep_search | `duplicate-code-hunter` |
 
 All agents use `opencode-go/deepseek-v4-flash` model. Developer additionally uses format-on-save and tsc-checkpoint extensions.
 
