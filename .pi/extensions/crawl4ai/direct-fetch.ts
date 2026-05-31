@@ -87,6 +87,11 @@ export async function directFetchCrawl(
 		visited.add(current);
 
 		try {
+			// 30s per-fetch timeout combined with external cancellation signal.
+			// Prevents hang on slow TCP accept / DNS timeout.
+			const fetchSignal = signal
+				? AbortSignal.any([AbortSignal.timeout(30_000), signal])
+				: AbortSignal.timeout(30_000);
 			const res = await fetch(current, {
 				headers: {
 					"User-Agent":
@@ -95,7 +100,7 @@ export async function directFetchCrawl(
 						"Chrome/120.0.0.0 Safari/537.36",
 					Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 				},
-				signal,
+				signal: fetchSignal,
 			});
 
 			if (!res.ok) {

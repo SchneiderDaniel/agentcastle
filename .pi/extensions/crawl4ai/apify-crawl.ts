@@ -22,6 +22,11 @@ export async function apifyCrawl(
 	const apiUrl = `https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?token=${token}&timeout=120`;
 
 	try {
+		// 130s client timeout — slightly above server's 120s timeout param.
+		// Combined with external cancellation signal prevents hang before reaching Apify.
+		const fetchSignal = signal
+			? AbortSignal.any([AbortSignal.timeout(130_000), signal])
+			: AbortSignal.timeout(130_000);
 		const res = await fetch(apiUrl, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -32,7 +37,7 @@ export async function apifyCrawl(
 				outputFormat: "markdown",
 				sameDomainOnly: true,
 			}),
-			signal,
+			signal: fetchSignal,
 		});
 
 		if (!res.ok) return null;
