@@ -273,7 +273,7 @@ describe("handleTextEnd", () => {
 // ─── handleMessageEnd ─────────────────────────────────────────────
 
 describe("handleMessageEnd", () => {
-	it("processes assistant role: pushes thinking to fullLog and text to textOutputLines", () => {
+	it("processes assistant role: pushes thinking to both thinkingOutputLines and fullLog, text to textOutputLines", () => {
 		const state = createState();
 		handleMessageEnd(state, {
 			kind: "message_end",
@@ -286,11 +286,49 @@ describe("handleMessageEnd", () => {
 			},
 		});
 		assert.equal(state.textOutputLines[0], "answer");
-		// thinking at message_end goes to fullLog (with 💭 prefix), not thinkingOutputLines
+		// thinking at message_end goes to both thinkingOutputLines and fullLog (with 💭 prefix)
+		assert.ok(state.thinkingOutputLines[0]?.includes("deep"));
 		assert.ok(state.fullLog.some((l) => l.includes("💭") && l.includes("deep")));
 		// Flags are RESET at the end of message_end (end of turn)
 		assert.equal(state.thinkingPushedThisTurn, false);
 		assert.equal(state.textPushedThisTurn, false);
+	});
+
+	it("recovers multi-line thinking to thinkingOutputLines at message_end", () => {
+		const state = createState();
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "line 1\nline 2\nline 3" },
+					{ type: "text", text: "answer" },
+				],
+			},
+		});
+		// Multi-line thinking is joined into a single thinkingOutputLines entry
+		assert.equal(state.thinkingOutputLines.length, 1);
+		assert.ok(state.thinkingOutputLines[0].includes("line 1"));
+		assert.ok(state.thinkingOutputLines[0].includes("line 2"));
+		assert.ok(state.thinkingOutputLines[0].includes("line 3"));
+		assert.equal(state.textOutputLines[0], "answer");
+	});
+
+	it("skips thinking recovery when thinkingPushedThisTurn is already true", () => {
+		const state = createState({ thinkingPushedThisTurn: true });
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "should not appear" },
+					{ type: "text", text: "answer" },
+				],
+			},
+		});
+		// thinkingPushedThisTurn was already set — thinking recovery is skipped
+		assert.equal(state.thinkingOutputLines.length, 0);
+		assert.equal(state.textOutputLines[0], "answer");
 	});
 
 	it("processes toolResult role: pushes tool result log", () => {
