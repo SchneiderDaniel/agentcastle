@@ -5,7 +5,7 @@
 // Owns: filterStderr(), pushLog(), constants, getPhaseFromEvent().
 // Delegates: processJsonLine() → jsonLineToNormalizedEvent() + processNormalizedEvent().
 
-import type { AgentRunState, AgentPhase } from "./types";
+import type { AgentRunState, AgentPhase } from "./types.ts";
 import { formatTokens } from "./formatting.ts";
 import { jsonLineToNormalizedEvent, processNormalizedEvent } from "./event-adapter.ts";
 import { phasePriority } from "./event-types.ts";

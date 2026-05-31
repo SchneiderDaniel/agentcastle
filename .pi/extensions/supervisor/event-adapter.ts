@@ -3,7 +3,7 @@
 // SDK session events (from session.subscribe()) into NormalizedEvent.
 // Provides processNormalizedEvent() which delegates to shared handlers.
 
-import type { AgentRunState } from "./types";
+import type { AgentRunState } from "./types.ts";
 import type { NormalizedEvent, HandlerResult } from "./event-types.ts";
 import {
 	handleToolExecutionStart,

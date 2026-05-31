@@ -6,7 +6,7 @@
 // Both processJsonLine and processSessionEvent delegate to these via
 // processNormalizedEvent in event-adapter.ts.
 
-import type { AgentRunState } from "./types";
+import type { AgentRunState } from "./types.ts";
 import type { NormalizedEvent, HandlerResult } from "./event-types.ts";
 import { phasePriority } from "./event-types.ts";
 import { pushLog } from "./agent-stream.ts";
