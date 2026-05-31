@@ -145,6 +145,33 @@ describe("runAgentSubprocess — budget param wiring", () => {
 	});
 });
 
+// ─── runAgentSubprocess — result includes budgetExceeded field ──
+
+describe("runAgentSubprocess — budgetExceeded in result", () => {
+	it("result object has budgetExceeded property (even when budget not exceeded)", async () => {
+		const result = await runAgentSubprocess(
+			mockAgent as any,
+			"test task",
+			mockCtx,
+			1, // timeoutMs — immediate timeout
+		);
+		// The property must be present on the result object so callers can
+		// distinguish budget-exceeded failures from regular failures.
+		// It will be undefined when budget was not exceeded, but the property
+		// must exist (not just accessing a missing property).
+		assert.ok(
+			"budgetExceeded" in result,
+			"budgetExceeded must be a property of the subprocess result",
+		);
+	});
+
+	it("budgetExceeded is false/undefined when budget not exceeded", async () => {
+		const result = await runAgentSubprocess(mockAgent as any, "test task", mockCtx, 1);
+		// When budget is not exceeded, value should be undefined (not true)
+		assert.equal(result.budgetExceeded, undefined);
+	});
+});
+
 // ─── runAgent — budget param passthrough ────────────────────────
 
 describe("runAgent — budget param passthrough", () => {
