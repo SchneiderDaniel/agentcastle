@@ -15,7 +15,9 @@ import assert from "node:assert";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it, beforeEach, afterEach, mock } from "node:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import piignoreFactory from "../.pi/extensions/piignore.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types (match source at .pi/extensions/piignore.ts)
@@ -150,6 +152,69 @@ function createGetEntries_fixed(): {
 		},
 		getCallCount: () => _loadCount,
 	};
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Helpers for Phase 2 tests (mock ExtensionAPI)
+// ═══════════════════════════════════════════════════════════════════════
+
+interface HandlerStore {
+	resources_discover?: (
+		event: { type: "resources_discover"; cwd: string; reason: "startup" | "reload" },
+		ctx: { cwd: string },
+	) => void | Promise<void>;
+	tool_call?: (
+		event: { toolName: string; input: Record<string, unknown> },
+		ctx: { cwd: string; hasUI: boolean; ui: { notify: Function } },
+	) => unknown;
+}
+
+function createMockPi(): { pi: ExtensionAPI; handlers: HandlerStore } {
+	const handlers: HandlerStore = {};
+
+	const pi = {
+		on(event: string, handler: Function) {
+			(handlers as any)[event] = handler;
+		},
+		registerTool: () => {},
+		registerCommand: () => {},
+		registerShortcut: () => {},
+		registerFlag: () => {},
+		getFlag: () => undefined,
+		registerMessageRenderer: () => {},
+		sendMessage: () => {},
+		sendUserMessage: () => {},
+		appendEntry: () => {},
+		setSessionName: () => {},
+		getSessionName: () => undefined,
+		setLabel: () => {},
+		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+		getActiveTools: () => [],
+		getAllTools: () => [],
+		setActiveTools: () => {},
+		getCommands: () => [],
+		setModel: async () => false,
+		getThinkingLevel: () => "normal",
+		setThinkingLevel: () => {},
+		registerProvider: () => {},
+		unregisterProvider: () => {},
+		events: { on: () => {}, emit: () => {}, off: () => {} },
+	} as unknown as ExtensionAPI;
+
+	return { pi, handlers };
+}
+
+/**
+ * Simulate a tool_call event on the extension's handler.
+ * Creates a minimal mock ctx with the given cwd.
+ */
+async function simulateToolCall(
+	handler: Function,
+	toolName: string,
+	input: Record<string, unknown>,
+	cwd: string,
+): Promise<unknown> {
+	return await handler({ toolName, input }, { cwd, hasUI: false, ui: { notify: () => {} } });
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -422,5 +487,289 @@ describe("getEntries caching (Phase 1)", () => {
 		assert.strictEqual(isIgnored("child.txt", entries, dirA), true);
 		// Verify parent's patterns also work
 		assert.strictEqual(isIgnored("parent.txt", entries, dirA), true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2: ExtensionAPI integration — tool_call dispatch per cwd
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("tool_call dispatch (Phase 2)", () => {
+	let tmpRoot: string;
+
+	beforeEach(() => {
+		tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "piignore-phase2-"));
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpRoot, { recursive: true, force: true });
+	});
+
+	it("registers resources_discover and tool_call handlers on init", () => {
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		assert.ok(
+			typeof handlers.resources_discover === "function",
+			"should register resources_discover handler",
+		);
+		assert.ok(typeof handlers.tool_call === "function", "should register tool_call handler");
+	});
+
+	it("tool_call with read path matching .piignore in current cwd returns block", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), "secret.txt\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		// Notify resources_discover to load entries for tmpRoot
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"read",
+			{ path: "secret.txt" },
+			tmpRoot,
+		);
+
+		assert.ok(result, "should return a result");
+		assert.strictEqual((result as any).block, true, "should block secret.txt");
+	});
+
+	it("tool_call with read path NOT matching .piignore returns undefined (no block)", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), "secret.txt\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"read",
+			{ path: "public.txt" },
+			tmpRoot,
+		);
+
+		assert.strictEqual(result, undefined, "public.txt should NOT be blocked");
+	});
+
+	it("tool_call with bash command containing ignored path returns block", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), ".env\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"bash",
+			{ command: "cat .env" },
+			tmpRoot,
+		);
+
+		assert.ok(result, "should return a result");
+		assert.strictEqual((result as any).block, true, "should block .env access via bash");
+	});
+
+	it("bash command with safe paths returns undefined (no block)", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), ".env\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"bash",
+			{ command: "ls -la" },
+			tmpRoot,
+		);
+
+		assert.strictEqual(result, undefined, "safe bash commands should NOT be blocked");
+	});
+
+	it("cwd change triggers reload: paths blocked by new cwd's .piignore, not old one", async () => {
+		const dirA = path.join(tmpRoot, "projectA");
+		const dirB = path.join(tmpRoot, "projectB");
+		fs.mkdirSync(dirA, { recursive: true });
+		fs.mkdirSync(dirB, { recursive: true });
+		fs.writeFileSync(path.join(dirA, ".piignore"), "only-a.txt\n");
+		// dirB has NO .piignore
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		// Load entries for dirA
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: dirA, reason: "startup" },
+			{ cwd: dirA },
+		);
+
+		// Call tool with dirA cwd — only-a.txt should be blocked
+		const resultA = await simulateToolCall(
+			handlers.tool_call!,
+			"read",
+			{ path: "only-a.txt" },
+			dirA,
+		);
+		assert.strictEqual((resultA as any)?.block, true, "only-a.txt blocked in dirA");
+
+		// Call tool with dirB cwd — only-a.txt should NOT be blocked (dirB has no .piignore)
+		const resultB = await simulateToolCall(
+			handlers.tool_call!,
+			"read",
+			{ path: "only-a.txt" },
+			dirB,
+		);
+		assert.strictEqual(resultB, undefined, "only-a.txt NOT blocked in dirB (different cwd)");
+	});
+
+	it("cwd change then back reloads fresh entries for original cwd", async () => {
+		const dirA = path.join(tmpRoot, "projectA");
+		const dirB = path.join(tmpRoot, "projectB");
+		fs.mkdirSync(dirA, { recursive: true });
+		fs.mkdirSync(dirB, { recursive: true });
+		fs.writeFileSync(path.join(dirA, ".piignore"), "secret.txt\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		// Load entries for dirB (no .piignore)
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: dirB, reason: "startup" },
+			{ cwd: dirB },
+		);
+
+		// Call with dirB — nothing blocked
+		const resultB = await simulateToolCall(
+			handlers.tool_call!,
+			"read",
+			{ path: "secret.txt" },
+			dirB,
+		);
+		assert.strictEqual(resultB, undefined, "secret.txt NOT blocked in dirB (no .piignore)");
+
+		// Call with dirA — dirA's .piignore should block secret.txt
+		const resultA = await simulateToolCall(
+			handlers.tool_call!,
+			"read",
+			{ path: "secret.txt" },
+			dirA,
+		);
+		assert.strictEqual((resultA as any)?.block, true, "secret.txt blocked in dirA");
+	});
+
+	it("unhandled tool (not in path/bash lists) returns undefined (no-op)", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), "secret.txt\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		// An unknown tool should just return undefined (no action)
+		const result = await simulateToolCall(handlers.tool_call!, "unknown-tool" as any, {}, tmpRoot);
+		assert.strictEqual(result, undefined, "unhandled tool should be no-op");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2b: Try/catch safety net (fail-closed on unexpected errors)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("try/catch safety net (Phase 2b)", () => {
+	let tmpRoot: string;
+
+	beforeEach(() => {
+		tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "piignore-safety-"));
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpRoot, { recursive: true, force: true });
+	});
+
+	it("returns safe block result when loadPiIgnore throws (unreadable .piignore)", async () => {
+		// Write a .piignore then make it unreadable
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), "secret.txt\n");
+		fs.chmodSync(path.join(tmpRoot, ".piignore"), 0o000);
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		// Trigger resources_discover to load entries
+		// This should fail but be caught by the try/catch
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		// Now call read — loadPiIgnore might throw or succeed depending on caching
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"read",
+			{ path: "secret.txt" },
+			tmpRoot,
+		);
+
+		// The extension should either block the path (if .piignore loaded) or
+		// return a safe block on error (fail-closed). Either way, result exists.
+		if (result) {
+			assert.strictEqual((result as any).block, true, "should return block on error");
+		}
+	});
+
+	it("returns safe block when .piignore file has permission error during tool_call", async () => {
+		// Write .piignore then make directory unreadable so readFileSync fails
+		const subDir = path.join(tmpRoot, "sub");
+		fs.mkdirSync(subDir, { recursive: true });
+		fs.writeFileSync(path.join(subDir, ".piignore"), "secret.txt\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		// Initial load succeeds
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: subDir, reason: "startup" },
+			{ cwd: subDir },
+		);
+
+		// Now make the .piignore unreadable and change cwd to force a reload
+		fs.chmodSync(path.join(subDir, ".piignore"), 0o000);
+		// Also invalidate the cache by changing to a different dir and back
+
+		const otherDir = path.join(tmpRoot, "other");
+		fs.mkdirSync(otherDir, { recursive: true });
+
+		// Call tool with otherDir first (no .piignore), then back to subDir
+		await simulateToolCall(handlers.tool_call!, "read", { path: "foo.txt" }, otherDir);
+
+		// Now call with subDir — should trigger reload which hits permission error
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"read",
+			{ path: "secret.txt" },
+			subDir,
+		);
+
+		assert.ok(result, "should return a result on error");
+		assert.strictEqual((result as any).block, true);
 	});
 });

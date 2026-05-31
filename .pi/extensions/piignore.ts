@@ -304,8 +304,14 @@ export default function (pi: ExtensionAPI): void {
 
 	// Reload patterns on /reload
 	pi.on("resources_discover", (_event, ctx) => {
-		entries = loadPiIgnore(ctx.cwd);
-		cachedCwd = ctx.cwd;
+		try {
+			entries = loadPiIgnore(ctx.cwd);
+			cachedCwd = ctx.cwd;
+		} catch (err) {
+			console.error("[piignore] resources_discover error:", err);
+			entries = null;
+			cachedCwd = null;
+		}
 	});
 
 	// Tools that take a direct path parameter
@@ -316,30 +322,38 @@ export default function (pi: ExtensionAPI): void {
 	const commandTools = ["bash"];
 
 	pi.on("tool_call", async (event, ctx) => {
-		const ignoreEntries = getEntries(ctx.cwd);
-		let blockedPath: string | null = null;
+		try {
+			const ignoreEntries = getEntries(ctx.cwd);
+			let blockedPath: string | null = null;
 
-		if (pathTools.includes(event.toolName)) {
-			blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
-		} else if (optPathTools.includes(event.toolName)) {
-			blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
-		} else if (commandTools.includes(event.toolName)) {
-			blockedPath = checkBashCommand(
-				(event.input as { command?: string }).command ?? "",
-				ignoreEntries,
-				ctx.cwd,
-			);
-		} else {
-			return;
-		}
-
-		if (blockedPath) {
-			if (ctx.hasUI) {
-				ctx.ui.notify(`Blocked by .piignore: ${blockedPath}`, "warning");
+			if (pathTools.includes(event.toolName)) {
+				blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
+			} else if (optPathTools.includes(event.toolName)) {
+				blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
+			} else if (commandTools.includes(event.toolName)) {
+				blockedPath = checkBashCommand(
+					(event.input as { command?: string }).command ?? "",
+					ignoreEntries,
+					ctx.cwd,
+				);
+			} else {
+				return;
 			}
+
+			if (blockedPath) {
+				if (ctx.hasUI) {
+					ctx.ui.notify(`Blocked by .piignore: ${blockedPath}`, "warning");
+				}
+				return {
+					block: true,
+					reason: `Path "${blockedPath}" matches .piignore patterns`,
+				};
+			}
+		} catch (err) {
+			console.error("[piignore] Internal error:", err);
 			return {
 				block: true,
-				reason: `Path "${blockedPath}" matches .piignore patterns`,
+				reason: "Piignore internal error — blocked for safety",
 			};
 		}
 	});
