@@ -353,6 +353,7 @@ Selected extensions from AgentCastle are published as individual npm packages un
 | Package | What it is | Install |
 |---------|-----------|---------|
 | `@agentcastle/ask-user` | Interactive ask_user tool with typed dialogs, Q&A log, and `/qna` command | `pi install npm:@agentcastle/ask-user` |
+| `@agentcastle/ripgrep-search` | Fast literal/regex code search — respects `.gitignore`, structured file:line:column:text output | `pi install npm:@agentcastle/ripgrep-search` |
 
 **Why publish separately?** Not all extensions belong on pi.dev — some are AgentCastle-specific (supervisor, session-logger, context-info). Published packages are self-contained, useful in any Pi setup.
 
@@ -368,6 +369,36 @@ Selected extensions from AgentCastle are published as individual npm packages un
 }
 ```
 Or after install, run `pi config` to enable/disable individual extensions.
+
+### Publishing a Package
+
+To publish an extension as an npm pi-package, use the `/package-extension` command in Pi's editor:
+
+```
+/package-extension
+```
+
+This runs the **Extension Packager** prompt which:
+1. Lists all extensions in `.pi/extensions/`
+2. Asks which one to package
+3. Reads the code to discover imports and dependencies
+4. Creates `package.json` with `@agentcastle/` scope, `pi-package` keyword, and pi manifest
+5. Creates `README.md` (renders as pi.dev gallery detail page)
+6. Shows `npm publish` commands to run manually
+7. Updates this Published Pi Packages table
+
+**Prerequisites:**
+- npm account with `@agentcastle` org access ([create org](https://www.npmjs.com/org/create) if needed)
+- Logged in: `npm login` / `npm whoami`
+- If 2FA enabled: `npm publish --otp=<code>` or use a granular access token with bypass
+
+**Manual publish:**
+```bash
+cd .pi/extensions/<name>
+npm publish --access public
+```
+
+After publish, verify on [pi.dev/packages](https://pi.dev/packages) and test with `pi install npm:@agentcastle/<name>`.
 
 #### 5.10 Skills
 
