@@ -14,8 +14,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
-import type { LspPublishDiagnosticsParams, LspDiagnosticData } from "../../lib/lsp-types.ts";
-import { isLspPublishDiagnosticsParams, isLspDiagnosticData } from "../../lib/lsp-types.ts";
+import type { LspPublishDiagnosticsParams, LspDiagnosticData } from "./lib/lsp-types.ts";
+import { isLspPublishDiagnosticsParams, isLspDiagnosticData } from "./lib/lsp-types.ts";
 import type { LspDiagnostic, ServerMapping, AuditResult } from "./types.ts";
 import { filterBySeverity } from "./formatting.ts";
 

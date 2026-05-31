@@ -354,6 +354,8 @@ Selected extensions from AgentCastle are published as individual npm packages un
 |---------|-----------|---------|
 | `@agentcastle/ask-user` | Interactive ask_user tool with typed dialogs, Q&A log, and `/qna` command | `pi install npm:@agentcastle/ask-user` |
 | `@agentcastle/ripgrep-search` | Fast literal/regex code search — respects `.gitignore`, structured file:line:column:text output | `pi install npm:@agentcastle/ripgrep-search` |
+| `@agentcastle/lsp-auditor` | Pre-audit code quality via LSP before commit — diagnostics on changed files | `pi install npm:@agentcastle/lsp-auditor` |
+| `@agentcastle/ranked-map` | Codebase symbol index with auto-mode detection — keyword-ranked, recency-ranked, or full-dump | `pi install npm:@agentcastle/ranked-map` |
 
 **Why publish separately?** Not all extensions belong on pi.dev — some are AgentCastle-specific (supervisor, session-logger, context-info). Published packages are self-contained, useful in any Pi setup.
 
