@@ -7,7 +7,20 @@
  *
  * Zero pi dependencies — domain layer only.
  * All functions synchronous, return only primitives, no side effects.
+ *
+ * Bash-command detection functions now delegate to BashCommand class
+ * (bash-command.ts) for single-parse semantics. Consumers may also
+ * import BashCommand directly.
  */
+
+// ── Imports from bash-command.ts ──
+
+import { BashCommand, parseBashCmd as parseBashCmdImpl } from "./bash-command.ts";
+
+// ── Re-export BashCommand class for direct use ──
+
+export { BashCommand } from "./bash-command.ts";
+export type { BashSegment } from "./bash-command.ts";
 
 // ── Constants ──
 
@@ -74,14 +87,6 @@ export const MAX_ERRORS_PER_TOOL = 3;
 
 // ── Types ──
 
-/** A single segment of a piped bash command. */
-export interface BashSegment {
-	/** Command tokens (cmd + args parsed outside quotes). */
-	tokens: string[];
-	/** Output redirect detected on segment (e.g., > or >>). */
-	redirect?: "write" | "append" | "read";
-}
-
 /** Per-tool metadata for harness configuration. */
 export interface ToolMeta {
 	/** If true, tool is never blocked by any guard. */
@@ -110,7 +115,7 @@ export function getToolMeta(toolName: string): ToolMeta {
 	return TOOL_META[toolName] ?? { passThrough: false, cascadeThreshold: CASCADE_THRESHOLD };
 }
 
-// ── Bash tokenization ──
+// ── Bash tokenization (kept for backward compatibility) ──
 
 /**
  * Tokenize a bash command string respecting quotes, pipes, and redirects.
@@ -127,83 +132,11 @@ export function getToolMeta(toolName: string): ToolMeta {
  *  - Escaped quotes inside quotes
  *  - Heredoc bodies (<< delimiter is treated as redirect)
  */
-export function parseBashCmd(cmd: string): BashSegment[] {
-	if (!cmd) return [];
-
-	const segments: BashSegment[] = [];
-	let currentSegment: string[] = [];
-	let currentToken = "";
-	let inSingleQuote = false;
-	let inDoubleQuote = false;
-
-	function flushToken() {
-		if (currentToken) {
-			currentSegment.push(currentToken);
-			currentToken = "";
-		}
-	}
-
-	function flushSegment() {
-		flushToken();
-		if (currentSegment.length === 0) return;
-
-		const seg: BashSegment = { tokens: [...currentSegment] };
-
-		// Check for redirect operators in tokens
-		const idx = seg.tokens.findIndex((t) => t === ">" || t === ">>");
-		if (idx >= 0) {
-			const op = seg.tokens[idx];
-			seg.redirect = op === ">>" ? "append" : "write";
-			seg.tokens = seg.tokens.slice(0, idx);
-		}
-
-		segments.push(seg);
-		currentSegment = [];
-	}
-
-	for (let i = 0; i < cmd.length; i++) {
-		const ch = cmd[i];
-
-		// Handle quote toggling
-		if (ch === "'" && !inDoubleQuote) {
-			inSingleQuote = !inSingleQuote;
-			currentToken += ch;
-			continue;
-		}
-		if (ch === '"' && !inSingleQuote) {
-			inDoubleQuote = !inDoubleQuote;
-			currentToken += ch;
-			continue;
-		}
-
-		// Inside quotes: collect everything literally
-		if (inSingleQuote || inDoubleQuote) {
-			currentToken += ch;
-			continue;
-		}
-
-		// Pipe separator (outside quotes)
-		if (ch === "|") {
-			flushSegment();
-			continue;
-		}
-
-		// Whitespace (space/tab) separator outside quotes
-		if (ch === " " || ch === "\t") {
-			flushToken();
-			continue;
-		}
-
-		currentToken += ch;
-	}
-
-	// Flush remaining
-	flushSegment();
-
-	return segments;
+export function parseBashCmd(cmd: string): import("./bash-command.ts").BashSegment[] {
+	return parseBashCmdImpl(cmd);
 }
 
-// ── Detection functions ──
+// ── Detection functions (delegate to BashCommand) ──
 
 /**
  * Quick check if a bash command is a simple standalone call
@@ -211,79 +144,34 @@ export function parseBashCmd(cmd: string): BashSegment[] {
  * Returns false for complex commands that should pass through.
  */
 export function isStandaloneToolCall(cmd: string): boolean {
-	if (!cmd) return false;
-	// Complex commands with pipes, &&, or ; are not standalone
-	if (cmd.includes("|") || cmd.includes("&&") || cmd.includes(";")) {
-		return false;
-	}
-	return true;
+	return new BashCommand(cmd).isStandalone();
 }
 
 /**
  * Check if a bash command uses grep/rg/find for search.
  * These should be replaced with ripgrep_search.
  *
- * Uses isStandaloneToolCall to let complex pipelines pass through:
+ * Uses BashCommand.isSearch() which handles:
  *  - `cmd1 | grep foo` → pass through (pipeline)
  *  - `grep foo` → block (standalone)
  *  - Backtick grep/rg → always block
  */
 export function isSearchInBash(cmd: string): boolean {
-	if (!cmd) return false;
-	const lower = cmd.toLowerCase();
-
-	// Backtick patterns: `grep`, `rg` — these are always search
-	if (lower.includes("`grep") || lower.includes("`rg")) {
-		return true;
-	}
-
-	// Only block standalone calls — complex pipelines pass through
-	if (!isStandaloneToolCall(lower)) {
-		return false;
-	}
-
-	// For standalone commands, check first segment only
-	const segments = parseBashCmd(lower);
-	if (segments.length === 0) return false;
-
-	const firstSeg = segments[0];
-	if (!firstSeg || firstSeg.tokens.length === 0) return false;
-
-	const first = firstSeg.tokens[0];
-	return first === "grep" || first === "rg";
+	return new BashCommand(cmd).isSearch();
 }
 
 /**
  * Check if a bash command uses cat/head/tail/less/more for file reading.
  * These should be replaced with the read tool.
  *
- * Uses parseBashCmd to avoid false positives:
+ * Uses BashCommand.isFileRead() which avoids false positives:
  *  - cat with output redirect (cat > file, cat >> file) → no block
  *  - head/tail in pipe context (cmd1 | head -5) → no block
  *  - Patterns in quoted args (gh issue --title "...cat...") → no block
  *  - cat/head/tail as first command → block (file read)
  */
 export function isCatHeadTailInBash(cmd: string): boolean {
-	if (!cmd) return false;
-	const lower = cmd.toLowerCase().trim();
-
-	const segments = parseBashCmd(lower);
-	if (segments.length === 0) return false;
-
-	// Check the FIRST segment only (pipe-chain head)
-	const firstSeg = segments[0];
-	if (!firstSeg || firstSeg.tokens.length === 0) return false;
-
-	// If first segment has redirect (write/append), it's not a read
-	if (firstSeg.redirect) return false;
-
-	// Check first token against READ_BASH_CMDS
-	const firstToken = firstSeg.tokens[0];
-	if (READ_BASH_CMDS.includes(firstToken as (typeof READ_BASH_CMDS)[number])) {
-		return true;
-	}
-
-	return false;
+	return new BashCommand(cmd).isFileRead();
 }
 
 /**
@@ -291,21 +179,7 @@ export function isCatHeadTailInBash(cmd: string): boolean {
  * Detects redirect operators and known file-modifying commands.
  */
 export function isFileModifyingBash(cmd: string): boolean {
-	if (!cmd) return false;
-	const lower = cmd.toLowerCase();
-
-	// Redirect operators (>, >>) always modify files
-	if (lower.includes(">")) return true;
-
-	const segments = parseBashCmd(lower);
-	if (segments.length === 0) return false;
-
-	// Check first token of first segment against known file-modifying commands
-	const firstSeg = segments[0];
-	if (!firstSeg || firstSeg.tokens.length === 0) return false;
-
-	const firstToken = firstSeg.tokens[0];
-	return (FILE_MODIFY_SIGNALS as readonly string[]).includes(firstToken);
+	return new BashCommand(cmd).isFileModify();
 }
 
 /**
@@ -336,18 +210,7 @@ export function buildRedirectMessage(toolName: string): string {
  * Does NOT match `npm ls`, `lsass`, or other commands containing "ls".
  */
 export function isLsInBash(cmd: string): boolean {
-	if (!cmd) return false;
-	const trimmed = cmd.trim().toLowerCase();
-
-	// Exact match for bare "ls"
-	if (trimmed === "ls") return true;
-
-	// Starts with "ls " followed by flags/paths — ensure it's not "npm ls" etc
-	// Check the first token is "ls"
-	const tokens = trimmed.split(/\s+/);
-	if (tokens.length > 0 && tokens[0] === "ls") return true;
-
-	return false;
+	return new BashCommand(cmd).isLs();
 }
 
 /**
@@ -386,66 +249,13 @@ export function isCodeFilePath(path: string): boolean {
  * Detect tool mismatch in a bash command and suggest alternative.
  * Returns null if no mismatch detected.
  *
- * Uses parseBashCmd for token-aware analysis to avoid false positives
- * from quoted arguments.
+ * Uses BashCommand.detectMismatch() for token-aware analysis to avoid
+ * false positives from quoted arguments.
  */
 export function detectMismatchAndSuggest(
 	cmd: string,
 ): { category: string; suggestion: string } | null {
-	if (!cmd) return null;
-	const lower = cmd.toLowerCase();
-
-	// Backtick search patterns are always search
-	if (lower.includes("`grep") || lower.includes("`rg")) {
-		return {
-			category: "tool-mismatch",
-			suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
-		};
-	}
-
-	const segments = parseBashCmd(lower);
-	if (segments.length === 0) return null;
-
-	// Search in bash (grep/rg as first token — standalone only, not piped)
-	if (isStandaloneToolCall(cmd)) {
-		for (const seg of segments) {
-			if (seg.redirect) continue;
-			if (seg.tokens.length >= 1) {
-				const first = seg.tokens[0];
-				if (first === "grep" || first === "rg") {
-					return {
-						category: "tool-mismatch",
-						suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
-					};
-				}
-			}
-		}
-	}
-
-	// File read in bash (cat/head/tail — first segment, no redirect)
-	const firstSeg = segments[0];
-	if (firstSeg && firstSeg.tokens.length >= 1 && !firstSeg.redirect) {
-		const first = firstSeg.tokens[0];
-		for (const c of READ_BASH_CMDS) {
-			if (first === c) {
-				return {
-					category: "tool-mismatch",
-					suggestion: `Use read tool instead of bash ${c} for file inspection`,
-				};
-			}
-		}
-	}
-
-	// ls (informational only)
-	if (isLsInBash(cmd)) {
-		return {
-			category: "tool-mismatch",
-			suggestion:
-				"Use bash ls for directory listing. For file contents, use read tool. For finding files, use ripgrep_search.",
-		};
-	}
-
-	return null;
+	return new BashCommand(cmd).detectMismatch();
 }
 
 /**
@@ -453,45 +263,10 @@ export function detectMismatchAndSuggest(
  * Returns the suggested tool name or null if no mismatch.
  * Used by runtime handler to populate redirectTo field.
  *
- * Uses parseBashCmd for token-aware analysis.
+ * Uses BashCommand.suggestRedirection() for token-aware analysis.
  */
 export function suggestRedirection(cmd: string): string | null {
-	if (!cmd) return null;
-	const lower = cmd.toLowerCase();
-
-	// Backtick search patterns → ripgrep_search
-	if (lower.includes("`grep") || lower.includes("`rg")) {
-		return "ripgrep_search";
-	}
-
-	const segments = parseBashCmd(lower);
-	if (segments.length === 0) return null;
-
-	// grep/rg as first token — standalone only, not piped
-	if (isStandaloneToolCall(cmd)) {
-		for (const seg of segments) {
-			if (seg.redirect) continue;
-			if (seg.tokens.length >= 1) {
-				const first = seg.tokens[0];
-				if (first === "grep" || first === "rg") {
-					return "ripgrep_search";
-				}
-			}
-		}
-	}
-
-	// cat/head/tail as first token in first segment, no redirect → read
-	const firstSeg = segments[0];
-	if (firstSeg && firstSeg.tokens.length >= 1 && !firstSeg.redirect) {
-		const first = firstSeg.tokens[0];
-		for (const c of READ_BASH_CMDS) {
-			if (first === c) {
-				return "read";
-			}
-		}
-	}
-
-	return null;
+	return new BashCommand(cmd).suggestRedirection();
 }
 
 // ── Shared helper (extracted from advisor.ts) ──

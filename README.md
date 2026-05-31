@@ -225,7 +225,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `scripts/session-query.sh` | Query JSONL session logs with jq |
 | `Makefile` | Deprecated — see `./agent-castle.sh` for Docker-based launch |
 | `test/` | 64 unit/integration test files |
-| `.pi/lib/` | Shared library (harness-rules, harness-state, lsp-types, types, github-types) |
+| `.pi/lib/` | Shared library (bash-command, harness-rules, harness-state, lsp-types, types, github-types) |
 | `.pi/state/session-extensions.json` | Tracks extension on/off state |
 | `.pi/specs/` | PRD specs (ranked-map, ripgrep-search, supervisor-refactor) |
 | `.pi/npm/` | Local npm package cache |
