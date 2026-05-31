@@ -34,19 +34,30 @@ let csvMigrated = false;
 
 /**
  * Run CSV→JSONL migration once on first write if CSV file exists.
+ *
+ * Sets csvMigrated BEFORE calling migrateQnaFromCsv to prevent re-entry.
+ * If the migration throws, csvMigrated is already true, so the next call
+ * will skip migration entirely — no duplicate entries are appended.
  */
 async function ensureMigrated(projectDir: string): Promise<void> {
 	if (csvMigrated) return;
+	// Set flag first to prevent re-entry on failure
+	csvMigrated = true;
 	const csvPath = path.join(projectDir, ".pi", "context", "qna.csv");
 	if (fs.existsSync(csvPath)) {
-		const result = await migrateQnaFromCsv(projectDir);
-		if (result.migrated > 0 || result.skipped > 0) {
-			console.warn(
-				`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
-			);
+		try {
+			const result = await migrateQnaFromCsv(projectDir);
+			if (result.migrated > 0 || result.skipped > 0) {
+				console.warn(
+					`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
+				);
+			}
+		} catch (err) {
+			// Migration failed but csvMigrated is already true.
+			// Log a warning so the user knows migration had issues.
+			console.warn(`Migration warning: ${(err as Error).message}`);
 		}
 	}
-	csvMigrated = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +120,12 @@ export default function askUser(pi: ExtensionAPI): void {
 			const projectDir = sm.getCwd();
 
 			// Run CSV→JSONL migration on first write
-			await ensureMigrated(projectDir);
+			// Wrapped in try/catch so a migration failure doesn't crash the tool
+			try {
+				await ensureMigrated(projectDir);
+			} catch (err) {
+				console.warn(`Migration warning: ${(err as Error).message}`);
+			}
 
 			// ── Freetext mode ──────────────────────────────────────────
 			if (mode === "freetext") {
