@@ -291,18 +291,27 @@ function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string):
 
 export default function (pi: ExtensionAPI): void {
 	// Defer sync I/O — load on first use, not at module init
+	let cachedCwd: string | null = null;
 	let entries: IgnoreEntry[] | null = null;
 
 	function getEntries(cwd: string): IgnoreEntry[] {
-		if (!entries) {
+		if (!entries || cachedCwd !== cwd) {
 			entries = loadPiIgnore(cwd);
+			cachedCwd = cwd;
 		}
 		return entries;
 	}
 
 	// Reload patterns on /reload
 	pi.on("resources_discover", (_event, ctx) => {
-		entries = loadPiIgnore(ctx.cwd);
+		try {
+			entries = loadPiIgnore(ctx.cwd);
+			cachedCwd = ctx.cwd;
+		} catch (err) {
+			console.error("[piignore] resources_discover error:", err);
+			entries = null;
+			cachedCwd = null;
+		}
 	});
 
 	// Tools that take a direct path parameter
@@ -341,10 +350,10 @@ export default function (pi: ExtensionAPI): void {
 				};
 			}
 		} catch (err) {
-			console.error("piignore: error checking paths", err);
+			console.error("[piignore] Internal error:", err);
 			return {
 				block: true,
-				reason: `Piignore internal error — blocked for safety`,
+				reason: "Piignore internal error — blocked for safety",
 			};
 		}
 	});
