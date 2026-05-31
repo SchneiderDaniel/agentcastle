@@ -152,6 +152,6 @@ export function sendPipelineError(
 			process.stdout.write("\x07");
 		}
 	} else {
-		ctx.ui.setStatus("supervisor", "");
+		ctx.ui.setStatus("supervisor", undefined);
 	}
 }

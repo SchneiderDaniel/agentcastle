@@ -318,7 +318,7 @@ export async function runAgentSubprocess(
 
 			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setWorkingMessage(undefined);
-			ctx.ui.setStatus("supervisor", "");
+			ctx.ui.setStatus("supervisor", undefined);
 
 			resolve({
 				output: rawOutput,
@@ -355,7 +355,7 @@ export async function runAgentSubprocess(
 			clearInterval(heartbeatTimer);
 			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setWorkingMessage(undefined);
-			ctx.ui.setStatus("supervisor", "");
+			ctx.ui.setStatus("supervisor", undefined);
 			resolve({
 				output: `Failed to start pi: ${err.message}`,
 				success: false,

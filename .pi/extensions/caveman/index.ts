@@ -20,7 +20,7 @@ export default function caveman(pi: ExtensionAPI): void {
 		const showStatus = configStore.getConfig().showStatus;
 
 		if (level === "off" || !showStatus) {
-			ctx.ui.setStatus("caveman", "");
+			ctx.ui.setStatus("caveman", undefined);
 			return;
 		}
 

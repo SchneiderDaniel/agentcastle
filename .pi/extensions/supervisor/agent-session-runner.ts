@@ -317,7 +317,7 @@ export async function runAgentInProcess(
 				watchdogHandle?.stop();
 				ctx.ui.setWidget(widgetId, undefined);
 				ctx.ui.setWorkingMessage(undefined);
-				ctx.ui.setStatus("supervisor", "");
+				ctx.ui.setStatus("supervisor", undefined);
 
 				const messages = session?.state?.messages || [];
 				return buildAgentRunResult(state, agentName, false, durationMs, messages);
@@ -419,7 +419,7 @@ export async function runAgentInProcess(
 
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);
-		ctx.ui.setStatus("supervisor", "");
+		ctx.ui.setStatus("supervisor", undefined);
 
 		const durationMs = Date.now() - startedAt;
 		const messages = session?.state?.messages || [];
@@ -439,7 +439,7 @@ export async function runAgentInProcess(
 
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);
-		ctx.ui.setStatus("supervisor", "");
+		ctx.ui.setStatus("supervisor", undefined);
 
 		const durationMs = Date.now() - startedAt;
 		const errorMsg = err instanceof Error ? err.message : String(err);
