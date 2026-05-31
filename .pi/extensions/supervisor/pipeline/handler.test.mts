@@ -345,9 +345,9 @@ describe("handlePostPipeline() — merge/cleanup ordering (Phase 1)", () => {
 		assert.equal(cleanupCalls.length, 0, "no cleanup calls when worktreeBranch undefined");
 	});
 
-	it("runs cleanup even when merge check fails (network error, checkPrConflicts returns null)", async () => {
+	it("runs cleanup even when merge check fails (network error, checkPrConflicts throws)", async () => {
 		const calls: ExecCall[] = [];
-		// gh call fails → checkPrConflicts catches and returns null
+		// gh call fails → checkPrConflicts throws → handlePostPipelineMerge catches it
 		const pi = createMockPi(
 			[
 				{ code: 1, stdout: "", stderr: "network error" }, // gh fails

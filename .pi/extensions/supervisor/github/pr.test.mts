@@ -57,10 +57,12 @@ describe("checkPrConflicts()", () => {
 		assert.equal(result, null);
 	});
 
-	it("returns null on gh error (graceful degradation)", async () => {
-		const pi = createMockPi({ code: 1, stdout: "", stderr: "error" });
-		const result = await checkPrConflicts(pi, "feature", "owner/repo");
-		assert.equal(result, null);
+	it("throws on gh error (auth/network failure)", async () => {
+		const pi = createMockPi({ code: 1, stdout: "", stderr: "network error" });
+		await assert.rejects(
+			() => checkPrConflicts(pi, "feature", "owner/repo"),
+			/gh pr failed: network error/,
+		);
 	});
 });
 

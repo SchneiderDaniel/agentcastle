@@ -43,8 +43,10 @@ export async function checkPrConflicts(
 			headRefName: pr.headRefName,
 			baseRefName: pr.baseRefName,
 		};
-	} catch {
-		return null;
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		console.error(`[supervisor] checkPrConflicts failed: ${msg}`);
+		throw err;
 	}
 }
 
