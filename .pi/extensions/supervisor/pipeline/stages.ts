@@ -17,6 +17,7 @@ import {
 	resolveNextStatusFromAgentOutput,
 	extractAuditScore,
 	type AuditScore,
+	type WorkflowStep,
 	WORKFLOW,
 } from "../workflow.ts";
 import { findStatusOption, setItemStatus } from "../github/project.ts";
@@ -132,7 +133,8 @@ export function calculateNextStatus(
 	if (!step) return { status: null, stopReason: `No workflow step for agent '${agentName}'` };
 
 	// Phase 2: Try structured AgentOutput parsing first
-	const structuredStatus = resolveNextStatusFromAgentOutput(step, textOnly ?? agentOutput);
+	// Use agentOutput (raw text) for JSON parsing since textOnly strips JSON
+	const structuredStatus = resolveNextStatusFromAgentOutput(step, agentOutput);
 	if (structuredStatus) {
 		return { status: structuredStatus };
 	}
@@ -140,9 +142,34 @@ export function calculateNextStatus(
 	// Fallback: old marker-based detection (for backward compatibility)
 	const nextStatus = resolveNextStatus(step, textOnly) ?? resolveNextStatus(step, agentOutput);
 	if (!nextStatus) {
+		// No marker found — try to infer forward status from step's markerMap
+		// This handles cases where agent completed work but output lacks marker
+		const inferredStatus = inferForwardStatus(step);
+		if (inferredStatus) {
+			return { status: inferredStatus };
+		}
 		return { status: null, stopReason: `No completion marker found in ${agentName} output` };
 	}
 	return { status: nextStatus };
+}
+
+/**
+ * Infer the forward status from a workflow step's markerMap.
+ * Returns the first marker value whose key is a forward marker
+ * (doesn't start with AUDIT or FEEDBACK). Returns first value if
+ * none match, or null if markerMap is empty.
+ */
+export function inferForwardStatus(step: WorkflowStep): string | null {
+	if (!step.markerMap) return null;
+	const entries = Object.entries(step.markerMap);
+	// Prefer forward markers (keys without AUDIT_/FEEDBACK_ prefix)
+	for (const [key, val] of entries) {
+		if (!key.startsWith("AUDIT") && !key.startsWith("FEEDBACK")) {
+			return val;
+		}
+	}
+	// Fall back to first entry (audit/feedback only) if no forward marker
+	return entries[0]?.[1] || null;
 }
 
 // ─── Audit Score Tracking ─────────────────────────────────────────

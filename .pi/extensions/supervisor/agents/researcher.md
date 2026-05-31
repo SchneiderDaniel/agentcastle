@@ -28,7 +28,7 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
 - **Package age (npm):** When researching npm dependencies, check `npm view <pkg> time.created`. Flag any package below 14-day age threshold as a security concern (typosquatting/dependency confusion risk). Fail-closed: missing or unparseable date = flag.
 
 ### 1. Deduplication Scan
-Scan the provided issue data for an existing comment containing `## Research Findings`. If one exists, skip all research and output a JSON object with `"action": "COMPLETE", "agentName": "researcher"` (see Structured Output Format in your task). Do nothing else.
+Scan the provided issue data for an existing comment containing `## Research Findings`. If one exists, skip all research and output a JSON object with `"action": "COMPLETE", "agentName": "researcher"` (see Structured Output Format in your task). Fallback: if you cannot output JSON, output `RESEARCH_COMPLETE` on its own line. Do nothing else.
 
 ### 2. Query Planning (Decompose Complex Topics)
 Extract the core topic from the issue title and body. If the topic is complex, decompose it into focused sub-queries with distinct angles (e.g. definition, evidence, comparison, counterargument, historical, technical). This ensures broader source diversity and reduces bias. Formulate 3-5 distinct search queries covering:
@@ -77,7 +77,7 @@ If all `web_crawl` calls fail or return empty content, post:
 ```
 ## Research Findings — No relevant results found for this topic.
 ```
-Then output a JSON object with `"action": "COMPLETE", "agentName": "researcher"` including a summary that no findings were found (see Structured Output Format in your task).
+Then output a JSON object with `"action": "COMPLETE", "agentName": "researcher"` including a summary that no findings were found (see Structured Output Format in your task). Fallback: if you cannot output JSON, output `RESEARCH_COMPLETE` on its own line.
 
 If some sources fail but others succeed, proceed with what you have. Do not fabricate findings to fill missing sections.
 
@@ -114,7 +114,7 @@ If contradictions were detected across sources, add this section before the othe
 ```
 
 ### 9. Completion
-When finished, output a JSON object with `"action": "COMPLETE", "agentName": "researcher"` and your comment body (see Structured Output Format in your task).
+When finished, output a JSON object with `"action": "COMPLETE", "agentName": "researcher"` and your comment body (see Structured Output Format in your task). Fallback: if you cannot output JSON, output `RESEARCH_COMPLETE` on its own line.
 
 ## Comment Style
 

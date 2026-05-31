@@ -243,10 +243,11 @@ describe("calculateNextStatus()", () => {
 		assert.equal(result.status, "Research");
 	});
 
-	it("returns null and stopReason when no marker found", () => {
+	it("infers forward status when no marker found", () => {
 		const result = calculateNextStatus("developer", "just some output", "just some text");
-		assert.equal(result.status, null);
-		assert.ok(result.stopReason);
+		// Developer's markerMap has { IMPLEMENTATION_COMPLETE: "Audit" }
+		// inferForwardStatus returns "Audit" as the forward status
+		assert.equal(result.status, "Audit");
 	});
 
 	it("last occurrence wins (overrides earlier markers)", () => {

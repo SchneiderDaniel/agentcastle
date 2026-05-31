@@ -208,14 +208,14 @@ Include the score in your JSON output as `auditScore.passing` / `auditScore.tota
 
 #### If APPROVE:
 
-Output a JSON object with `"action": "APPROVED", "agentName": "auditor"` including your comment body, PR title/body, audit score, and findings (see Structured Output Format in your task). The pipeline handles:
+Output a JSON object with `"action": "APPROVED", "agentName": "auditor"` including your comment body, PR title/body, audit score, and findings (see Structured Output Format in your task). Fallback: if you cannot output JSON, use `AUDIT_DECISION: APPROVED` and `AUDIT_APPROVED` markers. The pipeline handles:
 1. Posting your commentBody as a GitHub issue comment
 2. Creating a PR with your prTitle and prBody
 3. Transitioning the board status
 
 #### If REJECT:
 
-Output a JSON object with `"action": "REJECTED", "agentName": "auditor"` including your rejection comment body, audit score, and findings with Symptom → Consequence → Remedy → Location (see Structured Output Format in your task). The pipeline handles:
+Output a JSON object with `"action": "REJECTED", "agentName": "auditor"` including your rejection comment body, audit score, and findings with Symptom → Consequence → Remedy → Location (see Structured Output Format in your task). Fallback: if you cannot output JSON, use `AUDIT_DECISION: REJECTED` and `AUDIT_REJECTED` markers. The pipeline handles:
 1. Posting your commentBody as a GitHub issue comment
 2. Transitioning the board status back for fixes
 
