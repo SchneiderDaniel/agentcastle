@@ -123,6 +123,9 @@ export function calculateNextStatus(
 	if (!step) return { status: null, stopReason: `No workflow step for agent '${agentName}'` };
 
 	const nextStatus = resolveNextStatus(step, textOnly) ?? resolveNextStatus(step, agentOutput);
+	if (!nextStatus) {
+		return { status: null, stopReason: `No completion marker found in ${agentName} output` };
+	}
 	return { status: nextStatus };
 }
 

@@ -2,32 +2,20 @@
 // Main /supervisor command handler: status loop, transitions, hook wiring.
 // Orchestrates the full pipeline by importing from submodules.
 // Stage transition logic is extracted to stages.ts.
+// Helpers are in helpers.ts with injected ExecFn/NotifyFn dependencies.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type {
 	AgentRunResult,
 	SupervisorConfig,
-	ProjectField,
-	ProjectItem,
 	PipelineAgentResult,
-	FilteredIssueData,
 	ParsedAgent,
 } from "../types.ts";
 import { loadConfig, resolveTimeoutMs } from "../config.ts";
-import {
-	getProjectFields,
-	getProjectItems,
-	getProjectId,
-	findIssueItem,
-	getItemStatusName,
-	checkBlockedByDependencies,
-	filterIssueData,
-} from "../github/index.ts";
-import { parseAgentFile } from "../agent-loader.ts";
+import { findIssueItem, getItemStatusName, filterIssueData } from "../github/index.ts";
 import { buildAgentTask, generateBranchName, summarizeComments } from "../agent-task.ts";
 import { runAgent } from "../agent-runner.ts";
 import { WORKFLOW } from "../workflow.ts";
-import { formatDuration } from "../formatting.ts";
 import { runTscAndLspAudit } from "../pipeline-audit.ts";
 import { buildPipelineSummary, validateAgentResult } from "../pipeline-output.ts";
 import { handlePostPipelineMerge } from "../pipeline-merge.ts";
@@ -37,7 +25,6 @@ import { sendPipelineSummary, sendAgentResultMessage, sendPipelineError } from "
 import {
 	MAX_PIPELINE_LOOPS,
 	createStageState,
-	type StageState,
 	handleBacklogTransition,
 	isDoneStatus,
 	resolveAgentName,
@@ -49,6 +36,14 @@ import {
 	buildAgentResultEntry,
 	handlePostAgentSuccess,
 } from "./stages.ts";
+import {
+	fetchIssue,
+	readProjectBoard,
+	checkDependencies,
+	fetchFreshIssueData,
+	loadAgentFile as loadAgentFileHelper,
+} from "./helpers.ts";
+import type { ExecFn, NotifyFn } from "./helpers.ts";
 
 /**
  * Main supervisor handler — processes a GitHub issue through the full Kanban pipeline.
@@ -71,12 +66,20 @@ export async function handleSupervisorCommand(
 	let worktreePath: string | undefined;
 	let worktreeBranch: string | undefined;
 
+	// Build ExecFn and NotifyFn from pi/ctx for helpers
+	const exec: ExecFn = (cmd, args, opts) => pi.exec(cmd, args, opts);
+	const notify: NotifyFn = {
+		info: (msg) => ctx.ui.notify(msg, "info"),
+		error: (msg) => ctx.ui.notify(msg, "error"),
+		setStatus: (status) => ctx.ui.setStatus("supervisor", status),
+	};
+
 	try {
 		config = loadConfig();
 
 		// Fetch issue
 		ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
-		const issueData = await fetchIssue(pi, ctx, config, issueNum);
+		const issueData = await fetchIssue(exec, notify, config, issueNum);
 		if (!issueData) return;
 		issueTitle = (issueData?.title as string) || `Issue #${issueNum}`;
 
@@ -89,9 +92,10 @@ export async function handleSupervisorCommand(
 		const filteredData = filterIssueData(issueData, config.codeowners);
 
 		// Read project board
+		ctx.ui.setStatus("supervisor", "Reading project board...");
 		const { fields, items, projectId, statusField } = await readProjectBoard(
-			pi,
-			ctx,
+			exec,
+			notify,
 			config,
 			issueNum,
 		);
@@ -105,7 +109,7 @@ export async function handleSupervisorCommand(
 
 		// Dependency gate
 		ctx.ui.setStatus("supervisor", "Checking dependencies...");
-		if (!(await checkDependencies(pi, ctx, config, issueNum))) return;
+		if (!(await checkDependencies(exec, notify, config, issueNum))) return;
 
 		// Pipeline main loop
 		const stageState = createStageState(getItemStatusName(loopItem));
@@ -152,7 +156,7 @@ export async function handleSupervisorCommand(
 			}
 
 			// Fetch fresh issue data for this iteration
-			const loopFilteredData = await fetchFreshIssueData(pi, config, issueNum, issueData);
+			const loopFilteredData = await fetchFreshIssueData(exec, config, issueNum, issueData);
 
 			// Rejection limit check
 			if (isRejectionLimitReached(loopFilteredData.comments, step.maxRejections)) {
@@ -165,7 +169,7 @@ export async function handleSupervisorCommand(
 			}
 
 			// Load agent
-			const agent = await loadAgentFile(pi, ctx, agentName);
+			const agent = await loadAgentFileHelper(exec, notify, ctx.cwd, agentName);
 			if (!agent) {
 				stopReason = `Agent file not found: ${agentName}`;
 				break;
@@ -349,6 +353,11 @@ export async function handleSupervisorCommand(
 			}
 		}
 
+		// Worktree cleanup — immediately after pipeline loop ends, close to creation site (line ~184)
+		if (worktreePath && worktreeBranch) {
+			await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
+		}
+
 		// Post-pipeline
 		if (isDoneStatus(loopStatus) && agentResults.length > 0) {
 			await handlePostPipelineMerge(issueNum, issueTitle, loopStatus, config, pi, ctx);
@@ -375,6 +384,10 @@ export async function handleSupervisorCommand(
 			ctx.ui.setStatus("supervisor", "");
 		}
 	} catch (err: unknown) {
+		// Also cleanup on error
+		if (worktreePath && worktreeBranch) {
+			await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
+		}
 		sendPipelineError(
 			pi,
 			ctx,
@@ -385,157 +398,12 @@ export async function handleSupervisorCommand(
 			err instanceof Error ? err.message : String(err),
 		);
 	}
-
-	// Worktree cleanup
-	if (worktreePath && worktreeBranch) {
-		await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
-	}
 }
 
-// ─── Extracted Helpers ───────────────────────────────────────────
-
-async function fetchIssue(
-	pi: ExtensionAPI,
-	ctx: ExtensionCommandContext,
-	config: SupervisorConfig,
-	issueNum: number,
-): Promise<Record<string, unknown> | null> {
-	try {
-		return await pi
-			.exec("gh", [
-				"issue",
-				"view",
-				String(issueNum),
-				"--repo",
-				config.repo,
-				"--json",
-				"number,title,body,author,comments",
-			])
-			.then((r) => JSON.parse(r.stdout || "{}"));
-	} catch {
-		ctx.ui.notify(`Issue #${issueNum} not found in ${config.repo}`, "error");
-		return null;
-	}
-}
-
-async function readProjectBoard(
-	pi: ExtensionAPI,
-	ctx: ExtensionCommandContext,
-	config: SupervisorConfig,
-	issueNum: number,
-): Promise<{
-	fields: ProjectField[] | null;
-	items: ProjectItem[];
-	projectId: string;
-	statusField: ProjectField | null;
-}> {
-	ctx.ui.setStatus("supervisor", "Reading project board...");
-	try {
-		const fields = await getProjectFields(pi, config.projectNumber);
-		const items = await getProjectItems(pi, config.projectNumber);
-		const projectId = await getProjectId(pi, config.projectNumber);
-
-		const statusField =
-			fields.find((f) => f.name.toLowerCase() === config.statusField?.toLowerCase()) || null;
-		if (!statusField) {
-			ctx.ui.notify(
-				`Status field '${config.statusField}' not found. Fields: ${fields.map((f) => f.name).join(", ")}`,
-				"error",
-			);
-			ctx.ui.setStatus("supervisor", "");
-			return { fields: null, items: [], projectId: "", statusField: null };
-		}
-		return { fields, items, projectId, statusField };
-	} catch (err: unknown) {
-		ctx.ui.setStatus("supervisor", "");
-		const msg = err instanceof Error ? err.message : String(err);
-		if (msg.includes("missing required scopes")) {
-			ctx.ui.notify(
-				"GitHub token missing 'project' scope. Run: gh auth refresh -s project",
-				"error",
-			);
-		} else {
-			ctx.ui.notify(`Failed to read project board: ${msg}`, "error");
-		}
-		return { fields: null, items: [], projectId: "", statusField: null };
-	}
-}
-
-async function checkDependencies(
-	pi: ExtensionAPI,
-	ctx: ExtensionCommandContext,
-	config: SupervisorConfig,
-	issueNum: number,
-): Promise<boolean> {
-	try {
-		const depsResult = await checkBlockedByDependencies(pi, issueNum, config.repo);
-		if (depsResult.blocked) {
-			const lines = depsResult.blockers.map(
-				(b) => `${b.type === "pullrequest" ? "!" : "#"}${b.number}: ${b.title} (open)`,
-			);
-			ctx.ui.notify(
-				`Issue #${issueNum} is blocked by unresolved dependencies:\n${lines.join("\n")}`,
-				"error",
-			);
-			ctx.ui.setStatus("supervisor", "");
-			return false;
-		}
-		return true;
-	} catch (err: unknown) {
-		const msg = err instanceof Error ? err.message : String(err);
-		ctx.ui.notify(`Dependency check failed: ${msg}`, "error");
-		ctx.ui.setStatus("supervisor", "");
-		return false;
-	}
-}
-
-async function fetchFreshIssueData(
-	pi: ExtensionAPI,
-	config: SupervisorConfig,
-	issueNum: number,
-	fallbackData: Record<string, unknown>,
-): Promise<FilteredIssueData> {
-	try {
-		const raw = await pi.exec("gh", [
-			"issue",
-			"view",
-			String(issueNum),
-			"--repo",
-			config.repo,
-			"--json",
-			"number,title,body,author,comments",
-		]);
-		return filterIssueData(JSON.parse(raw.stdout || "{}"), config.codeowners);
-	} catch {
-		return filterIssueData(fallbackData, config.codeowners);
-	}
-}
-
-async function loadAgentFile(
-	pi: ExtensionAPI,
-	ctx: ExtensionCommandContext,
-	agentName: string,
-): Promise<ParsedAgent | null> {
-	const agentPath = `.pi/extensions/supervisor/agents/${agentName}.md`;
-	try {
-		await pi.exec("test", ["-f", agentPath], { cwd: ctx.cwd });
-	} catch {
-		ctx.ui.notify(`Agent file not found: ${agentPath}`, "error");
-		return null;
-	}
-	try {
-		return parseAgentFile(agentPath);
-	} catch (err: unknown) {
-		ctx.ui.notify(
-			`Failed to parse agent: ${err instanceof Error ? err.message : String(err)}`,
-			"error",
-		);
-		return null;
-	}
-}
+// ─── Execute Agent (kept local — tightly coupled to runAgent) ────
 
 async function executeAgent(
-	agent: ReturnType<typeof parseAgentFile>,
+	agent: ParsedAgent,
 	task: string,
 	ctx: ExtensionCommandContext,
 	pi: ExtensionAPI,
