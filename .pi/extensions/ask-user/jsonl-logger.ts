@@ -430,9 +430,16 @@ export function splitCsvRows(content: string): string[] {
 
 /**
  * Migrate existing CSV entries to JSONL.
- * Reads .pi/context/qna.csv, parses each line, appends to qna.jsonl,
- * then deletes qna.csv on success.
- * Unparseable rows are skipped with a warning logged to stderr.
+ *
+ * Atomically renames CSV to a temp path first (making the original CSV
+ * unavailable), reads entries from the temp file, appends them to qna.jsonl,
+ * then deletes the temp file. This prevents duplicate entries if the
+ * migration is interrupted: the source CSV content is moved away atomically,
+ * so even on failure, no re-migration of the same entries can occur.
+ *
+ * If temp file deletion fails (permissions, file lock), entries have already
+ * been written to JSONL — the migration is considered complete and a warning
+ * is logged. Unparseable rows are skipped with a warning logged to stderr.
  */
 export async function migrateQnaFromCsv(
 	projectDir: string,
@@ -445,38 +452,54 @@ export async function migrateQnaFromCsv(
 		return { migrated: 0, skipped: 0 };
 	}
 
-	// Read CSV content
-	const content = fsSync.readFileSync(csvFile, "utf-8");
-	const lines = splitCsvRows(content);
+	// Atomically rename CSV to temp path. If rename fails (permissions, disk
+	// error), no entries have been written yet — throw for safe retry.
+	const tmpFile = csvFile + ".tmp." + Date.now();
+	fsSync.renameSync(csvFile, tmpFile);
 
 	let migrated = 0;
 	let skipped = 0;
 
-	for (const line of lines) {
-		const entry = parseCsvLine(line);
-		if (entry === null) {
-			if (line.trim() !== "") {
-				console.warn(`Warning: Skipping unparseable CSV row: ${line.slice(0, 80)}...`);
-				skipped++;
+	try {
+		// Read content from the temp file (former CSV)
+		const content = fsSync.readFileSync(tmpFile, "utf-8");
+		const lines = splitCsvRows(content);
+
+		for (const line of lines) {
+			const entry = parseCsvLine(line);
+			if (entry === null) {
+				if (line.trim() !== "") {
+					console.warn(`Warning: Skipping unparseable CSV row: ${line.slice(0, 80)}...`);
+					skipped++;
+				}
+				continue;
 			}
-			continue;
+
+			// Validate the entry (skip invalid ones)
+			const validationError = validateQnaEntry(entry);
+			if (validationError !== null) {
+				console.warn(`Warning: Skipping invalid CSV entry: ${validationError}`);
+				skipped++;
+				continue;
+			}
+
+			// Append to JSONL
+			await fs.appendFile(jsonlFile, toJsonlLine(entry), "utf-8");
+			migrated++;
 		}
 
-		// Validate the entry (skip invalid ones)
-		const validationError = validateQnaEntry(entry);
-		if (validationError !== null) {
-			console.warn(`Warning: Skipping invalid CSV entry: ${validationError}`);
-			skipped++;
-			continue;
+		// All entries written. Delete temp file.
+		try {
+			fsSync.unlinkSync(tmpFile);
+		} catch {
+			// Temp file unlink failure is non-fatal. Entries already committed.
+			console.warn(`Warning: Could not remove temp file ${tmpFile}`);
 		}
 
-		// Append to JSONL
-		await fs.appendFile(jsonlFile, toJsonlLine(entry), "utf-8");
-		migrated++;
+		return { migrated, skipped };
+	} catch (err) {
+		// Temp file (former CSV) remains on disk for potential manual recovery.
+		// The caller's csvMigrated flag prevents re-entry and duplicate writes.
+		throw err;
 	}
-
-	// Delete CSV on success
-	fsSync.unlinkSync(csvFile);
-
-	return { migrated, skipped };
 }
