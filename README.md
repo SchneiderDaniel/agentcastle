@@ -223,7 +223,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `AGENTS.md` | Caveman protocol (active every session) |
 | `scripts/setup-github-project.sh` | Create GitHub Project from settings |
 | `scripts/session-query.sh` | Query JSONL session logs with jq |
-| `Makefile` | Deprecated — see `./agent-castle.sh` for Docker-based launch |
+| `Makefile` | Docker workflow: `make up` (build+start), `make shell` (enter container), `make pi` (launch agent) |
 | `test/` | 64 unit/integration test files |
 | `.pi/lib/` | Shared library (bash-command, harness-rules, harness-state, lsp-types, types, github-types) |
 | `.pi/state/session-extensions.json` | Tracks extension on/off state |
