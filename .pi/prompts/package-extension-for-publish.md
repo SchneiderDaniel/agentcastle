@@ -126,4 +126,4 @@ After publish (or user confirms), add the new package to the Published Pi Packag
 
 ### Step 8 — Offer to package another
 
-After completion (or user declines publish), ask: "Package another extension? Run `/package-extension` again."
+After completion (or user declines publish), ask: "Package another extension? Run `/package-extension-for-publish` again."
