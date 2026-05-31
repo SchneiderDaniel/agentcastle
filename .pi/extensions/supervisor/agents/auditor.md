@@ -193,13 +193,7 @@ After evaluating all six dimensions above, compute a numeric score:
 - 🟢 Suggestions do NOT fail a dimension.
 - Score = (passing dimensions) / 6
 
-Emit the score as a standalone line **before** the decision section:
-
-```
-AUDIT_SCORE: 5/6
-```
-
-The score marker is always emitted regardless of APPROVE or REJECT. It does not override the rejection threshold.
+Include the score in your JSON output as `auditScore.passing` / `auditScore.total` (see Structured Output Format in your task). Always emit the score regardless of APPROVE or REJECT.
 
 - [ ] **Error handling:** Are all failure modes from the test plan handled? Is there error handling at trust boundaries?
 - [ ] **Input validation:** Are inputs validated at system boundaries?
@@ -214,133 +208,16 @@ The score marker is always emitted regardless of APPROVE or REJECT. It does not 
 
 #### If APPROVE:
 
-1. **Write audit summary to a temp file.**
-   Write the structured summary to a temp file, omitting any empty sections. This file is shared by both the PR body and the approval comment.
-
-   ```
-   SUMMARY_FILE=/tmp/audit-summary-<N>.md
-   cat > "$SUMMARY_FILE" << 'SUMMARYEOF'
-   ## Audit Approved
-
-   ### Summary
-   [1-2 sentences: what changed, why]
-
-   ### How it works
-   [Brief approach. Code snippets only when they clarify. Keep short.]
-
-   ### Key decisions
-   [Trade-offs, 1 sentence each. Omit section if none.]
-
-   ### Review findings
-   [🟢/🟡 non-blocking notes. Omit section if none.]
-
-   ### Diagram
-   [Optional mermaid. Omit section if no value.]
-
-   - Architecture compliance: ✓
-   - Ticket fulfillment: ✓
-   - Tests passed: ✓ (ran: <test commands>)
-   - Test quality: ✓
-   - Correctness & Safety: ✓
-   - Code quality: ✓
-   - Completeness: ✓
-
-   PR created. Ready for merge.
-   SUMMARYEOF
-   ```
-
-   Replace `<test commands>` with the actual command(s) executed. If multiple suites were run, list them separated by ` && ` or newlines.
-
-   **For trivial PRs** (single-line, typo, config): write a minimal summary with `## Audit Approval` + checklist + 1-line description.
-
-   **Omit empty sections:** Before each optional section (Key decisions, Review findings, Diagram), add a shell conditional to skip it if there's nothing to report. Only sections with content should appear in the summary.
-
-2. **Output the same summary as COMMENT_BODY:** so the supervisor posts the comment via API (reliable — avoids gh CLI auth/sandbox issues in agent subprocess). Do NOT use `gh issue comment` — the supervisor handles this.
-
-   ```
-   COMMENT_BODY:
-   ## Audit Approved
-
-   ### Summary
-   [1-2 sentences: what changed, why]
-
-   ### How it works
-   [Brief approach. Code snippets only when they clarify. Keep short.]
-
-   ### Key decisions
-   [Trade-offs, 1 sentence each. Omit section if none.]
-
-   ### Review findings
-   [🟢/🟡 non-blocking notes. Omit section if none.]
-
-   ### Diagram
-   [Optional mermaid. Omit section if no value.]
-
-   - Architecture compliance: ✓
-   - Ticket fulfillment: ✓
-   - Tests passed: ✓ (ran: <test commands>)
-   - Test quality: ✓
-   - Correctness & Safety: ✓
-   - Code quality: ✓
-   - Completeness: ✓
-   ```
-
-3. **Create a Pull Request** with the summary as body (the SUMMARY_FILE from step 1):
-   ```
-   if [ -s "$SUMMARY_FILE" ]; then
-     gh pr create --repo <owner/repo> --base main --head <branch-name> \
-       --title "feat(#<N>): <issue-title>" \
-       --body-file "$SUMMARY_FILE"
-   else
-     gh pr create --repo <owner/repo> --base main --head <branch-name> \
-       --title "feat(#<N>): <issue-title>" \
-       --body "Closes #<N>"
-   fi
-   ```
-
-4. Output decision markers (last occurrence wins — the supervisor uses these to transition status and post comment):
-   ```
-   AUDIT_DECISION: APPROVED
-   AUDIT_APPROVED
-   ```
+Output a JSON object with `"action": "APPROVED", "agentName": "auditor"` including your comment body, PR title/body, audit score, and findings (see Structured Output Format in your task). The pipeline handles:
+1. Posting your commentBody as a GitHub issue comment
+2. Creating a PR with your prTitle and prBody
+3. Transitioning the board status
 
 #### If REJECT:
 
-1. Output structured rejection comment. Use the structured finding format for each issue.
-   The supervisor posts this as a GitHub comment via API (more reliable than gh CLI inside agent subprocess):
-
-   ```
-   COMMENT_BODY:
-   ## Audit Rejected
-
-   ### Critical (must fix)
-
-   1. **🔴 Critical — [Dimension]: [title]**
-      - Symptom: [what]
-      - Consequence: [why]
-      - Remedy: [how]
-      - Location: \`file:line\`
-
-   ### Warnings (3+ → rejection)
-
-   1. **🟡 Warning — [Dimension]: [title]**
-      - Symptom: [what]
-      - Consequence: [why]
-      - Remedy: [how]
-      - Location: \`file:line\`
-
-   Fix and resubmit.
-   ```
-
-   - Group findings by severity: Critical first, then Warnings
-   - Each finding must include Symptom, Consequence, Remedy, and Location
-   - If rejecting due to warnings threshold (3+), state: "Rejected: 3+ warnings threshold exceeded"
-
-2. Output decision markers (last occurrence wins):
-   ```
-   AUDIT_DECISION: REJECTED
-   AUDIT_REJECTED
-   ```
+Output a JSON object with `"action": "REJECTED", "agentName": "auditor"` including your rejection comment body, audit score, and findings with Symptom → Consequence → Remedy → Location (see Structured Output Format in your task). The pipeline handles:
+1. Posting your commentBody as a GitHub issue comment
+2. Transitioning the board status back for fixes
 
 ### 6. Self-Reflection (Before Final Decision)
 

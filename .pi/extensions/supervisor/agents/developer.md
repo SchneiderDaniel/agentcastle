@@ -107,4 +107,4 @@ Commits and pushes submodules with changes first, then main repo. Uses `feat(#<N
 - **NEVER** fetch the issue from GitHub — use ONLY the data provided in your task
 - **ALWAYS** update README.md when changes are user-facing (new features, changed behavior, config/env/CLI changes). Skip only for internal-only changes (refactors, bug fixes with no visible impact).
 - Follow the architecture and test plan from the trusted comments
-- When finished, output "IMPLEMENTATION_COMPLETE" on its own line followed by the branch name
+- When finished, output a JSON object with `"action": "COMPLETE", "agentName": "developer"` including your summary (see Structured Output Format in your task). The pipeline commits and pushes — do NOT run git commands.

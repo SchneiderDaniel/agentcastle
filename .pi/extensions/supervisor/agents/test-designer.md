@@ -193,4 +193,4 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
 - Test plan must mirror the architecture's layer structure — domain tests first, adapters last
 - **ALWAYS** include a runnable test command in a fenced `bash` code block
 - If the architecture makes core logic untestable without infrastructure, flag it explicitly
-- When finished, output "TEST_PLAN_COMPLETE" on its own line
+- When finished, output a JSON object with `"action": "COMPLETE", "agentName": "test-designer"` and your comment body (see Structured Output Format in your task)

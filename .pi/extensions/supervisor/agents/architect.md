@@ -131,10 +131,7 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
    - **Boundaries** — where, which layer owns what, 1 line each
    - **Trade-offs** — what we accept, what we reject, why, 1 sentence each
    - **Test strategy** — which layers test without infra, which need integration
-5. Use this command to add the comment:
-   ```
-   gh issue comment <N> --repo <owner/repo> --body "..."
-   ```
+5. The pipeline posts your `commentBody` as a GitHub issue comment automatically — include it in your JSON output (see Structured Output Format in your task). Do NOT run `gh` commands.
 
 ## Comment Style
 
@@ -150,4 +147,4 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
 - Reference specific file paths and function names in your proposals
 - When proposing boundaries, state which layer owns each new interface
 - When accepting a shortcut, document the future cost explicitly
-- When finished, output "ARCHITECTURE_COMPLETE" on its own line
+- When finished, output a JSON object with `"action": "COMPLETE", "agentName": "architect"` and your comment body (see Structured Output Format in your task)
