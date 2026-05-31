@@ -201,6 +201,89 @@ describe("changelog-parser", () => {
 	it("Error: null input returns empty array", () => {
 		assert.deepStrictEqual(parseChangelog(null as unknown as string), []);
 	});
+
+	// ═══════════════════════════════════════════════════════════════
+	// Bug fix: isInternalEntry must not drop Fixed entries with API names
+	// ═══════════════════════════════════════════════════════════════
+
+	it("Fixed entry with internal term AND API keyword includes apiNames (bug fix)", () => {
+		const md = `## [1.0.0] - 2026-01-01
+
+### Fixed
+
+- Fixed provider registration for pi.exec
+`;
+		const entries = parseChangelog(md);
+		const fixed = entries.filter((e) => e.category === "Fixed");
+		assert.strictEqual(fixed.length, 1, "Fixed entry should NOT be dropped");
+		assert.ok(fixed[0]!.apiNames.includes("exec"), "Should extract 'exec' from pi.exec");
+		assert.ok(fixed[0]!.apiNames.length > 0, "apiNames should not be empty");
+	});
+
+	it("Fixed entry with only internal terms (no API names) still excluded", () => {
+		const md = `## [1.0.0] - 2026-01-01
+
+### Fixed
+
+- Fixed provider connection timeout
+`;
+		const entries = parseChangelog(md);
+		const fixed = entries.filter((e) => e.category === "Fixed");
+		assert.strictEqual(fixed.length, 0, "Pure internal Fixed entry should be excluded");
+	});
+
+	it("Fixed entry with different internal terms (no API) excluded", () => {
+		const md = `## [1.0.0] - 2026-01-01
+
+### Fixed
+
+- Fixed theme alignment on macOS
+`;
+		const entries = parseChangelog(md);
+		const fixed = entries.filter((e) => e.category === "Fixed");
+		assert.strictEqual(fixed.length, 0, "Theme/macOS internal Fixed entry should be excluded");
+	});
+
+	it("Fixed entry with API-only terms (no internal) still included", () => {
+		const md = `## [1.0.0] - 2026-01-01
+
+### Fixed
+
+- Fixed extension registration for custom tools
+`;
+		const entries = parseChangelog(md);
+		const fixed = entries.filter((e) => e.category === "Fixed");
+		assert.strictEqual(fixed.length, 1, "API-only Fixed entry should be included");
+		const apiNames = fixed[0]!.apiNames;
+		assert.ok(apiNames.includes("extension"), "Should extract 'extension'");
+		assert.ok(apiNames.includes("tool"), "Should extract 'tool'");
+	});
+
+	it("Fixed entry with multiple broad internal terms + API keyword included", () => {
+		const md = `## [1.0.0] - 2026-01-01
+
+### Fixed
+
+- Fixed bash login reference in pi.exec
+`;
+		const entries = parseChangelog(md);
+		const fixed = entries.filter((e) => e.category === "Fixed");
+		assert.strictEqual(fixed.length, 1, "Fixed entry with internal terms + API should be included");
+		assert.ok(fixed[0]!.apiNames.includes("exec"), "Should extract 'exec' from pi.exec");
+	});
+
+	it("Fixed entry with worker/resize internal terms + pi.on included", () => {
+		const md = `## [1.0.0] - 2026-01-01
+
+### Fixed
+
+- Fixed worker resize handler for pi.on events
+`;
+		const entries = parseChangelog(md);
+		const fixed = entries.filter((e) => e.category === "Fixed");
+		assert.strictEqual(fixed.length, 1, "Fixed entry with worker+resize+pi.on should be included");
+		assert.ok(fixed[0]!.apiNames.includes("on"), "Should extract 'on' from pi.on");
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════
