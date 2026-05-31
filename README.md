@@ -46,7 +46,7 @@ AgentCastle is a **Kanban-centred AI agent** built on the [Pi coding agent](http
 - **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching
 - **Text search** — `ripgrep_search` via ripgrep: fast literal/regex code search
 - **Web crawling** — `web_crawl`: local crawl4ai → Apify cloud → HTTP fallback
-- **Rich TUI** — Custom status bar (branch, model, token usage, TPS), welcome banner
+- **Rich TUI** — Custom status bar (branch, model, token usage, TPS, cache stats), welcome banner
 - **Session logging** — Every conversation saved as JSONL, queryable with jq
 - **Multi-agent pipeline** — Autonomous Kanban: Researcher → Architect → TestDesigner → Developer → Auditor
 - **LSP pre-audit** — Real LSP diagnostics before merge, auto-retry on errors
@@ -190,7 +190,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/ripgrep-search/` | `ripgrep_search` tool via ripgrep (modular: args, config, parse, temp, validate) |
 | `.pi/extensions/crawl4ai/` | `web_crawl` tool: local crawl4ai → Apify → HTTP fallback |
 | `.pi/extensions/supervisor/` | Kanban-driven multi-agent orchestration |
-| `.pi/extensions/context-info/` | Rich TUI status bar, welcome banner, TPS |
+| `.pi/extensions/context-info/` | Rich TUI status bar (branch, model, tokens, TPS, cache), welcome banner |
 | `.pi/extensions/session-logger/` | Session logging to JSONL |
 | `.pi/extensions/agent-harness/` | Runtime tool call validation — blocks `bash | grep`, `cat` file reads, redundant reads, error retry loops, same-tool cascades |
 | `.pi/extensions/ask-user/` | Interactive MC questions + CSV logger |
@@ -242,7 +242,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **Ripgrep Search** | `ripgrep_search` via ripgrep. Fast literal/regex code search, respects `.gitignore`. |
 | **Supervisor** | Kanban-driven multi-agent pipeline. Reads issue from GitHub project, dispatches agents in loop. Registers `/supervisor <issue-number>` command. |
 | **Web Crawler** | `web_crawl`: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps. |
-| **Context Info** | Rich TUI status bar (branch, model, tokens, TPS), welcome banner, animated working indicator. |
+| **Context Info** | Rich TUI status bar (branch, model, tokens, TPS, cache), welcome banner, animated working indicator. |
 | **Session Logger** | Logs sessions to `.pi/sessions/<id>.jsonl`. Generates `.md` reports with sub-agent output from supervisor pipeline. Toggle with `/session-logger`. Query with `scripts/session-query.sh`. |
 | **Session Advice** | Analyzes each session after shutdown for inefficient patterns. Generates `.advice.md` with fix recommendations. Post-hoc batch analysis via `scripts/session-advice.ts`. Report with `/session-advice report`. |
 | **Agent Harness** | Runtime tool call validation via `agent-harness` extension. Blocks `bash` with `grep`/`rg` (redirects to `ripgrep_search`), `bash` with `cat`/`head`/`tail` (redirects to `read`). Caches reads to prevent redundant file reads. Tracks errors per tool to block retry loops (2+ errors). Tracks consecutive same-tool calls to break cascades (8+) with sub-command-aware detection (`git status` vs `git diff` tracked separately). Cascade resets per conversation turn — each LLM response cycle starts fresh. Bash cascade suggestion is context-aware: commands already using `&&` get "Reduce per-turn call count", non-`&&` commands get "Combine bash calls with &&". Complements Session Advice (post-hoc) with runtime prevention. |
@@ -342,7 +342,7 @@ Empirical token consumption comparing tool configurations on a real audit task (
 
 Config 4 uses **27% fewer total tokens** and runs **33% faster** than mapper-only (config 2). The ripgrep fix resolved the earlier issue where ripgrep made token consumption worse.
 
-The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming, computed from a rolling 30s window, plus worktree name in brackets next to the branch when inside a git worktree.
+The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming, computed from a rolling 30s window, plus **LLM prompt cache** stats (`📦 cacheRead/cacheWrite`) on Row 2 — toggle with `contextStatusBar.showCache` in `.pi/settings.json` (default `true`). The supervisor subagent footer shows cache stats next to the token count. Shows `📦 --/--` before the first assistant response.
 
 > Run with `scripts/benchmark-tools.sh` (2 runs per config). Results saved to `scripts/benchmark-results/`.
 
@@ -460,6 +460,7 @@ Switch the project to **Board** layout in the browser and change **Group by** to
 | Quiz PR reviewer | `/quiz-master` |
 | View session logs | `ls .pi/sessions/` |
 | Reload config | `/reload` (after editing .piignore, settings.json, etc.) |
+| Toggle cache stats | `"contextStatusBar": { "showCache": false }` in `.pi/settings.json` |
 
 #### 7.3 Session Logger Details
 

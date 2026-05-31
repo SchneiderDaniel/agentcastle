@@ -60,11 +60,22 @@ export function buildWidgetLines(
 	// ── Idle warning (optional, shown when no events for >15s) ──
 	const idleLine = idleWarning ? `  ${idleWarning}` : undefined;
 
+	// ── Cache stats helper ──
+	function fmtCacheVal(n: number | undefined | null): string {
+		if (n === undefined || n === null) return "--";
+		return formatTokens(n);
+	}
+
 	// ── Stats footer (always included) ──
 	const shortModel = model ? model.split("/").pop() || model : undefined;
 	const statsParts: string[] = [`subagent:${agentName}`];
 	if (shortModel) statsParts.push(`🧠 ${shortModel}`);
 	if (state.tokenCount > 0) statsParts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
+	const cacheRead = state.cacheRead;
+	const cacheWrite = state.cacheWrite;
+	if (cacheRead !== undefined || cacheWrite !== undefined) {
+		statsParts.push(`📦 ${fmtCacheVal(cacheRead)}/${fmtCacheVal(cacheWrite)}`);
+	}
 	if (state.toolCount > 0) statsParts.push(`🔧 ${state.toolCount} tools`);
 	statsParts.push(`⏱ ${formatDuration(now - state.startedAt)}`);
 	const footer = `  ${statsParts.join(" · ")}`;
@@ -189,12 +200,23 @@ export function buildWidgetComponent(
 		c.addChild(new Text(fit(theme.fg("warning", `  ${idleWarning}`)), 1, 0));
 	}
 
+	// ── Cache stats helper ──
+	function fmtCacheVal(n: number | undefined | null): string {
+		if (n === undefined || n === null) return "--";
+		return formatTokens(n);
+	}
+
 	// ── Stats footer ──
 	const statsParts: string[] = [];
 	const shortModel = model ? model.split("/").pop() || model : undefined;
 	statsParts.push(`subagent:${agentName}`);
 	if (shortModel) statsParts.push(`🧠 ${shortModel}`);
 	if (state.tokenCount > 0) statsParts.push(`📊 ${formatTokens(state.tokenCount)} tokens`);
+	const cacheRead = state.cacheRead;
+	const cacheWrite = state.cacheWrite;
+	if (cacheRead !== undefined || cacheWrite !== undefined) {
+		statsParts.push(`📦 ${fmtCacheVal(cacheRead)}/${fmtCacheVal(cacheWrite)}`);
+	}
 	if (state.toolCount > 0) statsParts.push(`🔧 ${state.toolCount} tools`);
 	const elapsed = formatDuration(now - state.startedAt);
 	statsParts.push(`⏱ ${elapsed}`);

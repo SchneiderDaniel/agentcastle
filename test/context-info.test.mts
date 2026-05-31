@@ -24,12 +24,20 @@ interface MockPi {
 	on: (event: string, handler: (...args: any[]) => void) => void;
 }
 
-function createContextInfoExtension(): { pi: MockPi; logCalls: string[]; mockCtx: MockCtx } {
+function createContextInfoExtension(): {
+	pi: MockPi;
+	logCalls: string[];
+	mockCtx: MockCtx;
+	getCacheRead: () => number | undefined;
+	getCacheWrite: () => number | undefined;
+} {
 	const logCalls: string[] = [];
 	const handlers = new Map<string, (...args: any[]) => void>();
 	const mockCtx: MockCtx = {
 		getContextUsage: () => undefined,
 	};
+	let _cacheRead: number | undefined;
+	let _cacheWrite: number | undefined;
 
 	const mockPi: MockPi = {
 		on(event, handler) {
@@ -60,6 +68,8 @@ function createContextInfoExtension(): { pi: MockPi; logCalls: string[]; mockCtx
 		contextWindow = undefined;
 		contextTokens = undefined;
 		emitted = false;
+		_cacheRead = undefined;
+		_cacheWrite = undefined;
 	});
 
 	handlers.set("model_select", (event: any) => {
@@ -71,12 +81,19 @@ function createContextInfoExtension(): { pi: MockPi; logCalls: string[]; mockCtx
 	});
 
 	// Match production: use ctx.getContextUsage() instead of event.message.usage
+	// Also capture cacheRead/cacheWrite from event.message.usage
 	handlers.set("message_end", (event: any) => {
 		const msg = event.message;
 		if (!msg || msg.role !== "assistant") return;
-		const usage = mockCtx.getContextUsage();
-		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
-			contextTokens = usage.tokens;
+		// Capture cache stats from raw event usage
+		const usage = msg.usage;
+		if (usage) {
+			if (typeof usage.cacheRead === "number") _cacheRead = usage.cacheRead;
+			if (typeof usage.cacheWrite === "number") _cacheWrite = usage.cacheWrite;
+		}
+		const ctxUsage = mockCtx.getContextUsage();
+		if (ctxUsage && typeof ctxUsage.tokens === "number" && ctxUsage.tokens > 0) {
+			contextTokens = ctxUsage.tokens;
 			tryEmit();
 		}
 	});
@@ -90,12 +107,16 @@ function createContextInfoExtension(): { pi: MockPi; logCalls: string[]; mockCtx
 		pi: mockPi,
 		logCalls,
 		mockCtx,
+		getCacheRead: () => _cacheRead,
+		getCacheWrite: () => _cacheWrite,
 		_handlers: handlers,
 		_invoke: invoke,
 	} as unknown as {
 		pi: MockPi;
 		logCalls: string[];
 		mockCtx: MockCtx;
+		getCacheRead: () => number | undefined;
+		getCacheWrite: () => number | undefined;
 		_invoke: (e: string, ...a: any[]) => void;
 	};
 }
@@ -106,6 +127,14 @@ function setCtxUsage(ctx: TestCtx, tokens: number) {
 	ctx.mockCtx.getContextUsage = () => ({ tokens, contextWindow: 256000 });
 }
 
+function getCacheRead(ctx: TestCtx): number | undefined {
+	return ctx.getCacheRead();
+}
+
+function getCacheWrite(ctx: TestCtx): number | undefined {
+	return ctx.getCacheWrite();
+}
+
 function invoke(ctx: TestCtx, event: string, ...args: any[]) {
 	(ctx as any)._invoke(event, ...args);
 }
@@ -113,6 +142,29 @@ function invoke(ctx: TestCtx, event: string, ...args: any[]) {
 // ---------------------------------------------------------------------------
 // Duplicated helpers from .pi/extensions/context-info.ts (session timer)
 // ---------------------------------------------------------------------------
+
+/** Format token count: 1200 → "1.2K", 1200000 → "1.2M" */
+function formatTokens(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	return String(n);
+}
+
+/** Format cache stats: 📦 cacheRead/cacheWrite */
+function formatCacheStats(
+	cacheRead: number | undefined | null,
+	cacheWrite: number | undefined | null,
+): string {
+	if (
+		cacheRead === undefined ||
+		cacheRead === null ||
+		cacheWrite === undefined ||
+		cacheWrite === null
+	) {
+		return "\u{1F4E6} --/--";
+	}
+	return `\u{1F4E6} ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`;
+}
 
 /** Format elapsed ms → "⏱ Xh Ym Zs" */
 function formatSessionTimer(ms: number): string {
@@ -387,5 +439,117 @@ describe("context-info extension — error resilience", () => {
 			message: { role: "assistant" },
 		});
 		assert.strictEqual(ctx.logCalls.length, 0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Cache stats capture tests
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — cache stats capture", () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = createContextInfoExtension();
+	});
+
+	it("message_end with usage.cacheRead=76288 cacheWrite=0 → captures values", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 76288, cacheWrite: 0 },
+			},
+		});
+		assert.strictEqual(getCacheRead(ctx), 76288);
+		assert.strictEqual(getCacheWrite(ctx), 0);
+	});
+
+	it("message_end without usage → cacheRead/cacheWrite remain undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: { role: "assistant", content: [] },
+		});
+		assert.strictEqual(getCacheRead(ctx), undefined);
+		assert.strictEqual(getCacheWrite(ctx), undefined);
+	});
+
+	it("message_end with usage but missing cacheRead → cacheRead stays undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { totalTokens: 100, input: 50, output: 50 },
+			},
+		});
+		assert.strictEqual(getCacheRead(ctx), undefined);
+		assert.strictEqual(getCacheWrite(ctx), undefined);
+	});
+
+	it("session_start resets cache stats", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100, cacheWrite: 50 },
+			},
+		});
+		assert.strictEqual(getCacheRead(ctx), 100);
+
+		// New session resets
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getCacheRead(ctx), undefined);
+		assert.strictEqual(getCacheWrite(ctx), undefined);
+	});
+
+	it("message_end role is not assistant → does not capture cache stats", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "user",
+				usage: { cacheRead: 100, cacheWrite: 50 },
+			},
+		});
+		assert.strictEqual(getCacheRead(ctx), undefined);
+		assert.strictEqual(getCacheWrite(ctx), undefined);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatCacheStats tests
+// ---------------------------------------------------------------------------
+
+describe("formatCacheStats", () => {
+	it("formatCacheStats(76288, 0) → 📦 76.3K/0", () => {
+		assert.strictEqual(formatCacheStats(76288, 0), "\u{1F4E6} 76.3K/0");
+	});
+
+	it("formatCacheStats(1200000, 500) → 📦 1.2M/500", () => {
+		assert.strictEqual(formatCacheStats(1200000, 500), "\u{1F4E6} 1.2M/500");
+	});
+
+	it("formatCacheStats(0, 0) → 📦 0/0", () => {
+		assert.strictEqual(formatCacheStats(0, 0), "\u{1F4E6} 0/0");
+	});
+
+	it("formatCacheStats(undefined, undefined) → 📦 --/--", () => {
+		assert.strictEqual(formatCacheStats(undefined, undefined), "\u{1F4E6} --/--");
+	});
+
+	it("formatCacheStats(null, undefined) → 📦 --/--", () => {
+		assert.strictEqual(formatCacheStats(null, undefined), "\u{1F4E6} --/--");
+	});
+
+	it("formatCacheStats(0, undefined) → 📦 --/--", () => {
+		assert.strictEqual(formatCacheStats(0, undefined), "\u{1F4E6} --/--");
+	});
+
+	it("formatCacheStats(undefined, 0) → 📦 --/--", () => {
+		assert.strictEqual(formatCacheStats(undefined, 0), "\u{1F4E6} --/--");
 	});
 });

@@ -3,6 +3,24 @@
 // Tests mirror the scenarios from agent-stream.test.mts and
 // session-events.test.mts but target the shared handlers directly.
 
+// Augment AgentRunState with cache fields for test compilation
+// These are local to this test file - the real AgentRunState will have them after implementation
+interface AgentRunStateWithCache {
+	cacheRead?: number;
+	cacheWrite?: number;
+}
+
+type FullAgentRunState = AgentRunState & AgentRunStateWithCache;
+
+function createStateWithCache(overrides?: Partial<FullAgentRunState>): FullAgentRunState {
+	return {
+		...createState(overrides),
+		cacheRead: undefined,
+		cacheWrite: undefined,
+		...(overrides as any),
+	};
+}
+
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { AgentRunState } from "./types";
@@ -433,5 +451,74 @@ describe("handleContextInfo", () => {
 		});
 		assert.equal(result.flush, false);
 		assert.equal(state.contextInfoReceived, false);
+	});
+});
+
+// ─── handleMessageEnd — cache stats ──────────────────────────────
+
+describe("handleMessageEnd — cache stats", () => {
+	it("extracts cacheRead and cacheWrite from message usage", () => {
+		const state = createStateWithCache() as any;
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				usage: { cacheRead: 76288, cacheWrite: 0 },
+			},
+		});
+		assert.equal(state.cacheRead, 76288);
+		assert.equal(state.cacheWrite, 0);
+	});
+
+	it("does not set cacheRead/cacheWrite when usage is absent", () => {
+		const state = createStateWithCache() as any;
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: { role: "assistant", content: [] },
+		});
+		assert.equal(state.cacheRead, undefined);
+		assert.equal(state.cacheWrite, undefined);
+	});
+
+	it("does not set cacheRead/cacheWrite when usage has no cache fields", () => {
+		const state = createStateWithCache() as any;
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				usage: { totalTokens: 100, input: 50, output: 50 },
+			},
+		});
+		assert.equal(state.cacheRead, undefined);
+		assert.equal(state.cacheWrite, undefined);
+	});
+});
+
+// ─── handleDone — cache stats ─────────────────────────────────────
+
+describe("handleDone — cache stats", () => {
+	it("extracts cacheRead and cacheWrite from message usage", () => {
+		const state = createStateWithCache() as any;
+		handleDone(state, {
+			kind: "done",
+			message: {
+				content: [{ type: "text", text: "final" }],
+				usage: { cacheRead: 50000, cacheWrite: 1000 },
+			},
+		});
+		assert.equal(state.cacheRead, 50000);
+		assert.equal(state.cacheWrite, 1000);
+	});
+
+	it("does not set cacheRead/cacheWrite when usage is absent", () => {
+		const state = createStateWithCache() as any;
+		handleDone(state, {
+			kind: "done",
+			message: { content: [{ type: "text", text: "final" }] },
+		});
+		assert.equal(state.cacheRead, undefined);
+		assert.equal(state.cacheWrite, undefined);
 	});
 });

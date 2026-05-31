@@ -129,3 +129,19 @@ export function formatTps(tps: number | null): string {
 	if (tps > 999.9) return `${Math.round(tps)} t/s`;
 	return `${tps.toFixed(1)} t/s`;
 }
+
+/** Format cache stats: 📦 cacheRead/cacheWrite */
+export function formatCacheStats(
+	cacheRead: number | undefined | null,
+	cacheWrite: number | undefined | null,
+): string {
+	if (
+		cacheRead === undefined ||
+		cacheRead === null ||
+		cacheWrite === undefined ||
+		cacheWrite === null
+	) {
+		return "\u{1F4E6} --/--";
+	}
+	return `\u{1F4E6} ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`;
+}

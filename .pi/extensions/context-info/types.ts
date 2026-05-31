@@ -16,4 +16,5 @@ export interface ContextStatusBarConfig {
 	thresholds: ThresholdEntry[];
 	showTimer: boolean;
 	showTps: boolean;
+	showCache: boolean;
 }

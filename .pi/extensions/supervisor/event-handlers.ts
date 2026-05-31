@@ -199,6 +199,9 @@ export function handleMessageEnd(
 		}
 		if (msg.usage) {
 			state.tokenCount = msg.usage.totalTokens || msg.usage.input! + msg.usage.output!;
+			// Capture cache stats
+			if (typeof msg.usage.cacheRead === "number") state.cacheRead = msg.usage.cacheRead;
+			if (typeof msg.usage.cacheWrite === "number") state.cacheWrite = msg.usage.cacheWrite;
 		}
 	} else if (msg.role === "toolResult") {
 		const resultText = extractTextFromContent(msg.content);
@@ -243,6 +246,9 @@ export function handleDone(
 	if (msg?.usage) {
 		state.tokenCount =
 			msg.usage.totalTokens || (msg.usage.input ?? 0) + (msg.usage.output ?? 0) || state.tokenCount;
+		// Capture cache stats
+		if (typeof msg.usage.cacheRead === "number") state.cacheRead = msg.usage.cacheRead;
+		if (typeof msg.usage.cacheWrite === "number") state.cacheWrite = msg.usage.cacheWrite;
 	}
 
 	if (msg?.content && Array.isArray(msg.content)) {

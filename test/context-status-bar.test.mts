@@ -112,6 +112,7 @@ interface ContextStatusBarConfig {
 	thresholds: ThresholdEntry[];
 	showTimer: boolean;
 	showTps: boolean;
+	showCache: boolean;
 }
 
 /** Compute tokens per second from rolling buffer (30s window) */
@@ -226,7 +227,17 @@ function loadConfig(rawSettings: Record<string, unknown> | null): {
 		}
 	}
 
-	return { config: { enabled, thresholds, showTimer, showTps }, warnings };
+	// Parse showCache
+	let showCache = true;
+	if ("showCache" in cfg) {
+		if (typeof cfg.showCache === "boolean") {
+			showCache = cfg.showCache;
+		} else {
+			warnings.push("contextStatusBar.showCache must be boolean; using true");
+		}
+	}
+
+	return { config: { enabled, thresholds, showTimer, showTps, showCache }, warnings };
 }
 
 // ---------------------------------------------------------------------------
@@ -695,5 +706,130 @@ describe("formatTps", () => {
 
 	it("1234.5 → 1235 t/s (rounded integer)", () => {
 		assert.strictEqual(formatTps(1234.5), "1235 t/s");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatCacheStats tests
+// ---------------------------------------------------------------------------
+
+function formatCacheStats(
+	cacheRead: number | undefined | null,
+	cacheWrite: number | undefined | null,
+): string {
+	if (
+		cacheRead === undefined ||
+		cacheRead === null ||
+		cacheWrite === undefined ||
+		cacheWrite === null
+	) {
+		return "\u{1F4E6} --/--";
+	}
+	return `\u{1F4E6} ${_fmtTokens(cacheRead)}/${_fmtTokens(cacheWrite)}`;
+}
+
+function _fmtTokens(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	return String(n);
+}
+
+describe("formatCacheStats", () => {
+	it("formatCacheStats(76288, 0) → 📦 76.3K/0 using formatTokens for each value", () => {
+		assert.strictEqual(formatCacheStats(76288, 0), "\u{1F4E6} 76.3K/0");
+	});
+
+	it("formatCacheStats(1200000, 500) → 📦 1.2M/500 (mixed suffix and plain)", () => {
+		assert.strictEqual(formatCacheStats(1200000, 500), "\u{1F4E6} 1.2M/500");
+	});
+
+	it("formatCacheStats(0, 0) → 📦 0/0 (valid data, not placeholder)", () => {
+		assert.strictEqual(formatCacheStats(0, 0), "\u{1F4E6} 0/0");
+	});
+
+	it("formatCacheStats(undefined, undefined) → 📦 --/-- (no data yet)", () => {
+		assert.strictEqual(formatCacheStats(undefined, undefined), "\u{1F4E6} --/--");
+	});
+
+	it("formatCacheStats(null, undefined) → 📦 --/-- (null treated as unavailable)", () => {
+		assert.strictEqual(formatCacheStats(null, undefined), "\u{1F4E6} --/--");
+	});
+
+	it("formatCacheStats(0, undefined) → 📦 --/-- (partial data treated as unavailable)", () => {
+		assert.strictEqual(formatCacheStats(0, undefined), "\u{1F4E6} --/--");
+	});
+
+	it("formatCacheStats(undefined, 0) → 📦 --/-- (partial data treated as unavailable)", () => {
+		assert.strictEqual(formatCacheStats(undefined, 0), "\u{1F4E6} --/--");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// showCache config tests
+// ---------------------------------------------------------------------------
+
+describe("loadConfig — showCache", () => {
+	it("showCache defaults to true when key absent", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showCache, true);
+	});
+
+	it("showCache: true → showCache true", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showCache: true,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showCache, true);
+	});
+
+	it("showCache: false → showCache false", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showCache: false,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showCache, false);
+	});
+
+	it("showCache: invalid (non-boolean) → emits warning, defaults to true", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showCache: "yes",
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showCache, true);
+		assert.ok(result.warnings.some((w) => w.includes("showCache")));
+	});
+
+	it("showCache false with showTimer false and showTps false → all three false", () => {
+		const result = loadConfig({
+			contextStatusBar: {
+				enabled: true,
+				showTimer: false,
+				showTps: false,
+				showCache: false,
+				thresholds: [{ maxTokens: null, color: "red" }],
+			},
+		});
+		assert.ok(result.config);
+		assert.strictEqual(result.config!.showTimer, false);
+		assert.strictEqual(result.config!.showTps, false);
+		assert.strictEqual(result.config!.showCache, false);
 	});
 });
