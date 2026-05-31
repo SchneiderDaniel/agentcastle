@@ -5,6 +5,7 @@ tools: read, bash, structural_search, ripgrep_search, ranked_map
 model: opencode-go/deepseek-v4-flash
 thinking: high
 extensions: "agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer,worktree-sandbox"
+skills: duplicate-code-hunter
 ---
 
 🛠 Tool Discipline — Auditor
@@ -172,6 +173,12 @@ Assess maintainability:
 - [ ] **Cognitive load:** Can a reader follow the change locally without reconstructing hidden state? Are functions small and focused?
 - [ ] **Change propagation:** Does this change localize its impact, or does touching one concern require modifying multiple files?
 - [ ] **Knowledge duplication:** Is the same business rule, validation, or mapping expressed in multiple places?
+- [ ] **Duplicate detection:** Run the `duplicate-code-hunter` skill's methodology against all files in affected extensions/modules (not limited to git diff or `.pi/extensions/`). Apply the four clone types:
+    - **Type 1 (Exact clones):** Identical code except whitespace/comments — use `jscpd` (if available) or `ripgrep_search` with block comparison
+    - **Type 2 (Renamed clones):** Same structure with different identifiers/literals — use `structural_search` AST matching or normalized `diff`
+    - **Type 3 (Near-miss clones):** Same structure with added/removed/modified statements — use `jscpd --threshold` or pairwise line alignment
+    - **Type 4 (Semantic clones):** Different syntax, same functionality — requires LLM analysis with structural similarity cross-reference
+  Validate each finding with deterministic proof: three-way match (tool output + code evidence + diff/structural_search). Available tools: `jscpd`, `ripgrep_search`, `structural_search`, `diff`.
 - [ ] **Accidental complexity:** Is code more complex than the problem it solves? Are there unnecessary abstractions?
 - [ ] **Naming:** Are names precise and consistent? Do they use domain vocabulary?
 - [ ] **Comments:** Do comments explain rationale/constraints, or do they narrate code? Are there stale comments?
