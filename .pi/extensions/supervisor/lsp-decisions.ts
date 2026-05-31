@@ -37,16 +37,9 @@ export function determineLspPreAuditDecision(
 	return { nextStatus: "Implementation", note: preAuditResult.note, auditTriggered: true };
 }
 
-// Dynamically import runPreAudit (lazy to avoid issues at load time)
-let _runPreAudit: any = null;
-
+// Direct import for runPreAudit (hard dependency).
+// Throws if the lsp-auditor module is not available.
 export async function getRunPreAudit(): Promise<any> {
-	if (_runPreAudit) return _runPreAudit;
-	try {
-		const mod = await import("../lsp-auditor");
-		_runPreAudit = mod.runPreAudit;
-		return _runPreAudit;
-	} catch {
-		return null;
-	}
+	const mod = await import("../lsp-auditor");
+	return mod.runPreAudit;
 }

@@ -12,15 +12,22 @@ import type {
 	AgentRunResult,
 	FilteredIssueData,
 } from "../types.ts";
-import { resolveNextStatus, extractAuditScore, type AuditScore, WORKFLOW } from "../workflow.ts";
+import {
+	resolveNextStatus,
+	resolveNextStatusFromAgentOutput,
+	extractAuditScore,
+	type AuditScore,
+	WORKFLOW,
+} from "../workflow.ts";
 import { findStatusOption, setItemStatus } from "../github/project.ts";
 import {
 	postIssueComment,
 	extractAgentCommentBody,
 	extractStructuredAuditOutput,
-	buildAuditCommentFallback,
 	commitAndPush,
 } from "../github/index.ts";
+import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent-output.ts";
+import type { AgentOutput } from "../types.ts";
 
 // ─── Constants ────────────────────────────────────────────────────
 
@@ -111,8 +118,10 @@ export interface NextStatusResult {
 }
 
 /**
- * Resolve next status from agent output using marker matching.
- * Returns null if no marker found (pipeline should stop).
+ * Resolve next status from agent output.
+ * Uses structured JSON parsing (parseAgentOutput) when possible,
+ * falls back to text marker matching for backward compatibility.
+ * Returns null if no status can be determined (pipeline should stop).
  */
 export function calculateNextStatus(
 	agentName: string,
@@ -122,6 +131,13 @@ export function calculateNextStatus(
 	const step = WORKFLOW.find((s) => s.agentName === agentName);
 	if (!step) return { status: null, stopReason: `No workflow step for agent '${agentName}'` };
 
+	// Phase 2: Try structured AgentOutput parsing first
+	const structuredStatus = resolveNextStatusFromAgentOutput(step, textOnly ?? agentOutput);
+	if (structuredStatus) {
+		return { status: structuredStatus };
+	}
+
+	// Fallback: old marker-based detection (for backward compatibility)
 	const nextStatus = resolveNextStatus(step, textOnly) ?? resolveNextStatus(step, agentOutput);
 	if (!nextStatus) {
 		return { status: null, stopReason: `No completion marker found in ${agentName} output` };
@@ -260,6 +276,7 @@ export async function handlePostAgentSuccess(
 
 /**
  * Handle auditor-specific output: structured comments for approval/rejection.
+ * Uses parseAgentOutput for deterministic comment building.
  */
 async function handleAuditorOutput(
 	pi: ExtensionAPI,
@@ -269,14 +286,63 @@ async function handleAuditorOutput(
 	issueNum: number,
 	config: SupervisorConfig,
 ): Promise<void> {
-	const auditOutput = extractStructuredAuditOutput(agentOutput);
-	if (!auditOutput) return;
+	// Try structured AgentOutput parsing first
+	const parseResult = parseAgentOutput(agentOutput);
+	let actionFromOutput: "APPROVED" | "REJECTED" | undefined;
+	let commentBodyFromOutput: string | undefined;
 
-	if (auditOutput.decision === "APPROVED") {
-		if (auditOutput.commentBody) {
+	if (isAgentOutputSuccess(parseResult)) {
+		const output = parseResult as AgentOutput;
+		if (output.action === "APPROVED" || output.action === "REJECTED") {
+			actionFromOutput = output.action;
+			commentBodyFromOutput = output.commentBody;
+		}
+	}
+
+	// Fallback to old text-marker-based extraction
+	if (!actionFromOutput) {
+		const auditOutput = extractStructuredAuditOutput(agentOutput);
+		if (!auditOutput) return;
+
+		if (auditOutput.decision === "APPROVED") {
+			const bodyToPost = auditOutput.commentBody || agentOutput;
+			if (bodyToPost) {
+				try {
+					await postIssueComment(pi, issueNum, config.repo, bodyToPost);
+					ctx.ui.notify("Audit comment posted (text marker fallback)", "info");
+				} catch (acErr: unknown) {
+					console.warn(
+						`[supervisor] Failed to post audit comment: ${
+							acErr instanceof Error ? acErr.message : String(acErr)
+						}`,
+					);
+				}
+			}
+		} else if (auditOutput.decision === "REJECTED") {
+			const bodyToPost = auditOutput.commentBody || agentOutput;
+			if (bodyToPost) {
+				try {
+					await postIssueComment(pi, issueNum, config.repo, bodyToPost);
+					ctx.ui.notify("Audit rejection comment posted (text marker fallback)", "info");
+				} catch (rcErr: unknown) {
+					console.warn(
+						`[supervisor] Failed to post rejection comment: ${
+							rcErr instanceof Error ? rcErr.message : String(rcErr)
+						}`,
+					);
+				}
+			}
+		}
+		return;
+	}
+
+	// Structured path: build comment from AgentOutput
+	if (actionFromOutput === "APPROVED") {
+		const bodyToPost = commentBodyFromOutput || buildApprovalCommentFromOutput(result.textOnly);
+		if (bodyToPost) {
 			try {
-				await postIssueComment(pi, issueNum, config.repo, auditOutput.commentBody);
-				ctx.ui.notify("Audit approval comment posted", "info");
+				await postIssueComment(pi, issueNum, config.repo, bodyToPost);
+				ctx.ui.notify("Audit approval comment posted (from structured output)", "info");
 			} catch (acErr: unknown) {
 				console.warn(
 					`[supervisor] Failed to post audit comment: ${
@@ -284,41 +350,63 @@ async function handleAuditorOutput(
 					}`,
 				);
 			}
-		} else {
-			const fallbackBody = buildAuditCommentFallback(auditOutput.decision, result.textOnly);
-			if (fallbackBody) {
-				try {
-					await postIssueComment(pi, issueNum, config.repo, fallbackBody);
-					ctx.ui.notify("Audit approval comment posted (deterministic fallback)", "info");
-				} catch (acErr: unknown) {
-					console.warn(
-						`[supervisor] Failed to post approval fallback comment: ${
-							acErr instanceof Error ? acErr.message : String(acErr)
-						}`,
-					);
-				}
-			}
 		}
-	} else if (auditOutput.decision === "REJECTED") {
-		const source = auditOutput.commentBody ? "COMMENT_BODY marker" : "deterministic fallback";
-		const commentToPost =
-			auditOutput.commentBody || buildAuditCommentFallback(auditOutput.decision, result.textOnly);
-		if (commentToPost) {
+	} else if (actionFromOutput === "REJECTED") {
+		const bodyToPost = commentBodyFromOutput || agentOutput;
+		if (bodyToPost) {
 			try {
-				await postIssueComment(pi, issueNum, config.repo, commentToPost);
-				ctx.ui.notify(`Audit rejection comment posted (${source})`, "info");
+				await postIssueComment(pi, issueNum, config.repo, bodyToPost);
+				ctx.ui.notify("Audit rejection comment posted (from structured output)", "info");
 			} catch (rcErr: unknown) {
 				console.warn(
-					`[supervisor] Failed to post rejection ${source} comment: ${
+					`[supervisor] Failed to post rejection comment: ${
 						rcErr instanceof Error ? rcErr.message : String(rcErr)
 					}`,
 				);
 			}
 		} else {
 			console.warn(
-				`[supervisor] Auditor rejected issue #${issueNum} but no COMMENT_BODY marker ` +
-					"or structured findings found — no comment posted.",
+				`[supervisor] Auditor rejected issue #${issueNum} but no comment body provided in structured output.`,
 			);
 		}
 	}
+}
+
+/**
+ * Build an approval comment from AgentOutput fields when no explicit commentBody provided.
+ */
+function buildApprovalCommentFromOutput(agentOutput: string): string | null {
+	// Try to extract structured content from the agent output
+	const parseResult = parseAgentOutput(agentOutput);
+	if (isAgentOutputSuccess(parseResult)) {
+		const output = parseResult as AgentOutput;
+		const lines: string[] = ["## Audit Approved", ""];
+
+		if (output.auditScore) {
+			const passing = output.auditScore.passing;
+			const total = output.auditScore.total;
+			lines.push(
+				`**Score:** ${passing}/${total} — ${passing === total ? "All dimensions passing" : `${passing} of ${total} dimensions passing`}`,
+			);
+			lines.push("");
+		}
+
+		if (output.findings && output.findings.length > 0) {
+			lines.push("### Findings");
+			lines.push("");
+			for (const finding of output.findings) {
+				lines.push(`- **${finding.severity} — ${finding.dimension}**`);
+				if (finding.symptom) lines.push(`  - Symptom: ${finding.symptom}`);
+				if (finding.consequence) lines.push(`  - Consequence: ${finding.consequence}`);
+				if (finding.remedy) lines.push(`  - Remedy: ${finding.remedy}`);
+				if (finding.location) lines.push(`  - Location: ${finding.location}`);
+			}
+			lines.push("");
+		}
+
+		lines.push("Fix and resubmit if issues remain.");
+		return lines.join("\n");
+	}
+
+	return null;
 }

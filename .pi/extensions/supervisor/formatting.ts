@@ -1,6 +1,9 @@
 // ─── Formatting helpers ──────────────────────────────────────────────
 // Pure formatting functions — no Pi API, no filesystem side effects.
 
+import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "./agent-output.ts";
+import type { AgentOutput } from "./types.ts";
+
 export function formatTokens(n: number): string {
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -41,6 +44,17 @@ export function extractSummaryLine(
 ): string {
 	if (!textOutput) return success ? `${agentName} completed` : `${agentName} failed`;
 
+	// Primary: parseAgentOutput for structured summary
+	const parseResult = parseAgentOutput(textOutput);
+	if (isAgentOutputSuccess(parseResult)) {
+		const output = parseResult as AgentOutput;
+		if (output.summary) return output.summary;
+		// Generate from action + agentName
+		const actionLabel = output.action.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+		return `${output.agentName}: ${actionLabel}`;
+	}
+
+	// Fallback: text marker detection (backward compat)
 	const markers = [
 		"ARCHITECTURE_COMPLETE",
 		"RESEARCH_COMPLETE",
