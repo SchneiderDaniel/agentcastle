@@ -28,6 +28,36 @@ import { buildErrorNotificationContext } from "./diagnostics.ts";
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
 
+// ─── createAgentRunState: shared state initialization ──────────────
+// Used by both runAgentSubprocess (agent-runner.ts) and
+// runAgentInProcess (agent-session-runner.ts) for consistent state creation.
+// Budget params default to 0 (unlimited) for backward compatibility.
+
+export function createAgentRunState(
+	startedAt: number,
+	maxToolCalls?: number,
+	agentTokenBudget?: number,
+): AgentRunState {
+	return {
+		toolCount: 0,
+		tokenCount: 0,
+		fullLog: [],
+		liveThinking: "",
+		liveText: "",
+		textOutputLines: [],
+		thinkingOutputLines: [],
+		phase: "idle",
+		startedAt,
+		contextInfoReceived: false,
+		thinkingPushedThisTurn: false,
+		textPushedThisTurn: false,
+		budgetExceeded: false,
+		budgetExceededReason: undefined,
+		maxToolCalls: maxToolCalls ?? 0,
+		agentTokenBudget: agentTokenBudget ?? 0,
+	};
+}
+
 // ─── runAgent (Primary: in-process, Fallback: subprocess) ──────────
 
 export async function runAgent(
@@ -37,6 +67,8 @@ export async function runAgent(
 	pi: ExtensionAPI,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 	cwd?: string,
+	maxToolCalls?: number,
+	agentTokenBudget?: number,
 ): Promise<AgentRunResult> {
 	// Primary: in-process via SDK
 	// Two failure modes:
@@ -44,7 +76,16 @@ export async function runAgent(
 	//   2. Non-success result (watchdog stall, agent error) — checked via result.success
 	// Both trigger subprocess fallback for resilience (Phase 3: graceful degradation).
 	try {
-		const result = await runAgentInProcess(agent, task, ctx, pi, timeoutMs, cwd);
+		const result = await runAgentInProcess(
+			agent,
+			task,
+			ctx,
+			pi,
+			timeoutMs,
+			cwd,
+			maxToolCalls,
+			agentTokenBudget,
+		);
 
 		// Check for non-thrown failures (e.g., watchdog stall, agent error result)
 		if (!result.success) {
@@ -58,7 +99,15 @@ export async function runAgent(
 			} catch {
 				// notification fallback
 			}
-			return await runAgentSubprocess(agent, task, ctx, timeoutMs, cwd);
+			return await runAgentSubprocess(
+				agent,
+				task,
+				ctx,
+				timeoutMs,
+				cwd,
+				maxToolCalls,
+				agentTokenBudget,
+			);
 		}
 
 		return result;
@@ -73,7 +122,15 @@ export async function runAgent(
 			// notification fallback
 		}
 		// Fallback: subprocess
-		return await runAgentSubprocess(agent, task, ctx, timeoutMs, cwd);
+		return await runAgentSubprocess(
+			agent,
+			task,
+			ctx,
+			timeoutMs,
+			cwd,
+			maxToolCalls,
+			agentTokenBudget,
+		);
 	}
 }
 
@@ -85,6 +142,8 @@ export async function runAgentSubprocess(
 	ctx: ExtensionCommandContext,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 	cwd?: string,
+	maxToolCalls?: number,
+	agentTokenBudget?: number,
 ): Promise<AgentRunResult> {
 	const effectiveCwd = cwd || ctx.cwd || process.cwd();
 	// Pass worktree path to worktree-sandbox extension for path confinement
@@ -122,24 +181,7 @@ export async function runAgentSubprocess(
 
 	const startedAt = Date.now();
 
-	const state: AgentRunState = {
-		toolCount: 0,
-		tokenCount: 0,
-		fullLog: [],
-		liveThinking: "",
-		liveText: "",
-		textOutputLines: [],
-		thinkingOutputLines: [],
-		phase: "idle",
-		startedAt,
-		contextInfoReceived: false,
-		thinkingPushedThisTurn: false,
-		textPushedThisTurn: false,
-		budgetExceeded: false,
-		budgetExceededReason: undefined,
-		maxToolCalls: 0,
-		agentTokenBudget: 0,
-	};
+	const state = createAgentRunState(startedAt, maxToolCalls, agentTokenBudget);
 
 	return new Promise((resolve) => {
 		const child = spawn("/usr/bin/pi", args, {
