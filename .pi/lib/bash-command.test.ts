@@ -313,3 +313,48 @@ describe("BashCommand parse-once", () => {
 		// All methods use the same parsed segments
 	});
 });
+
+// ── Phase 1: BashCommand.from() static factory ──
+
+describe("BashCommand.from", () => {
+	it("returns BashCommand instance identical to new BashCommand", () => {
+		const from = BashCommand.from("grep foo");
+		const direct = new BashCommand("grep foo");
+		assert.ok(from instanceof BashCommand);
+		assert.equal(from.raw, direct.raw);
+		assert.deepEqual(from.segments, direct.segments);
+	});
+
+	it("parses command once (segments shared across method calls)", () => {
+		const cmd = BashCommand.from("ls -la | grep foo");
+		assert.equal(cmd.segments.length, 2);
+		assert.equal(cmd.isSearch(), false);
+		assert.equal(cmd.isStandalone(), false);
+	});
+
+	it("from('') returns instance with empty segments", () => {
+		const cmd = BashCommand.from("");
+		assert.deepEqual(cmd.segments, []);
+		assert.equal(cmd.raw, "");
+	});
+
+	it("from('ls | grep foo').isSearch() returns false (piped)", () => {
+		assert.equal(BashCommand.from("ls | grep foo").isSearch(), false);
+	});
+
+	it("from reuses same parseBashCmd code path as constructor", () => {
+		// Same command should produce identical segments
+		const cmd = "cat file.ts > output.txt";
+		const fromResult = BashCommand.from(cmd);
+		const newResult = new BashCommand(cmd);
+		assert.equal(fromResult.segments.length, newResult.segments.length);
+		assert.equal(fromResult.segments[0]?.redirect, newResult.segments[0]?.redirect);
+		assert.deepEqual(fromResult.segments, newResult.segments);
+	});
+
+	it("from is a static method (no new required)", () => {
+		const cmd = BashCommand.from("echo hi");
+		assert.ok(cmd instanceof BashCommand);
+		assert.equal(cmd.isStandalone(), true);
+	});
+});

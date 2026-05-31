@@ -1,21 +1,21 @@
 /**
- * harness-rules.ts — Shared tool-call detection rules
+ * harness-rules.ts — Shared tool-call detection rules, constants, and helpers.
  *
- * Pure functions consumed by both:
- *  - agent-harness extension (runtime tool_call blocking)
- *  - session-advice/advisor.ts (post-hoc session analysis)
+ * Bash command parsing and detection are provided by the BashCommand class
+ * (import from this module or directly from bash-command.ts).
+ *
+ * This module exports:
+ *  - Constants: BASH_SEARCH_SIGNALS, READ_BASH_CMDS, SEARCH_TOOLS, etc.
+ *  - Types: ToolMeta
+ *  - Helpers: buildRedirectMessage, getToolMeta, isRedundantRead, etc.
+ *  - Re-exports: BashCommand, BashSegment from bash-command.ts
  *
  * Zero pi dependencies — domain layer only.
- * All functions synchronous, return only primitives, no side effects.
- *
- * Bash-command detection functions now delegate to BashCommand class
- * (bash-command.ts) for single-parse semantics. Consumers may also
- * import BashCommand directly.
  */
 
 // ── Imports from bash-command.ts ──
 
-import { BashCommand, parseBashCmd as parseBashCmdImpl } from "./bash-command.ts";
+import { parseBashCmd as parseBashCmdImpl } from "./bash-command.ts";
 
 // ── Re-export BashCommand class for direct use ──
 
@@ -136,52 +136,6 @@ export function parseBashCmd(cmd: string): import("./bash-command.ts").BashSegme
 	return parseBashCmdImpl(cmd);
 }
 
-// ── Detection functions (delegate to BashCommand) ──
-
-/**
- * Quick check if a bash command is a simple standalone call
- * (no pipes, && chains, or semicolons).
- * Returns false for complex commands that should pass through.
- */
-export function isStandaloneToolCall(cmd: string): boolean {
-	return new BashCommand(cmd).isStandalone();
-}
-
-/**
- * Check if a bash command uses grep/rg/find for search.
- * These should be replaced with ripgrep_search.
- *
- * Uses BashCommand.isSearch() which handles:
- *  - `cmd1 | grep foo` → pass through (pipeline)
- *  - `grep foo` → block (standalone)
- *  - Backtick grep/rg → always block
- */
-export function isSearchInBash(cmd: string): boolean {
-	return new BashCommand(cmd).isSearch();
-}
-
-/**
- * Check if a bash command uses cat/head/tail/less/more for file reading.
- * These should be replaced with the read tool.
- *
- * Uses BashCommand.isFileRead() which avoids false positives:
- *  - cat with output redirect (cat > file, cat >> file) → no block
- *  - head/tail in pipe context (cmd1 | head -5) → no block
- *  - Patterns in quoted args (gh issue --title "...cat...") → no block
- *  - cat/head/tail as first command → block (file read)
- */
-export function isCatHeadTailInBash(cmd: string): boolean {
-	return new BashCommand(cmd).isFileRead();
-}
-
-/**
- * Check if a bash command modifies files (triggers cache invalidation).
- * Detects redirect operators and known file-modifying commands.
- */
-export function isFileModifyingBash(cmd: string): boolean {
-	return new BashCommand(cmd).isFileModify();
-}
-
 /**
  * Build a structured redirect message for the LLM.
  * Returns a [SYSTEM OVERRIDE] block with forbidden action and required JSON schema.
@@ -202,15 +156,6 @@ export function buildRedirectMessage(toolName: string): string {
 		].join("\n");
 	}
 	return "";
-}
-
-/**
- * Check if a bash command uses `ls` for directory listing.
- * Returns true for `ls`, `ls -la`, `ls -l`, etc.
- * Does NOT match `npm ls`, `lsass`, or other commands containing "ls".
- */
-export function isLsInBash(cmd: string): boolean {
-	return new BashCommand(cmd).isLs();
 }
 
 /**
@@ -245,31 +190,7 @@ export function isCodeFilePath(path: string): boolean {
 	return false;
 }
 
-/**
- * Detect tool mismatch in a bash command and suggest alternative.
- * Returns null if no mismatch detected.
- *
- * Uses BashCommand.detectMismatch() for token-aware analysis to avoid
- * false positives from quoted arguments.
- */
-export function detectMismatchAndSuggest(
-	cmd: string,
-): { category: string; suggestion: string } | null {
-	return new BashCommand(cmd).detectMismatch();
-}
-
-/**
- * Suggest a redirection for a mismatched bash command.
- * Returns the suggested tool name or null if no mismatch.
- * Used by runtime handler to populate redirectTo field.
- *
- * Uses BashCommand.suggestRedirection() for token-aware analysis.
- */
-export function suggestRedirection(cmd: string): string | null {
-	return new BashCommand(cmd).suggestRedirection();
-}
-
-// ── Shared helper (extracted from advisor.ts) ──
+// ── Shared helper ──
 
 /**
  * Check if text contains grep-like patterns.

@@ -10,13 +10,8 @@
  */
 
 import { readFileSync } from "node:fs";
-import {
-	isSearchInBash,
-	isCatHeadTailInBash,
-	isLsInBash,
-	isCodeFilePath,
-	SEARCH_TOOLS,
-} from "../../lib/harness-rules.ts";
+import { BashCommand } from "../../lib/bash-command.ts";
+import { isCodeFilePath, SEARCH_TOOLS } from "../../lib/harness-rules.ts";
 
 // ── Types ──
 
@@ -193,38 +188,38 @@ function detectToolMismatch(data: SessionData): AdviceEntry[] {
 	for (const entry of data.entries) {
 		if (entry.toolName !== "bash") continue;
 
-		const cmd = (entry.text ?? "").toLowerCase();
+		const rawCmd = entry.text ?? "";
 
-		// Check for grep/rg/find in bash — use harness-rules
-		if (isSearchInBash(cmd)) {
+		// Check for grep/rg/find in bash — use BashCommand
+		if (new BashCommand(rawCmd).isSearch()) {
 			results.push({
 				severity: "error",
 				category: "tool-mismatch",
-				detail: `\`bash\` used with grep/rg — use \`ripgrep_search\` tool (turn ${entry.turnIndex}): \`${(entry.text ?? "").slice(0, 100)}\``,
+				detail: `\`bash\` used with grep/rg — use \`ripgrep_search\` tool (turn ${entry.turnIndex}): \`${rawCmd.slice(0, 100)}\``,
 				recommendation:
 					"Replace `bash | grep/rg` with `ripgrep_search`. Use dedicated search tool for structured JSON results.",
 				turns: [entry.turnIndex],
 			});
 		}
 
-		// Check for file reads in bash — use harness-rules
-		if (isCatHeadTailInBash(cmd)) {
+		// Check for file reads in bash — use BashCommand
+		if (new BashCommand(rawCmd).isFileRead()) {
 			results.push({
 				severity: "error",
 				category: "tool-mismatch",
-				detail: `\`bash\` used with cat/head/tail — use \`read\` tool (turn ${entry.turnIndex}): \`${(entry.text ?? "").slice(0, 100)}\``,
+				detail: `\`bash\` used with cat/head/tail — use \`read\` tool (turn ${entry.turnIndex}): \`${rawCmd.slice(0, 100)}\``,
 				recommendation:
 					"Replace `bash cat/head/tail` with `read` tool. Use `read(path, offset, limit)` for file inspection.",
 				turns: [entry.turnIndex],
 			});
 		}
 
-		// Check for ls — use harness-rules
-		if (isLsInBash(cmd)) {
+		// Check for ls — use BashCommand
+		if (new BashCommand(rawCmd).isLs()) {
 			results.push({
 				severity: "info",
 				category: "tool-mismatch",
-				detail: `\`bash\` used with \`ls\` (turn ${entry.turnIndex}): \`${(entry.text ?? "").slice(0, 100)}\``,
+				detail: `\`bash\` used with \`ls\` (turn ${entry.turnIndex}): \`${rawCmd.slice(0, 100)}\``,
 				recommendation:
 					"Use `bash ls` only for directory listing. For file contents, use `read`. For finding files, use `ripgrep_search`.",
 				turns: [entry.turnIndex],
@@ -312,7 +307,7 @@ function detectToolCoverageGap(data: SessionData): AdviceEntry[] {
 	});
 
 	const hasBashSearch = data.entries.some(
-		(e) => e.toolName === "bash" && isSearchInBash(e.text ?? ""),
+		(e) => e.toolName === "bash" && new BashCommand(e.text ?? "").isSearch(),
 	);
 
 	if (!touchedCode) return [];
