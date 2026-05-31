@@ -117,15 +117,10 @@ export function parseChangelog(md: string): ChangeEntry[] {
 			categoryHasBullet = true;
 			const description = bulletMatch[1]!;
 
-			// Skip "Fixed" entries with internal-only terms
-			if (currentCategory === "Fixed" && isInternalEntry(description)) {
-				continue;
-			}
-
 			const apiNames = extractApiNames(description);
-			const isApiVisible = currentCategory !== "Fixed" || apiNames.length > 0;
 
-			if (currentCategory === "Fixed" && !isApiVisible) {
+			// Skip "Fixed" entries that are truly internal-only (no API changes)
+			if (currentCategory === "Fixed" && apiNames.length === 0 && isInternalEntry(description)) {
 				continue;
 			}
 
