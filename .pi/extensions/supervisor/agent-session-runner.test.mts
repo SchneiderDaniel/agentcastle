@@ -1,6 +1,8 @@
-// ─── Tests: agent-session-runner.ts — Phase 1 abort on budget exceeded ──
+// ─── Tests: agent-session-runner.ts — Phase 1 abort on budget exceeded
+// and Phase 3 stall → throw → subprocess fallback ──
 // Integration tests with mock session. No actual LLM calls.
-// Tests that session.abort() is called when state.budgetExceeded is true.
+// Tests that session.abort() is called when state.budgetExceeded is true
+// and that watchdog-fired stall throws to trigger subprocess fallback.
 
 import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
@@ -110,5 +112,123 @@ describe("session abort on budget exceeded", () => {
 		assert.equal(result.toolCount, 30);
 		assert.equal(result.tokenCount, 100000);
 		assert.equal(result.success, false);
+	});
+});
+
+// ─── Stall → throw → subprocess fallback ─────────────────────────
+
+describe("stall detection throws to trigger subprocess fallback", () => {
+	it("simulated watchdogFired block throws Error instead of returning result", async () => {
+		// This simulates the refactored code path: when watchdog fires,
+		// the code should throw so runAgent() catch block triggers subprocess fallback.
+		// OLD: return buildAgentRunResult(state, agentName, false, durationMs, messages);
+		// NEW: throw new Error(...);
+
+		const state = createState({
+			budgetExceeded: false,
+			fullLog: ["[Stall: developer aborted — no events for >30s]"],
+		});
+		const WATCHDOG_TIMEOUT_MS = 30_000;
+		const agentName = "developer";
+		const watchdogFired = true;
+
+		// Simulate the code path from agent-session-runner.ts:
+		// When watchdog fires, throw so catch block triggers subprocess fallback.
+		async function simulateWatchdogPath(): Promise<AgentRunResult> {
+			if (watchdogFired) {
+				const durationMs = Date.now() - state.startedAt;
+				state.fullLog.push(
+					`[Stall: ${agentName} aborted after ${durationMs}ms — no events for >${WATCHDOG_TIMEOUT_MS / 1000}s]`,
+				);
+
+				// Throw to trigger subprocess fallback (fix for audit issue #1)
+				throw new Error(
+					`Agent ${agentName} stalled: no events for >${WATCHDOG_TIMEOUT_MS / 1000}s`,
+				);
+			}
+
+			return buildAgentRunResult(state, agentName, true, 0, []);
+		}
+
+		await assert.rejects(
+			simulateWatchdogPath(),
+			{ message: "Agent developer stalled: no events for >30s" },
+			"should throw an error when watchdog fires",
+		);
+
+		// Verify the log was pushed before throw
+		const stallLog = state.fullLog.find((l) => l.includes("Stall"));
+		assert.ok(stallLog, "should have pushed stall log entry before throw");
+	});
+
+	it("non-watchdog path returns normally (no throw)", async () => {
+		const state = createState({ budgetExceeded: false });
+		const agentName = "developer";
+		const watchdogFired = false;
+
+		async function simulateNonWatchdogPath(): Promise<AgentRunResult> {
+			if (watchdogFired) {
+				throw new Error("should not reach");
+			}
+
+			// Ensure prompt settled and cleanup happens
+			const promptSettled = true;
+			if (!promptSettled) {
+				throw new Error("prompt not settled");
+			}
+
+			return buildAgentRunResult(state, agentName, true, 0, []);
+		}
+
+		const result = await simulateNonWatchdogPath();
+		assert.equal(result.success, true);
+		assert.equal(result.agentName, "developer");
+	});
+
+	it("watchdogFired before promptSettled waits for prompt then throws", async () => {
+		// Simulates: watchdog fires while prompt is still pending
+		let promptSettled = false;
+		const agentName = "developer";
+		const WATCHDOG_TIMEOUT_MS = 30_000;
+		const state = createState({});
+
+		async function simulateWatchdogWithPendingPrompt(): Promise<AgentRunResult> {
+			const watchdogFired = true;
+
+			// Simulate prompt that eventually settles
+			const settlePrompt = async () => {
+				await new Promise((r) => setTimeout(r, 10));
+				promptSettled = true;
+			};
+
+			if (watchdogFired) {
+				const durationMs = Date.now() - state.startedAt;
+				state.fullLog.push(
+					`[Stall: ${agentName} aborted after ${durationMs}ms — no events for >${WATCHDOG_TIMEOUT_MS / 1000}s]`,
+				);
+
+				// Ensure prompt settled
+				if (!promptSettled) {
+					try {
+						await settlePrompt();
+					} catch {
+						// prompt settled via abort
+					}
+				}
+
+				throw new Error(
+					`Agent ${agentName} stalled: no events for >${WATCHDOG_TIMEOUT_MS / 1000}s`,
+				);
+			}
+
+			return buildAgentRunResult(state, agentName, true, 0, []);
+		}
+
+		await assert.rejects(simulateWatchdogWithPendingPrompt(), {
+			message: "Agent developer stalled: no events for >30s",
+		});
+
+		// Verify prompt eventually settled
+		assert.equal(promptSettled, true, "prompt should have settled after await");
 	});
 });

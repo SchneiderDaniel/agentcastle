@@ -122,6 +122,48 @@ describe("trackPhase", () => {
 		const idleTime = inst.snapshot().phaseTiming.idle;
 		assert.ok(idleTime >= 0);
 	});
+
+	it("phaseTiming contains all four phases with numeric values", () => {
+		const inst = createInstrumenter();
+		const snap = inst.snapshot();
+		const expectedPhases = ["idle", "thinking", "tool", "text"];
+		for (const phase of expectedPhases) {
+			assert.ok(phase in snap.phaseTiming, `phaseTiming should include key "${phase}"`);
+			assert.equal(
+				typeof snap.phaseTiming[phase as keyof typeof snap.phaseTiming],
+				"number",
+				`phaseTiming["${phase}"] should be a number`,
+			);
+			assert.ok(
+				snap.phaseTiming[phase as keyof typeof snap.phaseTiming] >= 0,
+				`phaseTiming["${phase}"] should be >= 0`,
+			);
+		}
+	});
+
+	it("phaseTiming accumulates across multiple phase transitions", () => {
+		const inst = createInstrumenter();
+		const snap0 = inst.snapshot();
+		const idleBefore = snap0.phaseTiming.idle;
+
+		// Transition through multiple phases
+		inst.trackPhase("thinking");
+		inst.trackPhase("tool");
+		inst.trackPhase("text");
+
+		const snap1 = inst.snapshot();
+		// idle time should have increased (time spent from creation to first transition)
+		assert.ok(snap1.phaseTiming.idle >= idleBefore);
+		// thinking and tool should have non-zero time (we spent time in them)
+		// At minimum, idle + thinking + tool + text should sum to total elapsed
+		const totalTimed = Object.values(snap1.phaseTiming).reduce((a, b) => a + b, 0);
+		const elapsed = snap1.timestamp - snap0.timestamp;
+		// Total timed should be close to elapsed (allow small timing granularity)
+		assert.ok(
+			totalTimed >= elapsed - 50,
+			`total phase timing (${totalTimed}ms) should be near elapsed (${elapsed}ms)`,
+		);
+	});
 });
 
 // ─── setTokenCount ───────────────────────────────────────────────

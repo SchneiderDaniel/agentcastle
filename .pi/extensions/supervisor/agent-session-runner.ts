@@ -349,7 +349,8 @@ export async function runAgentInProcess(
 		}
 
 		// Watchdog fired check: session was aborted due to stalled event delivery
-		// This triggers the same failure path, causing runAgent to fall back to subprocess
+		// Throw so the outer catch block handles cleanup and returns error result,
+		// which propagates to runAgent() → it checks result.success → subprocess fallback.
 		if (watchdogFired) {
 			const durationMs = Date.now() - startedAt;
 			pushLog(
@@ -364,29 +365,18 @@ export async function runAgentInProcess(
 				state.thinkingOutputLines.push(state.liveThinking.trim());
 			}
 
-			// Ensure prompt settled
+			// Ensure prompt settled to prevent leaked promise
 			if (!promptSettled) {
 				try {
 					await promptPromise;
-				} catch {}
+				} catch {
+					// prompt settled via abort — expected
+				}
 			}
 
-			// Cleanup
-			try {
-				session?.dispose();
-			} catch {}
-			try {
-				unsubscribe?.();
-			} catch {}
-			if (flushTimer) clearTimeout(flushTimer);
-			if (heartbeatTimer) clearInterval(heartbeatTimer);
-			watchdogHandle?.stop();
-			ctx.ui.setWidget(widgetId, undefined);
-			ctx.ui.setWorkingMessage(undefined);
-			ctx.ui.setStatus("supervisor", "");
-
-			const messages = session?.state?.messages || [];
-			return buildAgentRunResult(state, agentName, false, durationMs, messages);
+			// Throw to trigger subprocess fallback in runAgent()
+			// Catch block handles session disposal, timer cleanup, widget clearing.
+			throw new Error(`Agent ${agentName} stalled: no events for >${WATCHDOG_TIMEOUT_MS / 1000}s`);
 		}
 
 		// Budget exceeded check: abort session if budget (token/tool limit) was exceeded
@@ -404,9 +394,12 @@ export async function runAgentInProcess(
 		// Log instrumentation snapshot
 		if (instrumenter) {
 			const snap = instrumenter.snapshot();
+			const timingParts = Object.entries(snap.phaseTiming)
+				.filter(([_, ms]) => ms > 0)
+				.map(([phase, ms]) => `${phase}:${ms}ms`);
 			pushLog(
 				state,
-				`📊 Instrumentation: ${snap.eventsTotal} events, ${snap.toolCalls} tools, ${snap.thinkingDeltas} thinking deltas, ${snap.textDeltas} text deltas, ${snap.phaseTransitions} phase transitions`,
+				`📊 Instrumentation: ${snap.eventsTotal} events, ${snap.toolCalls} tools, ${snap.thinkingDeltas} thinking deltas, ${snap.textDeltas} text deltas, ${snap.phaseTransitions} phase transitions, timing: ${timingParts.join(", ")}`,
 			);
 		}
 
