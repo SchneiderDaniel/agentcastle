@@ -1,33 +1,21 @@
 /**
- * Tests for agent-harness tool call handler.
+ * Tests for AgentHarness — tool call validation class.
  *
- * Pure-function unit tests: no infra, no pi runtime, no network.
- * Verify the 5 bugs from issue #207 are fixed:
- *   Bug 1: record() called for all tools (including pass-through)
- *   Bug 2: currentTurn advances on block paths
- *   Bug 3: currentTurn advances on bash empty-command
- *   Bug 4: CASCADE_THRESHOLD raised to 8
- *   Bug 5: CACHE_TTL_TURNS unified and raised to 6
- *
- * Issue 296 additions:
- *   - toolCallIndex / sessionTurn split
- *   - turn_start event binding
- *   - Cascade reset on turn boundaries
- *   - Suggestion text fix (&& present vs absent)
+ * Tests construct AgentHarness, call handleToolCall(), assert on return value.
+ * No direct state access — only public API: handleToolCall(), handleTurnStart(), reset().
+ * getBashSubKey stays as standalone pure function — tests for it remain unchanged.
  */
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createHarnessState } from "../../lib/harness-state.ts";
-import { createToolCallHandler, getBashSubKey } from "./index.ts";
+import { AgentHarness, getBashSubKey } from "./index.ts";
+import type { ToolCallResult } from "./index.ts";
 import agentHarness from "./index.ts";
 import {
 	CASCADE_THRESHOLD,
 	CACHE_TTL_TURNS,
 	buildRedirectMessage,
 } from "../../lib/harness-rules.ts";
-import type { ToolCallResult } from "./index.ts";
-import type { HarnessState } from "../../lib/harness-state.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ── Helpers ──
@@ -45,196 +33,528 @@ function makeCtx() {
 }
 
 function callNTimes(
-	handler: ReturnType<typeof createToolCallHandler>,
+	harness: AgentHarness,
 	toolName: string,
 	n: number,
 	args: Record<string, unknown> = {},
 ) {
 	const results: (ToolCallResult | null)[] = [];
 	for (let i = 0; i < n; i++) {
-		results.push(handler(makeEvent(toolName, args), makeCtx()));
+		results.push(harness.handleToolCall(makeEvent(toolName, args), makeCtx()));
 	}
 	return results;
 }
 
-// ── Tests ──
+// ── Phase 1: Domain tests — basic guard logic ──
 
-describe("agent-harness handler", () => {
-	// ── Bug 1: record() called before pass-through check ──
-
-	it("record() is called for pass-through tools — resets consecutive counter", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Call read twice → consecutive count for read should be 2
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		handler(makeEvent("read", { path: "b.ts" }), makeCtx());
-
-		// Now call pass-through tool → should reset consecutive
-		handler(makeEvent("ripgrep_search"), makeCtx());
-
-		// Now call read again → consecutive should be 1 (reset by pass-through)
-		handler(makeEvent("read", { path: "c.ts" }), makeCtx());
-
-		// Get consecutive info: after the most recent read, count should be 1
-		const info = state.callCounter.getConsecutive("read");
-		assert.equal(info.toolName, "read");
-		assert.equal(info.count, 1, "pass-through tool should reset consecutive counter");
+describe("AgentHarness handleToolCall — domain", () => {
+	it("happy path: read with path passes through", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(result, null);
 	});
 
-	it("record() is called for pass-through tools independently", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Call a pass-through tool — should record
-		handler(makeEvent("structural_search"), makeCtx());
-
-		// Check that getConsecutive for it works (it's the last recorded tool)
-		const info = state.callCounter.getConsecutive("structural_search");
-		assert.equal(info.toolName, "structural_search");
-		assert.equal(info.count, 1);
+	it("undefined toolName returns null", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall({ input: {} }, makeCtx());
+		assert.equal(result, null);
 	});
 
-	// ── Bug 2: toolCallIndex advances on block paths ──
-
-	it("toolCallIndex advances on error retry block", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Push 2 errors for read
-		state.errorTracker.push("read", { turn: 0, toolName: "read" });
-		state.errorTracker.push("read", { turn: 1, toolName: "read" });
-
-		// Next read call should be blocked (error retry)
-		const result = handler(makeEvent("read"), makeCtx());
-		assert.ok(result?.block, "should block on error retry");
-
-		// toolCallIndex should advance
-		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on error retry block");
+	it("empty toolName returns null", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("", { path: "a.ts" }), makeCtx());
+		assert.equal(result, null);
 	});
 
-	it("toolCallIndex advances on read cache block", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First call: not cached, passes through
-		handler(makeEvent("read", { path: "x.ts" }), makeCtx());
-
-		// Second call: same path+offset+limit → cache hit, block
-		const result = handler(makeEvent("read", { path: "x.ts" }), makeCtx());
-		assert.ok(result?.block, "should block on cache hit");
-
-		// toolCallIndex should advance to 2 (first call incremented to 1, second to 2)
-		assert.equal(state.toolCallIndex, 2, "toolCallIndex should advance on read cache block");
+	it("bash grep standalone returns block with redirectTo ripgrep_search", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("bash", { command: "grep foo" }), makeCtx());
+		assert.ok(result?.block);
+		assert.equal(result?.redirectTo, "ripgrep_search");
+		assert.ok(result!.reason.includes("[SYSTEM OVERRIDE]"));
 	});
 
-	it("toolCallIndex advances on cascade block (non-read tool)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+	it("bash rg standalone returns block with redirectTo ripgrep_search", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("bash", { command: "rg pattern" }), makeCtx());
+		assert.ok(result?.block);
+		assert.equal(result?.redirectTo, "ripgrep_search");
+	});
 
-		// Call write repeatedly until blocked by cascade
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < CASCADE_THRESHOLD; i++) {
-			result = handler(makeEvent("write", { path: `file${i}.ts`, content: "" }), makeCtx());
+	it("bash cat file returns block with redirectTo read", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "cat README.md" }),
+			makeCtx(),
+		);
+		assert.ok(result?.block);
+		assert.equal(result?.redirectTo, "read");
+		assert.ok(result!.reason.includes("[SYSTEM OVERRIDE]"));
+	});
+
+	it("bash head file returns block with redirectTo read", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "head -5 file" }),
+			makeCtx(),
+		);
+		assert.ok(result?.block);
+		assert.equal(result?.redirectTo, "read");
+	});
+
+	it("bash tail file returns block with redirectTo read", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "tail -10 file" }),
+			makeCtx(),
+		);
+		assert.ok(result?.block);
+		assert.equal(result?.redirectTo, "read");
+	});
+
+	it("bash cat with write redirect (cat > file) does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "cat > /tmp/foo << EOF" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("bash cat with append redirect (cat >> file) does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "cat >> file << EOF" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("bash cat concat (cat file1 file2 > combined) does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "cat file1.ts file2.ts > combined.ts" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("bash head/tail in pipe does NOT block", () => {
+		const harness = new AgentHarness();
+		const r1 = harness.handleToolCall(
+			makeEvent("bash", { command: "ls -la | head -5" }),
+			makeCtx(),
+		);
+		const r2 = harness.handleToolCall(
+			makeEvent("bash", { command: "ls -lt | tail -10" }),
+			makeCtx(),
+		);
+		assert.equal(r1, null);
+		assert.equal(r2, null);
+	});
+
+	it("bash piped grep (ls | grep) does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "ls -la | grep foo" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("bash quoted args (gh issue --body '...| grep...') does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "gh issue create --body '...| grep...'" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("bash quoted cat in title does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: 'gh issue create --title "... cat ..."' }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("bash npm test passes through", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("bash", { command: "npm test" }), makeCtx());
+		assert.equal(result, null);
+	});
+
+	it("bash ls passes through (informational, not blocked)", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("bash", { command: "ls -la" }), makeCtx());
+		assert.equal(result, null);
+	});
+
+	it("bash empty command passes through", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("bash", {}), makeCtx());
+		assert.equal(result, null);
+	});
+
+	it("bash null command passes through", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("bash", { command: "" }), makeCtx());
+		assert.equal(result, null);
+	});
+
+	it("pass-through tools (structural_search) pass through", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("structural_search", { pattern: "test", language: "ts" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("pass-through tools (ripgrep_search) pass through", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("ripgrep_search", { query: "test" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("unknown tool does not crash", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("unknown_tool_xyz", {}), makeCtx());
+		assert.equal(result, null);
+	});
+});
+
+// ── Phase 2: Error accumulation and retry blocking ──
+
+describe("AgentHarness error accumulation", () => {
+	it("error event passes through but tracks error", () => {
+		const harness = new AgentHarness();
+		const r1 = harness.handleToolCall(makeEvent("read", { path: "err.ts" }, true), makeCtx());
+		assert.equal(r1, null, "error event should pass through");
+
+		// Subsequent non-error call should pass (1 error, not >=2)
+		const r2 = harness.handleToolCall(makeEvent("read", { path: "ok.ts" }), makeCtx());
+		assert.equal(r2, null, "read after single error should pass");
+	});
+
+	it("2 errors block the next non-error call", () => {
+		const harness = new AgentHarness();
+
+		// 2 error events
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }, true), makeCtx());
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
+
+		// 3rd non-error call should be blocked
+		const result = harness.handleToolCall(makeEvent("read", { path: "c.ts" }), makeCtx());
+		assert.ok(result?.block, "read should block after 2 errors");
+		assert.ok(result!.reason.includes("errored"), "reason should mention errors");
+	});
+
+	it("different tools have independent error tracking", () => {
+		const harness = new AgentHarness();
+
+		// 2 errors for read
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }, true), makeCtx());
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
+
+		// Non-error write should pass (no errors for write)
+		const writeResult = harness.handleToolCall(
+			makeEvent("write", { path: "c.ts", content: "" }),
+			makeCtx(),
+		);
+		assert.equal(writeResult, null, "write should pass — no errors tracked for write");
+	});
+
+	it("turn_start decays errors — tool recovers after turn boundary", () => {
+		const harness = new AgentHarness();
+
+		// 2 errors for read
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }, true), makeCtx());
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
+
+		// Blocked
+		const blocked = harness.handleToolCall(makeEvent("read", { path: "c.ts" }), makeCtx());
+		assert.ok(blocked?.block);
+
+		// Turn boundary decays 2 errors → 1
+		harness.handleTurnStart();
+
+		// Now should pass (1 < 2)
+		const after = harness.handleToolCall(makeEvent("read", { path: "d.ts" }), makeCtx());
+		assert.equal(after, null, "read should pass after turn_start decays errors");
+	});
+
+	it("error recovery across multiple turn_starts", () => {
+		const harness = new AgentHarness();
+
+		// 3 errors for read
+		for (let i = 0; i < 3; i++) {
+			harness.handleToolCall(makeEvent("read", { path: `${i}.ts` }, true), makeCtx());
 		}
 
-		// Last call should be blocked
-		assert.ok(result?.block, "should block on cascade");
-		// toolCallIndex should equal CASCADE_THRESHOLD
+		// Blocked
+		const blocked = harness.handleToolCall(makeEvent("read", { path: "c.ts" }), makeCtx());
+		assert.ok(blocked?.block);
+
+		// 3 turn_starts decay 3→2→1→0
+		for (let i = 0; i < 3; i++) {
+			harness.handleTurnStart();
+		}
+
+		// Should pass
+		const after = harness.handleToolCall(makeEvent("read", { path: "d.ts" }), makeCtx());
+		assert.equal(after, null, "read should pass after 3 turn_starts decay all errors");
+	});
+});
+
+// ── Phase 3: Read cache ──
+
+describe("AgentHarness read cache", () => {
+	it("first read passes through", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("read", { path: "a.ts", offset: 0, limit: 100 }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
+	});
+
+	it("second read same path+offset+limit blocks", () => {
+		const harness = new AgentHarness();
+
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		assert.ok(result?.block, "same path re-read should block");
+		assert.ok(result!.reason.includes("cached"), "reason should mention cache");
+	});
+
+	it("different path reads both pass", () => {
+		const harness = new AgentHarness();
+
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		const result = harness.handleToolCall(makeEvent("read", { path: "b.ts" }), makeCtx());
+
+		assert.equal(result, null, "different path should pass");
+	});
+
+	it("different offset/limit produces different cache key", () => {
+		const harness = new AgentHarness();
+
+		harness.handleToolCall(makeEvent("read", { path: "a.ts", offset: 0, limit: 100 }), makeCtx());
+		const result = harness.handleToolCall(
+			makeEvent("read", { path: "a.ts", offset: 50, limit: 20 }),
+			makeCtx(),
+		);
+
+		assert.equal(result, null, "different offset/limit should pass");
+	});
+
+	it("read without path key passes through (no caching)", () => {
+		const harness = new AgentHarness();
+		const r1 = harness.handleToolCall(makeEvent("read", {}), makeCtx());
+		const r2 = harness.handleToolCall(makeEvent("read", {}), makeCtx());
+		assert.equal(r1, null);
+		assert.equal(r2, null);
+	});
+
+	it("cache miss after TTL expiry", () => {
+		const harness = new AgentHarness();
+
+		// Read at toolCallIndex 0
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// Advance toolCallIndex beyond TTL (CACHE_TTL_TURNS = 6)
+		// Since we can't directly set toolCallIndex, we make other calls
+		// to advance it. Total calls needed: 6+ to exceed TTL.
+		// After first read at index 0, make 6 more non-read calls:
+		for (let i = 0; i < 6; i++) {
+			harness.handleToolCall(makeEvent("bash", { command: `echo ${i}` }), makeCtx());
+		}
+
+		// Now toolCallIndex is 7, read same path — cache TTL expired (diff=7, >=6)
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(result, null, "cache should be expired after TTL turns");
+	});
+
+	it("toolCallIndex advances correctly — 2nd read after non-cache-clearing call blocks", () => {
+		const harness = new AgentHarness();
+
+		// Read a.ts → caches at index 0
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// bash ls (non-modifying) advances index, doesn't clear cache
+		harness.handleToolCall(makeEvent("bash", { command: "ls" }), makeCtx());
+
+		// Read same a.ts — cache should be present (turn diff < 6)
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.ok(result?.block, "cache should still be valid — 2nd read same path blocks");
+	});
+});
+
+// ── Phase 4: Cache invalidation ──
+
+describe("AgentHarness cache invalidation", () => {
+	it("write tool clears read cache", () => {
+		const harness = new AgentHarness();
+
+		// Read caches
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// Write clears cache
+		harness.handleToolCall(makeEvent("write", { path: "out.ts", content: "data" }), makeCtx());
+
+		// Re-read same file should pass (cache cleared)
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(result, null, "read after write should pass — cache invalidated");
+	});
+
+	it("edit tool clears read cache", () => {
+		const harness = new AgentHarness();
+
+		// Read caches
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// Edit clears cache
+		harness.handleToolCall(
+			makeEvent("edit", { path: "a.ts", oldText: "foo", newText: "bar" }),
+			makeCtx(),
+		);
+
+		// Re-read same file should pass (cache cleared)
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(result, null, "read after edit should pass — cache invalidated");
+	});
+
+	it("file-modifying bash command (sed) clears read cache", () => {
+		const harness = new AgentHarness();
+
+		// Read caches
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// sed modifies files — clears cache
+		harness.handleToolCall(
+			makeEvent("bash", { command: "sed -i 's/foo/bar/g' file.ts" }),
+			makeCtx(),
+		);
+
+		// Re-read should pass
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(result, null, "read after sed should pass — cache invalidated");
+	});
+
+	it("non-modifying bash command does NOT clear read cache", () => {
+		const harness = new AgentHarness();
+
+		// Read caches
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// ls doesn't modify files
+		harness.handleToolCall(makeEvent("bash", { command: "ls -la" }), makeCtx());
+
+		// Re-read should block (cache still present)
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.ok(result?.block, "read after ls should block — cache not invalidated");
+	});
+
+	it("echo with redirect clears read cache", () => {
+		const harness = new AgentHarness();
+
+		// Read caches
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// echo with > modifies files
+		harness.handleToolCall(makeEvent("bash", { command: "echo 'data' > /tmp/x" }), makeCtx());
+
+		// Re-read should pass (cache cleared)
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(result, null, "read after echo > should pass — cache invalidated");
+	});
+
+	it("edit and write both clear cache independently", () => {
+		const harness = new AgentHarness();
+
+		// Read → edit → re-read passes
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		harness.handleToolCall(
+			makeEvent("edit", { path: "a.ts", oldText: "foo", newText: "bar" }),
+			makeCtx(),
+		);
 		assert.equal(
-			state.toolCallIndex,
-			CASCADE_THRESHOLD,
-			"toolCallIndex should advance on cascade block",
+			harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx()),
+			null,
+			"edit clears cache",
+		);
+
+		// Read → write → re-read passes
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }), makeCtx());
+		harness.handleToolCall(makeEvent("write", { path: "b.ts", content: "x" }), makeCtx());
+		assert.equal(
+			harness.handleToolCall(makeEvent("read", { path: "b.ts" }), makeCtx()),
+			null,
+			"write clears cache",
 		);
 	});
+});
 
-	it("toolCallIndex advances on bash mismatch block", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+// ── Phase 5: Cascade detection ──
 
-		const result = handler(makeEvent("bash", { command: "grep something" }), makeCtx());
-		assert.ok(result?.block, "should block bash grep");
-
-		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on bash mismatch block");
+describe("AgentHarness cascade detection", () => {
+	it("CASCADE_THRESHOLD is at least 8", () => {
+		assert.ok(CASCADE_THRESHOLD >= 8);
 	});
 
-	// ── Bug 3: toolCallIndex advances on bash empty-command ──
-
-	it("toolCallIndex advances on bash empty command", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Empty command should pass through (result null) but still increment turn
-		const result = handler(makeEvent("bash", {}), makeCtx());
-		assert.equal(result, null, "empty bash command should pass through");
-		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on empty bash command");
+	it("CACHE_TTL_TURNS is at least 6", () => {
+		assert.ok(CACHE_TTL_TURNS >= 6);
 	});
 
-	it("toolCallIndex advances on bash null command", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const result = handler(makeEvent("bash", { command: "" }), makeCtx());
-		assert.equal(result, null, "null bash command should pass through");
-		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on null bash command");
-	});
-
-	// ── toolCallIndex advances on normal paths (regression) ──
-
-	it("toolCallIndex advances on pass-through tool call", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		handler(makeEvent("ripgrep_search"), makeCtx());
-		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on pass-through");
-	});
-
-	it("toolCallIndex advances on error tracking path", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		handler(makeEvent("read", {}, true), makeCtx());
-		assert.equal(state.toolCallIndex, 1, "toolCallIndex should advance on error tracking");
-	});
-
-	// ── Bug 4: CASCADE_THRESHOLD ──
-
-	it("cascade blocks only after CASCADE_THRESHOLD consecutive calls (non-read tools)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+	it("cascade blocks only after CASCADE_THRESHOLD consecutive calls (non-read)", () => {
+		const harness = new AgentHarness();
 
 		// CASCADE_THRESHOLD - 1 calls → should NOT block
 		for (let i = 0; i < CASCADE_THRESHOLD - 1; i++) {
-			const result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+			const result = harness.handleToolCall(
+				makeEvent("write", { path: `f${i}.ts`, content: "" }),
+				makeCtx(),
+			);
 			assert.equal(result, null, `call ${i + 1}/${CASCADE_THRESHOLD - 1} should not block`);
 		}
 
 		// CASCADE_THRESHOLD-th call → should block
-		const result = handler(makeEvent("write", { path: "block.ts", content: "" }), makeCtx());
+		const result = harness.handleToolCall(
+			makeEvent("write", { path: "block.ts", content: "" }),
+			makeCtx(),
+		);
 		assert.ok(result?.block, `${CASCADE_THRESHOLD}th call should block`);
 		assert.ok(result!.reason.includes("Same-tool cascade"), "reason should mention cascade");
 	});
 
-	it("CASCADE_THRESHOLD is at least 8", () => {
-		assert.ok(
-			CASCADE_THRESHOLD >= 8,
-			`CASCADE_THRESHOLD should be >= 8 (got ${CASCADE_THRESHOLD})`,
-		);
+	it("cascade blocks after 8 consecutive write calls", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "write", 8, { path: "f.ts", content: "" });
+		for (let i = 0; i < 7; i++) {
+			assert.equal(results[i], null, `call ${i + 1} should pass`);
+		}
+		assert.ok(results[7]?.block, "8th call should block");
 	});
 
-	// ── Bug 5: CACHE_TTL_TURNS unified ──
-
-	it("CACHE_TTL_TURNS is at least 6", () => {
-		assert.ok(CACHE_TTL_TURNS >= 6, `CACHE_TTL_TURNS should be >= 6 (got ${CACHE_TTL_TURNS})`);
+	it("cascade blocks after 8 consecutive bash calls with same subKey", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "bash", 8, { command: "echo hi" });
+		for (let i = 0; i < 7; i++) {
+			assert.equal(results[i], null, `bash echo call ${i + 1} should pass`);
+		}
+		assert.ok(results[7]?.block, "8th bash echo call should block");
 	});
 
-	// ── Edge cases ──
+	it("mixed tools do NOT trigger cascade", () => {
+		const harness = new AgentHarness();
 
-	it("multiple different tools don't trigger cascade", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Interleave different tools with unique paths — no cascade
 		const sequence = [
 			{ tool: "read", args: { path: "a.ts" } },
 			{ tool: "bash", args: { command: "echo hi" } },
@@ -247,15 +567,13 @@ describe("agent-harness handler", () => {
 		];
 		for (let i = 0; i < sequence.length; i++) {
 			const { tool, args } = sequence[i];
-			const result = handler(makeEvent(tool, args), makeCtx());
-			assert.equal(result, null, `mixed tools should not block at index ${i}`);
+			const result = harness.handleToolCall(makeEvent(tool, args), makeCtx());
+			assert.equal(result, null, `mixed tools should not block at index ${i} (${tool})`);
 		}
 	});
 
-	it("pass-through tools interleaved with read don't trigger cascade", () => {
-		// The original Bug 1 scenario: read × pass-through × read × pass-through × ...
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+	it("pass-through tools interleaved with read reset cascade", () => {
+		const harness = new AgentHarness();
 
 		// Simulate: read, ripgrep_search, read, ranked_map, read, structural_search, read
 		const sequence = [
@@ -270,229 +588,605 @@ describe("agent-harness handler", () => {
 
 		for (let i = 0; i < sequence.length; i++) {
 			const { tool, args } = sequence[i];
-			const result = handler(makeEvent(tool, args), makeCtx());
+			const result = harness.handleToolCall(makeEvent(tool, args), makeCtx());
 			assert.equal(
 				result,
 				null,
 				`interleaved pass-through tools should not cause cascade at step ${i} (${tool})`,
 			);
 		}
-
-		// After sequence, toolCallIndex should be 7
-		assert.equal(state.toolCallIndex, sequence.length);
 	});
 
-	// ── sessionTurn usage in handler ──
-
-	it("sessionTurn is passed to callCounter.record() as sinceTurn", () => {
-		const state = createHarnessState();
-		state.sessionTurn = 3;
-		const handler = createToolCallHandler(state);
-
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		const info = state.callCounter.getConsecutive("read");
-		assert.equal(info.sinceTurn, 3, "sinceTurn should equal sessionTurn");
+	it("pass-through tools never cascade — 15 consecutive ask_user", () => {
+		const harness = new AgentHarness();
+		for (let i = 0; i < 15; i++) {
+			const result = harness.handleToolCall(
+				makeEvent("ask_user", { question: `Q${i}?` }),
+				makeCtx(),
+			);
+			assert.equal(result, null, `ask_user call ${i} should NOT be blocked`);
+		}
 	});
 
-	it("sessionTurn increments independently from toolCallIndex", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+	it("pass-through tools never cascade — 15 consecutive structural_search", () => {
+		const harness = new AgentHarness();
+		for (let i = 0; i < 15; i++) {
+			const result = harness.handleToolCall(
+				makeEvent("structural_search", { pattern: "test", language: "ts" }),
+				makeCtx(),
+			);
+			assert.equal(result, null, `structural_search call ${i} should NOT be blocked`);
+		}
+	});
 
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		handler(makeEvent("write", { path: "b.ts", content: "" }), makeCtx());
-
-		// sessionTurn stays 0 (only changed by turn_start handler)
-		assert.equal(state.sessionTurn, 0);
-		// toolCallIndex advances to 2
-		assert.equal(state.toolCallIndex, 2);
+	it("read cascade is skipped (cache handles redundancy)", () => {
+		const harness = new AgentHarness();
+		// 8 reads with different paths — none should be blocked by cascade
+		for (let i = 0; i < 8; i++) {
+			const result = harness.handleToolCall(makeEvent("read", { path: `file${i}.ts` }), makeCtx());
+			assert.equal(result, null, `read ${i} should not be blocked by cascade`);
+		}
 	});
 });
 
-// ── Issue 296: Suggestion text fix (&& present vs absent) ──
+// ── Phase 6: Cascade suggestion text ──
 
-describe("Issue 296: Cascade suggestion text", () => {
+describe("AgentHarness cascade suggestion text", () => {
 	it("bash cascade WITHOUT && suggests 'Combine bash calls with && or use a script file'", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
-		}
-		assert.ok(result?.block);
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "bash", 8, { command: "echo hi" });
+		assert.ok(results[7]?.block);
 		assert.ok(
-			result!.reason.includes("Combine bash calls with && or use a script file"),
+			results[7]!.reason.includes("Combine bash calls with && or use a script file"),
 			"blocked echo hi should suggest combined bash calls",
 		);
 	});
 
-	it("bash cascade WITH && suggests 'Reduce per-turn call count — commands already use && for batching'", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "cd /repo && git status" }), makeCtx());
-		}
-		assert.ok(result?.block);
+	it("bash cascade WITH && suggests 'Reduce per-turn call count'", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "bash", 8, { command: "cd /repo && git status" });
+		assert.ok(results[7]?.block);
 		assert.ok(
-			result!.reason.includes("Reduce per-turn call count"),
+			results[7]!.reason.includes("Reduce per-turn call count"),
 			"blocked && command should suggest reducing per-turn count",
 		);
 		assert.ok(
-			!result!.reason.includes("Write a script file"),
+			!results[7]!.reason.includes("Write a script file"),
 			"should not suggest writing a script file for && commands",
 		);
 	});
 
-	it("non-bash cascade unchanged suggestion text", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
-		}
-		assert.ok(result?.block);
+	it("bash WITH && in middle of command (npm install && npm test) suggests Reduce per-turn", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "bash", 8, { command: "npm install && npm test" });
+		assert.ok(results[7]?.block);
 		assert.ok(
-			result!.reason.includes("Batch write calls"),
-			"non-bash cascade should keep existing suggestion",
+			results[7]!.reason.includes("Reduce per-turn call count"),
+			"blocked npm && command should suggest reducing per-turn count",
 		);
 	});
 
-	it("bash WITH && in middle of command ('npm install && npm test') suggests Reduce per-turn", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "npm install && npm test" }), makeCtx());
-		}
-		assert.ok(result?.block);
+	it("non-bash cascade suggests 'Batch <tool> calls'", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "write", 8, { path: "f.ts", content: "" });
+		assert.ok(results[7]?.block);
 		assert.ok(
-			result!.reason.includes("Reduce per-turn call count"),
-			"blocked npm && command should suggest reducing per-turn count",
+			results[7]!.reason.includes("Batch write calls"),
+			"non-bash cascade should keep existing suggestion",
 		);
 	});
 });
 
-// ── Issue 296: Cascade resets on turn boundaries ──
+// ── Phase 7: Error retry block reason ──
 
-describe("Issue 296: Cascade reset on turn boundaries", () => {
+describe("AgentHarness error retry reason", () => {
+	it("block reason includes error count and last turn", () => {
+		const harness = new AgentHarness();
+
+		// 2 errors for read
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }, true), makeCtx());
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
+
+		const result = harness.handleToolCall(makeEvent("read", { path: "c.ts" }), makeCtx());
+		assert.ok(result?.block);
+		assert.ok(result!.reason.includes("errored"), "should mention error count");
+	});
+});
+
+// ── Phase 8: Turn boundary cascade reset ──
+
+describe("AgentHarness turn boundary cascade reset", () => {
 	it("8 same-subKey bash calls in one turn — 8th blocked", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
-		}
-		assert.ok(result?.block, "8th call in same turn should block");
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "bash", 8, { command: "echo hi" });
+		assert.ok(results[7]?.block, "8th call in same turn should block");
 	});
 
-	it("4 same-subKey bash → turn_start → 4 same-subKey bash → none blocked", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+	it("4 same-subKey bash → handleTurnStart → 4 same-subKey bash → none blocked", () => {
+		const harness = new AgentHarness();
 
 		// 4 calls in sessionTurn 0
 		for (let i = 0; i < 4; i++) {
-			const result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+			const result = harness.handleToolCall(makeEvent("bash", { command: "echo hi" }), makeCtx());
 			assert.equal(result, null, `call ${i + 1} in turn 0 should pass`);
 		}
 
 		// Turn boundary: reset cascade, increment sessionTurn
-		state.sessionTurn++;
-		state.callCounter.turnBoundaryReset();
+		harness.handleTurnStart();
 
 		// 4 more calls in sessionTurn 1
 		for (let i = 0; i < 4; i++) {
-			const result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
+			const result = harness.handleToolCall(makeEvent("bash", { command: "echo hi" }), makeCtx());
 			assert.equal(result, null, `call ${i + 1} in turn 1 should pass (reset by turn boundary)`);
 		}
 	});
 
-	it("8 write calls in one turn — 8th blocked (non-bash unaffected)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
-		}
-		assert.ok(result?.block, "8th write call in same turn should block");
+	it("8 write calls in one turn — 8th blocked", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "write", 8, { path: "f.ts", content: "" });
+		assert.ok(results[7]?.block, "8th write call in same turn should block");
 	});
 
-	it("4 write → turn_start → 4 write → none blocked (non-bash resets across turns too)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+	it("4 write → handleTurnStart → 4 write → none blocked", () => {
+		const harness = new AgentHarness();
 
 		for (let i = 0; i < 4; i++) {
-			const result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+			const result = harness.handleToolCall(
+				makeEvent("write", { path: `f${i}.ts`, content: "" }),
+				makeCtx(),
+			);
 			assert.equal(result, null, `write ${i + 1} in turn 0 should pass`);
 		}
 
 		// Turn boundary
-		state.sessionTurn++;
-		state.callCounter.turnBoundaryReset();
+		harness.handleTurnStart();
 
 		for (let i = 0; i < 4; i++) {
-			const result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
+			const result = harness.handleToolCall(
+				makeEvent("write", { path: `f${i}.ts`, content: "" }),
+				makeCtx(),
+			);
 			assert.equal(result, null, `write ${i + 1} in turn 1 should pass (reset)`);
 		}
 	});
 
-	it("toolCallIndex continues monotonic despite turn_start resets", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+	it("cascade resets across multiple turns — 8 across 2 turns bypasses block", () => {
+		const harness = new AgentHarness();
 
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx()); // toolCallIndex → 1
+		// 4 same-subKey bash in turn 0
+		for (let i = 0; i < 4; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: "echo same" }), makeCtx());
+			assert.equal(result, null, `turn 0 call ${i} should pass`);
+		}
 
 		// Turn boundary
-		state.sessionTurn++;
-		state.callCounter.turnBoundaryReset();
+		harness.handleTurnStart();
 
-		handler(makeEvent("read", { path: "b.ts" }), makeCtx()); // toolCallIndex → 2
-		handler(makeEvent("read", { path: "c.ts" }), makeCtx()); // toolCallIndex → 3
-
-		assert.equal(state.toolCallIndex, 3, "toolCallIndex should be monotonic across turn resets");
-		assert.equal(state.sessionTurn, 1, "sessionTurn should have incremented");
+		// 4 more same-subKey bash in turn 1
+		for (let i = 0; i < 4; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: "echo same" }), makeCtx());
+			assert.equal(result, null, `turn 1 call ${i} should pass (reset by turn boundary)`);
+		}
 	});
 
-	it("sessionTurn 0 → 3 turn_starts = 3", () => {
-		const state = createHarnessState();
-		assert.equal(state.sessionTurn, 0);
+	it("turn_start decay does not break error accumulation across turns", () => {
+		const harness = new AgentHarness();
 
-		state.sessionTurn++;
-		assert.equal(state.sessionTurn, 1);
+		// Error in turn 0
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }, true), makeCtx());
 
-		state.sessionTurn++;
-		assert.equal(state.sessionTurn, 2);
+		// turn_start decays from 1→0
+		harness.handleTurnStart();
 
-		state.sessionTurn++;
-		assert.equal(state.sessionTurn, 3);
-	});
+		// Error again in turn 1
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
 
-	it("toolCallIndex 0 → 5 tool calls + 2 turn_starts = 5 (monotonic)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
+		// 1 error, should not block
+		const r3 = harness.handleToolCall(makeEvent("read", { path: "c.ts" }), makeCtx());
+		assert.equal(r3, null, "1 error should not block");
 
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx()); // 1
-		state.sessionTurn++; // turn 1 start
-		state.callCounter.turnBoundaryReset();
-		handler(makeEvent("read", { path: "b.ts" }), makeCtx()); // 2
-		handler(makeEvent("read", { path: "c.ts" }), makeCtx()); // 3
-		state.sessionTurn++; // turn 2 start
-		state.callCounter.turnBoundaryReset();
-		handler(makeEvent("read", { path: "d.ts" }), makeCtx()); // 4
-		handler(makeEvent("read", { path: "e.ts" }), makeCtx()); // 5
+		// Error again in turn 1
+		harness.handleToolCall(makeEvent("read", { path: "d.ts" }, true), makeCtx());
 
-		assert.equal(state.toolCallIndex, 5);
+		// Now 2 errors — should block
+		const r5 = harness.handleToolCall(makeEvent("read", { path: "e.ts" }), makeCtx());
+		assert.ok(r5?.block, "read should block after 2 new errors");
 	});
 });
 
-// ── Integration tests (mock ExtensionAPI) ──
+// ── Phase 9: Multi-verb CLI diversity ──
 
-describe("agent-harness integration with mock ExtensionAPI", () => {
+describe("AgentHarness multi-verb CLI diversity", () => {
+	it("getBashSubKey pure function — 2-token extraction", () => {
+		assert.equal(getBashSubKey("git status"), "git status");
+		assert.equal(getBashSubKey("git diff"), "git diff");
+		assert.equal(getBashSubKey("echo hi"), "echo");
+		assert.equal(getBashSubKey("ls"), "ls");
+		assert.equal(getBashSubKey("npm install"), "npm install");
+		assert.equal(getBashSubKey("docker ps"), "docker ps");
+		assert.equal(getBashSubKey("gh issue list"), "gh issue");
+		assert.equal(getBashSubKey(""), undefined);
+		assert.equal(getBashSubKey("   "), undefined);
+		assert.equal(getBashSubKey("git push origin main"), "git push");
+	});
+
+	it("8 npm install calls — 8th blocked", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "bash", 8, { command: "npm install" });
+		assert.ok(results[7]?.block, "8th npm install should block");
+	});
+
+	it("diverse npm sub-commands — all 8 pass", () => {
+		const harness = new AgentHarness();
+		const commands = [
+			"npm install",
+			"npm test",
+			"npm run build",
+			"npm publish",
+			"npm audit",
+			"npm cache clean",
+			"npm ci",
+			"npm outdated",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `npm cmd ${i} (${commands[i]}) should pass`);
+		}
+	});
+
+	it("diverse git sub-commands — all 8 pass", () => {
+		const harness = new AgentHarness();
+		const commands = [
+			"git status",
+			"git diff",
+			"git log",
+			"git stash",
+			"git branch",
+			"git merge",
+			"git push",
+			"git pull",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `git cmd ${i} (${commands[i]}) should pass`);
+		}
+	});
+
+	it("diverse docker commands — all 8 pass", () => {
+		const harness = new AgentHarness();
+		const commands = [
+			"docker ps",
+			"docker exec",
+			"docker logs",
+			"docker build",
+			"docker run",
+			"docker stop",
+			"docker rm",
+			"docker images",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `docker cmd ${i} (${commands[i]}) should pass`);
+		}
+	});
+
+	it("diverse gh commands — all 8 pass", () => {
+		const harness = new AgentHarness();
+		const commands = [
+			"gh issue list",
+			"gh pr create",
+			"gh release list",
+			"gh run list",
+			"gh repo view",
+			"gh search repos",
+			"gh secret list",
+			"gh config list",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `gh cmd ${i} (${commands[i]}) should pass`);
+		}
+	});
+
+	it("mixed CLIs (git/npm/docker/gh) — all pass", () => {
+		const harness = new AgentHarness();
+		const commands = [
+			"git status",
+			"npm install",
+			"docker ps",
+			"gh issue list",
+			"git diff",
+			"npm test",
+			"docker exec",
+			"gh pr create",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `mixed cmd ${i} (${commands[i]}) should pass`);
+		}
+	});
+
+	it("bash subKey resets when switching between different first tokens", () => {
+		const harness = new AgentHarness();
+
+		// bash:ls ×4 → bash:cd ×4 → bash:ls ×4 — never blocks
+		for (let round = 0; round < 3; round++) {
+			for (let i = 0; i < 4; i++) {
+				const cmd = round === 1 ? "cd .." : "ls";
+				const result = harness.handleToolCall(makeEvent("bash", { command: cmd }), makeCtx());
+				assert.equal(result, null, `bash ${cmd} round ${round} call ${i} should pass`);
+			}
+		}
+	});
+
+	it("git push origin main ×8 — 8th blocked (same 2-token subKey)", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "bash", 8, { command: "git push origin main" });
+		assert.ok(results[7]?.block, "8th git push origin main should block");
+	});
+});
+
+// ── Phase 10: cd-prefix cascading ──
+
+describe("AgentHarness cd-prefix cascading", () => {
+	it("getBashSubKey: cd /repo && git status → 'git status'", () => {
+		assert.equal(getBashSubKey("cd /repo && git status"), "git status");
+	});
+
+	it("getBashSubKey: cd ~/src && ls -la → 'ls'", () => {
+		assert.equal(getBashSubKey("cd ~/src && ls -la"), "ls");
+	});
+
+	it("getBashSubKey: cd relative/path && gh issue view 271 → 'gh issue'", () => {
+		assert.equal(getBashSubKey("cd relative/path && gh issue view 271"), "gh issue");
+	});
+
+	it("getBashSubKey: cd /repo → 'cd' (bare cd)", () => {
+		assert.equal(getBashSubKey("cd /repo"), "cd");
+	});
+
+	it("getBashSubKey: '' → undefined", () => {
+		assert.equal(getBashSubKey(""), undefined);
+	});
+
+	it("getBashSubKey: '   ' → undefined", () => {
+		assert.equal(getBashSubKey("   "), undefined);
+	});
+
+	it("8 cd /repo && git status calls — 8th blocked (same subKey)", () => {
+		const harness = new AgentHarness();
+		const results = callNTimes(harness, "bash", 8, { command: "cd /repo && git status" });
+		assert.ok(results[7]?.block, "8th cd-prefixed git status should block");
+	});
+
+	it("diverse cd-prefixed commands — all pass", () => {
+		const harness = new AgentHarness();
+		const commands = [
+			"cd /repo && git status",
+			"cd /repo && ls",
+			"cd /repo && npm install",
+			"cd /repo && docker ps",
+			"cd /repo && gh issue list",
+			"cd /repo && echo hi",
+			"cd /repo && pwd",
+			"cd /repo && cat file",
+		];
+		for (let i = 0; i < commands.length; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: commands[i] }), makeCtx());
+			assert.equal(result, null, `cd-prefixed cmd ${i} should pass`);
+		}
+	});
+
+	it("7 ls calls then cd /repo && ls — 8th blocked (same subKey 'ls')", () => {
+		const harness = new AgentHarness();
+
+		// 7 bare ls calls
+		for (let i = 0; i < 7; i++) {
+			const result = harness.handleToolCall(makeEvent("bash", { command: "ls" }), makeCtx());
+			assert.equal(result, null, `bare ls call ${i + 1} should pass`);
+		}
+
+		// 8th: cd /repo && ls — same subKey 'ls', should be blocked
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "cd /repo && ls" }),
+			makeCtx(),
+		);
+		assert.ok(result?.block, "8th call (cd /repo && ls) should block — same subKey 'ls'");
+	});
+
+	it("Mix bare cd and cd-prefixed — both pass (different subKeys)", () => {
+		const harness = new AgentHarness();
+
+		// bare cd — subKey 'cd'
+		const r1 = harness.handleToolCall(makeEvent("bash", { command: "cd /repo" }), makeCtx());
+		assert.equal(r1, null);
+
+		// cd-prefixed ls — subKey 'ls', different from 'cd'
+		const r2 = harness.handleToolCall(makeEvent("bash", { command: "cd /repo && ls" }), makeCtx());
+		assert.equal(r2, null);
+	});
+});
+
+// ── Phase 11: Blocked calls not recorded (Bug 5 fix) ──
+
+describe("AgentHarness blocked calls not recorded", () => {
+	it("blocked bash grep does NOT inflate cascade counter", () => {
+		const harness = new AgentHarness();
+
+		// Blocked call (cat README.md) — subKey "cat", blocked, NOT recorded
+		harness.handleToolCall(makeEvent("bash", { command: "cat README.md" }), makeCtx());
+
+		// Legitimate call — should count as first
+		let result = harness.handleToolCall(makeEvent("bash", { command: "echo hi" }), makeCtx());
+		assert.equal(result, null, "legitimate call after blocked should pass");
+
+		// 7 more identical legitimate calls — 8th total should block
+		for (let i = 0; i < 7; i++) {
+			result = harness.handleToolCall(makeEvent("bash", { command: "echo hi" }), makeCtx());
+		}
+		assert.ok(result?.block, "8th legitimate call should be blocked by cascade");
+	});
+
+	it("blocked read cache does NOT inflate cascade counter", () => {
+		const harness = new AgentHarness();
+
+		// First read passes
+		harness.handleToolCall(makeEvent("read", { path: "test.ts" }), makeCtx());
+
+		// Second read same path — blocked by cache
+		const blocked = harness.handleToolCall(makeEvent("read", { path: "test.ts" }), makeCtx());
+		assert.ok(blocked?.block, "second read same path should be blocked");
+
+		// Third read different path — should pass (counter not incremented by blocked)
+		const pass = harness.handleToolCall(makeEvent("read", { path: "other.ts" }), makeCtx());
+		assert.equal(pass, null, "read after blocked cache hit should pass");
+	});
+
+	it("blocked cascade does NOT inflate cascade counter — different tool clears the block", () => {
+		const harness = new AgentHarness();
+
+		// Make 7 calls, then 8th blocked
+		for (let i = 0; i < 7; i++) {
+			const result = harness.handleToolCall(
+				makeEvent("write", { path: `f${i}.ts`, content: "" }),
+				makeCtx(),
+			);
+			assert.equal(result, null, `call ${i} should pass before cascade`);
+		}
+
+		// 8th blocked
+		const blocked = harness.handleToolCall(
+			makeEvent("write", { path: "block.ts", content: "" }),
+			makeCtx(),
+		);
+		assert.ok(blocked?.block, "8th call should be blocked by cascade");
+
+		// After blocked call, different tool resets the cascade counter
+		const diffTool = harness.handleToolCall(makeEvent("bash", { command: "echo diff" }), makeCtx());
+		assert.equal(diffTool, null, "different tool should pass");
+
+		// Now write again — cascade reset because tool changed
+		const after = harness.handleToolCall(
+			makeEvent("write", { path: "after.ts", content: "" }),
+			makeCtx(),
+		);
+		assert.equal(
+			after,
+			null,
+			"write after different tool should pass (cascade reset by tool change)",
+		);
+	});
+});
+
+// ── Phase 12: Error retry block format ──
+
+describe("AgentHarness error block format", () => {
+	it("bash grep block uses system override format", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("bash", { command: "grep foo" }), makeCtx());
+		assert.ok(result?.block);
+		assert.ok(result!.reason.includes("[SYSTEM OVERRIDE]"));
+		assert.ok(result!.reason.includes("ripgrep_search"));
+		assert.ok(result!.reason.includes("JSON Schema"));
+	});
+
+	it("bash cat block uses system override format", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "cat README.md" }),
+			makeCtx(),
+		);
+		assert.ok(result?.block);
+		assert.ok(result!.reason.includes("[SYSTEM OVERRIDE]"));
+		assert.ok(result!.reason.includes("read"));
+		assert.ok(result!.reason.includes("JSON Schema"));
+	});
+});
+
+// ── Phase 13: Reset ──
+
+describe("AgentHarness reset", () => {
+	it("reset clears cascade state", () => {
+		const harness = new AgentHarness();
+
+		// Build up cascade
+		const results = callNTimes(harness, "write", 8, { path: "f.ts", content: "" });
+		assert.ok(results[7]?.block, "8th call should block");
+
+		// Reset
+		harness.reset();
+
+		// After reset, write should pass
+		const after = harness.handleToolCall(
+			makeEvent("write", { path: "fresh.ts", content: "" }),
+			makeCtx(),
+		);
+		assert.equal(after, null, "after reset, write should pass");
+	});
+
+	it("reset clears error tracker", () => {
+		const harness = new AgentHarness();
+
+		// Push 2 errors for read
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }, true), makeCtx());
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
+
+		// Verify blocked
+		const blocked = harness.handleToolCall(makeEvent("read", { path: "c.ts" }), makeCtx());
+		assert.ok(blocked?.block, "should block after 2 errors");
+
+		// Reset
+		harness.reset();
+
+		// After reset, read should pass (no errors)
+		const after = harness.handleToolCall(makeEvent("read", { path: "d.ts" }), makeCtx());
+		assert.equal(after, null, "after reset, read should pass");
+	});
+
+	it("reset clears read cache", () => {
+		const harness = new AgentHarness();
+
+		// Read caches
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+
+		// Reset clears cache
+		harness.reset();
+
+		// Re-read same path should pass (cache cleared)
+		const result = harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		assert.equal(result, null, "after reset, re-read should pass — cache cleared");
+	});
+
+	it("reset creates fully isolated state", () => {
+		const harness = new AgentHarness();
+
+		// First session: use some state
+		harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx());
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
+		harness.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
+
+		// Reset
+		harness.reset();
+
+		// Fresh state: read same file again should pass (cache cleared)
+		assert.equal(
+			harness.handleToolCall(makeEvent("read", { path: "a.ts" }), makeCtx()),
+			null,
+			"fresh session — cache cleared",
+		);
+
+		// No errors tracked
+		assert.equal(
+			harness.handleToolCall(makeEvent("read", { path: "c.ts" }), makeCtx()),
+			null,
+			"fresh session — no error retry",
+		);
+	});
+});
+
+// ── Phase 14: Mock ExtensionAPI integration ──
+
+describe("AgentHarness extension entry point", () => {
 	function createMockAPI() {
 		const handlers = new Map<string, (...args: any[]) => any>();
 		const api = {
@@ -539,12 +1233,11 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		assert.ok(api.handlers.has("tool_call"));
 	});
 
-	it("session_start creates fresh state — cascade resets", async () => {
+	it("session_start resets cascade state", async () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
-		// Fire 9 consecutive write events through api — cascade kicks in for NON-read tools
-		// CASCADE_THRESHOLD = 8, so 7 pass and 8th (index 7) blocks
+		// Fire consecutive write events through dispatch
 		for (let i = 0; i < 9; i++) {
 			const result = await api.fire("tool_call", {
 				type: "tool_call",
@@ -552,19 +1245,17 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 				toolName: "write",
 				input: { path: `file${i}.ts`, content: "" },
 			});
-			// 8th call (0-indexed 7) should be blocked (cascade threshold = 8)
 			if (i >= 7) {
 				assert.ok(result?.block, `call ${i} should be blocked by cascade`);
 			} else {
-				// Through dispatch, null pass-through becomes undefined via ?? undefined
 				assert.ok(result == null, `call ${i} should pass through`);
 			}
 		}
 
-		// Now fire session_start to reset state
+		// session_start resets
 		await api.fire("session_start", { type: "session_start", reason: "new" });
 
-		// After reset, a write should not be blocked
+		// After reset, write should not be blocked
 		const result = await api.fire("tool_call", {
 			type: "tool_call",
 			toolCallId: "reset",
@@ -574,47 +1265,11 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		assert.ok(result == null, "after session_start, state should be fresh — no block");
 	});
 
-	// ── Issue 296: turn_start event integration ──
-
-	it("turn_start handler increments sessionTurn and resets cascade counter", async () => {
+	it("turn_start handler resets cascade — 8 across 2 turns bypasses block", async () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
-		// 4 same-subKey bash calls in first turn
-		for (let i = 0; i < 4; i++) {
-			const result = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "bash",
-				input: { command: "echo turn0" },
-			});
-			assert.ok(result == null, `call ${i} in turn 0 should pass`);
-		}
-
-		// Fire turn_start — resets cascade counter
-		await api.fire("turn_start", {
-			type: "turn_start",
-			turnIndex: 1,
-			timestamp: Date.now(),
-		});
-
-		// 4 more same-subKey bash calls in second turn
-		for (let i = 0; i < 4; i++) {
-			const result = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(10 + i),
-				toolName: "bash",
-				input: { command: "echo turn1" },
-			});
-			assert.ok(result == null, `call ${i} in turn 1 should pass (reset by turn boundary)`);
-		}
-	});
-
-	it("turn_start handler resets cascade — 8 same-key across 2 turns bypasses block", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// 4 same-subKey bash in turn 0
+		// 4 calls in first turn
 		for (let i = 0; i < 4; i++) {
 			const result = await api.fire("tool_call", {
 				type: "tool_call",
@@ -626,9 +1281,13 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		}
 
 		// Turn boundary
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
+		await api.fire("turn_start", {
+			type: "turn_start",
+			turnIndex: 1,
+			timestamp: Date.now(),
+		});
 
-		// 4 more same-subKey bash in turn 1
+		// 4 more calls in second turn
 		for (let i = 0; i < 4; i++) {
 			const result = await api.fire("tool_call", {
 				type: "tool_call",
@@ -638,117 +1297,6 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			});
 			assert.ok(result == null, `turn 1 call ${i} should pass (reset by turn boundary)`);
 		}
-	});
-
-	it("8 same-subKey bash in single turn via dispatch — 8th blocked", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		let lastResult: any = null;
-		for (let i = 0; i < 8; i++) {
-			lastResult = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "bash",
-				input: { command: "echo same" },
-			});
-		}
-		assert.ok(lastResult?.block, "8th same-key bash in single turn should block");
-	});
-
-	it("turn_start handler does not reset toolCallIndex", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// 2 tool calls
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts" },
-		});
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "b.ts" },
-		});
-
-		// Turn boundary
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
-
-		// 2 more tool calls
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "c.ts" },
-		});
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "4",
-			toolName: "read",
-			input: { path: "d.ts" },
-		});
-
-		// Read call 4 should NOT be cache-blocked because paths differ
-		// But also, toolCallIndex is preserved across turn boundary
-		assert.ok(result == null, "fourth read should pass (different path)");
-		// We can't directly check toolCallIndex from the mock, but the turn_start
-		// handler just increments sessionTurn and resets callCounter
-	});
-
-	// ── Suggestion text via dispatch ──
-
-	it("8 bash WITHOUT && blocked — reason matches 'Combine bash calls with &&'", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		let lastResult: any = null;
-		for (let i = 0; i < 8; i++) {
-			lastResult = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "bash",
-				input: { command: "echo hi" },
-			});
-		}
-		assert.ok(lastResult?.block);
-		assert.ok(lastResult!.reason.includes("Combine bash calls with && or use a script file"));
-	});
-
-	it("8 bash WITH && blocked — reason matches 'Reduce per-turn call count'", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		let lastResult: any = null;
-		for (let i = 0; i < 8; i++) {
-			lastResult = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "bash",
-				input: { command: "cd /repo && git status" },
-			});
-		}
-		assert.ok(lastResult?.block);
-		assert.ok(lastResult!.reason.includes("Reduce per-turn call count"));
-	});
-
-	it("8 write blocked — reason matches 'Batch write calls'", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		let lastResult: any = null;
-		for (let i = 0; i < 8; i++) {
-			lastResult = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "write",
-				input: { path: `f${i}.ts`, content: "" },
-			});
-		}
-		assert.ok(lastResult?.block);
-		assert.ok(lastResult!.reason.includes("Batch write calls"));
 	});
 
 	it("correct pi event shape triggers read cache through full dispatch", async () => {
@@ -774,11 +1322,10 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		assert.ok(r2?.block, "second read same path should be blocked by cache");
 	});
 
-	it("bash grep mismatch through full dispatch", async () => {
+	it("bash grep through full dispatch", async () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
-		// Standalone grep (no pipe) should be blocked
 		const result = await api.fire("tool_call", {
 			type: "tool_call",
 			toolCallId: "1",
@@ -786,22 +1333,20 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 			input: { command: "grep foo" },
 		});
 		assert.ok(result?.block, "bash grep should be blocked");
-		assert.ok(result!.reason.includes("ripgrep_search"), "should suggest ripgrep_search");
 	});
 
-	it("undefined toolName in full dispatch returns null and doesn't block subsequent calls", async () => {
+	it("undefined toolName in full dispatch returns null", async () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
-		// Fire event without toolName
 		const r1 = await api.fire("tool_call", {
 			type: "tool_call",
 			toolCallId: "1",
-			input: { path: "x.ts" }, // no toolName key
+			input: { path: "x.ts" },
 		});
-		assert.ok(r1 == null, "undefined toolName should return null/undefined");
+		assert.ok(r1 == null, "undefined toolName should return null");
 
-		// Fire read — should work normally, not blocked by undefined's cascade count
+		// Fire read — should work normally
 		const r2 = await api.fire("tool_call", {
 			type: "tool_call",
 			toolCallId: "2",
@@ -811,11 +1356,33 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		assert.ok(r2 == null, "read should work normally after undefined toolName");
 	});
 
-	it("cross-type mixed sequence no false cascade", async () => {
+	it("isError event passthrough in dispatch", async () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
-		// Fire 10 events alternating tools
+		const r1 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "1",
+			toolName: "read",
+			input: { path: "err.ts" },
+			isError: true,
+		});
+		assert.ok(r1 == null, "error event should pass through");
+
+		// Normal read — should work (1 error)
+		const r2 = await api.fire("tool_call", {
+			type: "tool_call",
+			toolCallId: "2",
+			toolName: "read",
+			input: { path: "ok.ts" },
+		});
+		assert.ok(r2 == null, "read after single error should pass through");
+	});
+
+	it("mixed tools in dispatch — no false cascade", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
 		const sequence = [
 			{ toolName: "read", input: { path: "a.ts" } },
 			{ toolName: "bash", input: { command: "echo hi" } },
@@ -842,33 +1409,7 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		}
 	});
 
-	it("isError event passthrough in full dispatch", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// Error event — should pass through (result null) but track error
-		const r1 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "err.ts" },
-			isError: true,
-		});
-		assert.ok(r1 == null, "error event should pass through");
-
-		// Normal read — should work (only 1 error, not >=2)
-		const r2 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "ok.ts" },
-		});
-		assert.ok(r2 == null, "read after single error should pass through");
-	});
-
-	// ── Bug 1 fix: ask_user in PASS_THROUGH / TOOL_META ──
-
-	it("Bug 1 fix: ask_user 15 consecutive calls does NOT block", async () => {
+	it("ask_user 15 consecutive calls not blocked in dispatch", async () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
@@ -883,1240 +1424,7 @@ describe("agent-harness integration with mock ExtensionAPI", () => {
 		}
 	});
 
-	it("structural_search 15 consecutive calls does NOT block (pass-through)", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		for (let i = 0; i < 15; i++) {
-			const result = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "structural_search",
-				input: { pattern: "test", language: "ts" },
-			});
-			assert.ok(result == null, `structural_search call ${i} should NOT be blocked`);
-		}
-	});
-
-	// ── Bug 2 fix: cat with redirect not blocked ──
-
-	it("Bug 2 fix: bash cat with redirect (cat > file) does NOT block", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "cat > /tmp/foo << EOF" },
-		});
-		assert.ok(result == null, "cat with write redirect should NOT block");
-	});
-
-	it("Bug 2 fix: bash cat with append redirect (cat >>) does NOT block", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "cat >> file << EOF" },
-		});
-		assert.ok(result == null, "cat with append redirect should NOT block");
-	});
-
-	it("Bug 2 fix: bash cat file1 file2 > combined does NOT block", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "cat file1.ts file2.ts > combined.ts" },
-		});
-		assert.ok(result == null, "cat concat with redirect should NOT block");
-	});
-
-	it("Bug 2 fix: bash cat README.md STILL blocks (file read)", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "cat README.md" },
-		});
-		assert.ok(result?.block, "cat README.md (file read) should STILL block");
-	});
-
-	// ── Bug 3 fix: head/tail in pipe not blocked ──
-
-	it("Bug 3 fix: ls -la | head -5 does NOT block", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "ls -la | head -5" },
-		});
-		assert.ok(result == null, "head in pipe should NOT block");
-	});
-
-	it("Bug 3 fix: ls -la | tail -10 does NOT block", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "ls -lt | tail -10" },
-		});
-		assert.ok(result == null, "tail in pipe should NOT block");
-	});
-
-	it("Bug 3 fix: head -5 file STILL blocks (first cmd file read)", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "head -5 file" },
-		});
-		assert.ok(result?.block, "head as first cmd should STILL block");
-	});
-
-	// ── Bug 4 fix: quoted args not triggering false positives ──
-
-	it("Bug 4 fix: gh issue --body '...| grep...' does NOT block", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "gh issue create --body '...| grep...'" },
-		});
-		assert.ok(result == null, "grep pattern in quoted body should NOT block");
-	});
-
-	it("Bug 4 fix: gh issue --title '... cat ...' does NOT block", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		const result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: 'gh issue create --title "... cat ..."' },
-		});
-		assert.ok(result == null, "cat pattern in quoted title should NOT block");
-	});
-
-	// ── Bug 5 fix: blocked calls should NOT increment cascade counter ──
-
-	it("Bug 5 fix: blocked bash call does NOT increment cascade counter", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// Blocked call (cat README.md) — subKey "cat", blocked, NOT recorded
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "bash",
-			input: { command: "cat README.md" },
-		});
-
-		// Legitimate call — use 2-token command for consistent subKey across loop
-		// subKey "echo hi" — should count as first, not second, since blocked didn't count
-		let result = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "bash",
-			input: { command: "echo hi" },
-		});
-		assert.ok(result == null, "legitimate call after blocked should pass");
-
-		// 7 more identical legitimate calls — 8th total (i=9) should block
-		for (let i = 3; i <= 9; i++) {
-			result = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "bash",
-				input: { command: "echo hi" },
-			});
-			if (i < 9) {
-				assert.ok(result == null, `legitimate call ${i} should pass`);
-			} else {
-				assert.ok(result?.block, `8th legitimate call should be blocked by cascade`);
-			}
-		}
-	});
-
-	it("Bug 5 fix: blocked read cache does NOT increment cascade counter", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// First read passes
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "test.ts" },
-		});
-
-		// Second read same path — blocked by cache
-		const blocked = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "test.ts" },
-		});
-		assert.ok(blocked?.block, "second read same path should be blocked");
-
-		// Third read different path — should pass (counter not incremented by blocked)
-		const pass = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "other.ts" },
-		});
-		assert.ok(pass == null, "read after blocked cache hit should pass");
-	});
-
-	// ── Regression: pass-through tools still not blocked after turn_start binding ──
-
-	it("ask_user 15 consecutive calls still not blocked after turn_start binding", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		for (let i = 0; i < 15; i++) {
-			const result = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "ask_user",
-				input: { question: `Q${i}?` },
-			});
-			assert.ok(result == null, `ask_user call ${i} should NOT be blocked`);
-		}
-	});
-
-	it("structural_search 15 consecutive calls still not blocked after turn_start binding", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		for (let i = 0; i < 15; i++) {
-			const result = await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "structural_search",
-				input: { pattern: "test", language: "ts" },
-			});
-			assert.ok(result == null, `structural_search call ${i} should NOT be blocked`);
-		}
-	});
-});
-
-// ── Phase 2: CallCounter subKey cascade (Bug 3) ──
-
-describe("Bug 3 fix: CallCounter subKey cascade", () => {
-	it("8 bash calls with same sub-command — 8th blocked", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "ls -la" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `bash ls call ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th same-subKey bash call should block");
-	});
-
-	it("diverse bash sub-commands never block", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const commands = [
-			"ls",
-			"cd src",
-			"file index.ts",
-			"stat main.ts",
-			"timeout 10",
-			"find .",
-			"git log",
-			"npm test",
-		];
-		for (let i = 0; i < commands.length; i++) {
-			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
-			assert.equal(result, null, `diverse cmd ${i} (${commands[i]}) should pass`);
-		}
-	});
-
-	it("8 diverse git sub-commands — all 8 pass (sub-command-aware keys)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const gitCommands = [
-			"git status",
-			"git diff",
-			"git log",
-			"git stash",
-			"git branch",
-			"git merge",
-			"git push",
-			"git pull",
-		];
-		for (let i = 0; i < gitCommands.length; i++) {
-			const result = handler(makeEvent("bash", { command: gitCommands[i] }), makeCtx());
-			assert.equal(result, null, `git cmd ${i} (${gitCommands[i]}) should pass`);
-		}
-		// Verify 0 blocks by checking toolCallIndex == 8
-		assert.equal(state.toolCallIndex, 8, "all 8 git calls should have passed");
-	});
-
-	it("bash subKey resets when switching between different first tokens", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// bash:ls ×4 → bash:cd ×4 → bash:ls ×4 — never blocks
-		for (let round = 0; round < 3; round++) {
-			for (let i = 0; i < 4; i++) {
-				const cmd = round === 1 ? "cd .." : "ls";
-				const result = handler(makeEvent("bash", { command: cmd }), makeCtx());
-				assert.equal(result, null, `bash ${cmd} round ${round} call ${i} should pass`);
-			}
-		}
-
-		// Final check: total 12 calls, 0 blocks
-		assert.equal(state.toolCallIndex, 12);
-	});
-
-	it("non-bash tool cascade still works (backward compat)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `write call ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th write call should block (backward compat)");
-	});
-
-	it("bash empty command recorded without subKey — backward compat", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Empty command passes through, no subKey extracted
-		const r1 = handler(makeEvent("bash", {}), makeCtx());
-		assert.equal(r1, null);
-
-		// Next bash call with command — should be different subKey vs no subKey
-		const r2 = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
-		assert.equal(r2, null);
-
-		// Since empty command had no subKey and echo has subKey "echo",
-		// they're different keys, so both have count 1.
-		// Total turns: 2
-		assert.equal(state.toolCallIndex, 2);
-	});
-});
-
-// ── Issue 282: cd-prefix in getBashSubKey ──
-
-describe("Issue 282: getBashSubKey cd-prefix extraction", () => {
-	it("cd /repo && git status → subKey 'git status'", () => {
-		assert.equal(getBashSubKey("cd /repo && git status"), "git status");
-	});
-
-	it("cd ~/src && ls -la → subKey 'ls'", () => {
-		assert.equal(getBashSubKey("cd ~/src && ls -la"), "ls");
-	});
-
-	it("cd relative/path && gh issue view 271 → subKey 'gh issue'", () => {
-		assert.equal(getBashSubKey("cd relative/path && gh issue view 271"), "gh issue");
-	});
-
-	it("cd /repo && npm install express → subKey 'npm install'", () => {
-		assert.equal(getBashSubKey("cd /repo && npm install express"), "npm install");
-	});
-
-	it("cd /repo && echo hi → subKey 'echo'", () => {
-		assert.equal(getBashSubKey("cd /repo && echo hi"), "echo");
-	});
-
-	it("cd /repo → subKey 'cd' (bare cd, no &&)", () => {
-		assert.equal(getBashSubKey("cd /repo"), "cd");
-	});
-
-	it("cd /repo; git status → subKey 'cd' (semicolons not handled)", () => {
-		assert.equal(getBashSubKey("cd /repo; git status"), "cd");
-	});
-
-	it("cd \"path with spaces\" && cmd → subKey 'cmd'", () => {
-		assert.equal(getBashSubKey('cd "path with spaces" && cmd'), "cmd");
-	});
-
-	it("git status → git status (backward compat)", () => {
-		assert.equal(getBashSubKey("git status"), "git status");
-	});
-
-	it("npm install → npm install (backward compat)", () => {
-		assert.equal(getBashSubKey("npm install"), "npm install");
-	});
-
-	it("echo hi → echo (backward compat)", () => {
-		assert.equal(getBashSubKey("echo hi"), "echo");
-	});
-
-	it("'' → undefined (backward compat)", () => {
-		assert.equal(getBashSubKey(""), undefined);
-	});
-
-	it("'   ' → undefined (backward compat)", () => {
-		assert.equal(getBashSubKey("   "), undefined);
-	});
-});
-
-describe("Issue 282: Cascade behavior with cd-prefixed commands", () => {
-	it("8 cd /repo && git status calls — 8th blocked", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "cd /repo && git status" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `cd-prefixed git status call ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th cd-prefixed git status should block (same subKey 'git status')");
-	});
-
-	it("8 diverse cd-prefixed commands — all 8 pass", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const commands = [
-			"cd /repo && git status",
-			"cd /repo && ls",
-			"cd /repo && npm install",
-			"cd /repo && docker ps",
-			"cd /repo && gh issue list",
-			"cd /repo && echo hi",
-			"cd /repo && pwd",
-			"cd /repo && cat file",
-		];
-		for (let i = 0; i < commands.length; i++) {
-			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
-			assert.equal(result, null, `diverse cd-prefixed cmd ${i} should pass`);
-		}
-		assert.equal(state.toolCallIndex, 8, "all 8 diverse cd-prefixed calls should pass");
-	});
-
-	it("Mix bare cd and cd-prefixed — both pass (different subKeys)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// bare cd — subKey 'cd'
-		const r1 = handler(makeEvent("bash", { command: "cd /repo" }), makeCtx());
-		assert.equal(r1, null);
-
-		// cd-prefixed ls — subKey 'ls', different from 'cd'
-		const r2 = handler(makeEvent("bash", { command: "cd /repo && ls" }), makeCtx());
-		assert.equal(r2, null);
-
-		assert.equal(state.toolCallIndex, 2);
-	});
-
-	it("cd /repo && npm install ×8 — 8th blocked (same subKey 'npm install')", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "cd /repo && npm install" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `npm install with cd prefix ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th npm install with cd prefix should block (same subKey)");
-	});
-
-	it("cd /repo && npm install then cd /repo && npm test — both pass (different subKeys)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const r1 = handler(makeEvent("bash", { command: "cd /repo && npm install" }), makeCtx());
-		assert.equal(r1, null);
-
-		const r2 = handler(makeEvent("bash", { command: "cd /repo && npm test" }), makeCtx());
-		assert.equal(r2, null);
-
-		assert.equal(state.toolCallIndex, 2);
-	});
-
-	it("7 ls calls then 1 cd /repo && ls — 8th blocked (same subKey 'ls')", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		// 7 bare ls calls → subKey 'ls'
-		for (let i = 0; i < 7; i++) {
-			result = handler(makeEvent("bash", { command: "ls" }), makeCtx());
-			assert.equal(result, null, `bare ls call ${i + 1} should pass`);
-		}
-
-		// 8th call: cd /repo && ls — same subKey 'ls', should be blocked
-		result = handler(makeEvent("bash", { command: "cd /repo && ls" }), makeCtx());
-		assert.ok(result?.block, "8th call (cd /repo && ls) should block — same subKey 'ls'");
-	});
-});
-
-// ── Issue 282: Error message suggestion split (now Issue 296 style) ──
-
-describe("Issue 282: Error message suggestion split (migrated to Issue 296 format)", () => {
-	it("Blocked bash WITHOUT && suggests 'Combine bash calls with &&'", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
-		}
-		assert.ok(result?.block);
-		assert.ok(
-			result!.reason.includes("Combine bash calls with &&"),
-			"blocked echo hi should suggest combined bash calls",
-		);
-	});
-
-	it("Blocked bash WITH && suggests 'Reduce per-turn call count'", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "cd /repo && git status" }), makeCtx());
-		}
-		assert.ok(result?.block);
-		assert.ok(
-			result!.reason.includes("Reduce per-turn call count"),
-			"blocked cd-prefixed command should suggest reducing per-turn call count",
-		);
-	});
-
-	it("Non-bash cascade unchanged suggestion text", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
-		}
-		assert.ok(result?.block);
-		assert.ok(
-			result!.reason.includes("Batch write calls"),
-			"non-bash cascade should keep existing suggestion",
-		);
-	});
-
-	it("Blocked bash WITH && in middle of command suggests Reduce per-turn", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "npm install && npm test" }), makeCtx());
-		}
-		assert.ok(result?.block);
-		assert.ok(
-			result!.reason.includes("Reduce per-turn call count"),
-			"blocked npm && command should suggest reducing per-turn count",
-		);
-	});
-});
-
-// ── Phase 2: Multi-verb CLI diversity (npm, docker, gh) ──
-
-describe("Phase 2: Multi-verb CLI diversity — 2-token subKey", () => {
-	it("getBashSubKey pure function — 2-token extraction", () => {
-		assert.equal(getBashSubKey("git status"), "git status");
-		assert.equal(getBashSubKey("git diff"), "git diff");
-		assert.equal(getBashSubKey("echo hi"), "echo");
-		assert.equal(getBashSubKey("ls"), "ls");
-		assert.equal(getBashSubKey("npm install"), "npm install");
-		assert.equal(getBashSubKey("docker ps"), "docker ps");
-		assert.equal(getBashSubKey("gh issue list"), "gh issue");
-		assert.equal(getBashSubKey(""), undefined);
-		assert.equal(getBashSubKey("   "), undefined);
-		assert.equal(getBashSubKey("git push origin main"), "git push");
-	});
-
-	it("npm install ×8 — 8th blocked (same 2-token subKey)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "npm install" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `npm install call ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th npm install should block (same subKey)");
-	});
-
-	it("diverse npm sub-commands — all 8 pass", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const commands = [
-			"npm install",
-			"npm test",
-			"npm run build",
-			"npm publish",
-			"npm audit",
-			"npm cache clean",
-			"npm ci",
-			"npm outdated",
-		];
-		for (let i = 0; i < commands.length; i++) {
-			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
-			assert.equal(result, null, `npm cmd ${i} (${commands[i]}) should pass`);
-		}
-		assert.equal(state.toolCallIndex, 8, "all 8 diverse npm calls should pass");
-	});
-
-	it("diverse docker sub-commands — all 8 pass", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const commands = [
-			"docker ps",
-			"docker exec",
-			"docker logs",
-			"docker build",
-			"docker run",
-			"docker stop",
-			"docker rm",
-			"docker images",
-		];
-		for (let i = 0; i < commands.length; i++) {
-			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
-			assert.equal(result, null, `docker cmd ${i} (${commands[i]}) should pass`);
-		}
-		assert.equal(state.toolCallIndex, 8, "all 8 diverse docker calls should pass");
-	});
-
-	it("diverse gh sub-commands — all 8 pass", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const commands = [
-			"gh issue list",
-			"gh pr create",
-			"gh release list",
-			"gh run list",
-			"gh repo view",
-			"gh search repos",
-			"gh secret list",
-			"gh config list",
-		];
-		for (let i = 0; i < commands.length; i++) {
-			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
-			assert.equal(result, null, `gh cmd ${i} (${commands[i]}) should pass`);
-		}
-		assert.equal(state.toolCallIndex, 8, "all 8 diverse gh calls should pass");
-	});
-});
-
-// ── Phase 3: Backward compatibility and edge cases ──
-
-describe("Phase 3: Backward compatibility and edge cases", () => {
-	it("echo hi ×8 — 8th blocked (single-token subKey 'echo', backward compat)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `echo hi call ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th echo hi should block (same subKey 'echo')");
-	});
-
-	it("non-bash write cascade still works — 8th blocked", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("write", { path: `f${i}.ts`, content: "" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `write call ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th write call should block (unchanged path)");
-	});
-
-	it("bash empty command ×8 — 8th blocked (same undefined subKey)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `empty bash ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th empty bash should block (same undefined subKey)");
-	});
-
-	it("bash({}) then bash with command — both pass (different subKeys)", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// No command key — subKey undefined
-		const r1 = handler(makeEvent("bash", {}), makeCtx());
-		assert.equal(r1, null);
-
-		// Has command — subKey "echo"
-		const r2 = handler(makeEvent("bash", { command: "echo hi" }), makeCtx());
-		assert.equal(r2, null);
-
-		// Different keys, both pass, 2 turns
-		assert.equal(state.toolCallIndex, 2);
-	});
-
-	it("mixed CLIs (git/npm/docker/gh) — all 8 pass", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const commands = [
-			"git status",
-			"npm install",
-			"docker ps",
-			"gh issue list",
-			"git diff",
-			"npm test",
-			"docker exec",
-			"gh pr create",
-		];
-		for (let i = 0; i < commands.length; i++) {
-			const result = handler(makeEvent("bash", { command: commands[i] }), makeCtx());
-			assert.equal(result, null, `mixed cmd ${i} (${commands[i]}) should pass`);
-		}
-		assert.equal(state.toolCallIndex, 8, "all 8 mixed CLI calls should pass");
-	});
-
-	it("git push origin main ×8 — 8th blocked (same 2-token subKey 'git push')", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		let result: ToolCallResult | null = null;
-		for (let i = 0; i < 8; i++) {
-			result = handler(makeEvent("bash", { command: "git push origin main" }), makeCtx());
-			if (i < 7) {
-				assert.equal(result, null, `git push call ${i + 1} should pass`);
-			}
-		}
-		assert.ok(result?.block, "8th git push origin main should block (same 2-token subKey)");
-	});
-});
-
-// ── Phase 3: Read cache [pending] same-turn pass-through (Bug 5) ──
-
-describe("Bug 5 fix: read cache [pending] same-turn pass-through", () => {
-	it("same-turn [pending] re-read passes through", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read at turn 0: cache miss, set [pending], pass
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-		assert.equal(state.toolCallIndex, 1);
-
-		// Reset turn to 0 to simulate same-turn re-read
-		state.toolCallIndex = 0;
-
-		// Second read at turn 0: cache hit with [pending] at turn 0 → pass through
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r2, null, "same-turn [pending] should pass through");
-	});
-
-	it("cross-turn [pending] re-read blocks", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read: turn 0, sets [pending]
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(state.toolCallIndex, 1);
-
-		// Second read at turn 1: cache hit with [pending] at turn 0
-		// Since cached.turn(0) !== toolCallIndex(1), it blocks
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.ok(r2?.block, "cross-turn [pending] should block");
-	});
-
-	it("same-turn normal content still blocks", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Manually set cache with real content at turn 0
-		state.readCache.set("a.ts|0|", "real content", 0);
-
-		// Read at turn 0: cache hit with real content at turn 0 → block
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.ok(r1?.block, "same-turn real content should still block");
-	});
-
-	it("different cache keys both pass", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Read with offset 0, limit 100
-		const r1 = handler(makeEvent("read", { path: "a.ts", offset: 0, limit: 100 }), makeCtx());
-		assert.equal(r1, null);
-
-		// Reset turn to 0 for same-turn
-		state.toolCallIndex = 0;
-
-		// Read with offset 100, limit 100 — different cache key, should pass
-		const r2 = handler(makeEvent("read", { path: "a.ts", offset: 100, limit: 100 }), makeCtx());
-		assert.equal(r2, null, "different offset should have different cache key");
-	});
-
-	it("TTL-expired [pending] cache miss passes through", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read at turn 0: sets [pending]
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-
-		// Set turn to 6 (CACHE_TTL_TURNS = 6, diff >= 6 → TTL expired)
-		state.toolCallIndex = 6;
-
-		// Re-read: cache TTL expired, miss, pass through
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r2, null, "TTL-expired cache miss should pass through");
-	});
-});
-
-// ── Issue 270: Harness improvements ──
-
-describe("Issue 270: Cache invalidation on write", () => {
-	it("write tool clears read cache", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read caches
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// Write clears cache
-		handler(makeEvent("write", { path: "out.ts", content: "data" }), makeCtx());
-
-		// Re-read same file should pass (cache was cleared)
-		state.toolCallIndex = 2;
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r2, null, "read after write should pass — cache invalidated");
-	});
-
-	it("file-modifying bash command clears read cache", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read caches
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// sed -i modifies files, should clear cache
-		handler(makeEvent("bash", { command: "sed -i 's/foo/bar/g' file.ts" }), makeCtx());
-
-		// Re-read same file should pass (cache was cleared)
-		state.toolCallIndex = 4;
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r2, null, "read after sed should pass — cache invalidated");
-	});
-
-	it("non-modifying bash command does NOT clear read cache", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read caches
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// ls doesn't modify files, cache should stay
-		handler(makeEvent("bash", { command: "ls -la" }), makeCtx());
-
-		// Re-read same file — cache still present, should block
-		state.toolCallIndex = 2;
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.ok(r2?.block, "read after ls should block — cache not invalidated");
-	});
-
-	it("echo with redirect clears read cache", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read caches
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// echo with > redirect modifies files
-		handler(makeEvent("bash", { command: "echo 'data' > /tmp/x" }), makeCtx());
-
-		// Cache should be cleared
-		state.toolCallIndex = 4;
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r2, null, "read after echo > should pass — cache invalidated");
-	});
-});
-
-describe("Issue 270: buildRedirectMessage format", () => {
-	it("bash grep block uses system override format", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const result = handler(makeEvent("bash", { command: "grep foo" }), makeCtx());
-		assert.ok(result?.block);
-		assert.ok(
-			result!.reason.includes("[SYSTEM OVERRIDE]"),
-			"reason should start with SYSTEM OVERRIDE",
-		);
-		assert.ok(result!.reason.includes("ripgrep_search"), "should mention ripgrep_search tool");
-		assert.ok(result!.reason.includes("JSON Schema"), "should include JSON Schema");
-	});
-
-	it("bash cat block uses system override format", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const result = handler(makeEvent("bash", { command: "cat README.md" }), makeCtx());
-		assert.ok(result?.block);
-		assert.ok(
-			result!.reason.includes("[SYSTEM OVERRIDE]"),
-			"reason should start with SYSTEM OVERRIDE",
-		);
-		assert.ok(result!.reason.includes("read"), "should mention read tool");
-		assert.ok(result!.reason.includes("JSON Schema"), "should include JSON Schema");
-	});
-});
-
-describe("Issue 270: Pipeline pass-through for bash search", () => {
-	it("piped grep (ls | grep) does NOT block", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const result = handler(makeEvent("bash", { command: "ls -la | grep foo" }), makeCtx());
-		assert.equal(result, null, "piped grep should pass through");
-	});
-
-	it("chained grep (cmd && grep) does NOT block", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const result = handler(makeEvent("bash", { command: "cd src && rg pattern" }), makeCtx());
-		assert.equal(result, null, "chained grep with && should pass through");
-	});
-
-	it("standalone grep still blocks", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const result = handler(makeEvent("bash", { command: "grep foo" }), makeCtx());
-		assert.ok(result?.block, "standalone grep should still block");
-	});
-
-	it("pipeline with grep in pipe segment does NOT block", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const result = handler(
-			makeEvent("bash", { command: "find . -type f | xargs grep TODO" }),
-			makeCtx(),
-		);
-		assert.equal(result, null, "xargs grep pipeline should pass through");
-	});
-
-	it("semicolon chained grep does NOT block", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		const result = handler(makeEvent("bash", { command: "echo done; grep foo" }), makeCtx());
-		assert.equal(result, null, "semicolon chained grep should pass through");
-	});
-});
-
-describe("Issue 270: batchId-aware cache TTL", () => {
-	it("handler passes state.batchId to read cache", () => {
-		const state = createHarnessState();
-		state.batchId = 42;
-		const handler = createToolCallHandler(state);
-
-		// First read caches with batchId
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// Simulate same batch — same batchId, toolCallIndex advanced
-		// Cache entry was stored with batchId=42, now get with batchId=42
-		// Should still be valid (same batch), so blocked
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.ok(r2?.block, "same batchId read should block (cache still valid)");
-	});
-
-	it("different batchId uses turn-based TTL", () => {
-		const state = createHarnessState();
-		state.batchId = 42;
-		const handler = createToolCallHandler(state);
-
-		// First read caches with batchId 42 at turn 0
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// New batch — state.batchId changes
-		state.batchId = 43;
-
-		// Within TTL turns (diff < 6), cache still valid for different batchId
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.ok(r2?.block, "different batchId within turn TTL should block");
-	});
-
-	it("no batchId set — backward compat fallback to turn-based", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// No batchId set (undefined)
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// Same turn — normal blocking
-		state.toolCallIndex = 1;
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.ok(r2?.block, "no batchId — normal cache block");
-	});
-});
-
-// ── Issue 320: Edit tool cache invalidation (Phase 1) ──
-
-describe("Issue 320: Edit cache invalidation (handler unit)", () => {
-	it("edit tool clears read cache — read after edit passes", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read caches
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// Edit clears cache
-		handler(makeEvent("edit", { path: "a.ts", oldText: "foo", newText: "bar" }), makeCtx());
-
-		// Re-read same file should pass (cache was cleared)
-		state.toolCallIndex = 2;
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r2, null, "read after edit should pass — cache invalidated");
-	});
-
-	it("edit with only path arg still clears cache", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// First read caches
-		const r1 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r1, null);
-
-		// Edit with minimal args
-		handler(makeEvent("edit", { path: "x.ts" }), makeCtx());
-
-		// Re-read should pass (cache cleared)
-		state.toolCallIndex = 2;
-		const r2 = handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		assert.equal(r2, null, "read after minimal edit should pass");
-	});
-
-	it("edit and write both clear cache independently", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Read → edit → re-read passes
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		handler(makeEvent("edit", { path: "a.ts" }), makeCtx());
-		state.toolCallIndex = 2;
-		assert.equal(
-			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
-			null,
-			"edit clears cache",
-		);
-
-		// Read → write → re-read passes
-		state.toolCallIndex = 3;
-		handler(makeEvent("read", { path: "b.ts" }), makeCtx());
-		handler(makeEvent("write", { path: "b.ts", content: "x" }), makeCtx());
-		state.toolCallIndex = 5;
-		assert.equal(
-			handler(makeEvent("read", { path: "b.ts" }), makeCtx()),
-			null,
-			"write clears cache",
-		);
-	});
-
-	it("edit cache invalidation does NOT affect cascade counter", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// 3 reads
-		for (let i = 0; i < 3; i++) {
-			assert.equal(
-				handler(makeEvent("read", { path: `file${i}.ts` }), makeCtx()),
-				null,
-				`read ${i} should pass`,
-			);
-		}
-
-		// Edit interleaved
-		handler(makeEvent("edit", { path: "a.ts" }), makeCtx());
-
-		// 4 more reads (total 7) — none blocked by cascade
-		for (let i = 3; i < 7; i++) {
-			assert.equal(
-				handler(makeEvent("read", { path: `file${i}.ts` }), makeCtx()),
-				null,
-				`read ${i} after edit should pass`,
-			);
-		}
-	});
-
-	it("edit clears cache after previous write also cleared it — double-clear is idempotent", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Read caches
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-
-		// Write clears cache
-		handler(makeEvent("write", { path: "out.ts", content: "x" }), makeCtx());
-
-		// Edit also clears cache (double-clear, idempotent)
-		handler(makeEvent("edit", { path: "a.ts" }), makeCtx());
-
-		// Re-read should pass (cache still clear)
-		state.toolCallIndex = 3;
-		assert.equal(
-			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
-			null,
-			"read after write+edit should pass",
-		);
-	});
-
-	it("edit clears cache at turn boundary — cache empty regardless of TTL", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		// Read at turn 0
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-
-		// Turn boundary + edit
-		state.sessionTurn++;
-		state.callCounter.turnBoundaryReset();
-		handler(makeEvent("edit", { path: "a.ts" }), makeCtx());
-
-		// Re-read should pass (edit cleared cache)
-		state.toolCallIndex = 4;
-		assert.equal(
-			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
-			null,
-			"read after turn boundary + edit should pass",
-		);
-	});
-
-	it("regression: write cache invalidation still works", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		handler(makeEvent("write", { path: "out.ts", content: "data" }), makeCtx());
-
-		state.toolCallIndex = 2;
-		assert.equal(
-			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
-			null,
-			"read after write should pass",
-		);
-	});
-
-	it("regression: file-modifying bash cache invalidation still works", () => {
-		const state = createHarnessState();
-		const handler = createToolCallHandler(state);
-
-		handler(makeEvent("read", { path: "a.ts" }), makeCtx());
-		handler(makeEvent("bash", { command: "sed -i 's/foo/bar/g' file.ts" }), makeCtx());
-
-		state.toolCallIndex = 4;
-		assert.equal(
-			handler(makeEvent("read", { path: "a.ts" }), makeCtx()),
-			null,
-			"read after sed should pass",
-		);
-	});
-});
-
-describe("Issue 320: Edit cache invalidation (dispatch integration)", () => {
-	function createMockAPI() {
-		const handlers = new Map<string, (...args: any[]) => any>();
-		const api = {
-			handlers,
-			on(event: any, handler: any) {
-				handlers.set(event, handler);
-			},
-			fire(event: string, data: any, ctx?: any) {
-				const handler = handlers.get(event);
-				if (handler) return handler(data, ctx ?? {});
-			},
-			registerTool: () => {},
-			registerCommand: () => {},
-			registerShortcut: () => {},
-			registerFlag: () => {},
-			getFlag: () => undefined,
-			registerMessageRenderer: () => {},
-			sendMessage: () => {},
-			sendUserMessage: () => {},
-			appendEntry: () => {},
-			setSessionName: () => {},
-			getSessionName: () => undefined,
-			setLabel: () => {},
-			exec: async () => ({ code: 0, killed: false, stdout: "", stderr: "" }),
-			getActiveTools: () => [],
-			getAllTools: () => [],
-			setActiveTools: () => {},
-			getCommands: () => [],
-			setModel: async () => false,
-			getThinkingLevel: () => "off" as any,
-			setThinkingLevel: () => {},
-			registerProvider: () => {},
-			unregisterProvider: () => {},
-			events: { on: () => {}, emit: () => {}, off: () => {} } as any,
-		};
-		return api as typeof api & ExtensionAPI;
-	}
-
-	it('edit through full pi.on("tool_call") dispatch — subsequent read passes', async () => {
+	it("edit through dispatch clears cache", async () => {
 		const api = createMockAPI();
 		agentHarness(api);
 
@@ -2142,472 +1450,50 @@ describe("Issue 320: Edit cache invalidation (dispatch integration)", () => {
 		});
 		assert.ok(r3 == null, "read after edit through dispatch should pass — cache invalidated");
 	});
-
-	it("edit interleaved with write in full dispatch — both clear cache consistently", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// Read a.ts
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts" },
-		});
-
-		// Edit a.ts — clears cache
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "edit",
-			input: { path: "a.ts", oldText: "foo", newText: "bar" },
-		});
-
-		// Read a.ts — passes (edit cleared cache)
-		const r3 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "a.ts" },
-		});
-		assert.ok(r3 == null, "read after edit passes");
-
-		// Write b.ts
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "4",
-			toolName: "write",
-			input: { path: "b.ts", content: "data" },
-		});
-
-		// Read a.ts — passes (write cleared cache, even though different file)
-		const r5 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "5",
-			toolName: "read",
-			input: { path: "a.ts" },
-		});
-		assert.ok(r5 == null, "read after write passes");
-	});
-
-	it("read → edit → read(offset) → edit → read(offset)", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// Read with offset
-		const r1 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts", offset: 0, limit: 100 },
-		});
-		assert.ok(r1 == null, "first read passes");
-
-		// Edit clears cache
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "edit",
-			input: { path: "a.ts", oldText: "foo", newText: "bar" },
-		});
-
-		// Read same offset — passes (edit cleared cache)
-		const r3 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "a.ts", offset: 0, limit: 100 },
-		});
-		assert.ok(r3 == null, "read after first edit passes");
-
-		// Another edit
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "4",
-			toolName: "edit",
-			input: { path: "a.ts", oldText: "bar", newText: "baz" },
-		});
-
-		// Read same offset again — passes (second edit cleared cache)
-		const r5 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "5",
-			toolName: "read",
-			input: { path: "a.ts", offset: 0, limit: 100 },
-		});
-		assert.ok(r5 == null, "read after second edit passes");
-	});
 });
 
-// ── Issue 320: Error tracker decay — integration (Phase 2) ──
+// ── Phase 15: Pipeline pass-through for bash search ──
 
-describe("Issue 320: Error tracker decay — turn_start integration", () => {
-	function createMockAPI() {
-		const handlers = new Map<string, (...args: any[]) => any>();
-		const api = {
-			handlers,
-			on(event: any, handler: any) {
-				handlers.set(event, handler);
-			},
-			fire(event: string, data: any, ctx?: any) {
-				const handler = handlers.get(event);
-				if (handler) return handler(data, ctx ?? {});
-			},
-			registerTool: () => {},
-			registerCommand: () => {},
-			registerShortcut: () => {},
-			registerFlag: () => {},
-			getFlag: () => undefined,
-			registerMessageRenderer: () => {},
-			sendMessage: () => {},
-			sendUserMessage: () => {},
-			appendEntry: () => {},
-			setSessionName: () => {},
-			getSessionName: () => undefined,
-			setLabel: () => {},
-			exec: async () => ({ code: 0, killed: false, stdout: "", stderr: "" }),
-			getActiveTools: () => [],
-			getAllTools: () => [],
-			setActiveTools: () => {},
-			getCommands: () => [],
-			setModel: async () => false,
-			getThinkingLevel: () => "off" as any,
-			setThinkingLevel: () => {},
-			registerProvider: () => {},
-			unregisterProvider: () => {},
-			events: { on: () => {}, emit: () => {}, off: () => {} } as any,
-		};
-		return api as typeof api & ExtensionAPI;
-	}
-
-	it("turn_start calls errorTracker.decay()", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// Push 2 errors manually via handler (isError)
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts" },
-			isError: true,
-		});
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "b.ts" },
-			isError: true,
-		});
-
-		// Verify 2 errors
-		// Need to access state: fire turn_start, then check state is unreachable from here
-		// Instead, fire turn_start and then check that tool with 2 errors now passes
-
-		// Non-error read — should be blocked (2 errors)
-		const r3 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "c.ts" },
-		});
-		assert.ok(r3?.block, "read should be blocked after 2 errors");
-
-		// Fire turn_start — should decay errors (2→1)
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
-
-		// Non-error read — still blocked (1 error remaining, but >= 2? No, 1 < 2)
-		// Actually with 1 error, should NOT block (shouldBlockRetry needs >= 2)
-		const r4 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "4",
-			toolName: "read",
-			input: { path: "d.ts" },
-		});
-		assert.ok(r4 == null, "read should pass after turn_start decays errors from 2→1");
+describe("AgentHarness pipeline pass-through", () => {
+	it("piped grep (ls | grep) does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "ls -la | grep foo" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
 	});
 
-	it("After 2 turn_starts without new errors, tool with 2 errors auto-recovers", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// 2 errors for read
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts" },
-			isError: true,
-		});
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "b.ts" },
-			isError: true,
-		});
-
-		// Verify blocked
-		const r3 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "c.ts" },
-		});
-		assert.ok(r3?.block, "read blocked after 2 errors (pre-recovery check)");
-
-		// Fire 2 turn_starts (decays 2 errors → 1 → 0)
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 2, timestamp: Date.now() });
-
-		// Now should pass (0 errors)
-		const r4 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "4",
-			toolName: "read",
-			input: { path: "d.ts" },
-		});
-		assert.ok(r4 == null, "read should pass after 2 turn_starts decay all errors");
+	it("chained grep with && does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "cd src && rg pattern" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
 	});
 
-	it("After 1 turn_start, tool with 2 errors still blocked (1 remains, >=2 still true)", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// 3 errors for read
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts" },
-			isError: true,
-		});
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "b.ts" },
-			isError: true,
-		});
-
-		// Fire 1 turn_start — decays from 2→1
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
-
-		// Should pass (1 < 2)
-		const r3 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "c.ts" },
-		});
-		assert.ok(r3 == null, "read should pass after 1 turn_start (1 error < 2 threshold)");
+	it("standalone grep still blocks", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(makeEvent("bash", { command: "grep foo" }), makeCtx());
+		assert.ok(result?.block);
 	});
 
-	it("After 3 turn_starts, tool with 3 errors recovers to 0", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// 3 errors for read
-		for (let i = 0; i < 3; i++) {
-			await api.fire("tool_call", {
-				type: "tool_call",
-				toolCallId: String(i),
-				toolName: "read",
-				input: { path: `${i}.ts` },
-				isError: true,
-			});
-		}
-
-		// Verify blocked
-		const r3 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "c.ts" },
-		});
-		assert.ok(r3?.block, "read blocked after 3 errors");
-
-		// Fire 3 turn_starts — decays 3→2→1→0
-		for (let i = 0; i < 3; i++) {
-			await api.fire("turn_start", { type: "turn_start", turnIndex: i + 1, timestamp: Date.now() });
-		}
-
-		// Now should pass (0 errors)
-		const r4 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "6",
-			toolName: "read",
-			input: { path: "d.ts" },
-		});
-		assert.ok(r4 == null, "read should pass after 3 turn_starts decay all 3 errors");
+	it("xargs grep pipeline does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "find . -type f | xargs grep TODO" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
 	});
 
-	it("error recovery doesn't cascade across different tools", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// 2 errors for read, 2 errors for write
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts" },
-			isError: true,
-		});
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "b.ts" },
-			isError: true,
-		});
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "write",
-			input: { path: "c.ts", content: "x" },
-			isError: true,
-		});
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "4",
-			toolName: "write",
-			input: { path: "d.ts", content: "y" },
-			isError: true,
-		});
-
-		// Both blocked
-		const r5 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "5",
-			toolName: "read",
-			input: { path: "e.ts" },
-		});
-		assert.ok(r5?.block, "read blocked after 2 errors");
-
-		const r6 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "6",
-			toolName: "write",
-			input: { path: "f.ts", content: "z" },
-		});
-		assert.ok(r6?.block, "write blocked after 2 errors");
-
-		// Fire 2 turn_starts — decays both tools' errors
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 2, timestamp: Date.now() });
-
-		// Both should now pass (independently recovered)
-		const r7 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "7",
-			toolName: "read",
-			input: { path: "g.ts" },
-		});
-		assert.ok(r7 == null, "read recovered after 2 decays");
-
-		const r8 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "8",
-			toolName: "write",
-			input: { path: "h.ts", content: "w" },
-		});
-		assert.ok(r8 == null, "write recovered after 2 decays");
-	});
-
-	it("decay at turn_start does not break actual error accumulation", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		// Error in turn 0
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts" },
-			isError: true,
-		});
-
-		// turn_start decays from 1→0
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
-
-		// Error again in turn 1
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "b.ts" },
-			isError: true,
-		});
-
-		// 1 error, should not block
-		const r3 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "c.ts" },
-		});
-		assert.ok(r3 == null, "1 error should not block (threshold is 2)");
-
-		// Error again in turn 1
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "4",
-			toolName: "read",
-			input: { path: "d.ts" },
-			isError: true,
-		});
-
-		// Now 2 errors in fresh accumulator — should block
-		const r5 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "5",
-			toolName: "read",
-			input: { path: "e.ts" },
-		});
-		assert.ok(r5?.block, "read should block after 2 new errors accumulated in same turn");
-	});
-
-	it("turn_start decay does NOT affect toolCallIndex", async () => {
-		const api = createMockAPI();
-		agentHarness(api);
-
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "1",
-			toolName: "read",
-			input: { path: "a.ts" },
-		});
-		await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "2",
-			toolName: "read",
-			input: { path: "b.ts" },
-		});
-
-		// Fire turn_start
-		await api.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: Date.now() });
-
-		// Read again — third overall call
-		const r3 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "3",
-			toolName: "read",
-			input: { path: "c.ts" },
-		});
-		assert.ok(r3 == null, "read should pass");
-
-		// Read again — fourth overall call
-		const r4 = await api.fire("tool_call", {
-			type: "tool_call",
-			toolCallId: "4",
-			toolName: "read",
-			input: { path: "d.ts" },
-		});
-		assert.ok(r4 == null, "read should pass");
-
-		// We can't directly check toolCallIndex from the mock, but the fact
-		// that reads still pass (and don't get cache-blocked because paths differ)
-		// confirms toolCallIndex continues normally
+	it("semicolon chained grep does NOT block", () => {
+		const harness = new AgentHarness();
+		const result = harness.handleToolCall(
+			makeEvent("bash", { command: "echo done; grep foo" }),
+			makeCtx(),
+		);
+		assert.equal(result, null);
 	});
 });
