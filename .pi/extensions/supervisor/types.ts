@@ -215,6 +215,65 @@ export interface MergeResult {
 	message: string;
 }
 
+// ─── Agent Output Schema ────────────────────────────────────────────
+// Single JSON schema for all agent outputs. No text markers, no regex.
+// All agents output the same structure; pipeline parses it deterministically.
+
+/** Supported action types — single vocabulary for all agents */
+export type AgentAction = "COMPLETE" | "APPROVED" | "REJECTED";
+
+/** Severity levels for audit findings */
+export type FindingSeverity = "critical" | "warning" | "suggestion";
+
+/** Known audit dimensions */
+export type AuditDimension =
+	| "architecture-compliance"
+	| "ticket-fulfillment"
+	| "tests-passed"
+	| "test-quality"
+	| "correctness-safety"
+	| "code-quality"
+	| "completeness"
+	| string;
+
+/** A single audit finding */
+export interface Finding {
+	severity: FindingSeverity;
+	dimension: AuditDimension;
+	symptom: string;
+	consequence: string;
+	remedy: string;
+	location?: string;
+}
+
+/** Structured output that all agents must produce as their final message */
+export interface AgentOutput {
+	action: AgentAction;
+	agentName: string;
+	/** Brief summary line describing what the agent accomplished */
+	summary?: string;
+	/** Comment body to post on the GitHub issue */
+	commentBody?: string;
+	/** PR title (auditor only) */
+	prTitle?: string;
+	/** PR body (auditor only) */
+	prBody?: string;
+	/** Audit score (auditor only) */
+	auditScore?: { passing: number; total: number };
+	/** Audit findings (auditor only, for rejection) */
+	findings?: Finding[];
+	/** Refusal reason — if set, pipeline treats as rejection */
+	refusal?: string;
+}
+
+/** Result of a failed parse attempt */
+export interface FailedParse {
+	error: string;
+	rawOutput: string;
+}
+
+export type ParseResult = AgentOutput | FailedParse;
+
 // ─── LSP Pre-Audit ──────────────────────────────────────────────────
 
 export interface LspPreAuditDecision {

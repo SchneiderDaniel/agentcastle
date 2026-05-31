@@ -1,6 +1,9 @@
 // ─── Workflow Config ──────────────────────────────────────────────
 // Config-driven pipeline: define transitions as data, not code.
 
+import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "./agent-output.ts";
+import type { AgentOutput, ParseResult } from "./types.ts";
+
 export interface WorkflowStep {
 	/** Board status column name (must match config.statusMapping keys) */
 	status: string;
@@ -80,6 +83,7 @@ export const WORKFLOW: WorkflowStep[] = [
 /**
  * Find the LATEST matching marker in agent output.
  * Last occurrence wins — enables feedback markers to override forward markers.
+ * Kept for backward compatibility during transition.
  */
 export function resolveNextStatus(step: WorkflowStep, agentOutput: string): string | null {
 	if (!step.markerMap) return null;
@@ -97,9 +101,61 @@ export function resolveNextStatus(step: WorkflowStep, agentOutput: string): stri
 }
 
 /**
+ * Resolve next status from parsed AgentOutput.
+ * Uses deterministic JSON parsing instead of text marker lookups.
+ * Falls back to marker-based resolution if AgentOutput can't be parsed.
+ */
+export function resolveNextStatusFromAgentOutput(
+	step: WorkflowStep,
+	agentOutputText: string,
+): string | null {
+	if (!step.markerMap) return null;
+
+	// Try structured JSON parsing first
+	const parseResult = parseAgentOutput(agentOutputText);
+	if (isAgentOutputSuccess(parseResult)) {
+		const output = parseResult as AgentOutput;
+		const action = output.action;
+
+		// Map action to appropriate marker key in the step's markerMap
+		if (action === "APPROVED") {
+			// Look for approval markers
+			if (step.markerMap["AUDIT_DECISION: APPROVED"])
+				return step.markerMap["AUDIT_DECISION: APPROVED"];
+			if (step.markerMap["AUDIT_APPROVED"]) return step.markerMap["AUDIT_APPROVED"];
+		}
+
+		if (action === "REJECTED") {
+			// Look for rejection markers
+			if (step.markerMap["AUDIT_DECISION: REJECTED"])
+				return step.markerMap["AUDIT_DECISION: REJECTED"];
+			if (step.markerMap["AUDIT_REJECTED"]) return step.markerMap["AUDIT_REJECTED"];
+		}
+
+		if (action === "COMPLETE") {
+			// Look for agent completion markers — skip audit markers
+			const completionMarkers = Object.keys(step.markerMap).filter(
+				(m) => !m.startsWith("AUDIT") && !m.startsWith("FEEDBACK"),
+			);
+			// Return the first forward status
+			for (const marker of completionMarkers) {
+				const status = step.markerMap[marker];
+				if (status) return status;
+			}
+		}
+
+		// If we still couldn't map, fall through to marker fallback
+	}
+
+	// Fallback: use old marker-based detection
+	return resolveNextStatus(step, agentOutputText);
+}
+
+/**
  * Extract audit score from agent output.
- * Looks for `AUDIT_SCORE: N/M` pattern (last occurrence wins).
- * Returns null if no score marker is found.
+ * First tries structured AgentOutput.auditScore, then falls back to
+ * text marker `AUDIT_SCORE: N/M` pattern (last occurrence wins).
+ * Returns null if no score is found.
  */
 export interface AuditScore {
 	passing: number;
@@ -107,6 +163,19 @@ export interface AuditScore {
 }
 
 export function extractAuditScore(agentOutput: string): AuditScore | null {
+	// Try structured JSON parsing first
+	const parseResult = parseAgentOutput(agentOutput);
+	if (isAgentOutputSuccess(parseResult)) {
+		const output = parseResult as AgentOutput;
+		if (output.auditScore) {
+			return {
+				passing: output.auditScore.passing,
+				total: output.auditScore.total,
+			};
+		}
+	}
+
+	// Fallback: text marker detection
 	const regex = /AUDIT_SCORE:\s*(\d+)\s*\/\s*(\d+)/g;
 	let match: RegExpExecArray | null;
 	let lastMatch: RegExpExecArray | null = null;

@@ -633,13 +633,13 @@ The supervisor (`/supervisor <issue-number>`) is the heart of this harness. It t
 
 #### 8.2 Agent Deep Dive
 
-| # | Agent | Entry Marker | Completion Marker | Tools | Thinking | Role |
+| # | Agent | Entry Marker | Output Format | Tools | Thinking | Role |
 |---|-------|-------------|-------------------|-------|----------|------|
-| 1 | **Researcher** | `Research` | `RESEARCH_COMPLETE` | read, bash, structural_search, ripgrep_search | medium | Crawls 3-5 web pages on issue topic, synthesizes findings. Posts `## Research Findings`. Never makes recommendations. |
-| 2 | **Architect** | `Architecture` | `ARCHITECTURE_COMPLETE` | read, bash, structural_search, ripgrep_search | high | Applies Clean Architecture, PEAA, Philosophy of Software Design principles. Proposes target architecture. |
-| 3 | **TestDesigner** | `TestDesign` | `TEST_PLAN_COMPLETE` | read, bash, structural_search, ripgrep_search | medium | Writes test plan: unit, integration, characterization tests. |
-| 4 | **Developer** | `Implementation` | `IMPLEMENTATION_COMPLETE` | read, bash, write, edit, structural_search, ripgrep_search | low | Implements code in pre-created worktree, commits, pushes. Handles submodule changes. |
-| 5 | **Auditor** | `Audit` | `AUDIT_APPROVED` or `AUDIT_REJECTED` | read, bash, structural_search, ripgrep_search | medium | Reviews code against architecture + test plan. Creates PR if approved, or rejects with specifics. |
+| 1 | **Researcher** | `Research` | JSON `{ action, agentName, summary, commentBody }` | read, bash, structural_search, ripgrep_search | medium | Crawls 3-5 web pages on issue topic, synthesizes findings. Posts `## Research Findings`. Never makes recommendations. |
+| 2 | **Architect** | `Architecture` | JSON `{ action, agentName, summary, commentBody }` | read, bash, structural_search, ripgrep_search | high | Applies Clean Architecture, PEAA, Philosophy of Software Design principles. Proposes target architecture. |
+| 3 | **TestDesigner** | `TestDesign` | JSON `{ action, agentName, summary, commentBody }` | read, bash, structural_search, ripgrep_search | medium | Writes test plan: unit, integration, characterization tests. |
+| 4 | **Developer** | `Implementation` | JSON `{ action, agentName, summary, commentBody }` | read, bash, write, edit, structural_search, ripgrep_search | low | Implements code in pre-created worktree, commits, pushes. Handles submodule changes. |
+| 5 | **Auditor** | `Audit` | JSON `{ action: "APPROVED" | "REJECTED", agentName, summary, commentBody, prTitle, prBody, auditScore, findings }` | read, bash, structural_search, ripgrep_search | medium | Reviews code against architecture + test plan. Creates PR if approved, or rejects with specifics. |
 
 #### 8.3 Git Worktree Lifecycle
 
@@ -857,23 +857,23 @@ Reads issue's current status from project board → "Research"
 Spins up agent with researcher system prompt + issue data
 Agent crawls 3-5 web pages about the issue topic
 Posts:  gh issue comment 42 --repo owner/repo --body "## Research Findings..."
-Outputs: RESEARCH_COMPLETE
-Supervisor moves issue → "Architecture" on board
+Outputs: JSON `{"action":"COMPLETE","agentName":"researcher","commentBody":"## Research Findings..."}`
+Supervisor parses JSON → moves issue → "Architecture" on board
 
 ── Step 3: Architect ────────────────────────────────────────────
 Spins up agent with architect prompt + issue + research findings
 Analyzes codebase using read, bash, structural_search, ripgrep_search
 Proposes architecture following Clean Architecture + PEAA principles
 Posts:  gh issue comment 42 --body "## Architecture Approach..."
-Outputs: ARCHITECTURE_COMPLETE
-Supervisor moves issue → "TestDesign"
+Outputs: JSON `{"action":"COMPLETE","agentName":"architect","commentBody":"## Architecture..."}`
+Supervisor parses JSON → moves issue → "TestDesign"
 
 ── Step 4: TestDesigner ─────────────────────────────────────────
 Spins up agent with test-designer prompt + issue + architecture
 Writes test plan: unit, integration, characterization tests
 Posts:  gh issue comment 42 --body "## Test Plan..."
-Outputs: TEST_PLAN_COMPLETE
-Supervisor moves issue → "Implementation"
+Outputs: JSON `{"action":"COMPLETE","agentName":"test-designer","commentBody":"## Test Plan..."}`
+Supervisor parses JSON → moves issue → "Implementation"
 
 ── Step 5: Developer ────────────────────────────────────────────
 Supervisor creates worktree:  git worktree add -b <branch> ../<branch> main
@@ -881,7 +881,8 @@ Spins up agent with developer prompt + issue + arch + test plan, cwd=<worktree-p
   Implements feature, runs tests, formats code
   git add -A && git commit -m "feat(#42): ..."
   git push origin <branch>
-Outputs: IMPLEMENTATION_COMPLETE
+Outputs: JSON `{"action":"COMPLETE","agentName":"developer","summary":"Implemented..."}`
+Supervisor parses JSON → moves issue → "Implementation"→"Audit" via quality gates
 
 ── Step 6: Quality Gates ────────────────────────────────────────
   TSC: runs npx tsc --noEmit on worktree → pass
@@ -896,8 +897,8 @@ Spins up agent with auditor prompt + all previous data, cwd=<worktree-path>
   Creates submodule PRs if needed
   Creates main PR: gh pr create --repo owner/repo --head <branch> --title "feat(#42): ..."
   Posts: ## Audit Approved
-Outputs: AUDIT_APPROVED
-Supervisor moves issue → "Done"
+Outputs: JSON `{"action":"APPROVED","agentName":"auditor","prTitle":"feat(#42):...","auditScore":{"passing":6,"total":6},"findings":[]}`
+Supervisor parses JSON → moves issue → "Done"
 
 ── Step 8: Post-pipeline ────────────────────────────────────────
   Checks PR for merge conflicts

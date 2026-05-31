@@ -2,20 +2,14 @@
  * ask-user — Lets the AI ask you interactive questions during a task
  *
  * Thin entry point. Registers the ask_user tool with TypeBox schema from
- * types.ts and delegates execute logic to QuestionHandler and jsonl-logger.ts.
+ * types.ts and delegates execute logic to jsonl-logger.ts and question-ui.ts.
  *
  * Also registers:
  *   - /qna slash command for human querying of Q&A history
  *   - ask_user_read tool for LLM extraction of past Q&A entries
  *
- * Phase 2: CSV migration runs eagerly at session_start instead of lazily
- * at first tool call.
- *
- * Phase 3: ask_user_read error handling unified under a single try/catch
- * returning consistent { entries, count, error } shape.
- *
  * All completed interactions are logged to .pi/context/qna.jsonl.
- * Legacy .pi/context/qna.csv is migrated on session start if present.
+ * Legacy .pi/context/qna.csv is migrated on first append if present.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -26,46 +20,43 @@ import {
 	listQnaEntries,
 	getQnaEntry,
 	queryQnaEntries,
+	readQnaEntries,
 } from "./jsonl-logger.ts";
-import { QuestionHandler } from "./question-handler.ts";
+import { renderScrollableDialog } from "./question-ui.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 // ---------------------------------------------------------------------------
-// QnaReadError type — unified error shape for ask_user_read (Phase 3)
+// Migration guard
 // ---------------------------------------------------------------------------
 
-interface QnaReadError {
-	entries: [];
-	count: 0;
-	error: string;
-}
-
-function qnaReadError(message: string): QnaReadError {
-	return { entries: [], count: 0, error: message };
-}
-
-// ---------------------------------------------------------------------------
-// Migration — runs at session_start (Phase 2)
-// ---------------------------------------------------------------------------
+let csvMigrated = false;
 
 /**
- * Run CSV→JSONL migration if CSV file exists.
- * Called eagerly at session_start instead of lazily at first tool call.
+ * Run CSV→JSONL migration once on first write if CSV file exists.
+ *
+ * Sets csvMigrated BEFORE calling migrateQnaFromCsv to prevent re-entry.
+ * If the migration throws, csvMigrated is already true, so the next call
+ * will skip migration entirely — no duplicate entries are appended.
  */
 async function ensureMigrated(projectDir: string): Promise<void> {
+	if (csvMigrated) return;
+	// Set flag first to prevent re-entry on failure
+	csvMigrated = true;
 	const csvPath = path.join(projectDir, ".pi", "context", "qna.csv");
-	if (!fs.existsSync(csvPath)) return;
-
-	try {
-		const result = await migrateQnaFromCsv(projectDir);
-		if (result.migrated > 0 || result.skipped > 0) {
-			console.warn(
-				`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
-			);
+	if (fs.existsSync(csvPath)) {
+		try {
+			const result = await migrateQnaFromCsv(projectDir);
+			if (result.migrated > 0 || result.skipped > 0) {
+				console.warn(
+					`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
+				);
+			}
+		} catch (err) {
+			// Migration failed but csvMigrated is already true.
+			// Log a warning so the user knows migration had issues.
+			console.warn(`Migration warning: ${(err as Error).message}`);
 		}
-	} catch (err) {
-		console.warn(`Migration warning: ${(err as Error).message}`);
 	}
 }
 
@@ -100,17 +91,7 @@ function formatTable(
 // ---------------------------------------------------------------------------
 
 export default function askUser(pi: ExtensionAPI): void {
-	// ── Phase 2: Migration on session_start ──────────────────────────
-	pi.on("session_start", async (_event, ctx) => {
-		const projectDir = ctx.sessionManager.getCwd();
-		try {
-			await ensureMigrated(projectDir);
-		} catch (err) {
-			console.warn(`Migration warning: ${(err as Error).message}`);
-		}
-	});
-
-	// ── ask_user tool — thin dispatcher via QuestionHandler (Phase 1) ─
+	// ── ask_user tool (unchanged except storage backend) ──────────────
 	pi.registerTool({
 		name: "ask_user",
 		label: "Ask User",
@@ -138,22 +119,152 @@ export default function askUser(pi: ExtensionAPI): void {
 			const sm = ctx.sessionManager;
 			const projectDir = sm.getCwd();
 
-			const handler = new QuestionHandler({
-				projectDir,
-				ui: ctx.ui,
-				appendQnaEntry,
-			});
-
-			if (mode === "freetext") {
-				return handler.handleFreetext(question);
+			// Run CSV→JSONL migration on first write
+			// Wrapped in try/catch so a migration failure doesn't crash the tool
+			try {
+				await ensureMigrated(projectDir);
+			} catch (err) {
+				console.warn(`Migration warning: ${(err as Error).message}`);
 			}
 
-			// Choice mode (default)
-			return handler.handleChoice({
-				question,
-				options: params.options ?? [],
-				disableOther: params.disableOther,
-			});
+			// ── Freetext mode ──────────────────────────────────────────
+			if (mode === "freetext") {
+				const answer = await ctx.ui.input(question, "");
+				if (answer === undefined || answer.trim() === "") {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "User cancelled the question. Ask if they want to skip this topic and move on.",
+							},
+						],
+						details: {} as Record<string, unknown>,
+					};
+				}
+
+				const trimmedAnswer = answer.trim();
+				const timestamp = new Date().toISOString();
+
+				try {
+					await appendQnaEntry(projectDir, timestamp, question, trimmedAnswer);
+				} catch (err) {
+					ctx.ui.notify(`Failed to save Q&A entry: ${(err as Error).message}`, "error");
+				}
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `User answered: "${trimmedAnswer}"`,
+						},
+					],
+					details: { answer: trimmedAnswer },
+				};
+			}
+
+			// ── Choice mode (default) ──────────────────────────────────
+			const options = params.options ?? [];
+
+			// Build SelectItems. Map labels back to values after selection.
+			const labelToValue: Array<{ label: string; value: string }> = [];
+			const items: Array<{ value: string; label: string }> = [];
+
+			for (let i = 0; i < options.length; i++) {
+				const opt = options[i]!;
+				const suffix = opt.recommended ? " (Recommended)" : "";
+				const label = `${i + 1}. ${opt.label}${suffix}`;
+				labelToValue.push({ label, value: opt.value });
+				items.push({ value: label, label });
+			}
+
+			let otherLabel = "";
+			if (!params.disableOther) {
+				otherLabel = `${items.length + 1}. Other (type your answer)`;
+				items.push({ value: otherLabel, label: otherLabel });
+			}
+
+			// Use custom scrollable dialog so long questions (with code
+			// blocks) can be scrolled independently from the option list.
+			const selectedLabel = (await ctx.ui.custom((tui, theme, _keybindings, done) =>
+				renderScrollableDialog(
+					tui,
+					theme as { fg: (color: string, text: string) => string },
+					done,
+					question,
+					items,
+					labelToValue,
+					otherLabel,
+				),
+			)) as string | undefined;
+
+			const timestamp = new Date().toISOString();
+
+			// User cancelled (Esc)
+			if (selectedLabel === undefined) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "User cancelled the question. Ask if they want to skip this topic and move on.",
+						},
+					],
+					details: {} as Record<string, unknown>,
+				};
+			}
+
+			// User picked "Other" — ask for custom text (only when not disabled)
+			if (!params.disableOther && selectedLabel === otherLabel) {
+				const customAnswer = await ctx.ui.input("Type your answer:", "");
+				if (customAnswer === undefined || customAnswer.trim() === "") {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: "User cancelled or left 'Other' empty. Re-ask or mark this topic as unresolved.",
+							},
+						],
+						details: {} as Record<string, unknown>,
+					};
+				}
+
+				const trimmedCustom = customAnswer.trim();
+
+				try {
+					await appendQnaEntry(sm.getCwd(), timestamp, question, trimmedCustom);
+				} catch (err) {
+					ctx.ui.notify(`Failed to save Q&A entry: ${(err as Error).message}`, "error");
+				}
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `User chose "Other" and answered: "${trimmedCustom}"`,
+						},
+					],
+					details: { selected: "__other__", customAnswer: trimmedCustom },
+				};
+			}
+
+			// User picked a predefined option
+			const selectedValue =
+				labelToValue.find((e) => e.label === selectedLabel)?.value ?? selectedLabel;
+
+			try {
+				await appendQnaEntry(sm.getCwd(), timestamp, question, selectedValue);
+			} catch (err) {
+				ctx.ui.notify(`Failed to save Q&A entry: ${(err as Error).message}`, "error");
+			}
+
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `User selected: "${selectedLabel}"`,
+					},
+				],
+				details: { selected: selectedValue, label: selectedLabel },
+			};
 		},
 	});
 
@@ -292,7 +403,7 @@ export default function askUser(pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── ask_user_read LLM tool (Phase 3: unified error handling) ────
+	// ── ask_user_read LLM tool ──────────────────────────────────────
 	pi.registerTool({
 		name: "ask_user_read",
 		label: "Read Q&A History",
@@ -328,13 +439,19 @@ export default function askUser(pi: ExtensionAPI): void {
 				text?: string;
 			};
 
-			// Single try/catch — one error shape for all paths (Phase 3)
 			try {
 				if (action === "list") {
 					const entries = await listQnaEntries(projectDir, limit);
 					return {
 						content: [
-							{ type: "text" as const, text: JSON.stringify({ entries, count: entries.length }) },
+							{
+								type: "text" as const,
+								text: JSON.stringify({
+									entries,
+									count: entries.length,
+									...(entries.length === 0 ? { message: "No Q&A history yet" } : {}),
+								}),
+							},
 						],
 						details: { entries, count: entries.length },
 					};
@@ -342,32 +459,62 @@ export default function askUser(pi: ExtensionAPI): void {
 
 				if (action === "get") {
 					if (id === undefined || id === null) {
-						const err = qnaReadError("id parameter is required for get action");
 						return {
-							content: [{ type: "text" as const, text: JSON.stringify(err) }],
-							details: err as unknown as Record<string, unknown>,
+							content: [
+								{
+									type: "text" as const,
+									text: JSON.stringify({
+										entries: [],
+										count: 0,
+										message: "id parameter is required for get action",
+									}),
+								},
+							],
+							details: { entries: [], count: 0 },
 						};
 					}
 
 					const entry = await getQnaEntry(projectDir, id);
 					if (entry === undefined) {
-						const err = qnaReadError("No Q&A history yet");
 						return {
-							content: [{ type: "text" as const, text: JSON.stringify(err) }],
-							details: err as unknown as Record<string, unknown>,
+							content: [
+								{
+									type: "text" as const,
+									text: JSON.stringify({
+										entries: [],
+										count: 0,
+										message: "No Q&A history yet",
+									}),
+								},
+							],
+							details: { entries: [], count: 0 },
 						};
 					}
 					if (entry === null) {
-						const err = qnaReadError(`Entry #${id} not found`);
 						return {
-							content: [{ type: "text" as const, text: JSON.stringify(err) }],
-							details: err as unknown as Record<string, unknown>,
+							content: [
+								{
+									type: "text" as const,
+									text: JSON.stringify({
+										entries: [],
+										count: 0,
+										message: `Entry #${id} not found`,
+									}),
+								},
+							],
+							details: { entries: [], count: 0 },
 						};
 					}
 
 					return {
 						content: [
-							{ type: "text" as const, text: JSON.stringify({ entries: [entry], count: 1 }) },
+							{
+								type: "text" as const,
+								text: JSON.stringify({
+									entries: [entry],
+									count: 1,
+								}),
+							},
 						],
 						details: { entries: [entry], count: 1 },
 					};
@@ -375,33 +522,64 @@ export default function askUser(pi: ExtensionAPI): void {
 
 				if (action === "query") {
 					if (!text) {
-						const err = qnaReadError("text parameter is required for query action");
 						return {
-							content: [{ type: "text" as const, text: JSON.stringify(err) }],
-							details: err as unknown as Record<string, unknown>,
+							content: [
+								{
+									type: "text" as const,
+									text: JSON.stringify({
+										entries: [],
+										count: 0,
+										message: "text parameter is required for query action",
+									}),
+								},
+							],
+							details: { entries: [], count: 0 },
 						};
 					}
 
 					const entries = await queryQnaEntries(projectDir, text);
 					return {
 						content: [
-							{ type: "text" as const, text: JSON.stringify({ entries, count: entries.length }) },
+							{
+								type: "text" as const,
+								text: JSON.stringify({
+									entries,
+									count: entries.length,
+									...(entries.length === 0 ? { message: "No Q&A history yet" } : {}),
+								}),
+							},
 						],
 						details: { entries, count: entries.length },
 					};
 				}
 
 				// Unknown action
-				const err = qnaReadError(`Unknown action: ${action}`);
 				return {
-					content: [{ type: "text" as const, text: JSON.stringify(err) }],
-					details: err as unknown as Record<string, unknown>,
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								entries: [],
+								count: 0,
+								message: `Unknown action: ${action}`,
+							}),
+						},
+					],
+					details: { entries: [], count: 0 },
 				};
 			} catch (err) {
-				const errResult = qnaReadError(`Error reading Q&A history: ${(err as Error).message}`);
 				return {
-					content: [{ type: "text" as const, text: JSON.stringify(errResult) }],
-					details: errResult as unknown as Record<string, unknown>,
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								entries: [],
+								count: 0,
+								message: `Error reading Q&A history: ${(err as Error).message}`,
+							}),
+						},
+					],
+					details: { entries: [], count: 0 },
 				};
 			}
 		},

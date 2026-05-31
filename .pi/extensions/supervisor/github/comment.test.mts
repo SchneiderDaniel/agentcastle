@@ -1,6 +1,6 @@
 // ─── Tests: github/comment.ts — issue comment posting + parsing ──
 // Tests for postIssueComment, extractStructuredAuditOutput,
-// extractAgentCommentBody, buildAuditCommentFallback.
+// extractAgentCommentBody.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -9,7 +9,6 @@ import {
 	postIssueComment,
 	extractStructuredAuditOutput,
 	extractAgentCommentBody,
-	buildAuditCommentFallback,
 } from "./comment.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -135,30 +134,5 @@ describe("extractAgentCommentBody()", () => {
 		const output = "COMMENT_BODY: Trailing text";
 		const result = extractAgentCommentBody(output);
 		assert.equal(result, "Trailing text");
-	});
-});
-
-// ─── Tests: buildAuditCommentFallback() ───────────────────────────
-
-describe("buildAuditCommentFallback()", () => {
-	it("builds rejection comment from structured findings", () => {
-		const output = `**🔴 Critical — Dim: Title**\nSymptom: Issue detected\nConsequence: Breaks things\nRemedy: Fix it\nLocation: file.ts:42`;
-		const result = buildAuditCommentFallback("REJECTED", output);
-		assert.ok(result !== null);
-		assert.ok(result.includes("Audit Rejected"));
-		assert.ok(result.includes("Critical"));
-	});
-
-	it("builds approval comment from AUDIT_SCORE", () => {
-		const output = "AUDIT_SCORE: 5/6\n- Quality: ✅";
-		const result = buildAuditCommentFallback("APPROVED", output);
-		assert.ok(result !== null);
-		assert.ok(result.includes("Audit Approved"));
-		assert.ok(result.includes("5/6"));
-	});
-
-	it("returns null for empty output", () => {
-		const result = buildAuditCommentFallback("APPROVED", "");
-		assert.equal(result, null);
 	});
 });

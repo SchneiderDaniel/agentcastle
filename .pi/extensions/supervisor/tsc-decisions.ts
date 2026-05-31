@@ -64,21 +64,12 @@ export function determineTscCheckpointDecision(
 }
 
 /**
- * Lazy import for runTscCheckpoint to avoid circular dependencies at load time.
+ * Direct import for runTscCheckpoint (hard dependency).
+ * Throws if the tsc-checkpoint module is not available.
  */
-let _runTscCheckpoint:
-	| ((pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>)
-	| null = null;
-
 export async function getRunTscCheckpoint(): Promise<
-	((pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>) | null
+	(pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>
 > {
-	if (_runTscCheckpoint) return _runTscCheckpoint;
-	try {
-		const mod = await import("../tsc-checkpoint");
-		_runTscCheckpoint = mod.runTscCheckpoint;
-		return _runTscCheckpoint;
-	} catch {
-		return null;
-	}
+	const mod = await import("../tsc-checkpoint");
+	return mod.runTscCheckpoint;
 }

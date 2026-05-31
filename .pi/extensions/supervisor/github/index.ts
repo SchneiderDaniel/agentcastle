@@ -20,7 +20,6 @@ export {
 	filterIssueData,
 	extractAgentCommentBody,
 	extractStructuredAuditOutput,
-	buildAuditCommentFallback,
 } from "./comment.ts";
 export type { StructuredAuditOutput, RawIssueData } from "./comment.ts";
 export { commitChanges, pushBranch, commitAndPush } from "./git.ts";
