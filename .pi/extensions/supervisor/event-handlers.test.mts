@@ -259,6 +259,15 @@ describe("handleTextEnd", () => {
 		});
 		assert.equal(state.tokenCount, 50);
 	});
+
+	it("treats missing input as 0 via ?? 0 fallback", () => {
+		const state = createState();
+		handleTextEnd(state, {
+			kind: "text_end",
+			usage: { output: 50 },
+		});
+		assert.equal(state.tokenCount, 50);
+	});
 });
 
 // ─── handleMessageEnd ─────────────────────────────────────────────
@@ -352,6 +361,67 @@ describe("handleMessageEnd", () => {
 			},
 		});
 		assert.equal(state.tokenCount, 200);
+	});
+
+	it("preserves tokenCount when usage has only cache stats (no totalTokens/input/output)", () => {
+		const state = createState({ tokenCount: 500 });
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				usage: { cacheRead: 76288, cacheWrite: 500 },
+			},
+		});
+		assert.equal(state.tokenCount, 500);
+	});
+
+	it("preserves tokenCount when totalTokens is 0 and input/output are absent", () => {
+		const state = createState({ tokenCount: 200 });
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				usage: { totalTokens: 0 },
+			},
+		});
+		assert.equal(state.tokenCount, 200);
+	});
+
+	it("uses input+output fallback when totalTokens is absent", () => {
+		const state = createState();
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				usage: { input: 100, output: 50 },
+			},
+		});
+		assert.equal(state.tokenCount, 150);
+	});
+
+	it("treats input:0 as valid via ?? 0 fallback", () => {
+		const state = createState();
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				usage: { input: 0, output: 50 },
+			},
+		});
+		assert.equal(state.tokenCount, 50);
+	});
+
+	it("preserves tokenCount when no usage object is present", () => {
+		const state = createState({ tokenCount: 100 });
+		handleMessageEnd(state, {
+			kind: "message_end",
+			message: { role: "assistant", content: [] },
+		});
+		assert.equal(state.tokenCount, 100);
 	});
 });
 

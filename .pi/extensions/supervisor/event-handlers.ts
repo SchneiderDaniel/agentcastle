@@ -158,7 +158,7 @@ export function handleTextEnd(
 	state.textPushedThisTurn = true;
 	if (ev.usage) {
 		state.tokenCount =
-			ev.usage.totalTokens || ev.usage.input! + ev.usage.output! || state.tokenCount;
+			ev.usage.totalTokens || (ev.usage.input ?? 0) + (ev.usage.output ?? 0) || state.tokenCount;
 	}
 	state.liveText = "";
 	state.phase = "idle";
@@ -198,7 +198,10 @@ export function handleMessageEnd(
 			}
 		}
 		if (msg.usage) {
-			state.tokenCount = msg.usage.totalTokens || msg.usage.input! + msg.usage.output!;
+			state.tokenCount =
+				msg.usage.totalTokens ||
+				(msg.usage.input ?? 0) + (msg.usage.output ?? 0) ||
+				state.tokenCount;
 			// Capture cache stats
 			if (typeof msg.usage.cacheRead === "number") state.cacheRead = msg.usage.cacheRead;
 			if (typeof msg.usage.cacheWrite === "number") state.cacheWrite = msg.usage.cacheWrite;
