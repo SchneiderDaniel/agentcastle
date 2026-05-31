@@ -332,6 +332,7 @@ export async function runAgentSubprocess(
 				summaryLine,
 				errorOutput: filteredStderr,
 				thinkingOutput,
+				budgetExceeded: state.budgetExceeded || undefined,
 			});
 		};
 
