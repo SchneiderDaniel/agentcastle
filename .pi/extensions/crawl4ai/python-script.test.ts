@@ -53,3 +53,51 @@ describe("CRAWL4AI_SCRIPT — SIGTERM handler (Bug 6)", () => {
 		);
 	});
 });
+
+describe("CRAWL4AI_SCRIPT — config file read instead of argv JSON parse (Bug Fix)", () => {
+	it("(D) does NOT contain json.loads(sys.argv[1]) — old broken pattern absent", () => {
+		assert.ok(
+			!CRAWL4AI_SCRIPT.includes("json.loads(sys.argv[1])"),
+			"script should NOT parse sys.argv[1] as JSON string; should read from file instead",
+		);
+	});
+
+	it("(D) contains open(sys.argv[1]) — file path opened for reading", () => {
+		assert.ok(
+			CRAWL4AI_SCRIPT.includes("open(sys.argv[1])"),
+			"script should open the config file path passed as argv[1]",
+		);
+	});
+
+	it("(D) contains json.load( — deserializes from file handle, not string", () => {
+		const hasJsonLoad = CRAWL4AI_SCRIPT.includes("json.load(");
+		const hasJsonLoads = CRAWL4AI_SCRIPT.includes("json.loads(");
+		assert.ok(hasJsonLoad, "script should use json.load() to read from file handle");
+		assert.ok(!hasJsonLoads, "script should NOT use json.loads() which parses a string");
+	});
+
+	it("(D) open(sys.argv[1]) appears before json.load( in script — file opened before parsing", () => {
+		const openIdx = CRAWL4AI_SCRIPT.indexOf("open(sys.argv[1])");
+		const loadIdx = CRAWL4AI_SCRIPT.indexOf("json.load(");
+		assert.ok(openIdx >= 0, "open(sys.argv[1]) must exist");
+		assert.ok(loadIdx >= 0, "json.load( must exist");
+		assert.ok(openIdx < loadIdx, "open(sys.argv[1]) must appear before json.load(");
+	});
+
+	it("(D) has with statement around open(sys.argv[1]) — proper resource cleanup", () => {
+		// Find the with statement that wraps open(sys.argv[1])
+		// Pattern: with open(sys.argv[1]) as <var>:
+		const withOpenPattern = /with\s+open\(sys\.argv\[1\]\)\s+as\s+\w+:/;
+		assert.ok(
+			withOpenPattern.test(CRAWL4AI_SCRIPT),
+			"script should have 'with open(sys.argv[1]) as <var>:' for proper resource cleanup",
+		);
+	});
+
+	it("(D) does NOT contain json.loads( anywhere — no remaining misuse of string-parser idiom", () => {
+		assert.ok(
+			!CRAWL4AI_SCRIPT.includes("json.loads("),
+			"script should have NO json.loads() calls anywhere",
+		);
+	});
+});
