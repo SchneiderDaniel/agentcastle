@@ -1,0 +1,60 @@
+/**
+ * Minimal LSP protocol types for lsp-auditor.ts
+ *
+ * Covers the subset of LSP used by the auditor extension.
+ * For full protocol types, use `vscode-languageserver-protocol`.
+ */
+
+// ─── LSP Basic Types ─────────────────────────────────────────────────
+
+export interface LspPosition {
+	line: number;
+	character: number;
+}
+
+export interface LspRange {
+	start: LspPosition;
+	end: LspPosition;
+}
+
+export interface LspDiagnosticData {
+	range: LspRange;
+	severity?: number; // 1=Error, 2=Warning, 3=Information, 4=Hint
+	message: string;
+	source?: string;
+	code?: string | number;
+}
+
+export interface LspPublishDiagnosticsParams {
+	uri: string;
+	diagnostics: LspDiagnosticData[];
+}
+
+export interface LspTextDocumentItem {
+	uri: string;
+	languageId: string;
+	version: number;
+	text: string;
+}
+
+export interface LspInitializeParams {
+	processId: number;
+	rootUri: string;
+	capabilities: Record<string, unknown>;
+}
+
+export interface LspInitializeResult {
+	capabilities: Record<string, unknown>;
+}
+
+// ─── Type guards ─────────────────────────────────────────────────────
+
+import { isObject } from "./types.ts";
+
+export function isLspDiagnosticData(obj: unknown): obj is LspDiagnosticData {
+	return isObject(obj) && isObject(obj.range) && typeof obj.message === "string";
+}
+
+export function isLspPublishDiagnosticsParams(obj: unknown): obj is LspPublishDiagnosticsParams {
+	return isObject(obj) && typeof obj.uri === "string" && Array.isArray(obj.diagnostics);
+}
