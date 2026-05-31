@@ -247,6 +247,7 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
+			clearInterval(heartbeatTimer);
 			if (state.liveText.trim()) {
 				state.textOutputLines.push(state.liveText.trim());
 			}
@@ -308,6 +309,7 @@ export async function runAgentSubprocess(
 				clearTimeout(flushTimer);
 				flushTimer = null;
 			}
+			clearInterval(heartbeatTimer);
 			ctx.ui.setWidget(widgetId, undefined);
 			ctx.ui.setWorkingMessage(undefined);
 			ctx.ui.setStatus("supervisor", "");
