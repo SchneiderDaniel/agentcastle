@@ -26,13 +26,15 @@ export function generateBranchName(
 
 // ─── JSON Output Template ────────────────────────────────────────
 // All agents must output a JSON object as their final message.
-// The pipeline parses this deterministically — no text markers needed.
+// The pipeline parses this as the primary completion signal.
+// Text markers (e.g., ARCHITECTURE_COMPLETE) are only used as fallback if JSON is unavailable.
 
 const JSON_OUTPUT_INSTRUCTION = `
 ### Structured Output Format
 
-You MUST output your response as a JSON object in the following format. The pipeline
-parses this deterministically — no text markers needed.
+Output your response as a JSON object in the following format (primary).
+The pipeline parses this deterministically for status transitions, comments, and PRs.
+If you absolutely cannot output JSON, fall back to the text completion marker mentioned in your system prompt.
 
 \`\`\`json
 {
