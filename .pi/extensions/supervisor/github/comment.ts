@@ -82,12 +82,16 @@ export function extractStructuredAuditOutput(output: string): StructuredAuditOut
 		result.prTitle = prTitleMatch[prTitleMatch.length - 1].replace(/^PR_TITLE\s*:\s*/i, "").trim();
 	}
 
-	const prBodyMatch = output.match(/PR_BODY\s*:\s*([\s\S]*?)(?=\n[A-Z_]+\s*:|$)/);
+	const prBodyMatch = output.match(
+		/PR_BODY\s*:[^\S\n]*([\s\S]*?)(?=\n(?:COMMENT_BODY|SUBMODULE_PR|PR_TITLE)\s*:|$)/,
+	);
 	if (prBodyMatch) {
 		result.prBody = prBodyMatch[1].trim();
 	}
 
-	const commentBodyMatch = output.match(/COMMENT_BODY\s*:\s*([\s\S]*?)(?=\n[A-Z_]+\s*:|$)/);
+	const commentBodyMatch = output.match(
+		/COMMENT_BODY\s*:[^\S\n]*([\s\S]*?)(?=\n(?:SUBMODULE_PR|AUDIT_DECISION)\s*:|$)/,
+	);
 	if (commentBodyMatch) {
 		result.commentBody = commentBodyMatch[1].trim();
 	}
