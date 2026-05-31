@@ -93,11 +93,13 @@ function isIgnored(targetPath: string, entries: IgnoreEntry[], cwd: string): boo
 
 	let ignored = false;
 
-	for (const entry of entries) {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
 		const rel = path.relative(entry.root, absPath);
 		if (rel === "" || (rel && !rel.startsWith("..") && !path.isAbsolute(rel))) {
+			const relForMatch = rel.replace(/\\/g, "/");
 			for (const pat of entry.patterns) {
-				if (pat.regex.test(rel)) {
+				if (pat.regex.test(relForMatch)) {
 					ignored = !pat.negate;
 				}
 			}

@@ -111,11 +111,13 @@ function isIgnored(targetPath: string, entries: IgnoreEntry[], cwd: string): boo
 
 	let ignored = false;
 
-	for (const entry of entries) {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
 		const rel = path.relative(entry.root, absPath);
 		if (rel === "" || (rel && !rel.startsWith("..") && !path.isAbsolute(rel))) {
+			const relForMatch = rel.replace(/\\/g, "/");
 			for (const pat of entry.patterns) {
-				if (pat.regex.test(rel)) {
+				if (pat.regex.test(relForMatch)) {
 					ignored = !pat.negate;
 				}
 			}
@@ -199,6 +201,16 @@ describe("piignore extension", () => {
 
 			assert.strictEqual(isIgnored("local.txt", entries, nonCwdDir), true);
 			assert.strictEqual(isIgnored("global.txt", entries, nonCwdDir), true);
+		});
+
+		it("should let child .piignore negation override parent ignore patterns", () => {
+			fs.writeFileSync(path.join(tmpRoot, ".piignore"), "*.env\n", "utf-8");
+			fs.writeFileSync(path.join(nonCwdDir, ".piignore"), "!important.env\n", "utf-8");
+
+			const entries = loadPiIgnore(nonCwdDir);
+
+			assert.strictEqual(isIgnored("important.env", entries, nonCwdDir), false);
+			assert.strictEqual(isIgnored("debug.env", entries, nonCwdDir), true);
 		});
 	});
 
