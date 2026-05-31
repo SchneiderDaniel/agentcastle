@@ -4,7 +4,7 @@
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.74.0-6e3bf0)](https://pi.dev)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-**Kanban-centred Pi agent with token-efficient tools, security guardrails, and efficient workflow enhancements.** Docker + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback.
+**Kanban-centred Pi agent with token-efficient tools, security guardrails, and efficient workflow enhancements.** Docker + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback. Heavy use of git worktrees for parallel development.
 
 ![AgentCastle TUI — multi-agent Kanban pipeline](agentcastletui.png)
 
