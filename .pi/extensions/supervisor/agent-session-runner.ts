@@ -241,8 +241,8 @@ export async function runAgentInProcess(
 					instrumenter?.trackPhase(state.phase);
 				}
 
-				if (result.flush) scheduleFlush();
 				if (result.workingChange) {
+					scheduleFlush();
 					const wm = getWorkingMessage(state, agentName);
 					ctx.ui.setWorkingMessage(wm ?? undefined);
 				}

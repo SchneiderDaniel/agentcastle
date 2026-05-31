@@ -196,8 +196,8 @@ export async function runAgentSubprocess(
 		const handleLine = (line: string) => {
 			try {
 				const result = processJsonLine(line, state);
-				if (result.flush) scheduleFlush();
 				if (result.workingChange) {
+					scheduleFlush();
 					const wm = getWorkingMessage(state, agentName);
 					ctx.ui.setWorkingMessage(wm ?? undefined);
 				}
