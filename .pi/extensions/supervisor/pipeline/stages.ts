@@ -234,6 +234,7 @@ export async function applyStatusTransition(
 export function buildAgentResultEntry(
 	result: AgentRunResult,
 	usedRetry: boolean,
+	model?: string,
 ): PipelineAgentResult {
 	const statusLabel = !result.success ? "FAILED" : usedRetry ? "SUCCESS (after retry)" : "SUCCESS";
 
@@ -243,6 +244,7 @@ export function buildAgentResultEntry(
 		durationMs: result.durationMs,
 		tokenCount: result.tokenCount,
 		toolCount: result.toolCount,
+		model,
 	};
 }
 

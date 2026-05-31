@@ -379,6 +379,28 @@ describe("buildAgentResultEntry()", () => {
 		assert.equal(entry.tokenCount, 3000);
 		assert.equal(entry.toolCount, 5);
 	});
+
+	it("model is undefined when not provided", () => {
+		const entry = buildAgentResultEntry(baseResult, false);
+		assert.equal(entry.model, undefined);
+	});
+
+	it("model is set when provided", () => {
+		const entry = buildAgentResultEntry(baseResult, false, "anthropic/claude-sonnet-4-20250514");
+		assert.equal(entry.model, "anthropic/claude-sonnet-4-20250514");
+	});
+
+	it("model shows as short name in pipeline output", () => {
+		const entry = buildAgentResultEntry(baseResult, false, "anthropic/claude-sonnet-4-20250514");
+		const shortModel = (m?: string) => (m ? m.split("/").pop() || m : "—");
+		assert.equal(shortModel(entry.model), "claude-sonnet-4-20250514");
+	});
+
+	it("model is undefined when not provided, shows dash in output", () => {
+		const entry = buildAgentResultEntry(baseResult, false);
+		const shortModel = (m?: string) => (m ? m.split("/").pop() || m : "—");
+		assert.equal(shortModel(entry.model), "—");
+	});
 });
 
 // ─── Tests: handleBacklogTransition() ─────────────────────────────

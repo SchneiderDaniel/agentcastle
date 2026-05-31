@@ -123,26 +123,3 @@ export function buildSubagentStatusLine(
 export function joinExtensionStatuses(statuses: string[]): string {
 	return statuses.join(" | ");
 }
-
-export function countRejections(comments: any[]): number {
-	let count = 0;
-	for (let i = comments.length - 1; i >= 0; i--) {
-		const body = comments[i]?.body || "";
-		// Match both old-style and structured output markers
-		if (
-			body.includes("Audit Rejected") ||
-			body.includes("AUDIT_REJECTED") ||
-			body.includes("AUDIT_DECISION: REJECTED")
-		) {
-			count++;
-		} else if (
-			body.includes("Audit Approved") ||
-			body.includes("AUDIT_DECISION: APPROVED") ||
-			body.includes("ARCHITECTURE") ||
-			body.includes("Test Plan")
-		) {
-			break;
-		}
-	}
-	return count;
-}
