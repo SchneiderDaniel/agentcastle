@@ -17,14 +17,14 @@ jobs:
       && github.event.pull_request.author_association != 'COLLABORATOR'
       && github.event.pull_request.author_association != 'MEMBER'
     steps:
+      - uses: actions/checkout@v4
       - name: Post welcome comment
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
-          cat > /tmp/pr-welcome.md << 'WELCOME'
-          ## 👋 Welcome, @${AUTHOR}!
+          gh pr comment "${{ github.event.pull_request.number }}" \
+            --body-file - <<WELCOME
+          ## 👋 Welcome, @${{ github.event.pull_request.user.login }}!
 
           Thanks for submitting this PR to AgentCastle. A maintainer will review it shortly.
 
@@ -36,5 +36,3 @@ jobs:
 
           _We aim to review within 2-3 business days. Appreciate your contribution!_
           WELCOME
-          sed -i "s/\${AUTHOR}/${AUTHOR}/g" /tmp/pr-welcome.md
-          gh pr comment "$PR_NUMBER" --body-file /tmp/pr-welcome.md
