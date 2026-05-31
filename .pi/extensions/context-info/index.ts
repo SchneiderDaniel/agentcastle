@@ -41,6 +41,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	const lastContextWindowRef: { value: number | undefined } = { value: undefined };
 	const telemetryState: { emitted: boolean; lastContextWindow?: number } = { emitted: false };
 
+	// ── Cache stats state ─────────────────────────────────────────
+	const cacheReadRef: { value: number | undefined } = { value: undefined };
+	const cacheWriteRef: { value: number | undefined } = { value: undefined };
+
 	function syncTelemetryState() {
 		telemetryState.lastContextWindow = lastContextWindow;
 	}
@@ -76,6 +80,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 					lastContextWindowRef,
 					{ value: lastSampledOutput },
 					toolCallCount,
+					cacheReadRef,
+					cacheWriteRef,
 				);
 			}
 		}, 1000);
@@ -293,6 +299,9 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		lastComputedTps.value = null;
 		lastSampledOutput = undefined;
 		toolCallCount.value = 0;
+		// Reset cache stats
+		cacheReadRef.value = undefined;
+		cacheWriteRef.value = undefined;
 
 		// Detect worktree each session — git worktree can change across sessions
 		worktreeName = getWorktreeName(ctx.cwd);
@@ -328,6 +337,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			lastContextWindowRef,
 			{ value: lastSampledOutput },
 			toolCallCount,
+			cacheReadRef,
+			cacheWriteRef,
 		);
 
 		// Start live timer
@@ -382,6 +393,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				lastContextWindowRef,
 				{ value: lastSampledOutput },
 				toolCallCount,
+				cacheReadRef,
+				cacheWriteRef,
 			);
 	});
 
@@ -403,6 +416,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				lastContextWindowRef,
 				{ value: lastSampledOutput },
 				toolCallCount,
+				cacheReadRef,
+				cacheWriteRef,
 			);
 		tryEmit(ctx, telemetryState);
 	});
@@ -419,12 +434,22 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				lastContextWindowRef,
 				{ value: lastSampledOutput },
 				toolCallCount,
+				cacheReadRef,
+				cacheWriteRef,
 			);
 	});
 
 	pi.on("message_end", async (event, ctx: ExtensionContext) => {
 		const msg = event.message;
 		if (!msg || msg.role !== "assistant") return;
+		// Capture cache stats from raw event usage
+		const eventUsage = msg.usage;
+		if (eventUsage && typeof eventUsage.cacheRead === "number") {
+			cacheReadRef.value = eventUsage.cacheRead;
+		}
+		if (eventUsage && typeof eventUsage.cacheWrite === "number") {
+			cacheWriteRef.value = eventUsage.cacheWrite;
+		}
 		syncTelemetryState();
 		const usage = ctx.getContextUsage();
 		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {

@@ -16,6 +16,7 @@ import {
 	thinkingIcon,
 	thinkingColor,
 	formatTps,
+	formatCacheStats,
 	computeTps,
 } from "./formatting.js";
 
@@ -32,6 +33,8 @@ export function installFooter(
 	lastContextWindow: { value: number | undefined },
 	lastSampledOutput: { value: number | undefined },
 	toolCallCount: { value: number },
+	cacheReadRef?: { value: number | undefined },
+	cacheWriteRef?: { value: number | undefined },
 ): void {
 	if (!config || config.enabled === false) {
 		ctx.ui.setFooter(undefined);
@@ -170,14 +173,21 @@ export function installFooter(
 
 				row1 = truncateToWidth(row1, width);
 
-				// ── Build row 2 (ext statuses left, TPS right) ──
-				if (extStr || config.showTps) {
+				// ── Build row 2 (ext statuses left, TPS + cache right) ──
+				if (extStr || config.showTps || config.showCache) {
 					const left2 = extStr || "";
-					let right2 = "";
+					const rightParts: string[] = [];
 					if (config.showTps) {
 						const tpsDisplay = formatTps(lastComputedTps.value);
-						right2 = theme.fg("dim", tpsDisplay);
+						rightParts.push(theme.fg("dim", tpsDisplay));
 					}
+					if (config.showCache) {
+						const cacheRead = cacheReadRef?.value;
+						const cacheWrite = cacheWriteRef?.value;
+						const cacheStr = formatCacheStats(cacheRead, cacheWrite);
+						rightParts.push(theme.fg("dim", cacheStr));
+					}
+					const right2 = rightParts.join(" " + sep + " ");
 					const lw = visibleWidth(left2);
 					const rw = visibleWidth(right2);
 					const gap = Math.max(0, width - lw - rw);

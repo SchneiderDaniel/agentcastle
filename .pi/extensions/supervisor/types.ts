@@ -117,6 +117,10 @@ export interface AgentRunState {
 	maxToolCalls: number;
 	/** Max tokens allowed (0 = unlimited, populated from config) */
 	agentTokenBudget: number;
+	/** LLM prompt cache read tokens (from message usage) */
+	cacheRead?: number;
+	/** LLM prompt cache write tokens (from message usage) */
+	cacheWrite?: number;
 }
 
 // ─── Message renderer details type ───────────────────────────────────

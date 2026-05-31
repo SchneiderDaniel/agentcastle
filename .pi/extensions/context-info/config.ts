@@ -44,6 +44,7 @@ export function loadConfig(): ContextStatusBarConfig | null {
 		thresholds: DEFAULT_THRESHOLDS,
 		showTimer: true,
 		showTps: true,
+		showCache: true,
 	};
 	const settingsPath = ".pi/settings.json";
 	if (!existsSync(settingsPath)) return defaults;
@@ -95,5 +96,11 @@ export function loadConfig(): ContextStatusBarConfig | null {
 		showTps = cfg.showTps;
 	}
 
-	return { enabled, thresholds, showTimer, showTps };
+	// Parse showCache
+	let showCache = true;
+	if ("showCache" in cfg && typeof cfg.showCache === "boolean") {
+		showCache = cfg.showCache;
+	}
+
+	return { enabled, thresholds, showTimer, showTps, showCache };
 }

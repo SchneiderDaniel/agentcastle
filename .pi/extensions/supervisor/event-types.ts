@@ -14,7 +14,16 @@ export type NormalizedEvent =
 	| { kind: "thinking_end" }
 	| { kind: "thinking_delta"; delta: string }
 	| { kind: "text_start" }
-	| { kind: "text_end"; usage?: { totalTokens?: number; input?: number; output?: number } }
+	| {
+			kind: "text_end";
+			usage?: {
+				totalTokens?: number;
+				input?: number;
+				output?: number;
+				cacheRead?: number;
+				cacheWrite?: number;
+			};
+	  }
 	| { kind: "text_delta"; delta: string }
 	| {
 			kind: "message_end";
@@ -24,7 +33,13 @@ export type NormalizedEvent =
 					Record<string, unknown> & { type: string; text?: string; thinking?: string }
 				>;
 				toolName?: string;
-				usage?: { totalTokens?: number; input?: number; output?: number };
+				usage?: {
+					totalTokens?: number;
+					input?: number;
+					output?: number;
+					cacheRead?: number;
+					cacheWrite?: number;
+				};
 			};
 	  }
 	| {
@@ -33,7 +48,13 @@ export type NormalizedEvent =
 				content?: Array<
 					Record<string, unknown> & { type: string; text?: string; thinking?: string }
 				>;
-				usage?: { totalTokens?: number; input?: number; output?: number };
+				usage?: {
+					totalTokens?: number;
+					input?: number;
+					output?: number;
+					cacheRead?: number;
+					cacheWrite?: number;
+				};
 			};
 	  }
 	| { kind: "context_info"; contextTokens: number; contextWindow: number }
