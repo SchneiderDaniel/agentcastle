@@ -29,6 +29,7 @@ import { resolveModel, buildToolList } from "./session-model.ts";
 import { processSessionEvent } from "./session-events.ts";
 import { buildAgentRunResult } from "./session-result.ts";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
+import { createAgentRunState } from "./agent-runner.ts";
 import { calculateIdleWarning, buildErrorNotificationContext } from "./diagnostics.ts";
 import { createWatchdog } from "./watchdog.ts";
 import type { WatchdogHandle } from "./watchdog.ts";
@@ -52,6 +53,8 @@ export async function runAgentInProcess(
 	pi: ExtensionAPI,
 	timeoutMs: number = DEFAULT_AGENT_TIMEOUT_MS,
 	cwd?: string,
+	maxToolCalls?: number,
+	agentTokenBudget?: number,
 ): Promise<AgentRunResult> {
 	const effectiveCwd = cwd || ctx.cwd || process.cwd();
 	const agentName = agent.config.name;
@@ -70,24 +73,7 @@ export async function runAgentInProcess(
 
 	const startedAt = Date.now();
 
-	const state: AgentRunState = {
-		toolCount: 0,
-		tokenCount: 0,
-		fullLog: [],
-		liveThinking: "",
-		liveText: "",
-		textOutputLines: [],
-		thinkingOutputLines: [],
-		phase: "idle",
-		startedAt,
-		contextInfoReceived: false,
-		thinkingPushedThisTurn: false,
-		textPushedThisTurn: false,
-		budgetExceeded: false,
-		budgetExceededReason: undefined,
-		maxToolCalls: 0,
-		agentTokenBudget: 0,
-	};
+	const state = createAgentRunState(startedAt, maxToolCalls, agentTokenBudget);
 
 	// Hoist cleanup variables so they're accessible in try, catch, and finally
 	let flushTimer: NodeJS.Timeout | null = null;

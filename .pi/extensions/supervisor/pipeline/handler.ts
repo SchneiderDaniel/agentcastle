@@ -218,6 +218,8 @@ export async function handleSupervisorCommand(
 				pi,
 				timeoutMs,
 				isWorktreeAgent(agentName) ? worktreePath : undefined,
+				config.maxToolCalls,
+				config.agentTokenBudget,
 			);
 
 			agentResults.push(buildAgentResultEntry(result, usedRetry));
@@ -443,8 +445,19 @@ async function executeAgent(
 	pi: ExtensionAPI,
 	timeoutMs: number,
 	agentCwd: string | undefined,
+	maxToolCalls?: number,
+	agentTokenBudget?: number,
 ): Promise<{ result: AgentRunResult; usedRetry: boolean }> {
-	let result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
+	let result = await runAgent(
+		agent,
+		task,
+		ctx,
+		pi,
+		timeoutMs,
+		agentCwd,
+		maxToolCalls,
+		agentTokenBudget,
+	);
 	validateAgentResult(result);
 	let usedRetry = false;
 
@@ -452,7 +465,16 @@ async function executeAgent(
 		ctx.ui.notify(`Agent ${agent.config.name} exceeded budget — not retrying`, "warning");
 	} else if (!result.success) {
 		ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
-		result = await runAgent(agent, task, ctx, pi, timeoutMs, agentCwd);
+		result = await runAgent(
+			agent,
+			task,
+			ctx,
+			pi,
+			timeoutMs,
+			agentCwd,
+			maxToolCalls,
+			agentTokenBudget,
+		);
 		usedRetry = true;
 		validateAgentResult(result);
 	}

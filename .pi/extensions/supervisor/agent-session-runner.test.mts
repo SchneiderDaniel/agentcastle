@@ -232,3 +232,61 @@ describe("stall detection throws to trigger subprocess fallback", () => {
 		assert.equal(promptSettled, true, "prompt should have settled after await");
 	});
 });
+
+// ─── runAgentInProcess — budget param wiring ──────────────────────
+
+describe("runAgentInProcess — budget param wiring", () => {
+	it("state initialized with maxToolCalls=30 when passed 30", () => {
+		const state = createState({ maxToolCalls: 30 });
+		assert.equal(state.maxToolCalls, 30);
+	});
+
+	it("state initialized with agentTokenBudget=500000 when passed 500000", () => {
+		const state = createState({ agentTokenBudget: 500000 });
+		assert.equal(state.agentTokenBudget, 500000);
+	});
+
+	it("state has both budget fields set correctly when both passed", () => {
+		const state = createState({ maxToolCalls: 30, agentTokenBudget: 500000 });
+		assert.equal(state.maxToolCalls, 30);
+		assert.equal(state.agentTokenBudget, 500000);
+	});
+
+	it("state has maxToolCalls=0 and agentTokenBudget=0 when undefined (backward compat)", () => {
+		const state = createState({});
+		assert.equal(state.maxToolCalls, 0);
+		assert.equal(state.agentTokenBudget, 0);
+	});
+
+	it("state has maxToolCalls=0 and agentTokenBudget=0 when explicitly 0", () => {
+		const state = createState({ maxToolCalls: 0, agentTokenBudget: 0 });
+		assert.equal(state.maxToolCalls, 0);
+		assert.equal(state.agentTokenBudget, 0);
+	});
+
+	it("budgetExceeded is false initially", () => {
+		const state = createState({ maxToolCalls: 30, agentTokenBudget: 500000 });
+		assert.equal(state.budgetExceeded, false);
+	});
+
+	it("budgetExceededReason is undefined initially", () => {
+		const state = createState({ maxToolCalls: 30, agentTokenBudget: 500000 });
+		assert.equal(state.budgetExceededReason, undefined);
+	});
+
+	it("existing buildAgentRunResult tests still pass with budgetExceeded", () => {
+		const state = createState({
+			budgetExceeded: true,
+			budgetExceededReason: "Tool limit: 30/30",
+			toolCount: 30,
+			tokenCount: 100000,
+			maxToolCalls: 30,
+			agentTokenBudget: 500000,
+		});
+		const result: AgentRunResult = buildAgentRunResult(state, "developer", false, 5000, []);
+		assert.equal(result.budgetExceeded, true);
+		assert.equal(result.toolCount, 30);
+		assert.equal(result.tokenCount, 100000);
+		assert.equal(result.success, false);
+	});
+});
