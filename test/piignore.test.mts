@@ -53,7 +53,18 @@ function patternToRegex(pattern: string): Pattern {
 
 	const hasSlash = p.includes("/") || p.startsWith("**");
 
-	let r = p.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+	// Step 1a: Extract and preserve bracket expressions
+	const bracketExprs: string[] = [];
+	let r = p.replace(/\[([^\]]*)\]/g, (match) => {
+		bracketExprs.push(match);
+		return `\x00B${bracketExprs.length - 1}\x00`;
+	});
+
+	// Step 1b: Escape regex meta-characters except *, ?, [, ]
+	r = r.replace(/[.+^${}()|\\]/g, "\\$&");
+
+	// Step 1c: Escape unclosed [ (bracket without matching ]) as literal
+	r = r.replace(/\[/g, "\\[");
 
 	r = r.replace(/\*\*\//g, "\x00G\x00");
 	r = r.replace(/\*\*$/g, "\x00GS\x00");
@@ -63,6 +74,18 @@ function patternToRegex(pattern: string): Pattern {
 
 	r = r.replace(/\x00G\x00/g, "(.*/)?");
 	r = r.replace(/\x00GS\x00/g, ".*");
+
+	// Step 4b: Restore bracket expressions
+	for (let i = 0; i < bracketExprs.length; i++) {
+		let expr = bracketExprs[i];
+		if (expr.startsWith("[!")) {
+			expr = "[^" + expr.slice(2);
+		}
+		if (expr === "[]") {
+			expr = "\\[\\]";
+		}
+		r = r.split(`\x00B${i}\x00`).join(expr);
+	}
 
 	if (hasSlash) {
 		r = "^" + r;

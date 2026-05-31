@@ -46,8 +46,19 @@ function patternToRegex(pattern: string): Pattern {
 
 	const hasSlash = p.includes("/") || p.startsWith("**");
 
-	// Step 1: Escape regex meta-characters except *, ?, /
-	let r = p.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+	// Step 1a: Extract and preserve bracket expressions so the regex
+	//          escape step doesn't mangle [ and ] as literals.
+	const bracketExprs: string[] = [];
+	let r = p.replace(/\[([^\]]*)\]/g, (match) => {
+		bracketExprs.push(match);
+		return `\x00B${bracketExprs.length - 1}\x00`;
+	});
+
+	// Step 1b: Escape regex meta-characters except *, ?, [, ]
+	r = r.replace(/[.+^${}()|\\]/g, "\\$&");
+
+	// Step 1c: Escape unclosed [ (bracket without matching ]) as literal
+	r = r.replace(/\[/g, "\\[");
 
 	// Step 2: Replace **/ and ** with placeholders (so later * replacement
 	//         doesn't mangle the injected regex syntax)
@@ -61,6 +72,20 @@ function patternToRegex(pattern: string): Pattern {
 	// Step 4: Replace placeholders with actual regex
 	r = r.replace(/\x00G\x00/g, "(.*/)?");
 	r = r.replace(/\x00GS\x00/g, ".*");
+
+	// Step 4b: Restore bracket expressions
+	for (let i = 0; i < bracketExprs.length; i++) {
+		let expr = bracketExprs[i];
+		// [!...] → [^...]  (gitignore negation to regex negation)
+		if (expr.startsWith("[!")) {
+			expr = "[^" + expr.slice(2);
+		}
+		// Empty bracket [] → escape as literal \[\]
+		if (expr === "[]") {
+			expr = "\\[\\]";
+		}
+		r = r.split(`\x00B${i}\x00`).join(expr);
+	}
 
 	// Step 5: Anchor
 	if (hasSlash) {
