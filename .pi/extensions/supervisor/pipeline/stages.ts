@@ -235,7 +235,7 @@ export async function handlePostAgentSuccess(
 	worktreePath: string | undefined,
 	worktreeBranch: string | undefined,
 	issueTitle: string,
-): Promise<void> {
+): Promise<boolean> {
 	const agentOutput = result.textOutput || result.output || "";
 
 	// Agent comments: architect, test-designer, researcher
@@ -265,6 +265,7 @@ export async function handlePostAgentSuccess(
 			const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr);
 			ctx.ui.notify(`commitAndPush failed: ${cpMsg}`, "warning");
 			console.warn(`[supervisor] commitAndPush failed: ${cpMsg}`);
+			return false;
 		}
 	}
 
@@ -272,6 +273,9 @@ export async function handlePostAgentSuccess(
 	if (agentName === "auditor") {
 		await handleAuditorOutput(pi, ctx, agentOutput, result, issueNum, config);
 	}
+
+	// Default: pipeline should continue
+	return true;
 }
 
 /**

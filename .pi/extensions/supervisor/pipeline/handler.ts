@@ -254,7 +254,7 @@ export async function handleSupervisorCommand(
 
 			// Post-processing
 			if (result.success) {
-				await handlePostAgentSuccess(
+				const continuePipeline = await handlePostAgentSuccess(
 					pi,
 					ctx,
 					result,
@@ -266,6 +266,10 @@ export async function handleSupervisorCommand(
 					worktreeBranch,
 					issueTitle,
 				);
+				if (!continuePipeline) {
+					stopReason = `commitAndPush failed for ${agentName}`;
+					break;
+				}
 			}
 
 			// Determine next status

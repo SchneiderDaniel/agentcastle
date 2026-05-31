@@ -502,7 +502,7 @@ describe("handlePostAgentSuccess()", () => {
 			"COMMENT_BODY:\n## Architecture\nSome design\nCOMMENT_BODY_END\nARCHITECTURE_COMPLETE",
 	};
 
-	it("posts comment for architect when output contains COMMENT_BODY", async () => {
+	it("posts comment for architect when output contains COMMENT_BODY — returns true", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi([{ code: 0, stdout: "", stderr: "" }], calls);
 		const ctx = createMockCtx();
@@ -511,7 +511,7 @@ describe("handlePostAgentSuccess()", () => {
 			comments: [],
 		};
 
-		await handlePostAgentSuccess(
+		const success = await handlePostAgentSuccess(
 			pi,
 			ctx,
 			baseResult,
@@ -524,12 +524,38 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
+		assert.equal(success, true, "architect comment post succeeds — pipeline should continue");
 		// Should call gh issue comment
 		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("issue"));
 		assert.ok(ghCall, "should call gh issue comment for architect");
 	});
 
-	it("posts comment for test-designer when output contains COMMENT_BODY", async () => {
+	it("architect comment post fails (gh error) — returns true (advisory), pipeline continues", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi([{ code: 1, stdout: "", stderr: "network error" }], calls);
+		const ctx = createMockCtx();
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			baseResult,
+			"architect",
+			42,
+			mockConfig,
+			filteredData,
+			undefined,
+			undefined,
+			"Test issue",
+		);
+
+		assert.equal(success, true, "architect comment failure is advisory — pipeline should continue");
+	});
+
+	it("posts comment for test-designer when output contains COMMENT_BODY — returns true", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi([{ code: 0, stdout: "", stderr: "" }], calls);
 		const ctx = createMockCtx();
@@ -544,7 +570,7 @@ describe("handlePostAgentSuccess()", () => {
 			comments: [],
 		};
 
-		await handlePostAgentSuccess(
+		const success = await handlePostAgentSuccess(
 			pi,
 			ctx,
 			result,
@@ -557,11 +583,12 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
+		assert.equal(success, true, "test-designer success — pipeline should continue");
 		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("issue"));
 		assert.ok(ghCall, "should call gh issue comment for test-designer");
 	});
 
-	it("posts comment for researcher when output contains COMMENT_BODY", async () => {
+	it("posts comment for researcher when output contains COMMENT_BODY — returns true", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi([{ code: 0, stdout: "", stderr: "" }], calls);
 		const ctx = createMockCtx();
@@ -576,7 +603,7 @@ describe("handlePostAgentSuccess()", () => {
 			comments: [],
 		};
 
-		await handlePostAgentSuccess(
+		const success = await handlePostAgentSuccess(
 			pi,
 			ctx,
 			result,
@@ -589,18 +616,53 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
+		assert.equal(success, true, "researcher success — pipeline should continue");
 		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("issue"));
 		assert.ok(ghCall, "should call gh issue comment for researcher");
 	});
 
-	it("commits and pushes for developer when worktreePath and branch provided", async () => {
+	it("researcher comment post fails (gh error) — returns true (advisory), pipeline continues", async () => {
 		const calls: ExecCall[] = [];
-		// developer commit+pull uses: commitAndPush which calls gh then git push
-		// We need multiple mock results
+		const pi = createMockPi([{ code: 1, stdout: "", stderr: "timeout" }], calls);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "researcher",
+			textOutput: "COMMENT_BODY:\n## Research Findings\nStuff\nCOMMENT_BODY_END",
+			textOnly: "COMMENT_BODY:\n## Research Findings\nStuff\nCOMMENT_BODY_END\nRESEARCH_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"researcher",
+			42,
+			mockConfig,
+			filteredData,
+			undefined,
+			undefined,
+			"Test issue",
+		);
+
+		assert.equal(
+			success,
+			true,
+			"researcher comment failure is advisory — pipeline should continue",
+		);
+	});
+
+	it("commits and pushes for developer when worktreePath and branch provided — returns true", async () => {
+		const calls: ExecCall[] = [];
+		// developer commit+pull uses: commitAndPush which calls git add, commit, push
 		const pi = createMockPi(
 			[
-				{ code: 0, stdout: "", stderr: "" }, // gh project item-edit
-				{ code: 0, stdout: "", stderr: "" }, // git add / commit
+				{ code: 0, stdout: "", stderr: "" }, // git add -A
+				{ code: 0, stdout: "", stderr: "" }, // git commit
 				{ code: 0, stdout: "", stderr: "" }, // git push
 			],
 			calls,
@@ -617,7 +679,7 @@ describe("handlePostAgentSuccess()", () => {
 			comments: [],
 		};
 
-		await handlePostAgentSuccess(
+		const success = await handlePostAgentSuccess(
 			pi,
 			ctx,
 			result,
@@ -630,12 +692,264 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
-		// Should call git push or similar
+		assert.equal(success, true, "commit/push succeeds — pipeline should continue");
+		// Should call git operations
 		const gitCalls = calls.filter((c) => c.cmd === "git");
 		assert.ok(gitCalls.length > 0, "should call git operations for developer");
 	});
 
-	it("handles auditor approval output with structured AUDIT_DECISION", async () => {
+	it("developer git add fails (code 1) — returns false, signals critical failure", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 1, stdout: "", stderr: "fatal: could not add" }, // git add fails
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			"/repo/worktree",
+			"feature-branch",
+			"Test issue",
+		);
+
+		assert.equal(success, false, "git add failure must return false — pipeline should stop");
+	});
+
+	it("developer git commit fails with real error (not 'nothing to commit') — returns false", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // git add succeeds
+				{ code: 1, stdout: "", stderr: "fatal: bad object" }, // git commit fails
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			"/repo/worktree",
+			"feature-branch",
+			"Test issue",
+		);
+
+		assert.equal(success, false, "git commit failure must return false — pipeline should stop");
+	});
+
+	it("developer git push fails (network error) — returns false", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // git add succeeds
+				{ code: 0, stdout: "", stderr: "" }, // git commit succeeds
+				{ code: 1, stdout: "", stderr: "fatal: could not push" }, // git push fails
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			"/repo/worktree",
+			"feature-branch",
+			"Test issue",
+		);
+
+		assert.equal(success, false, "git push failure must return false — pipeline should stop");
+	});
+
+	it("developer git commit returns 'nothing to commit' — still pushes, push succeeds — returns true", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // git add succeeds
+				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit
+				{ code: 0, stdout: "", stderr: "" }, // git push succeeds
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			"/repo/worktree",
+			"feature-branch",
+			"Test issue",
+		);
+
+		assert.equal(success, true, "'nothing to commit' + push succeeds — pipeline should continue");
+	});
+
+	it("developer git commit returns 'nothing to commit' — still pushes, push fails — returns false", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // git add succeeds
+				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit
+				{ code: 1, stdout: "", stderr: "fatal: permission denied" }, // git push fails
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			"/repo/worktree",
+			"feature-branch",
+			"Test issue",
+		);
+
+		assert.equal(success, false, "'nothing to commit' + push fails — pipeline should stop");
+	});
+
+	it("developer with worktreePath undefined — returns true (no-op)", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi([], calls);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			undefined,
+			"feature-branch",
+			"Test issue",
+		);
+
+		assert.equal(success, true, "no worktreePath — no-op, pipeline should continue");
+		assert.equal(calls.length, 0);
+	});
+
+	it("developer with worktreeBranch undefined — returns true (no-op)", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi([], calls);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			"/repo/worktree",
+			undefined,
+			"Test issue",
+		);
+
+		assert.equal(success, true, "no worktreeBranch — no-op, pipeline should continue");
+		assert.equal(calls.length, 0);
+	});
+
+	it("handles auditor approval output with structured AUDIT_DECISION — returns true", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi(
 			[
@@ -657,7 +971,7 @@ describe("handlePostAgentSuccess()", () => {
 			comments: [],
 		};
 
-		await handlePostAgentSuccess(
+		const success = await handlePostAgentSuccess(
 			pi,
 			ctx,
 			result,
@@ -670,12 +984,13 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
+		assert.equal(success, true, "auditor — pipeline should continue");
 		// Should call gh issue comment
 		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("comment"));
 		assert.ok(ghCall, "should post audit approval comment");
 	});
 
-	it("handles auditor rejection output", async () => {
+	it("handles auditor rejection output — returns true", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi(
 			[
@@ -697,7 +1012,7 @@ describe("handlePostAgentSuccess()", () => {
 			comments: [],
 		};
 
-		await handlePostAgentSuccess(
+		const success = await handlePostAgentSuccess(
 			pi,
 			ctx,
 			result,
@@ -710,11 +1025,12 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
+		assert.equal(success, true, "auditor — pipeline should continue");
 		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("comment"));
 		assert.ok(ghCall, "should post audit rejection comment");
 	});
 
-	it("handles auditor output with no COMMENT_BODY marker using deterministic fallback", async () => {
+	it("handles auditor output with no COMMENT_BODY marker using deterministic fallback — returns true", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi(
 			[
@@ -734,7 +1050,7 @@ describe("handlePostAgentSuccess()", () => {
 			comments: [],
 		};
 
-		await handlePostAgentSuccess(
+		const success = await handlePostAgentSuccess(
 			pi,
 			ctx,
 			result,
@@ -747,6 +1063,7 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
+		assert.equal(success, true, "auditor — pipeline should continue");
 		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("comment"));
 		assert.ok(ghCall, "should post fallback comment");
 	});
@@ -766,7 +1083,7 @@ describe("handlePostAgentSuccess()", () => {
 			comments: [],
 		};
 
-		await handlePostAgentSuccess(
+		const success = await handlePostAgentSuccess(
 			pi,
 			ctx,
 			result,
@@ -780,6 +1097,7 @@ describe("handlePostAgentSuccess()", () => {
 		);
 
 		// No gh calls expected for developer without worktree
+		assert.equal(success, true, "no worktree — no-op, pipeline should continue");
 		assert.equal(calls.length, 0);
 	});
 });
