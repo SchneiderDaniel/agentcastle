@@ -35,6 +35,9 @@ import {
 	applyStatusTransition,
 	buildAgentResultEntry,
 	handlePostAgentSuccess,
+	shouldSkipResearcher,
+	checkReadmeUpdated,
+	inferForwardStatus,
 } from "./stages.ts";
 import {
 	fetchIssue,
@@ -166,6 +169,31 @@ export async function handleSupervisorCommand(
 					"error",
 				);
 				break;
+			}
+
+			// Deduplication gate: skip researcher if findings already exist
+			if (agentName === "researcher" && shouldSkipResearcher(loopStatus, loopFilteredData)) {
+				ctx.ui.notify(
+					`Issue #${issueNum} already has research findings — skipping researcher`,
+					"info",
+				);
+				// Find the next forward status for the researcher step
+				const nextStatus = inferForwardStatus(step);
+				if (nextStatus) {
+					loopStatus = await applyStatusTransition(
+						pi,
+						loopItem.id,
+						projectId,
+						fields,
+						statusField.id,
+						nextStatus,
+					);
+					ctx.ui.notify(
+						`Issue #${issueNum} moved: Research → ${nextStatus} (deduplication gate)`,
+						"info",
+					);
+					continue;
+				}
 			}
 
 			// Load agent

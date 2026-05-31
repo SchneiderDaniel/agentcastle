@@ -29,6 +29,7 @@ import {
 } from "../github/index.ts";
 import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent-output.ts";
 import type { AgentOutput } from "../types.ts";
+import { hasResearchFindings } from "../workflow.ts";
 
 // ─── Constants ────────────────────────────────────────────────────
 
@@ -95,6 +96,81 @@ export function resolveAgentName(loopStatus: string, config: SupervisorConfig): 
 
 export function isWorktreeAgent(agentName: string): boolean {
 	return agentName === "developer" || agentName === "auditor";
+}
+
+// ─── Deduplication Gate ─────────────────────────────────────────────
+
+/**
+ * Check if the researcher agent should be skipped because research findings
+ * already exist. This is a pipeline-level gate that replaces the LLM-instructed
+ * deduplication scan that was previously in the researcher.md agent prompt.
+ *
+ * @returns true if researcher should be skipped
+ */
+export function shouldSkipResearcher(
+	loopStatus: string,
+	filteredData: { body: string; comments: Array<{ author: string; body: string }> },
+): boolean {
+	if (loopStatus !== "Research") return false;
+	return hasResearchFindings(filteredData);
+}
+
+// ─── README Change Detection ───────────────────────────────────────
+
+/**
+ * Check if the README needs updating based on git diff analysis.
+ * If the diff contains user-facing changes (new features, config changes,
+ * CLI changes, API changes, dependency changes) but README is not modified,
+ * this returns a warning that should be surfaced.
+ */
+export async function checkReadmeUpdated(
+	execFn: (
+		cmd: string,
+		args: string[],
+		opts?: Record<string, unknown>,
+	) => Promise<{ code: number; stdout: string; stderr: string }>,
+	worktreePath: string,
+	defaultBranch: string,
+): Promise<{ updated: boolean; warning?: string }> {
+	try {
+		// Get list of changed files vs. default branch
+		const diffResult = await execFn("git", ["diff", defaultBranch, "--name-only"], {
+			cwd: worktreePath,
+		});
+		const changedFiles = (diffResult.stdout || "").trim().split("\n").filter(Boolean);
+
+		// Check if README was modified
+		const readmeModified = changedFiles.some((f: string) => f.toLowerCase().includes("readme"));
+
+		// Check if changes are user-facing (not just test/internal files)
+		const userFacingChanges = changedFiles.some((f: string) => {
+			const lower = f.toLowerCase();
+			// Internal-only files don't need README updates
+			if (
+				lower.startsWith("test/") ||
+				lower.startsWith(".pi/") ||
+				lower.endsWith(".test.ts") ||
+				lower.endsWith(".test.mts")
+			) {
+				return false;
+			}
+			// Source files, config files, etc. are potentially user-facing
+			return true;
+		});
+
+		if (userFacingChanges && !readmeModified) {
+			return {
+				updated: false,
+				warning:
+					"README.md was not updated despite user-facing changes. Please update README.md to reflect the changes.",
+			};
+		}
+
+		return { updated: true };
+	} catch {
+		// If git diff fails, we can't verify — return updated=true to not block
+		return { updated: true };
+	}
 }
 
 // ─── Check Rejection Limit ────────────────────────────────────────
@@ -295,6 +371,23 @@ export async function handlePostAgentSuccess(
 			ctx.ui.notify(`commitAndPush failed: ${cpMsg}`, "warning");
 			console.warn(`[supervisor] commitAndPush failed: ${cpMsg}`);
 			return false;
+		}
+
+		// README change detection: warn if README was not updated for user-facing changes
+		try {
+			const execFn = (cmd: string, args: string[], opts?: Record<string, unknown>) =>
+				pi.exec(cmd, args, opts);
+			const readmeCheck = await checkReadmeUpdated(
+				execFn,
+				worktreePath,
+				config.defaultBranch || "main",
+			);
+			if (!readmeCheck.updated && readmeCheck.warning) {
+				ctx.ui.notify(readmeCheck.warning, "warning");
+				console.warn(`[supervisor] ${readmeCheck.warning}`);
+			}
+		} catch {
+			// README check is advisory — don't block pipeline
 		}
 	}
 
