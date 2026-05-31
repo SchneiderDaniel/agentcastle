@@ -353,15 +353,20 @@ export async function handleSupervisorCommand(
 			}
 		}
 
-		// Worktree cleanup — immediately after pipeline loop ends, close to creation site (line ~184)
-		if (worktreePath && worktreeBranch) {
-			await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
-		}
-
-		// Post-pipeline
-		if (isDoneStatus(loopStatus) && agentResults.length > 0) {
-			await handlePostPipelineMerge(issueNum, issueTitle, loopStatus, config, pi, ctx);
-		}
+		// Post-pipeline operations with correct ordering:
+		// 1. Merge resolution (needs worktree to exist)
+		// 2. Worktree cleanup (after merge is complete)
+		await handlePostPipeline(
+			issueNum,
+			issueTitle,
+			loopStatus,
+			agentResults,
+			config,
+			pi,
+			ctx,
+			worktreePath,
+			worktreeBranch,
+		);
 
 		// Completion notification
 		if (agentResults.length > 0 || stopReason !== undefined) {
@@ -397,6 +402,35 @@ export async function handleSupervisorCommand(
 			config,
 			err instanceof Error ? err.message : String(err),
 		);
+	}
+}
+
+// ─── Post-Pipeline Operations ──────────────────────────────────────
+// Extracted for testability — runs merge before cleanup.
+// Order: merge (needs worktree) → cleanup (deletes worktree).
+// In try/finally so cleanup always runs even if merge throws.
+
+export async function handlePostPipeline(
+	issueNum: number,
+	issueTitle: string,
+	loopStatus: string,
+	agentResults: PipelineAgentResult[],
+	config: SupervisorConfig,
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	worktreePath: string | undefined,
+	worktreeBranch: string | undefined,
+): Promise<void> {
+	try {
+		// Step 1: Post-pipeline merge resolution — needs worktree to exist
+		if (isDoneStatus(loopStatus) && agentResults.length > 0) {
+			await handlePostPipelineMerge(issueNum, issueTitle, loopStatus, config, pi, ctx);
+		}
+	} finally {
+		// Step 2: Worktree cleanup — always runs, even if merge throws
+		if (worktreePath && worktreeBranch) {
+			await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
+		}
 	}
 }
 

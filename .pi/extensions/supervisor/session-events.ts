@@ -5,7 +5,7 @@
 // Owns: SessionEvent type, getEventPhase() (backward compat).
 // Delegates: processSessionEvent() → sessionEventToNormalizedEvent() + processNormalizedEvent().
 
-import type { AgentRunState, AgentPhase } from "./types";
+import type { AgentRunState, AgentPhase } from "./types.ts";
 import { pushLog } from "./agent-stream.ts";
 import { sessionEventToNormalizedEvent, processNormalizedEvent } from "./event-adapter.ts";
 import { phasePriority } from "./event-types.ts";

@@ -2,8 +2,8 @@
 // CI/TSC/LSP pre-transition checks. Wraps pipeline-audit.ts.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig } from "../types";
-import { runTscAndLspAudit } from "../pipeline-audit";
+import type { SupervisorConfig } from "../types.ts";
+import { runTscAndLspAudit } from "../pipeline-audit.ts";
 
 /**
  * Run hook checks (CI, TSC, LSP) before a status transition.

@@ -5,12 +5,12 @@
 // In-process runner lives in agent-session-runner.ts
 // Subprocess lifecycle lives in this file (parsing in agent-stream.ts).
 
-import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./types";
+import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./types.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { resolveTools, resolveExtensions, resolveSkillPaths } from "./extensions";
-import { formatDuration, extractSummaryLine, formatTokens } from "./formatting";
-import { resolveTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } from "./config";
+import { resolveTools, resolveExtensions, resolveSkillPaths } from "./extensions.ts";
+import { formatDuration, extractSummaryLine, formatTokens } from "./formatting.ts";
+import { resolveTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
 import {
 	processJsonLine,
 	getPhaseFromEvent,
@@ -20,13 +20,13 @@ import {
 	MAX_FULL_LOG,
 	WIDGET_LINES,
 	MAX_LIVE_THINKING,
-} from "./agent-stream";
-import { buildWidgetLines, getWorkingMessage } from "./session-widget";
-import { runAgentInProcess } from "./agent-session-runner";
-import { buildErrorNotificationContext } from "./diagnostics";
+} from "./agent-stream.ts";
+import { buildWidgetLines, getWorkingMessage } from "./session-widget.ts";
+import { runAgentInProcess } from "./agent-session-runner.ts";
+import { buildErrorNotificationContext } from "./diagnostics.ts";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
-export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
+export { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
 
 // ─── runAgent (Primary: in-process, Fallback: subprocess) ──────────
 

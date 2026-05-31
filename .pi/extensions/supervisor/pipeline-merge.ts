@@ -8,9 +8,9 @@ import { existsSync } from "node:fs";
 import { generateBranchName } from "./agent-task.ts";
 import { tryAutoMerge } from "./merge.ts";
 import { checkPrConflicts } from "./github/pr.ts";
-import { parseAgentFile } from "./agent-loader";
-import { runAgent } from "./agent-runner";
-import { resolveTimeoutMs } from "./config";
+import { parseAgentFile } from "./agent-loader.ts";
+import { runAgent } from "./agent-runner.ts";
+import { resolveTimeoutMs } from "./config.ts";
 
 /**
  * Handle post-pipeline merge conflict detection and resolution.
