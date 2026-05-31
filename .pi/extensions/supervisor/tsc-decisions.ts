@@ -3,8 +3,8 @@
 // Pure function — no Pi API, no process spawning.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { TscDiagnostic } from "../tsc-checkpoint.ts";
-import { formatTscDiagnostics } from "../tsc-checkpoint.ts";
+import type { TscDiagnostic } from "../tsc-checkpoint/index.ts";
+import { formatTscDiagnostics } from "../tsc-checkpoint/index.ts";
 
 /**
  * Result from a tsc checkpoint run.
