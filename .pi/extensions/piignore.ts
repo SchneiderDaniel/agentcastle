@@ -92,7 +92,7 @@ function loadPiIgnore(cwd: string): IgnoreEntry[] {
 	while (true) {
 		const ignorePath = path.join(dir, ".piignore");
 		if (fs.existsSync(ignorePath)) {
-			entries.push({
+			entries.unshift({
 				root: dir,
 				patterns: parseIgnore(fs.readFileSync(ignorePath, "utf-8")),
 			});

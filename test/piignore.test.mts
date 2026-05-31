@@ -92,7 +92,7 @@ function loadPiIgnore(cwd: string): IgnoreEntry[] {
 	while (true) {
 		const ignorePath = path.join(dir, ".piignore");
 		if (fs.existsSync(ignorePath)) {
-			entries.push({
+			entries.unshift({
 				root: dir,
 				patterns: parseIgnore(fs.readFileSync(ignorePath, "utf-8")),
 			});
@@ -133,8 +133,13 @@ describe("piignore extension", () => {
 	const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "piignore-test-"));
 	const nonCwdDir = path.join(tmpRoot, "other-project");
 
+	// Phase 1 uses a deeper tree: parentDir/subDir
+	const parentDir = path.join(tmpRoot, "parent-test");
+	const subDir = path.join(parentDir, "sub");
+
 	beforeEach(() => {
 		fs.mkdirSync(nonCwdDir, { recursive: true });
+		fs.mkdirSync(subDir, { recursive: true });
 	});
 
 	afterEach(() => {
@@ -228,6 +233,61 @@ describe("piignore extension", () => {
 
 			const absPath = path.join(nonCwdDir, "secret.txt");
 			assert.strictEqual(isIgnored(absPath, entries, nonCwdDir), true);
+		});
+	});
+
+	describe("Phase 1: Precedence fix — child negation overrides parent", () => {
+		it("parent ignores *.env, child negates !important.env — not ignored", () => {
+			fs.writeFileSync(path.join(parentDir, ".piignore"), "*.env\n", "utf-8");
+			fs.writeFileSync(path.join(subDir, ".piignore"), "!important.env\n", "utf-8");
+
+			const entries = loadPiIgnore(subDir);
+
+			assert.strictEqual(isIgnored("important.env", entries, subDir), false);
+		});
+
+		it("parent ignores *.log, child negates !critical.log — not ignored", () => {
+			fs.writeFileSync(path.join(parentDir, ".piignore"), "*.log\n", "utf-8");
+			fs.writeFileSync(path.join(subDir, ".piignore"), "!critical.log\n", "utf-8");
+
+			const entries = loadPiIgnore(subDir);
+
+			assert.strictEqual(isIgnored("critical.log", entries, subDir), false);
+		});
+
+		it("parent ignores *, child negates !README.md — not ignored", () => {
+			fs.writeFileSync(path.join(parentDir, ".piignore"), "*\n", "utf-8");
+			fs.writeFileSync(path.join(subDir, ".piignore"), "!README.md\n", "utf-8");
+
+			const entries = loadPiIgnore(subDir);
+
+			assert.strictEqual(isIgnored("README.md", entries, subDir), false);
+		});
+
+		it("parent ignores secrets/, child negates !secrets/public.txt — not ignored", () => {
+			fs.writeFileSync(path.join(parentDir, ".piignore"), "secrets/\n", "utf-8");
+			fs.writeFileSync(path.join(subDir, ".piignore"), "!secrets/public.txt\n", "utf-8");
+
+			const entries = loadPiIgnore(subDir);
+
+			assert.strictEqual(isIgnored("secrets/public.txt", entries, subDir), false);
+		});
+
+		it("parent ignores *.key, child has no .piignore — still ignored", () => {
+			fs.writeFileSync(path.join(parentDir, ".piignore"), "*.key\n", "utf-8");
+
+			const entries = loadPiIgnore(subDir);
+
+			assert.strictEqual(isIgnored("auth.key", entries, subDir), true);
+		});
+
+		it("parent ignores *.tmp, child has !important.tmp then *.tmp later — still ignored (last-match-wins within file)", () => {
+			fs.writeFileSync(path.join(parentDir, ".piignore"), "*.tmp\n", "utf-8");
+			fs.writeFileSync(path.join(subDir, ".piignore"), "!important.tmp\n*.tmp\n", "utf-8");
+
+			const entries = loadPiIgnore(subDir);
+
+			assert.strictEqual(isIgnored("important.tmp", entries, subDir), true);
 		});
 	});
 });
