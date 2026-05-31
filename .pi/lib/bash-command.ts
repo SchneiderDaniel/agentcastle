@@ -165,6 +165,20 @@ export class BashCommand {
 	}
 
 	/**
+	 * Create a BashCommand instance from a command string.
+	 * Static factory that delegates to the constructor.
+	 *
+	 * Example:
+	 * ```ts
+	 * const cmd = BashCommand.from("grep foo");
+	 * cmd.isSearch(); // true
+	 * ```
+	 */
+	static from(cmd: string): BashCommand {
+		return new BashCommand(cmd);
+	}
+
+	/**
 	 * True if this is a pure, un-piped grep/rg call that should use
 	 * the ripgrep_search tool instead.
 	 *
