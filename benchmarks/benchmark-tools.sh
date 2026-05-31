@@ -17,8 +17,8 @@ TASK="Audit test coverage of chart/figure generation methods in flask_planhead/a
 CONFIGS=(
   "1-no-tools|--no-tools --no-extensions"
   "2-builtin-mapper|--no-extensions -e $PROJECT_DIR/.pi/extensions/ranked-map.ts"
-  "3-builtin-mapper-structural|--no-extensions -e $PROJECT_DIR/.pi/extensions/ranked-map.ts -e $PROJECT_DIR/.pi/extensions/structural-analyzer.ts"
-  "4-builtin-mapper-structural-rg|--no-extensions -e $PROJECT_DIR/.pi/extensions/ranked-map.ts -e $PROJECT_DIR/.pi/extensions/structural-analyzer.ts -e $PROJECT_DIR/.pi/extensions/ripgrep-search/index.ts"
+  "3-builtin-mapper-structural|--no-extensions -e $PROJECT_DIR/.pi/extensions/ranked-map.ts -e $PROJECT_DIR/.pi/extensions/structural-analyzer/index.ts"
+  "4-builtin-mapper-structural-rg|--no-extensions -e $PROJECT_DIR/.pi/extensions/ranked-map.ts -e $PROJECT_DIR/.pi/extensions/structural-analyzer/index.ts -e $PROJECT_DIR/.pi/extensions/ripgrep-search/index.ts"
 )
 
 GREEN='\033[0;32m'

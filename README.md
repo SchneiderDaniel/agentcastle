@@ -356,6 +356,8 @@ Selected extensions from AgentCastle are published as individual npm packages un
 | `@agentcastle/ripgrep-search` | Fast literal/regex code search — respects `.gitignore`, structured file:line:column:text output | `pi install npm:@agentcastle/ripgrep-search` |
 | `@agentcastle/lsp-auditor` | Pre-audit code quality via LSP before commit — diagnostics on changed files | `pi install npm:@agentcastle/lsp-auditor` |
 | `@agentcastle/ranked-map` | Codebase symbol index with auto-mode detection — keyword-ranked, recency-ranked, or full-dump | `pi install npm:@agentcastle/ranked-map` |
+| `@agentcastle/piignore` | Blocks AI access to sensitive files via `.piignore` patterns — keeps secrets safe | `pi install npm:@agentcastle/piignore` |
+| `@agentcastle/structural-analyzer` | AST-aware code search via ast-grep — finds function calls, classes, try/catch, and structural patterns | `pi install npm:@agentcastle/structural-analyzer` |
 
 **Why publish separately?** Not all extensions belong on pi.dev — some are AgentCastle-specific (supervisor, session-logger, context-info). Published packages are self-contained, useful in any Pi setup.
 
