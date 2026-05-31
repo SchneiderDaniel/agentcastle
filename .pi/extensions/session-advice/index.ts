@@ -154,25 +154,7 @@ export default function (pi: ExtensionAPI): void {
 						const date = new Date().toISOString().slice(0, 10);
 						const title = `Session Advice Report — ${date} (${findingCount} findings)`;
 
-						// Write body to temp file to avoid shell escaping issues
-						const bodyFile = path.join(sessionsDir, ".gh-issue-body.tmp");
-						fs.writeFileSync(bodyFile, body, "utf-8");
-
-						const result = execSync(
-							`gh issue create --repo "${repo}" --title "${title}" --body-file "${bodyFile}"`,
-							{
-								cwd,
-								timeout: 30_000,
-								encoding: "utf-8",
-							},
-						).trim();
-
-						// Clean up temp file
-						try {
-							fs.unlinkSync(bodyFile);
-						} catch {
-							/* ok */
-						}
+						const result = createGhIssue(repo, title, body, sessionsDir);
 
 						ctx.ui.notify(`Issue created: ${result}`, "info");
 					} catch (err) {
@@ -541,6 +523,55 @@ export function generateAdviceReport(sessionsDir: string): string {
 function short(s: string, n: number): string {
 	if (s.length <= n) return s;
 	return s.slice(0, n - 3) + "...";
+}
+
+/**
+ * Create a GitHub issue using gh CLI.
+ * Writes body to a temp file, runs `gh issue create`, and cleans up in finally.
+ *
+ * @param repo - GitHub repo string (e.g. "owner/repo")
+ * @param title - Issue title
+ * @param body - Issue body (markdown)
+ * @param sessionsDir - Directory to write temp file (and clean up from)
+ * @param execFn - Exec function for testing (defaults to execSync)
+ * @returns The issue URL (trimmed)
+ * @throws Any error from execFn or writeFileSync
+ */
+export function createGhIssue(
+	repo: string,
+	title: string,
+	body: string,
+	sessionsDir: string,
+	execFn: (
+		cmd: string,
+		opts: { cwd: string; timeout: number; encoding: string },
+	) => string | Buffer = execSync,
+): string {
+	const bodyFile = path.join(sessionsDir, ".gh-issue-body.tmp");
+	try {
+		fs.writeFileSync(bodyFile, body, "utf-8");
+
+		const raw = execFn(
+			`gh issue create --repo "${repo}" --title "${title}" --body-file "${bodyFile}"`,
+			{
+				cwd: process.cwd(),
+				timeout: 30_000,
+				encoding: "utf-8",
+			},
+		);
+		const result = (typeof raw === "string" ? raw : raw.toString("utf-8")).trim();
+
+		return result;
+	} finally {
+		// Clean up temp file — delete even if execFn throws
+		try {
+			if (fs.existsSync(bodyFile)) {
+				fs.unlinkSync(bodyFile);
+			}
+		} catch {
+			/* ok — best-effort cleanup */
+		}
+	}
 }
 
 /** Generate .advice.md for a session .jsonl file. */
