@@ -19,6 +19,7 @@ export function buildWidgetLines(
 	state: AgentRunState,
 	agentName: string,
 	model?: string,
+	idleWarning?: string | null,
 ): string[] {
 	const now = Date.now();
 
@@ -56,6 +57,9 @@ export function buildWidgetLines(
 	const hasLiveText = state.phase === "text" && state.liveText.trim();
 	const liveTextLine = hasLiveText ? `  ${state.liveText.trimEnd().slice(-200)}` : undefined;
 
+	// ── Idle warning (optional, shown when no events for >15s) ──
+	const idleLine = idleWarning ? `  ${idleWarning}` : undefined;
+
 	// ── Stats footer (always included) ──
 	const shortModel = model ? model.split("/").pop() || model : undefined;
 	const statsParts: string[] = [`subagent:${agentName}`];
@@ -69,7 +73,8 @@ export function buildWidgetLines(
 	const fixedCount = fixed.length;
 	const footerCount = 1;
 	const liveTextCount = liveTextLine ? 1 : 0;
-	const maxLogLines = MAX - fixedCount - liveTextCount - footerCount;
+	const idleLineCount = idleLine ? 1 : 0;
+	const maxLogLines = MAX - fixedCount - liveTextCount - idleLineCount - footerCount;
 
 	const lines: string[] = [...fixed];
 
@@ -82,6 +87,7 @@ export function buildWidgetLines(
 	}
 
 	if (liveTextLine) lines.push(liveTextLine);
+	if (idleLine) lines.push(idleLine);
 	lines.push(footer);
 
 	return lines;
@@ -99,6 +105,7 @@ export function buildWidgetComponent(
 	agentName: string,
 	model: string | undefined,
 	theme: any,
+	idleWarning?: string | null,
 ): Container {
 	const now = Date.now();
 	const w = Math.max(40, getTermWidth() - 4);
@@ -175,6 +182,11 @@ export function buildWidgetComponent(
 	if (state.phase === "text" && state.liveText.trim()) {
 		const partial = state.liveText.trimEnd().slice(-200);
 		c.addChild(new Text(fit(`  ${partial}`), 1, 0));
+	}
+
+	// ── Idle warning (optional) ──
+	if (idleWarning) {
+		c.addChild(new Text(fit(theme.fg("warning", `  ${idleWarning}`)), 1, 0));
 	}
 
 	// ── Stats footer ──

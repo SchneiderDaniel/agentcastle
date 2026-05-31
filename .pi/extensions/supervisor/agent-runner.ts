@@ -23,6 +23,7 @@ import {
 } from "./agent-stream";
 import { buildWidgetLines, getWorkingMessage } from "./session-widget";
 import { runAgentInProcess } from "./agent-session-runner";
+import { buildErrorNotificationContext } from "./diagnostics";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config";
@@ -41,7 +42,15 @@ export async function runAgent(
 	try {
 		return await runAgentInProcess(agent, task, ctx, pi, timeoutMs, cwd);
 	} catch (err: unknown) {
+		const errMsg = err instanceof Error ? err.message : String(err);
 		console.error(`[supervisor] In-process runner failed, falling back to subprocess: ${err}`);
+		// Show notification with diagnostic context
+		try {
+			const ctx2 = buildErrorNotificationContext("in-process-runner", errMsg);
+			ctx.ui.notify(`In-process runner failed — falling back to subprocess: ${ctx2}`, "warning");
+		} catch {
+			// notification fallback
+		}
 		// Fallback: subprocess (existing code)
 		return await runAgentSubprocess(agent, task, ctx, timeoutMs, cwd);
 	}

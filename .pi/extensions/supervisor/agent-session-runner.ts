@@ -29,6 +29,11 @@ import { resolveModel, buildToolList } from "./session-model.ts";
 import { processSessionEvent } from "./session-events.ts";
 import { buildAgentRunResult } from "./session-result.ts";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
+import { calculateIdleWarning, buildErrorNotificationContext } from "./diagnostics.ts";
+import { createWatchdog } from "./watchdog.ts";
+import type { WatchdogHandle } from "./watchdog.ts";
+import { createInstrumenter } from "./instrumentation.ts";
+import type { InstrumenterHandle } from "./instrumentation.ts";
 
 // ─── Main: runAgentInProcess ────────────────────────────────────────
 
@@ -88,6 +93,19 @@ export async function runAgentInProcess(
 	let flushTimer: NodeJS.Timeout | null = null;
 	let heartbeatTimer: NodeJS.Timeout | null = null;
 
+	// ── Diagnostics: event tracking, watchdog, instrumentation ──
+	// Track last event time for idle detection and watchdog liveness
+	let lastEventTime = Date.now();
+
+	// Create watchdog to detect stalled event delivery (30s = 30_000ms timeout, 5s check interval)
+	const WATCHDOG_TIMEOUT_MS = 30_000;
+	const WATCHDOG_CHECK_INTERVAL_MS = 5_000;
+	const IDLE_WARNING_THRESHOLD_MS = 15_000;
+
+	let watchdogFired = false;
+	let watchdogHandle: WatchdogHandle | undefined;
+	let instrumenter: InstrumenterHandle | undefined;
+
 	// Resolve model
 	const modelInfo = await resolveModel(agent.config.model || "");
 	let resolvedModel: ReturnType<typeof getModel> | undefined;
@@ -139,6 +157,28 @@ export async function runAgentInProcess(
 		});
 		session = sessionResult.session;
 
+		// ── Create watchdog and instrumenter ──
+		instrumenter = createInstrumenter();
+
+		watchdogHandle = createWatchdog({
+			timeoutMs: WATCHDOG_TIMEOUT_MS,
+			checkIntervalMs: WATCHDOG_CHECK_INTERVAL_MS,
+			onTimeout: async (elapsedMs: number) => {
+				watchdogFired = true;
+				const msg = `[supervisor] No events for ${Math.round(elapsedMs / 1000)}s — agent may be stuck`;
+				console.error(msg);
+				ctx.ui.notify(
+					`No agent events for ${Math.round(elapsedMs / 1000)}s — aborting stuck session`,
+					"warning",
+				);
+				try {
+					await session!.abort();
+				} catch {
+					// session already handled
+				}
+			},
+		});
+
 		// ── Live widget via string array ──
 		// Uses ctx.ui.setWidget() with a string array (lighter than Component factory).
 		// buildWidgetLines builds ≤20 lines from state (log entries, stats, phase info).
@@ -150,7 +190,15 @@ export async function runAgentInProcess(
 				flushTimer = null;
 			}
 			try {
-				ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName, agent.config.model));
+				const idleWarning = calculateIdleWarning(
+					Date.now(),
+					lastEventTime,
+					IDLE_WARNING_THRESHOLD_MS,
+				);
+				ctx.ui.setWidget(
+					widgetId,
+					buildWidgetLines(state, agentName, agent.config.model, idleWarning),
+				);
 				ctx.ui.setStatus("supervisor", undefined);
 			} catch (renderErr: unknown) {
 				const msg = renderErr instanceof Error ? renderErr.message : String(renderErr);
@@ -178,7 +226,21 @@ export async function runAgentInProcess(
 
 		unsubscribe = session.subscribe((event: any) => {
 			try {
+				// Update last event time for idle detection and watchdog
+				lastEventTime = Date.now();
+				watchdogHandle?.reset();
+
+				// Instrument: count events by kind
+				const eventKind = event?.type || "unknown";
+				instrumenter?.incrementEvent(eventKind);
+
 				const result = processSessionEvent(event, state);
+
+				// Track phase transitions via instrumentation
+				if (result.workingChange) {
+					instrumenter?.trackPhase(state.phase);
+				}
+
 				if (result.flush) scheduleFlush();
 				if (result.workingChange) {
 					const wm = getWorkingMessage(state, agentName);
@@ -189,8 +251,18 @@ export async function runAgentInProcess(
 				console.error(
 					`[supervisor] session event error for ${agentName}: ${msg} (event type: ${event?.type})`,
 				);
+				// Show notification to user with diagnostic context
+				try {
+					const notificationCtx = buildErrorNotificationContext(event, evErr);
+					ctx.ui.notify(notificationCtx, "error");
+				} catch {
+					// notify fallback — don't let notification failure cascade
+				}
 			}
 		});
+
+		// Start watchdog now that subscription is active
+		watchdogHandle?.start();
 
 		// ── Bug 2 fix: Properly settle session.prompt() on timeout ──
 		// When timeout fires, session.abort() is called but session.prompt()
@@ -256,6 +328,7 @@ export async function runAgentInProcess(
 				} catch {}
 				if (flushTimer) clearTimeout(flushTimer);
 				if (heartbeatTimer) clearInterval(heartbeatTimer);
+				watchdogHandle?.stop();
 				ctx.ui.setWidget(widgetId, undefined);
 				ctx.ui.setWorkingMessage(undefined);
 				ctx.ui.setStatus("supervisor", "");
@@ -275,6 +348,47 @@ export async function runAgentInProcess(
 			}
 		}
 
+		// Watchdog fired check: session was aborted due to stalled event delivery
+		// This triggers the same failure path, causing runAgent to fall back to subprocess
+		if (watchdogFired) {
+			const durationMs = Date.now() - startedAt;
+			pushLog(
+				state,
+				`[Stall: ${agentName} aborted after ${formatDuration(durationMs)} — no events for >${WATCHDOG_TIMEOUT_MS / 1000}s]`,
+			);
+
+			if (state.liveText.trim()) {
+				state.textOutputLines.push(state.liveText.trim());
+			}
+			if (state.liveThinking.trim()) {
+				state.thinkingOutputLines.push(state.liveThinking.trim());
+			}
+
+			// Ensure prompt settled
+			if (!promptSettled) {
+				try {
+					await promptPromise;
+				} catch {}
+			}
+
+			// Cleanup
+			try {
+				session?.dispose();
+			} catch {}
+			try {
+				unsubscribe?.();
+			} catch {}
+			if (flushTimer) clearTimeout(flushTimer);
+			if (heartbeatTimer) clearInterval(heartbeatTimer);
+			watchdogHandle?.stop();
+			ctx.ui.setWidget(widgetId, undefined);
+			ctx.ui.setWorkingMessage(undefined);
+			ctx.ui.setStatus("supervisor", "");
+
+			const messages = session?.state?.messages || [];
+			return buildAgentRunResult(state, agentName, false, durationMs, messages);
+		}
+
 		// Budget exceeded check: abort session if budget (token/tool limit) was exceeded
 		if (state.budgetExceeded) {
 			try {
@@ -282,6 +396,18 @@ export async function runAgentInProcess(
 			} catch {
 				// session already aborted or disposed
 			}
+		}
+
+		// Stop watchdog before final flush
+		watchdogHandle?.stop();
+
+		// Log instrumentation snapshot
+		if (instrumenter) {
+			const snap = instrumenter.snapshot();
+			pushLog(
+				state,
+				`📊 Instrumentation: ${snap.eventsTotal} events, ${snap.toolCalls} tools, ${snap.thinkingDeltas} thinking deltas, ${snap.textDeltas} text deltas, ${snap.phaseTransitions} phase transitions`,
+			);
 		}
 
 		// Success path
@@ -330,6 +456,7 @@ export async function runAgentInProcess(
 		} catch {}
 		if (flushTimer) clearTimeout(flushTimer);
 		if (heartbeatTimer) clearInterval(heartbeatTimer);
+		watchdogHandle?.stop();
 
 		ctx.ui.setWidget(widgetId, undefined);
 		ctx.ui.setWorkingMessage(undefined);
