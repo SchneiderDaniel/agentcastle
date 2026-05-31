@@ -31,7 +31,7 @@ interface ExecFn {
  * by ending quote, adding escaped quote, and resuming.
  * abc'def → 'abc'\''def'
  */
-function shSingleQuote(s: string): string {
+export function shSingleQuote(s: string): string {
 	return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
@@ -69,13 +69,21 @@ export async function runCrawl4aiScript(
 	fs.writeFileSync(configPath, JSON.stringify(config), "utf-8");
 
 	// Build bash command with all paths single-quoted
-	const ldPath = shSingleQuote(depsDir + ":$LD_LIBRARY_PATH");
 	const qBrowsers = shSingleQuote(browsersPath);
 	const qPython = shSingleQuote(python);
 	const qScript = shSingleQuote(scriptPath);
 	const qConfig = shSingleQuote(configPath);
 
-	const bashCmd = `env LD_LIBRARY_PATH=${ldPath} PLAYWRIGHT_BROWSERS_PATH=${qBrowsers} ${qPython} ${qScript} ${qConfig}`;
+	// Quote depsDir separately from $LD_LIBRARY_PATH so bash can expand the variable.
+	// Use bash ${var:+:var} pattern: prepend colon+value only if LD_LIBRARY_PATH is non-empty.
+	// The \$ escapes the dollar sign from TypeScript string, leaving $ for inner bash -c expansion.
+	let bashCmd: string;
+	if (depsDir) {
+		const qDepsDir = shSingleQuote(depsDir);
+		bashCmd = `env LD_LIBRARY_PATH=${qDepsDir}\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH} PLAYWRIGHT_BROWSERS_PATH=${qBrowsers} ${qPython} ${qScript} ${qConfig}`;
+	} else {
+		bashCmd = `env PLAYWRIGHT_BROWSERS_PATH=${qBrowsers} ${qPython} ${qScript} ${qConfig}`;
+	}
 
 	return execFn
 		? execFn("bash", ["-c", bashCmd], { timeout, signal })
