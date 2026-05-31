@@ -174,16 +174,21 @@ export function handleMessageEnd(
 
 	if (msg.role === "assistant") {
 		if (!state.thinkingPushedThisTurn && Array.isArray(msg.content)) {
+			const thinkingParts: string[] = [];
 			for (const block of msg.content) {
 				if (block.type === "thinking" && block.thinking) {
 					const thinkingText =
 						typeof block.thinking === "string"
 							? block.thinking
 							: JSON.stringify(block.thinking).slice(0, 500);
+					thinkingParts.push(thinkingText);
 					for (const t of thinkingText.split("\n")) {
 						if (t.trim()) pushLog(state, `💭 ${t.slice(0, 500)}`);
 					}
 				}
+			}
+			if (thinkingParts.length > 0) {
+				state.thinkingOutputLines.push(thinkingParts.join("\n").trim());
 			}
 			state.thinkingPushedThisTurn = true;
 		}
