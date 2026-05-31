@@ -15,6 +15,7 @@ import {
 	writeAdvice,
 	backfillMissingAdvice,
 	handleShutdown,
+	createGhIssue,
 } from "./index.ts";
 
 // ── Helpers ──
@@ -763,5 +764,127 @@ describe("Phase 6: Shutdown sets correct symlink", () => {
 		handleShutdown(null);
 		handleShutdown(undefined);
 		assert.ok(true, "no-op on null/undefined");
+	});
+});
+
+// ── Phase 7: Temp file cleanup on gh issue create failure ──
+
+describe("Phase 7: Temp file cleanup on gh issue create failure", () => {
+	const tmpDirs7: string[] = [];
+
+	after(() => {
+		for (const d of tmpDirs7) {
+			try {
+				fs.rmSync(d, { recursive: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	function makeDir(): string {
+		const dir = fs.mkdtempSync("/tmp/session-advice-test-");
+		tmpDirs7.push(dir);
+		return dir;
+	}
+
+	it("execFn returns URL → temp file deleted, function returns URL string", () => {
+		const dir = makeDir();
+		const url = "https://github.com/owner/repo/issues/1";
+		const execFn = () => url;
+
+		const result = createGhIssue("owner/repo", "title", "body", dir, execFn);
+
+		assert.equal(result, url, "should return the URL");
+		assert.ok(!fs.existsSync(path.join(dir, ".gh-issue-body.tmp")), "temp file should be deleted");
+	});
+
+	it("execFn throws 'gh: command not found' → temp file deleted, error propagated", () => {
+		const dir = makeDir();
+		const execFn = () => {
+			throw new Error("gh: command not found");
+		};
+
+		assert.throws(
+			() => createGhIssue("owner/repo", "title", "body", dir, execFn),
+			/gh: command not found/,
+		);
+		assert.ok(!fs.existsSync(path.join(dir, ".gh-issue-body.tmp")), "temp file should be deleted");
+	});
+
+	it("execFn throws 'Process exited with code 1' → temp file deleted, error propagated", () => {
+		const dir = makeDir();
+		const execFn = () => {
+			throw new Error("Process exited with code 1");
+		};
+
+		assert.throws(
+			() => createGhIssue("owner/repo", "title", "body", dir, execFn),
+			/Process exited with code 1/,
+		);
+		assert.ok(!fs.existsSync(path.join(dir, ".gh-issue-body.tmp")), "temp file should be deleted");
+	});
+
+	it("execFn returns with trailing newline → result trimmed, temp file deleted", () => {
+		const dir = makeDir();
+		const url = "https://github.com/owner/repo/issues/1\n";
+		const execFn = () => url;
+
+		const result = createGhIssue("owner/repo", "title", "body", dir, execFn);
+
+		assert.equal(
+			result,
+			"https://github.com/owner/repo/issues/1",
+			"trailing whitespace should be trimmed",
+		);
+		assert.ok(!fs.existsSync(path.join(dir, ".gh-issue-body.tmp")), "temp file should be deleted");
+	});
+
+	it("non-existent sessionsDir → writeFileSync throws before temp file, no .tmp file created", () => {
+		const execFn = () => "https://example.com";
+
+		assert.throws(() => createGhIssue("owner/repo", "title", "body", "/nonexistent/path", execFn));
+	});
+
+	it("execFn throws non-Error type (string 'fail') → temp file deleted, error propagated", () => {
+		const dir = makeDir();
+		const execFn = () => {
+			// eslint-disable-next-line no-throw-literal
+			throw "fail";
+		};
+
+		assert.throws(() => createGhIssue("owner/repo", "title", "body", dir, execFn));
+		assert.ok(!fs.existsSync(path.join(dir, ".gh-issue-body.tmp")), "temp file should be deleted");
+	});
+
+	it("empty sessionsDir string → writeFileSync uses cwd, temp file cleaned up", () => {
+		const execFn = () => "https://example.com";
+
+		const result = createGhIssue("owner/repo", "title", "body", "", execFn);
+
+		assert.equal(result, "https://example.com");
+		// No .gh-issue-body.tmp left in current dir
+		assert.ok(!fs.existsSync(".gh-issue-body.tmp"), "temp file should not exist in cwd");
+	});
+
+	it("execFn succeeds but unlinkSync fails → finally swallows unlink error, returns URL", () => {
+		const dir = makeDir();
+		const url = "https://github.com/owner/repo/issues/1";
+		// execFn makes the temp file read-only so unlinkSync in finally fails
+		const execFn = () => {
+			fs.chmodSync(path.join(dir, ".gh-issue-body.tmp"), 0o444);
+			return url;
+		};
+
+		const result = createGhIssue("owner/repo", "title", "body", dir, execFn);
+
+		assert.equal(result, url, "should still return the URL");
+		// Clean up
+		try {
+			fs.chmodSync(path.join(dir, ".gh-issue-body.tmp"), 0o644);
+			fs.unlinkSync(path.join(dir, ".gh-issue-body.tmp"));
+		} catch {
+			/* ok */
+		}
 	});
 });

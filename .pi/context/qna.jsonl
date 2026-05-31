@@ -92,3 +92,4 @@
 {"datetime":"2026-05-30T22:10:11.575Z","question":"Package name on npm — scoped or unscoped? If you have @agentcastle npm org, use @agentcastle/ask-user. Otherwise I can use agentcastle-ask-user or pi-ask-user.","answer":"scoped"}
 {"datetime":"2026-05-31T12:33:35.016Z","question":"Post this review to PR #328?","answer":"post"}
 {"datetime":"2026-05-31T12:44:31.847Z","question":"\"All extensions in agentcastle\" — how should I scope this? 14 extensions total.","answer":"individual"}
+{"datetime":"2026-05-31T12:50:55.151Z","question":"agent-harness architecture review filed (#335 umbrella + #336-#339 sub-issues). 13 extensions left. Continue with next or reconsider approach?","answer":"continue"}
