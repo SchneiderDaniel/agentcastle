@@ -19,9 +19,7 @@ import type { ExtensionAPI, ToolCallEventResult } from "@earendil-works/pi-codin
 import { createHarnessState } from "../../lib/harness-state.ts";
 import type { HarnessState } from "../../lib/harness-state.ts";
 import {
-	isSearchInBash,
-	isCatHeadTailInBash,
-	isFileModifyingBash,
+	BashCommand,
 	buildRedirectMessage,
 	MULTI_VERB_TOOLS,
 	CASCADE_THRESHOLD,
@@ -137,6 +135,11 @@ export function createToolCallHandler(state: HarnessState) {
 		}
 
 		let result: ToolCallResult | null = null;
+		// Parse bash command once if tool is bash (reused across guards)
+		const bashCmd =
+			toolName === "bash" && (args.command ?? "")
+				? new BashCommand((args.command ?? "") as string)
+				: undefined;
 
 		// ── 2. Error tracking ──
 		if (event.isError) {
@@ -148,9 +151,8 @@ export function createToolCallHandler(state: HarnessState) {
 		// File-modifying tool calls invalidate the read cache
 		if (toolName === "write" || toolName === "edit") {
 			state.readCache.clear();
-		} else if (toolName === "bash") {
-			const command = (args.command ?? "") as string;
-			if (command && isFileModifyingBash(command)) {
+		} else if (bashCmd) {
+			if (bashCmd.isFileModify()) {
 				state.readCache.clear();
 			}
 		}
@@ -227,29 +229,25 @@ export function createToolCallHandler(state: HarnessState) {
 		}
 
 		// ── 6. Tool mismatch detection (bash only) ──
-		if (!result && toolName === "bash") {
-			const command = (args.command ?? "") as string;
-			if (command) {
-				// Search in bash (grep/rg) → redirect to ripgrep_search
-				if (isSearchInBash(command)) {
-					result = {
-						block: true,
-						reason: buildRedirectMessage("ripgrep_search"),
-						redirectTo: "ripgrep_search",
-					};
-				}
-
-				// File read in bash (cat/head/tail) → redirect to read
-				else if (isCatHeadTailInBash(command)) {
-					result = {
-						block: true,
-						reason: buildRedirectMessage("read"),
-						redirectTo: "read",
-					};
-				}
-				// ls is informational only — pass through at runtime (not blocked)
+		if (!result && bashCmd) {
+			// Search in bash (grep/rg) → redirect to ripgrep_search
+			if (bashCmd.isSearch()) {
+				result = {
+					block: true,
+					reason: buildRedirectMessage("ripgrep_search"),
+					redirectTo: "ripgrep_search",
+				};
 			}
-			// Empty/null command: result stays null (pass through)
+
+			// File read in bash (cat/head/tail) → redirect to read
+			else if (bashCmd.isFileRead()) {
+				result = {
+					block: true,
+					reason: buildRedirectMessage("read"),
+					redirectTo: "read",
+				};
+			}
+			// ls is informational only — pass through at runtime (not blocked)
 		}
 
 		// ── 7. Record only if NOT blocked ──
