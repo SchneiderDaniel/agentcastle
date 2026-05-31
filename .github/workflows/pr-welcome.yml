@@ -1,7 +1,7 @@
 name: PR Welcome
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened]
 
 permissions:
@@ -17,7 +17,6 @@ jobs:
       && github.event.pull_request.author_association != 'COLLABORATOR'
       && github.event.pull_request.author_association != 'MEMBER'
     steps:
-      - uses: actions/checkout@v4
       - name: Post welcome comment
         env:
           GH_TOKEN: ${{ github.token }}

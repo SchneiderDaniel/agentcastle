@@ -42,3 +42,4 @@
 {"datetime":"2026-05-31T19:03:01.186Z","question":"Publish @agentcastle/piignore to npm now?\n\nFiles created:\n- `package.json` — `@agentcastle/piignore` v0.1.0 (no third-party deps)\n- `README.md` — features, install, usage with .piignore examples","answer":"publish"}
 {"datetime":"2026-05-31T19:04:09.486Z","question":"Which extension to package as npm pi-package?","answer":"structural-analyzer"}
 {"datetime":"2026-05-31T19:04:27.109Z","question":"Publish @agentcastle/structural-analyzer to npm now?\n\nFiles created:\n- `package.json` — `@agentcastle/structural-analyzer` v0.1.0 (no third-party deps)\n- `README.md` — features, install, usage with pattern examples","answer":"publish"}
+{"datetime":"2026-05-31T19:16:14.851Z","question":"Change trigger from `pull_request` to `pull_request_target` so the welcome comment posts immediately for new users without needing manual approval? Also remove the unused checkout step.","answer":"use_pull_request_target"}
