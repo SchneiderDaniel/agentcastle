@@ -647,3 +647,114 @@ describe("extractLastJson — string-boundary-aware brace matching", () => {
 		assert.equal((result as AgentOutput).commentBody, "Last JSON");
 	});
 });
+
+// ─── Tests: thinking-prefix stripping — JSON in thinking blocks ────
+// When agents use thinking:high, JSON output may be emitted inside
+// thinking blocks. Event handlers push thinking lines to fullLog with
+// "💭 " prefix per line. stripThinkingPrefix removes these prefixes
+// so parseAgentOutput can still extract valid JSON.
+
+describe("parseAgentOutput — JSON in thinking blocks (💭 prefix)", () => {
+	it("extracts JSON from thinking-prefixed lines (thinking:high scenario)", () => {
+		// Simulates fullLog when thinking:high agent outputs JSON inside thinking blocks
+		const fullLog = [
+			"💭 I need to design the architecture for this feature",
+			"💭 Let me consider the clean architecture approach",
+			"💭 {",
+			'💭   "action": "COMPLETE",',
+			'💭   "agentName": "architect",',
+			'💭   "commentBody": "## Architecture - My design approach",',
+			'💭   "summary": "Proposed architecture"',
+			"💭 }",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse JSON embedded in thinking blocks");
+		const o = result as AgentOutput;
+		assert.equal(o.action, "COMPLETE");
+		assert.equal(o.agentName, "architect");
+		assert.equal(o.commentBody, "## Architecture - My design approach");
+		assert.equal(o.summary, "Proposed architecture");
+	});
+
+	it("extracts JSON from mixed thinking+tool+text fullLog", () => {
+		// Realistic fullLog: tool calls + thinking + JSON-in-thinking
+		const fullLog = [
+			'🔧 read_file {"path":"/src/module.ts"}',
+			"✓ read_file",
+			"💭 Analyzing code structure",
+			'🔧 search_code {"pattern":"class.*Module"}',
+			"✓ search_code",
+			"💭 {",
+			'💭   "action": "COMPLETE",',
+			'💭   "agentName": "architect",',
+			'💭   "commentBody": "Review complete"',
+			"💭 }",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse JSON from mixed log with 💭 prefix");
+		assert.equal((result as AgentOutput).commentBody, "Review complete");
+	});
+
+	it("handles JSON entirely in thinking blocks (no text blocks)", () => {
+		// JSON entirely within thinking blocks, no separate text output
+		const fullLog = [
+			"💭 {",
+			'💭   "action": "COMPLETE",',
+			'💭   "agentName": "architect",',
+			'💭   "commentBody": "## Summary - Just thinking through this"',
+			"💭 }",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse JSON from pure thinking output");
+		assert.ok((result as AgentOutput).commentBody?.includes("Summary"));
+	});
+
+	it("still handles normal (non-prefixed) JSON correctly", () => {
+		// Regression: ensure non-prefixed JSON still works
+		const json = '{"commentBody":"Normal text block","action":"COMPLETE","agentName":"architect"}';
+		const result = parseAgentOutput(json);
+		assert.ok(isAgentOutput(result), "must still parse normal JSON");
+		assert.equal((result as AgentOutput).commentBody, "Normal text block");
+	});
+
+	it("handles JSON in code fence mixed with thinking prefix", () => {
+		// JSON inside code fence but with some thinking lines before
+		const fullLog = [
+			"💭 Let me output the JSON",
+			"```json",
+			"{",
+			'  "action": "COMPLETE",',
+			'  "agentName": "architect",',
+			'  "commentBody": "Code fenced approach"',
+			"}",
+			"```",
+			"💭 And I'm done",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse code-fenced JSON with thinking lines");
+		assert.equal((result as AgentOutput).commentBody, "Code fenced approach");
+	});
+
+	it("handles multi-line commentBody in thinking blocks", () => {
+		// commentBody with embedded newline (\\n escape in JSON) inside thinking prefix
+		const fullLog = [
+			"💭 {",
+			'💭   "action": "COMPLETE",',
+			'💭   "agentName": "architect",',
+			'💭   "commentBody": "## Summary\\nJust thinking through this"',
+			"💭 }",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(
+			isAgentOutput(result),
+			"must parse JSON with \\\\n in commentBody in thinking blocks",
+		);
+		// The \\n in the JSON text (from JavaScript string \\\\n) becomes \n after JSON.parse,
+		// which is a literal backslash followed by n (not a real newline)
+		assert.ok((result as AgentOutput).commentBody?.includes("Summary"));
+		assert.ok(
+			(result as AgentOutput).commentBody?.includes("\\n") ||
+				(result as AgentOutput).commentBody?.includes("\n"),
+		);
+	});
+});

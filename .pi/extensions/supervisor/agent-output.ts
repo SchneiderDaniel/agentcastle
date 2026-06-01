@@ -19,6 +19,25 @@ export function stripAnsi(text: string): string {
 	return text.replace(ANSI_RE, "");
 }
 
+// ─── Thinking Prefix Stripping ──────────────────────────────────────
+
+/**
+ * Strip "💭 " prefix from lines in text.
+ *
+ * When agents use `thinking: high`, the JSON output may be emitted inside
+ * thinking blocks instead of text blocks. The event handlers push thinking
+ * content to fullLog with the "💭 " prefix on each line. This prefix makes
+ * the text invalid JSON, causing parseAgentOutput to fail.
+ *
+ * Stripping "💭 " from the start of each line recovers the original JSON
+ * so it can be extracted and parsed correctly.
+ */
+const THINKING_PREFIX_RE = /^💭\s*/gm;
+
+function stripThinkingPrefix(text: string): string {
+	return text.replace(THINKING_PREFIX_RE, "");
+}
+
 // ─── Known Auditing Dimensions ────────────────────────────────────
 
 const KNOWN_DIMENSIONS = new Set<AuditDimension>([
@@ -355,8 +374,13 @@ export function parseAgentOutput(output: string): ParseResult {
 	// Step 1: Strip ANSI escape sequences
 	const clean = stripAnsi(trimmed);
 
+	// Step 1.5: Strip "💭 " thinking prefix from lines
+	// Agents with thinking:high emit JSON in thinking blocks, which get
+	// pushed to fullLog with "💭 " per line. Stripping recovers valid JSON.
+	const stripped = stripThinkingPrefix(clean);
+
 	// Step 2: Extract JSON from text
-	const jsonStr = extractLastJson(clean);
+	const jsonStr = extractLastJson(stripped);
 
 	// Step 2.5: Sanitize JSON — escape literal newlines inside string values
 	// Agents often produce commentBody with actual newlines instead of \\n escapes

@@ -259,10 +259,26 @@ export function handleDone(
 		if (typeof msg.usage.cacheWrite === "number") state.cacheWrite = msg.usage.cacheWrite;
 	}
 
-	if (msg?.content && Array.isArray(msg.content)) {
+	// handleDone: extract content from done event
+	// Some models/SDKs (e.g. thinking:high) don't emit text_delta/thinking_delta events.
+	// Instead, the entire response is in the done event's message.content as a raw string.
+	// Support both array format (blocks) and string format.
+	// Use 'as any' because the SDK type defines content as Array but at runtime can be string.
+	const content: unknown = msg?.content;
+
+	if (typeof content === "string" && content.trim()) {
+		// String content — no block structure, all text
+		if (!state.textPushedThisTurn) {
+			state.textOutputLines.push(content.trim());
+			state.textPushedThisTurn = true;
+			for (const t of content.split("\n")) {
+				if (t.trim()) pushLog(state, t);
+			}
+		}
+	} else if (Array.isArray(content)) {
 		const textParts: string[] = [];
 		const thinkingParts: string[] = [];
-		for (const block of msg.content) {
+		for (const block of content) {
 			if (block.type === "text" && block.text) {
 				textParts.push(block.text);
 			}

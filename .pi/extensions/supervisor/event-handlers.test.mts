@@ -653,3 +653,75 @@ describe("handleDone — cache stats", () => {
 		assert.equal(state.cacheWrite, undefined);
 	});
 });
+
+// ─── handleDone — string content (no streaming models) ────────────
+// Use 'as any' casts because the NormalizedEvent type defines message.content
+// as Array but at runtime the SDK can deliver a string for non-streaming models.
+
+describe("handleDone — string content (no streaming models)", () => {
+	it("extracts text from string content (no array blocks)", () => {
+		const state = createState();
+		const text = '{"action":"COMPLETE","agentName":"architect","commentBody":"Arch review"}';
+		handleDone(state, {
+			kind: "done",
+			message: {
+				content: text as any,
+			},
+		});
+		assert.equal(state.textPushedThisTurn, true);
+		assert.equal(state.textOutputLines.length, 1);
+		assert.ok(state.textOutputLines[0].includes("Arch review"));
+		assert.ok(state.fullLog.some((l: string) => l.includes("Arch review")));
+	});
+
+	it("extracts multi-line text from string content", () => {
+		const state = createState();
+		const text = "Line 1\nLine 2\nLine 3";
+		handleDone(state, {
+			kind: "done",
+			message: {
+				content: text as any,
+			},
+		});
+		assert.equal(state.textPushedThisTurn, true);
+		assert.equal(state.textOutputLines[0], "Line 1\nLine 2\nLine 3");
+		assert.ok(state.fullLog.includes("Line 1"));
+		assert.ok(state.fullLog.includes("Line 3"));
+	});
+
+	it("skips string content when textPushedThisTurn already true", () => {
+		const state = createState({ textPushedThisTurn: true });
+		handleDone(state, {
+			kind: "done",
+			message: {
+				content: "should not appear" as any,
+			},
+		});
+		assert.equal(state.textOutputLines.length, 0);
+	});
+
+	it("skips empty/whitespace string content", () => {
+		const state = createState();
+		handleDone(state, {
+			kind: "done",
+			message: {
+				content: "   \n   " as any,
+			},
+		});
+		assert.equal(state.textPushedThisTurn, false);
+		assert.equal(state.textOutputLines.length, 0);
+	});
+
+	it("still processes array content alongside string content path", () => {
+		// Regression: ensure array content path still works
+		const state = createState();
+		handleDone(state, {
+			kind: "done",
+			message: {
+				content: [{ type: "text", text: "array content works" }],
+			},
+		});
+		assert.equal(state.textPushedThisTurn, true);
+		assert.equal(state.textOutputLines[0], "array content works");
+	});
+});
