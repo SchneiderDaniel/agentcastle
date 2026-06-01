@@ -1,0 +1,200 @@
+/**
+ * ranked-map — RankedMapEngine orchestration class
+ *
+ * Extracts the execute handler logic into a testable class with
+ * independent methods for index building, ranking, previews, and formatting.
+ *
+ * Constructor takes config and exec, making every phase testable
+ * without running the full handler.
+ */
+
+import {
+	type ExecFn,
+	type CachedIndex,
+	type RankedMapConfig,
+	type RankedFileScore,
+	type RankedMapResult,
+} from "./types.ts";
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { buildCtagsArgs, buildSymbolIndex } from "./ctags.ts";
+import { loadCachedIndex } from "./cache.ts";
+import { selectMode, dumpAllFiles, formatOutput } from "./format.ts";
+import { computeKeywordScores, computeRecencyScores, rankFiles } from "./scoring.ts";
+import { runKeywordSearch } from "./search.ts";
+import { runGitRecency, getGitHead } from "./git.ts";
+
+/** Result shape for the rank method — extends dumpAllFiles/rankFiles result with mode. */
+export interface RankResult {
+	files: RankedFileScore[];
+	totalTokens: number;
+	truncated: boolean;
+	mode: "ranked" | "full_dump";
+}
+
+/**
+ * Orchestrates the ranked-map pipeline: index, search, rank, format.
+ *
+ * Usage:
+ *   const engine = new RankedMapEngine(config, exec, cwd);
+ *   const index = await engine.buildOrLoadIndex(targetDir, cacheDir, signal);
+ *   const ranked = await engine.rank(index, query, budget, signal);
+ *   const withPreviews = engine.addPreviews(ranked.files, targetDir, ranked.mode);
+ *   const output = engine.format(withPreviews, budget, ranked.truncated, ranked.mode);
+ */
+export class RankedMapEngine {
+	constructor(
+		private config: RankedMapConfig,
+		private exec: ExecFn,
+		private cwd: string,
+	) {}
+
+	/**
+	 * Build or load the symbol index.
+	 *
+	 * 1. Looks up git HEAD for cache invalidation.
+	 * 2. Tries to load a cached index matching current HEAD.
+	 * 3. On cache miss, runs ctags, parses JSONL output, caches the result.
+	 *
+	 * @throws Error if ctags fails with non-zero exit and no usable output.
+	 */
+	async buildOrLoadIndex(
+		targetDir: string,
+		cacheDir: string,
+		signal?: AbortSignal,
+	): Promise<CachedIndex> {
+		const cachePath = resolve(cacheDir, "ranked-map-index.json");
+		const currentHead = await getGitHead(this.exec, this.cwd, signal);
+
+		// Try cache first
+		if (currentHead) {
+			const cached = loadCachedIndex(cachePath, currentHead);
+			if (cached) return cached;
+		}
+
+		// Build new index
+		try {
+			if (!existsSync(cacheDir)) {
+				mkdirSync(cacheDir, { recursive: true });
+			}
+		} catch {
+			// non-critical — cache dir may already exist
+		}
+
+		const { command, args } = buildCtagsArgs(targetDir, 0);
+		const result = await this.exec(command, args, {
+			cwd: this.cwd,
+			timeout: 30_000,
+			signal,
+		});
+
+		if (result.code !== 0 && (!result.stdout || result.stdout.trim().length === 0)) {
+			throw new Error(
+				`ctags failed (exit code ${result.code}): ${result.stderr || "unknown error"}\n\nEnsure universal-ctags is installed with JSON output support.`,
+			);
+		}
+
+		const index = buildSymbolIndex(result.stdout, currentHead || "unknown");
+
+		try {
+			writeFileSync(cachePath, JSON.stringify(index), "utf-8");
+		} catch {
+			/* non-critical — cache write failure is not fatal */
+		}
+
+		return index;
+	}
+
+	/**
+	 * Rank files based on query and recency, or dump all for small repos.
+	 *
+	 * Mode selection:
+	 * - query provided → "ranked" (keyword + recency scoring)
+	 * - no query, totalSymbols <= autoThreshold → "full_dump" (path-sorted)
+	 * - no query, totalSymbols > autoThreshold → "ranked" (recency-only)
+	 */
+	async rank(
+		index: CachedIndex,
+		query: string,
+		budget: number,
+		signal?: AbortSignal,
+	): Promise<RankResult> {
+		const totalSymbols = Object.values(index.symbols).flat().length;
+		const mode = selectMode(query, totalSymbols, this.config.autoThreshold);
+
+		if (mode === "full_dump") {
+			const dumped = dumpAllFiles(index.symbols, budget);
+			return { ...dumped, mode: "full_dump" as const };
+		}
+
+		// Ranked mode: compute keyword scores (if query) and recency scores
+		let keywordScores: Record<string, number> = {};
+		if (query.trim()) {
+			const { fileMatches, terms } = await runKeywordSearch(
+				this.exec,
+				query,
+				/* targetDir */ ".", // uses cwd; search targetDir same as index target
+				this.cwd,
+				signal,
+			);
+			keywordScores = computeKeywordScores(fileMatches, terms);
+		}
+
+		const fileDates = await runGitRecency(
+			this.exec,
+			this.config.recencyWindowDays,
+			this.cwd,
+			signal,
+		);
+		const recencyScores = computeRecencyScores(fileDates, this.config.recencyWindowDays);
+
+		const ranked = rankFiles(
+			keywordScores,
+			recencyScores,
+			this.config.weights,
+			budget,
+			index.symbols,
+		);
+
+		return { ...ranked, mode: "ranked" as const };
+	}
+
+	/**
+	 * Add file previews (first 5 lines) for ranked mode results.
+	 * Full_dump mode files are returned unchanged.
+	 */
+	addPreviews(
+		files: RankedFileScore[],
+		targetDir: string,
+		mode: "ranked" | "full_dump",
+	): RankedFileScore[] {
+		if (mode === "full_dump") return files;
+
+		return files.map((f) => {
+			if (f.preview) return f; // already has preview
+			let preview = "";
+			try {
+				const fullPath = resolve(this.cwd, targetDir, f.path);
+				if (existsSync(fullPath)) {
+					preview = readFileSync(fullPath, "utf-8").split("\n").slice(0, 5).join("\n");
+				}
+			} catch {
+				/* empty preview */
+			}
+			return { ...f, preview };
+		});
+	}
+
+	/**
+	 * Format ranked files into the output shape expected by the tool.
+	 * Delegates to formatOutput internally.
+	 */
+	format(
+		files: RankedFileScore[],
+		budget: number,
+		truncated: boolean,
+		mode: "ranked" | "full_dump",
+	): RankedMapResult {
+		return formatOutput(files, budget, truncated, mode);
+	}
+}
