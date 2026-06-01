@@ -43,3 +43,10 @@
 {"datetime":"2026-05-31T19:04:09.486Z","question":"Which extension to package as npm pi-package?","answer":"structural-analyzer"}
 {"datetime":"2026-05-31T19:04:27.109Z","question":"Publish @agentcastle/structural-analyzer to npm now?\n\nFiles created:\n- `package.json` — `@agentcastle/structural-analyzer` v0.1.0 (no third-party deps)\n- `README.md` — features, install, usage with pattern examples","answer":"publish"}
 {"datetime":"2026-05-31T19:16:14.851Z","question":"Change trigger from `pull_request` to `pull_request_target` so the welcome comment posts immediately for new users without needing manual approval? Also remove the unused checkout step.","answer":"use_pull_request_target"}
+{"datetime":"2026-06-01T19:15:26.705Z","question":"Which pi docs matter for validation? All of them (README + docs/*.md + examples/*), or specific files like extensions.md, sdk.md, packages.md?","answer":"all"}
+{"datetime":"2026-06-01T19:15:39.302Z","question":"What counts as a violation? Pick the scope:","answer":"strict"}
+{"datetime":"2026-06-01T19:15:48.120Z","question":"One issue per extension with all its violations listed together, or one issue per individual violation (so one extension could spawn multiple issues)?","answer":"per_extension"}
+{"datetime":"2026-06-01T19:16:04.495Z","question":"Should the prompt read all pi docs dynamically each run, or should docs/examples content be prepopulated in the prompt file so the LLM doesn't need web access?","answer":"dynamic_read"}
+{"datetime":"2026-06-01T19:16:23.305Z","question":"What issue labels? Always `extension-validation`? Should it also tag the extension name as a label?","answer":"both_labels"}
+{"datetime":"2026-06-01T19:16:32.360Z","question":"Should the prompt include a severity classification so violations are ranked (e.g., critical = breaks extension, major = violates best practice, minor = style/deviation)?","answer":"with_severity"}
+{"datetime":"2026-06-01T19:17:12.452Z","question":"Some extensions may be third-party or use patterns not covered in pi docs. How should the prompt handle extensions where no docs match the extension's feature set?","answer":"note_no_docs"}
