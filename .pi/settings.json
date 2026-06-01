@@ -19,6 +19,13 @@
 		"memory": "4G",
 		"cpus": "2.0"
 	},
+	"prompts": [
+		"prompts",
+		"prompts/operations",
+		"prompts/development",
+		"prompts/requirement",
+		"prompts/misc"
+	],
 	"supervisor": {
 		"repo": "SchneiderDaniel/agentcastle",
 		"projectNumber": 3,
