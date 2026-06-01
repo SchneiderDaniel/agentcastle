@@ -242,6 +242,22 @@ export default function askUser(pi: ExtensionAPI): void {
 		},
 	});
 
+	// ── ask_user_read error helper ─────────────────────────────────
+	function readError(message: string): {
+		content: Array<{ type: "text"; text: string }>;
+		details: Record<string, unknown>;
+	} {
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: JSON.stringify({ entries: [], count: 0, error: message }),
+				},
+			],
+			details: { entries: [], count: 0, error: message },
+		};
+	}
+
 	// ── ask_user_read LLM tool ──────────────────────────────────────
 	pi.registerTool({
 		name: "ask_user_read",
@@ -298,51 +314,15 @@ export default function askUser(pi: ExtensionAPI): void {
 
 				if (action === "get") {
 					if (id === undefined || id === null) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: JSON.stringify({
-										entries: [],
-										count: 0,
-										message: "id parameter is required for get action",
-									}),
-								},
-							],
-							details: { entries: [], count: 0 },
-						};
+						return readError("id parameter is required for get action");
 					}
 
 					const entry = await getQnaEntry(projectDir, id);
 					if (entry === undefined) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: JSON.stringify({
-										entries: [],
-										count: 0,
-										message: "No Q&A history yet",
-									}),
-								},
-							],
-							details: { entries: [], count: 0 },
-						};
+						return readError("No Q&A history yet");
 					}
 					if (entry === null) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: JSON.stringify({
-										entries: [],
-										count: 0,
-										message: `Entry #${id} not found`,
-									}),
-								},
-							],
-							details: { entries: [], count: 0 },
-						};
+						return readError(`Entry #${id} not found`);
 					}
 
 					return {
@@ -361,19 +341,7 @@ export default function askUser(pi: ExtensionAPI): void {
 
 				if (action === "query") {
 					if (!text) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: JSON.stringify({
-										entries: [],
-										count: 0,
-										message: "text parameter is required for query action",
-									}),
-								},
-							],
-							details: { entries: [], count: 0 },
-						};
+						return readError("text parameter is required for query action");
 					}
 
 					const entries = await queryQnaEntries(projectDir, text);
@@ -393,33 +361,9 @@ export default function askUser(pi: ExtensionAPI): void {
 				}
 
 				// Unknown action
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: JSON.stringify({
-								entries: [],
-								count: 0,
-								message: `Unknown action: ${action}`,
-							}),
-						},
-					],
-					details: { entries: [], count: 0 },
-				};
+				return readError(`Unknown action: ${action}`);
 			} catch (err) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: JSON.stringify({
-								entries: [],
-								count: 0,
-								message: `Error reading Q&A history: ${(err as Error).message}`,
-							}),
-						},
-					],
-					details: { entries: [], count: 0 },
-				};
+				return readError(`Error reading Q&A history: ${(err as Error).message}`);
 			}
 		},
 	});
