@@ -1,3 +1,8 @@
+export interface SessionLoggerGate {
+	enabledForNextSession: boolean;
+	sessionEnabled: boolean;
+}
+
 export interface Metadata {
 	sessionId: string;
 	name?: string;
