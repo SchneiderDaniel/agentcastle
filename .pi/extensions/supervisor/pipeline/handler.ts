@@ -62,6 +62,9 @@ export async function handleSupervisorCommand(
 		return;
 	}
 
+	// Clear any stale supervisor status from previous pipeline runs
+	ctx.ui.setStatus("supervisor", undefined);
+
 	const agentResults: PipelineAgentResult[] = [];
 	let stopReason: string | undefined;
 	let config!: SupervisorConfig;
