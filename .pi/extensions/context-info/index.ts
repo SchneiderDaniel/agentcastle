@@ -8,7 +8,6 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { loadConfig, readPiSetting } from "./config.js";
 import { getWorktreeName } from "./git-helpers.js";
 import { tryEmit } from "./telemetry.js";
@@ -16,8 +15,12 @@ import { installFooter } from "./footer.js";
 import { FooterState } from "./footer-state.js";
 import { showWelcomeBanner, readSessionExtState } from "./welcome.js";
 import { listLocalExtensions } from "./extensions.js";
+import type { ExtensionMeta } from "./extensions.js";
 import { listLocalPrompts } from "./prompts.js";
+import type { PromptMeta } from "./prompts.js";
 import { listLocalSkills } from "./skills.js";
+import type { SkillMeta } from "./skills.js";
+import { createExplainCommand, wordWrap } from "./explain.js";
 
 export default function contextInfo(pi: ExtensionAPI): void {
 	// FooterState — single source of truth for all mutable state
@@ -26,194 +29,42 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 	// ── Commands ────────────────────────────────────────────────────
 
-	pi.registerCommand("explain-prompts", {
-		description: "List all project-local prompts with descriptions",
-		handler: async (_args, ctx) => {
-			const prompts = listLocalPrompts();
-			if (prompts.length === 0) {
-				ctx.ui.notify("No prompts found", "info");
-				return;
+	// explain-prompts: multi-line with wordWrap
+	createExplainCommand<PromptMeta>(pi, "explain-prompts", "prompt", listLocalPrompts, {
+		formatItem: (item, { accent, dim, width }) => {
+			const lines: string[] = [accent("  " + item.name)];
+			const desc = (item.description ?? "(no description)").split("\n")[0].trim();
+			const descWidth = Math.max(20, width - 6);
+			const wrapped = wordWrap(desc, descWidth);
+			for (const seg of wrapped) {
+				lines.push(dim("    " + seg));
 			}
-
-			ctx.ui.setWidget("explain-prompts", (_tui, theme) => {
-				const accent = (s: string) => theme.fg("accent", s);
-				const dim = (s: string) => theme.fg("dim", s);
-
-				interface PromptLine {
-					name: string;
-					desc: string;
-				}
-
-				const items: PromptLine[] = prompts.map((pr) => ({
-					name: pr.name,
-					desc: (pr.description ?? "(no description)").split("\n")[0].trim(),
-				}));
-
-				function wordWrap(text: string, maxWidth: number): string[] {
-					if (visibleWidth(text) <= maxWidth) return [text];
-					const result: string[] = [];
-					let remaining = text;
-					while (remaining.length > 0) {
-						if (visibleWidth(remaining) <= maxWidth) {
-							result.push(remaining);
-							break;
-						}
-						// Find last space within maxWidth
-						let cut = maxWidth;
-						while (cut > 0 && remaining[cut] !== " " && remaining[cut] !== undefined) {
-							cut--;
-						}
-						if (cut <= 0) cut = maxWidth; // no space found, hard cut
-						result.push(remaining.slice(0, cut).trimEnd());
-						remaining = remaining.slice(cut).trimStart();
-					}
-					return result;
-				}
-
-				return {
-					render: (width: number) => {
-						const lines: string[] = [];
-						const descWidth = Math.max(20, width - 6);
-
-						for (const item of items) {
-							lines.push(accent("  " + item.name));
-							const wrapped = wordWrap(item.desc, descWidth);
-							for (const seg of wrapped) {
-								lines.push(dim("    " + seg));
-							}
-						}
-
-						lines.push("");
-						lines.push(
-							dim("  ─ ") +
-								dim(String(prompts.length)) +
-								dim(" prompts ─ disappears when you type"),
-						);
-
-						return lines.map((line) => {
-							if (line === "" || line.trim() === "") return "";
-							return line;
-						});
-					},
-					invalidate: () => {},
-				};
-			});
+			return lines;
 		},
 	});
 
-	pi.registerCommand("explain-skills", {
-		description: "List all project-local skills with descriptions",
-		handler: async (_args, ctx) => {
-			const skills = listLocalSkills();
-			if (skills.length === 0) {
-				ctx.ui.notify("No skills found", "info");
-				return;
+	// explain-skills: multi-line with wordWrap (same pattern as prompts)
+	createExplainCommand<SkillMeta>(pi, "explain-skills", "skill", listLocalSkills, {
+		formatItem: (item, { accent, dim, width }) => {
+			const lines: string[] = [accent("  " + item.name)];
+			const desc = (item.description ?? "(no description)").split("\n")[0].trim();
+			const descWidth = Math.max(20, width - 6);
+			const wrapped = wordWrap(desc, descWidth);
+			for (const seg of wrapped) {
+				lines.push(dim("    " + seg));
 			}
-
-			ctx.ui.setWidget("explain-skills", (_tui, theme) => {
-				const accent = (s: string) => theme.fg("accent", s);
-				const dim = (s: string) => theme.fg("dim", s);
-
-				interface SkillLine {
-					name: string;
-					desc: string;
-				}
-
-				const items: SkillLine[] = skills.map((sk) => ({
-					name: sk.name,
-					desc: (sk.description ?? "(no description)").split("\n")[0].trim(),
-				}));
-
-				function wordWrap(text: string, maxWidth: number): string[] {
-					if (visibleWidth(text) <= maxWidth) return [text];
-					const result: string[] = [];
-					let remaining = text;
-					while (remaining.length > 0) {
-						if (visibleWidth(remaining) <= maxWidth) {
-							result.push(remaining);
-							break;
-						}
-						// Find last space within maxWidth
-						let cut = maxWidth;
-						while (cut > 0 && remaining[cut] !== " " && remaining[cut] !== undefined) {
-							cut--;
-						}
-						if (cut <= 0) cut = maxWidth; // no space found, hard cut
-						result.push(remaining.slice(0, cut).trimEnd());
-						remaining = remaining.slice(cut).trimStart();
-					}
-					return result;
-				}
-
-				return {
-					render: (width: number) => {
-						const lines: string[] = [];
-						const descWidth = Math.max(20, width - 6);
-
-						for (const item of items) {
-							lines.push(accent("  " + item.name));
-							const wrapped = wordWrap(item.desc, descWidth);
-							for (const seg of wrapped) {
-								lines.push(dim("    " + seg));
-							}
-						}
-
-						lines.push("");
-						lines.push(
-							dim("  ─ ") + dim(String(skills.length)) + dim(" skills ─ disappears when you type"),
-						);
-
-						return lines.map((line) => {
-							if (line === "" || line.trim() === "") return "";
-							return line;
-						});
-					},
-					invalidate: () => {},
-				};
-			});
+			return lines;
 		},
 	});
 
-	pi.registerCommand("explain-extensions", {
-		description: "List all project-local extensions with descriptions",
-		handler: async (_args, ctx) => {
-			const extensions = listLocalExtensions();
-			if (extensions.length === 0) {
-				ctx.ui.notify("No extensions found", "info");
-				return;
+	// explain-extensions: single-line with error handling
+	createExplainCommand<ExtensionMeta>(pi, "explain-extensions", "extension", listLocalExtensions, {
+		formatItem: (item, { accent, dim }) => {
+			if (item.error) {
+				return [accent("  " + item.name) + dim("  error: " + item.error)];
 			}
-
-			ctx.ui.setWidget("explain-extensions", (_tui, theme) => {
-				const accent = (s: string) => theme.fg("accent", s);
-				const dim = (s: string) => theme.fg("dim", s);
-
-				const lines: string[] = [];
-
-				for (const ext of extensions) {
-					if (ext.error) {
-						lines.push(accent("  " + ext.name) + dim("  error: " + ext.error));
-						continue;
-					}
-					// First line only from JSDoc — no embedded newlines
-					const firstLine = (ext.description ?? "(no description)").split("\n")[0].trim();
-					lines.push(accent("  " + ext.name) + dim("  " + firstLine));
-				}
-
-				lines.push(
-					dim("  ─ ") +
-						dim(String(extensions.length)) +
-						dim(" extensions ─ disappears when you type"),
-				);
-
-				return {
-					render: (width: number) =>
-						lines.map((line) => {
-							if (line === "" || line.trim() === "") return "";
-							return truncateToWidth(line, width);
-						}),
-					invalidate: () => {},
-				};
-			});
+			const firstLine = (item.description ?? "(no description)").split("\n")[0].trim();
+			return [accent("  " + item.name) + dim("  " + firstLine)];
 		},
 	});
 
