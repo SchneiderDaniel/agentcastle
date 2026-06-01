@@ -185,16 +185,16 @@ describe("handleThinkingDelta", () => {
 // ─── handleThinkingEnd ────────────────────────────────────────────
 
 describe("handleThinkingEnd", () => {
-	it("sets flag even when liveThinking is empty", () => {
+	it("does NOT set flag when liveThinking is empty — allows done/message_end to push", () => {
 		const state = createState();
 		const result = handleThinkingEnd(state, { kind: "thinking_end" });
-		assert.equal(state.thinkingPushedThisTurn, true);
+		assert.equal(state.thinkingPushedThisTurn, false);
 		assert.equal(state.liveThinking, "");
 		assert.equal(result.flush, true);
 		assert.equal(result.workingChange, true);
 	});
 
-	it("pushes content when liveThinking has data", () => {
+	it("pushes content when liveThinking has data and sets flag", () => {
 		const state = createState({ liveThinking: "deep thought" });
 		handleThinkingEnd(state, { kind: "thinking_end" });
 		assert.equal(state.thinkingPushedThisTurn, true);
@@ -226,16 +226,16 @@ describe("handleTextDelta", () => {
 // ─── handleTextEnd ────────────────────────────────────────────────
 
 describe("handleTextEnd", () => {
-	it("sets flag even when liveText is empty", () => {
+	it("does NOT set flag when liveText is empty — allows done/message_end to push", () => {
 		const state = createState();
 		const result = handleTextEnd(state, { kind: "text_end" });
-		assert.equal(state.textPushedThisTurn, true);
+		assert.equal(state.textPushedThisTurn, false);
 		assert.equal(state.liveText, "");
 		assert.equal(result.flush, true);
 		assert.equal(result.workingChange, true);
 	});
 
-	it("pushes content when liveText has data", () => {
+	it("pushes content when liveText has data and sets flag", () => {
 		const state = createState({ liveText: "some output" });
 		handleTextEnd(state, { kind: "text_end" });
 		assert.equal(state.textPushedThisTurn, true);
@@ -476,6 +476,29 @@ describe("handleDone", () => {
 		});
 		assert.equal(state.textPushedThisTurn, true);
 		assert.equal(state.textOutputLines[0], "final answer");
+	});
+
+	it("captures text from done when text_end had no content — regression: empty text_end + done flow", () => {
+		// Simulates SDK: text_start → text_end(empty) → done(with full content)
+		const state = createState();
+		// text_end fires but liveText is empty — flag should NOT be set after fix
+		handleTextEnd(state, { kind: "text_end" });
+		assert.equal(state.textPushedThisTurn, false, "flag must NOT be set after empty text_end");
+		// done event carries actual text content
+		const jsonOutput = '{"commentBody":"This is the PR comment","approved":true}';
+		handleDone(state, {
+			kind: "done",
+			message: {
+				content: [{ type: "text", text: jsonOutput }],
+			},
+		});
+		assert.equal(state.textPushedThisTurn, true, "flag must be set after done pushes text");
+		assert.equal(state.textOutputLines.length, 1, "text must be captured");
+		assert.ok(
+			state.textOutputLines[0].includes("This is the PR comment"),
+			"comment body in textOutput",
+		);
+		assert.ok(state.textOutputLines[0].includes("approved"), "full JSON in textOutput");
 	});
 
 	it("processes thinking content and sets thinkingPushedThisTurn", () => {

@@ -99,8 +99,8 @@ export function handleThinkingEnd(
 			const trimmed = t.trim();
 			if (trimmed) pushLog(state, `💭 ${trimmed.slice(0, 500)}`);
 		}
+		state.thinkingPushedThisTurn = true;
 	}
-	state.thinkingPushedThisTurn = true;
 	state.liveThinking = "";
 	state.phase = "idle";
 	return { flush: true, workingChange: true };
@@ -154,8 +154,8 @@ export function handleTextEnd(
 			const trimmed = t.trim();
 			if (trimmed) pushLog(state, trimmed);
 		}
+		state.textPushedThisTurn = true;
 	}
-	state.textPushedThisTurn = true;
 	if (ev.usage) {
 		state.tokenCount =
 			ev.usage.totalTokens || (ev.usage.input ?? 0) + (ev.usage.output ?? 0) || state.tokenCount;

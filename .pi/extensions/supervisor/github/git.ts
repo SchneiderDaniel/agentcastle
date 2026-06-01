@@ -40,7 +40,9 @@ export async function commitAndPush(
 	if (commitResult.code !== 0) {
 		const output = (commitResult.stderr || "") + (commitResult.stdout || "");
 		if (output.includes("nothing to commit")) {
-			throw new Error("No changes to commit — developer produced no output");
+			// No changes to commit — developer produced no output or all changes already committed.
+			// This is not an error; pipeline should continue.
+			return;
 		}
 		throw new Error(`git commit failed: ${output.trim()}`);
 	}
