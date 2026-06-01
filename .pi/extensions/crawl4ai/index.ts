@@ -1,19 +1,20 @@
 /**
  * crawl4ai — Web page crawling and content extraction
  *
- * Provides the web_crawl tool. Tries crawl4ai first, falls back to
- * Apify then direct HTTP fetch. Extracts page content as markdown.
+ * Provides the web_crawl tool using a pluggable CrawlBackend strategy.
+ * Backends are tried in order (crawl4ai → Apify → direct HTTP fetch)
+ * until one succeeds. Adding a new backend is a single import + registration.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import os from "node:os";
-import { CRAWL4AI_SCRIPT } from "./python-script";
-import { ensurePythonVenv, ensureChromiumDeps } from "./venv-setup";
 import type { VenvCache } from "./venv-setup";
-import { runCrawl4aiScript } from "./executor";
-import { apifyCrawl } from "./apify-crawl";
-import { directFetchCrawl } from "./direct-fetch";
+import {
+	CrawlBackendRegistry,
+	LocalCrawl4aiBackend,
+	ApifyBackend,
+	DirectFetchBackend,
+} from "./backends";
 
 export default function crawl4ai(pi: ExtensionAPI): void {
 	const venvReady: VenvCache = new Map();
@@ -58,78 +59,19 @@ export default function crawl4ai(pi: ExtensionAPI): void {
 				details: {} as Record<string, unknown>,
 			});
 
-			// 1. Try local crawl4ai (preferred)
+			// Build fallback chain: crawl4ai → Apify → direct fetch
 			const cwd = _ctx.cwd;
-			const python = await ensurePythonVenv(pi.exec, cwd, onUpdate, venvReady);
-			const depsDir = await ensureChromiumDeps(pi.exec, cwd, onUpdate, depsReady);
-			if (python && depsDir) {
-				const browsersPath = (os.homedir() || "/tmp") + "/.cache/ms-playwright";
-				const run = await runCrawl4aiScript(
-					python,
-					depsDir,
-					browsersPath,
-					CRAWL4AI_SCRIPT,
-					{ url: params.url, maxPages },
-					120_000,
-					signal,
-					pi.exec,
-				);
-				if (run.code === 0) {
-					try {
-						// Parse between CRAWL4AI_OK and CRAWL4AI_DONE delimiters
-						const okIdx = run.stdout.indexOf("CRAWL4AI_OK");
-						const doneIdx = run.stdout.indexOf("CRAWL4AI_DONE");
-						let jsonStr = "";
-						if (okIdx !== -1 && doneIdx !== -1 && doneIdx > okIdx) {
-							jsonStr = run.stdout.slice(okIdx + "CRAWL4AI_OK".length, doneIdx).trim();
-						}
-						const parsed = JSON.parse(jsonStr || run.stdout) as {
-							ok: boolean;
-							error?: string;
-							results?: Array<{ url: string; markdown?: string; error?: string; success: boolean }>;
-						};
-						if (parsed.ok && parsed.results) {
-							const texts = parsed.results.map((r) =>
-								r.success
-									? `--- ${r.url} ---\n${r.markdown || "[No content]"}`
-									: `--- ${r.url} ---\nError: ${r.error}`,
-							);
-							return {
-								content: [{ type: "text", text: texts.join("\n\n") }],
-								details: {} as Record<string, unknown>,
-							};
-						}
-					} catch {
-						console.error(
-							"crawl4ai: parse failed, raw stdout (first 500 chars):",
-							run.stdout.slice(0, 500),
-						);
-						// parsing failed => fall through
-					}
-				}
-			}
+			const registry = new CrawlBackendRegistry([
+				new LocalCrawl4aiBackend(pi.exec, cwd, venvReady, depsReady),
+				new ApifyBackend(),
+				new DirectFetchBackend(),
+			]);
 
-			// 2. Fall back to Apify actor
-			onUpdate?.({
-				content: [{ type: "text", text: "Falling back to Apify actor …" }],
-				details: {} as Record<string, unknown>,
-			});
-			const apifyResult = await apifyCrawl(params.url, maxPages, signal);
-			if (apifyResult) {
-				return {
-					content: [{ type: "text", text: apifyResult }],
-					details: {} as Record<string, unknown>,
-				};
-			}
-
-			// 3. Last resort: direct fetch + lightweight extraction
-			onUpdate?.({
-				content: [{ type: "text", text: "Falling back to direct HTTP fetch …" }],
-				details: {} as Record<string, unknown>,
-			});
-			const directResult = await directFetchCrawl(params.url, maxPages, signal);
+			const result = await registry.tryAll(params.url, maxPages, signal, onUpdate);
 			return {
-				content: [{ type: "text", text: directResult }],
+				content: [
+					{ type: "text", text: result ?? "Crawl completed but no content was extracted." },
+				],
 				details: {} as Record<string, unknown>,
 			};
 		},
