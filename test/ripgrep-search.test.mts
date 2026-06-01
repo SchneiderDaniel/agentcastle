@@ -36,6 +36,7 @@ import {
 	cleanupTrackedTempDirs,
 	trackedTempDirs,
 } from "../.pi/extensions/ripgrep-search/temp.ts";
+import { buildSearchErrorText } from "../.pi/extensions/ripgrep-search/index.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Fixtures
@@ -1075,4 +1076,142 @@ describe("integration: rg binary", () => {
 			}
 		},
 	);
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Error classification (buildSearchErrorText)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("buildSearchErrorText", () => {
+	it("empty stderr with exit 137 (SIGKILL) — does NOT say 'Ensure installed'", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			137,
+			false,
+			"",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
+		assert.ok(result.includes("exit 137"), "Should mention exit code");
+		assert.ok(
+			result.includes("no error output") || result.includes("killed"),
+			"Should describe the situation (killed or no error output)",
+		);
+	});
+
+	it("empty stderr with exit 139 (SIGSEGV) — does NOT say 'Ensure installed'", () => {
+		const result = buildSearchErrorText("grep", 139, false, "", "grep", ".");
+		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
+		assert.ok(result.includes("no error output"), "Should mention no error output");
+	});
+
+	it("killed=true with code=null, empty stderr — says 'process killed'", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			null,
+			true,
+			"",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(result.includes("killed"), "Should mention process killed");
+		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
+	});
+
+	it("killed=true with code=null, non-empty stderr — says 'process killed' without Ensure", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			null,
+			true,
+			"out of memory",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(result.includes("killed"), "Should mention process killed");
+		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
+	});
+
+	it("stderr contains 'command not found' — says 'Ensure installed'", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			127,
+			false,
+			"rg: command not found",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(result.includes("Ensure"), "Should suggest checking installation");
+		assert.ok(result.includes("ripgrep (\`rg --version\`)"), "Should mention the engine to check");
+	});
+
+	it("stderr contains 'not recognized' — says 'Ensure installed'", () => {
+		const result = buildSearchErrorText("grep", 1, false, "'rg' is not recognized", "grep", ".");
+		assert.ok(result.includes("Ensure"), "Should suggest checking installation");
+	});
+
+	it("stderr contains 'internal error' — says 'Ensure installed'", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			1,
+			false,
+			"internal error",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(result.includes("Ensure"), "Should suggest checking installation");
+	});
+
+	it("stderr contains 'No such file' — says directory not found", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			2,
+			false,
+			"No such file or directory",
+			"ripgrep (\`rg --version\`)",
+			"foo/",
+		);
+		assert.ok(result.includes("not found"), "Should mention directory not found");
+		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
+	});
+
+	it("stderr contains 'ENOENT' — says directory not found", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			2,
+			false,
+			"ENOENT: no such file",
+			"ripgrep (\`rg --version\`)",
+			"foo/",
+		);
+		assert.ok(result.includes("not found"), "Should mention directory not found");
+		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
+	});
+
+	it("generic stderr with exit code — passes through stderr", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			2,
+			false,
+			"Permission denied",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(result.includes("Permission denied"), "Should include stderr content");
+		assert.ok(result.includes("exit 2"), "Should mention exit code");
+		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
+	});
+
+	it("non-empty stderr with exit code — passes through stderr", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			2,
+			false,
+			"max-line-length (6) exceeded",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(result.includes("max-line-length"), "Should include stderr content");
+		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
+	});
 });
