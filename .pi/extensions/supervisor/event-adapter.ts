@@ -143,13 +143,9 @@ export function sessionEventToNormalizedEvent(ev: Record<string, unknown>): Norm
 					return { kind: "text_end", usage: msg?.usage as any };
 				}
 				case "done": {
-					const doneMsg = ae.message as Record<string, unknown> | undefined;
 					return {
 						kind: "done",
-						message: {
-							content: doneMsg?.content as any[],
-							usage: doneMsg?.usage as any,
-						},
+						message: ev.message as any,
 					};
 				}
 				default:

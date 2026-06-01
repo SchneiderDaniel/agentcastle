@@ -357,13 +357,16 @@ describe("sessionEventToNormalizedEvent", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: { content: [{ type: "text", text: "done" }], usage: { input: 10, output: 5 } },
 			},
+			message: { content: [{ type: "text", text: "done" }], usage: { input: 10, output: 5 } },
 		});
 		assert.ok(result);
 		assert.equal(result!.kind, "done");
 		if (result!.kind === "done") {
 			assert.equal(result!.message.content?.[0]?.type, "text");
+			assert.equal(result!.message.content?.[0]?.text, "done");
+			assert.equal(result!.message.usage?.input, 10);
+			assert.equal(result!.message.usage?.output, 5);
 		}
 	});
 

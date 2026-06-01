@@ -435,9 +435,9 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [{ type: "text", text: "hello" }],
-				},
+			},
+			message: {
+				content: [{ type: "text", text: "hello" }],
 			},
 		};
 		const result = processSessionEvent(ev, state);
@@ -454,9 +454,9 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [{ type: "thinking", thinking: "deep thought" }],
-				},
+			},
+			message: {
+				content: [{ type: "thinking", thinking: "deep thought" }],
 			},
 		};
 		const result = processSessionEvent(ev, state);
@@ -475,12 +475,12 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [
-						{ type: "text", text: "hello" },
-						{ type: "thinking", thinking: "deep thought" },
-					],
-				},
+			},
+			message: {
+				content: [
+					{ type: "text", text: "hello" },
+					{ type: "thinking", thinking: "deep thought" },
+				],
 			},
 		};
 		const result = processSessionEvent(ev, state);
@@ -498,9 +498,9 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [],
-				},
+			},
+			message: {
+				content: [],
 			},
 		};
 		processSessionEvent(ev, state);
@@ -516,8 +516,8 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: undefined,
 			},
+			message: undefined,
 		};
 		processSessionEvent(ev, state);
 		assert.equal(state.textPushedThisTurn, false);
@@ -530,9 +530,9 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					usage: { input: 10, output: 5 },
-				},
+			},
+			message: {
+				usage: { input: 10, output: 5 },
 			},
 		};
 		processSessionEvent(ev, state);
@@ -547,9 +547,9 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [{ type: "text", text: "line1\nline2\nline3" }],
-				},
+			},
+			message: {
+				content: [{ type: "text", text: "line1\nline2\nline3" }],
 			},
 		};
 		processSessionEvent(ev, state);
@@ -567,9 +567,9 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [{ type: "text", text: "   " }],
-				},
+			},
+			message: {
+				content: [{ type: "text", text: "   " }],
 			},
 		};
 		processSessionEvent(ev, state);
@@ -584,9 +584,9 @@ describe("done handler — dedup flag fix", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [{ type: "thinking", thinking: "deep thought" }],
-				},
+			},
+			message: {
+				content: [{ type: "thinking", thinking: "deep thought" }],
 			},
 		};
 		processSessionEvent(ev, state);
@@ -607,9 +607,9 @@ describe("dedup chain — done then message_end", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [{ type: "text", text: "hello world" }],
-				},
+			},
+			message: {
+				content: [{ type: "text", text: "hello world" }],
 			},
 		};
 		processSessionEvent(doneEv, state);
@@ -645,9 +645,9 @@ describe("dedup chain — done then message_end", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [{ type: "thinking", thinking: "deep thought" }],
-				},
+			},
+			message: {
+				content: [{ type: "thinking", thinking: "deep thought" }],
 			},
 		};
 		processSessionEvent(doneEv, state);
@@ -676,12 +676,12 @@ describe("dedup chain — done then message_end", () => {
 			type: "message_update",
 			assistantMessageEvent: {
 				type: "done",
-				message: {
-					content: [
-						{ type: "text", text: "hello" },
-						{ type: "thinking", thinking: "deep thought" },
-					],
-				},
+			},
+			message: {
+				content: [
+					{ type: "text", text: "hello" },
+					{ type: "thinking", thinking: "deep thought" },
+				],
 			},
 		};
 		processSessionEvent(doneEv, state);
