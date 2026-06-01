@@ -4,7 +4,6 @@
  * Adapter layer: calls `gh` CLI via exec function.
  */
 
-import type { Finding } from "./extension-scanner.ts";
 import type { ASTFinding } from "./ast-scanner.ts";
 import type { MigrationSnippet } from "./migration-generator.ts";
 import type { ImpactScore } from "./impact-scorer.ts";
@@ -34,7 +33,7 @@ export function buildIssueTitle(
  */
 export function buildIssueBody(
 	extensionName: string,
-	findings: Finding[],
+	findings: ASTFinding[],
 	version: string,
 ): string {
 	const lines: string[] = [];
