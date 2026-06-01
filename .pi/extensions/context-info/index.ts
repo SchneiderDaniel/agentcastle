@@ -14,10 +14,13 @@ import { tryEmit } from "./telemetry.js";
 import { installFooter } from "./footer.js";
 import { FooterState } from "./footer-state.js";
 import { showWelcomeBanner, readSessionExtState } from "./welcome.js";
-import { createExplainCommand } from "./explain-command.js";
 import { listLocalExtensions } from "./extensions.js";
+import type { ExtensionMeta } from "./extensions.js";
 import { listLocalPrompts } from "./prompts.js";
+import type { PromptMeta } from "./prompts.js";
 import { listLocalSkills } from "./skills.js";
+import type { SkillMeta } from "./skills.js";
+import { createExplainCommand, wordWrap } from "./explain.js";
 
 export default function contextInfo(pi: ExtensionAPI): void {
 	// FooterState — single source of truth for all mutable state
@@ -26,9 +29,44 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 	// ── Commands ────────────────────────────────────────────────────
 
-	createExplainCommand(pi, "explain-extensions", "extension", listLocalExtensions);
-	createExplainCommand(pi, "explain-prompts", "prompt", listLocalPrompts);
-	createExplainCommand(pi, "explain-skills", "skill", listLocalSkills);
+	// explain-prompts: multi-line with wordWrap
+	createExplainCommand<PromptMeta>(pi, "explain-prompts", "prompt", listLocalPrompts, {
+		formatItem: (item, { accent, dim, width }) => {
+			const lines: string[] = [accent("  " + item.name)];
+			const desc = (item.description ?? "(no description)").split("\n")[0].trim();
+			const descWidth = Math.max(20, width - 6);
+			const wrapped = wordWrap(desc, descWidth);
+			for (const seg of wrapped) {
+				lines.push(dim("    " + seg));
+			}
+			return lines;
+		},
+	});
+
+	// explain-skills: multi-line with wordWrap (same pattern as prompts)
+	createExplainCommand<SkillMeta>(pi, "explain-skills", "skill", listLocalSkills, {
+		formatItem: (item, { accent, dim, width }) => {
+			const lines: string[] = [accent("  " + item.name)];
+			const desc = (item.description ?? "(no description)").split("\n")[0].trim();
+			const descWidth = Math.max(20, width - 6);
+			const wrapped = wordWrap(desc, descWidth);
+			for (const seg of wrapped) {
+				lines.push(dim("    " + seg));
+			}
+			return lines;
+		},
+	});
+
+	// explain-extensions: single-line with error handling
+	createExplainCommand<ExtensionMeta>(pi, "explain-extensions", "extension", listLocalExtensions, {
+		formatItem: (item, { accent, dim }) => {
+			if (item.error) {
+				return [accent("  " + item.name) + dim("  error: " + item.error)];
+			}
+			const firstLine = (item.description ?? "(no description)").split("\n")[0].trim();
+			return [accent("  " + item.name) + dim("  " + firstLine)];
+		},
+	});
 
 	// ── Hooks ──────────────────────────────────────────────────────
 
