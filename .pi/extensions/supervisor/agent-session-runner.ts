@@ -138,7 +138,7 @@ export async function runAgentInProcess(
 			resourceLoader,
 			settingsManager,
 			tools: tools.length > 0 ? tools : undefined,
-			noTools: tools.length === 0 ? "builtin" : undefined,
+			noTools: tools.length > 0 ? "builtin" : undefined,
 			model: resolvedModel,
 		});
 		session = sessionResult.session;
