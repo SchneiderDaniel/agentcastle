@@ -282,18 +282,16 @@ async function migrateQnaFromCsv(
 		return { migrated, skipped };
 	} catch (err) {
 		// Temp file (former CSV) remains on disk for potential recovery.
-		// csvMigrated flag (set before call in ensureMigrated) prevents re-entry.
 		throw err;
 	}
 }
 
-// ── ensureMigrated (Phase 1 guard) ─────────────────────────────────────────
+// ── session_start handler ────────────────────────────────────────────
+//
+// Simulates the pi.on("session_start", ...) logic that runs migration
+// at session start instead of inside the ask_user execute handler.
 
-let testCsvMigrated = false;
-
-async function ensureMigrated(projectDir: string): Promise<void> {
-	if (testCsvMigrated) return;
-	testCsvMigrated = true;
+async function handleSessionStart(projectDir: string): Promise<void> {
 	const csvPath = path.join(projectDir, ".pi", "context", "qna.csv");
 	if (fs.existsSync(csvPath)) {
 		try {
@@ -969,79 +967,50 @@ describe("migrateQnaFromCsv", () => {
 });
 
 // ============================================================================
-// Integration tests: ensureMigrated (Phase 1 — state guard)
+// Integration tests: session_start handler
 // ============================================================================
 
-describe("ensureMigrated (Phase 1 — state guard)", () => {
+describe("session_start handler", () => {
 	let tmpDir: string;
 
 	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ask-user-ensure-test-"));
-		testCsvMigrated = false;
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ask-user-session-start-test-"));
 	});
 
 	afterEach(() => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
-		testCsvMigrated = false;
 	});
 
-	it("sets csvMigrated flag before migration call — flag is true even if migration throws", async () => {
+	it("calls migrateQnaFromCsv when CSV exists", async () => {
 		const csvDir = path.join(tmpDir, ".pi", "context");
 		fs.mkdirSync(csvDir, { recursive: true });
-		fs.writeFileSync(path.join(csvDir, "qna.csv"), "2026-05-15T19:00:00.000Z;Q1;A1", "utf-8");
+		fs.writeFileSync(
+			path.join(csvDir, "qna.csv"),
+			"2026-05-15T19:00:00.000Z;What is your name?;Alice",
+			"utf-8",
+		);
 
-		// Make appendFile fail
-		const origAppend = fs.promises.appendFile;
-		fs.promises.appendFile = async () => {
-			throw new Error("Simulated failure");
-		};
+		await handleSessionStart(tmpDir);
 
-		try {
-			await ensureMigrated(tmpDir);
-		} catch {
-			// Expected — error is caught inside ensureMigrated
-		}
+		// CSV should be gone (migrated)
+		assert.ok(!fs.existsSync(path.join(csvDir, "qna.csv")), "CSV should be migrated and removed");
 
-		fs.promises.appendFile = origAppend;
+		// JSONL should exist with the entry
+		const jsonlPath = path.join(csvDir, "qna.jsonl");
+		assert.ok(fs.existsSync(jsonlPath), "JSONL should exist after migration");
 
-		// Flag should be true even though migration failed
-		assert.ok(testCsvMigrated, "csvMigrated should be true after ensureMigrated call");
+		const content = fs.readFileSync(jsonlPath, "utf-8");
+		assert.ok(content.includes("What is your name?"), "Entry should be in JSONL");
+		assert.ok(content.includes("Alice"), "Answer should be in JSONL");
 	});
 
-	it("returns immediately if csvMigrated is already true", async () => {
-		testCsvMigrated = true;
+	it("is a no-op when CSV does not exist", async () => {
+		// No CSV file — handler should do nothing
+		await handleSessionStart(tmpDir);
 
-		// Even with no CSV dir at all, ensureMigrated should return immediately
-		await ensureMigrated(tmpDir);
-
-		// No crash, no exception — flag remains true
-		assert.ok(testCsvMigrated);
-	});
-
-	it("sets csvMigrated even when CSV does not exist", async () => {
-		assert.ok(!testCsvMigrated, "Flag should start false");
-
-		await ensureMigrated(tmpDir);
-
-		assert.ok(testCsvMigrated, "Flag should be true after ensureMigrated with no CSV");
-	});
-
-	it("second call with read-only CSV returns immediately (csvMigrated already true)", async () => {
-		const csvDir = path.join(tmpDir, ".pi", "context");
-		fs.mkdirSync(csvDir, { recursive: true });
-		fs.writeFileSync(path.join(csvDir, "qna.csv"), "2026-05-15T19:00:00.000Z;Q1;A1", "utf-8");
-
-		// First call succeeds
-		await ensureMigrated(tmpDir);
-
-		// Reset CSV and try second call
-		testCsvMigrated = true; // Simulate already migrated
-
-		// This would throw if it tried to migrate again since CSV is gone
-		// (renamed during first call). But since flag is true, it returns immediately.
-		await ensureMigrated(tmpDir);
-
-		assert.ok(testCsvMigrated, "Flag remains true");
+		// No JSONL should be created
+		const jsonlPath = path.join(tmpDir, ".pi", "context", "qna.jsonl");
+		assert.ok(!fs.existsSync(jsonlPath), "JSONL should not be created when no CSV exists");
 	});
 
 	it("catches errors from migrateQnaFromCsv and logs warning instead of throwing", async () => {
@@ -1059,101 +1028,60 @@ describe("ensureMigrated (Phase 1 — state guard)", () => {
 		const origWarn = console.warn;
 		console.warn = (msg: string) => warnings.push(msg);
 
-		try {
-			await ensureMigrated(tmpDir);
-		} finally {
-			fs.promises.appendFile = origAppend;
-			console.warn = origWarn;
-		}
+		// Should not throw — errors are caught internally
+		await handleSessionStart(tmpDir);
+
+		fs.promises.appendFile = origAppend;
+		console.warn = origWarn;
 
 		assert.ok(
 			warnings.some((w) => w.includes("Migration warning")),
 			"Should log a warning instead of throwing",
 		);
 	});
-});
 
-// ============================================================================
-// Integration tests: Phase 3 — ensureMigrated called from execute context
-// (Tests that the try/catch in execute() prevents crashes even when migration fails)
-// ============================================================================
+	it("does not crash when .pi/context directory does not exist and no CSV", async () => {
+		// No .pi/context dir at all — handler should be a no-op, not crash
+		await handleSessionStart(tmpDir);
 
-describe("Phase 3 — Error resilience (execute wrapper)", () => {
-	let tmpDir: string;
-
-	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ask-user-phase3-test-"));
-		testCsvMigrated = false;
+		// No JSONL should exist
+		const jsonlPath = path.join(tmpDir, ".pi", "context", "qna.jsonl");
+		assert.ok(!fs.existsSync(jsonlPath), "JSONL should not be created");
 	});
 
-	afterEach(() => {
-		fs.rmSync(tmpDir, { recursive: true, force: true });
-		testCsvMigrated = false;
+	it("does not crash when .pi/context directory does not exist but CSV should be checked", async () => {
+		// Test that existsSync on a non-existent path returns false gracefully
+		const csvPath = path.join(tmpDir, ".pi", "context", "qna.csv");
+		assert.ok(!fs.existsSync(csvPath), "CSV should not exist");
+
+		await handleSessionStart(tmpDir);
+
+		// Should have completed without error
+		const jsonlPath = path.join(tmpDir, ".pi", "context", "qna.jsonl");
+		assert.ok(!fs.existsSync(jsonlPath), "JSONL should not be created");
 	});
 
-	it("simulates execute() wrapping ensureMigrated in try/catch — does not throw on migration failure", async () => {
+	it("logs migration summary when entries are migrated", async () => {
 		const csvDir = path.join(tmpDir, ".pi", "context");
 		fs.mkdirSync(csvDir, { recursive: true });
-		fs.writeFileSync(path.join(csvDir, "qna.csv"), "2026-05-15T19:00:00.000Z;Q1;A1", "utf-8");
-
-		// Make appendFile fail
-		const origAppend = fs.promises.appendFile;
-		fs.promises.appendFile = async () => {
-			throw new Error("Simulated write failure");
-		};
-
-		// Simulate execute() wrapping ensureMigrated in try/catch
-		let caughtError: Error | null = null;
-		try {
-			await ensureMigrated(tmpDir); // ensureMigrated itself now catches errors
-		} catch (err) {
-			caughtError = err as Error;
-		}
-
-		fs.promises.appendFile = origAppend;
-
-		// ensureMigrated catches errors internally, so the try/catch wrapper should not trigger
-		assert.strictEqual(caughtError, null, "ensureMigrated should catch errors internally");
-		assert.ok(testCsvMigrated, "Flag should be true after call");
-	});
-
-	it("multiple execute calls with failing migration do not create duplicates (csvMigrated prevents re-entry)", async () => {
-		const csvDir = path.join(tmpDir, ".pi", "context");
-		fs.mkdirSync(csvDir, { recursive: true });
-		fs.writeFileSync(path.join(csvDir, "qna.csv"), "2026-05-15T19:00:00.000Z;Q1;A1", "utf-8");
-
-		const origAppend = fs.promises.appendFile;
-		let callCount = 0;
-		fs.promises.appendFile = async () => {
-			callCount++;
-			throw new Error("Simulated write failure");
-		};
-
-		try {
-			// First call — migration fails, but csvMigrated is set
-			await ensureMigrated(tmpDir);
-		} catch {
-			// Expected internally caught
-		}
-
-		const appendCountAfterFirstCall = callCount;
-
-		// Second call — csvMigrated is true, so ensureMigrated returns immediately
-		try {
-			await ensureMigrated(tmpDir);
-		} catch {
-			// Should not throw
-		}
-
-		fs.promises.appendFile = origAppend;
-
-		// appendFile should only have been called once (first attempt only)
-		assert.strictEqual(
-			callCount,
-			appendCountAfterFirstCall,
-			"Second call should not retry migration",
+		fs.writeFileSync(
+			path.join(csvDir, "qna.csv"),
+			"2026-05-15T19:00:00.000Z;Q1;A1\n2026-05-15T20:00:00.000Z;Q2;A2",
+			"utf-8",
 		);
-		assert.ok(testCsvMigrated, "Flag should be true");
+
+		const warnings: string[] = [];
+		const origWarn = console.warn;
+		console.warn = (msg: string) => warnings.push(msg);
+
+		await handleSessionStart(tmpDir);
+
+		console.warn = origWarn;
+
+		assert.ok(
+			warnings.some((w) => w.includes("Migration:") && w.includes("2 entries migrated")),
+			"Should log migration summary",
+		);
 	});
 });
 

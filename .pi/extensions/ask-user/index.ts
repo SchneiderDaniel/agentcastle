@@ -9,7 +9,7 @@
  *   - ask_user_read tool for LLM extraction of past Q&A entries
  *
  * All completed interactions are logged to .pi/context/qna.jsonl.
- * Legacy .pi/context/qna.csv is migrated on first append if present.
+ * Legacy .pi/context/qna.csv is migrated at session start if present.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -24,40 +24,6 @@ import {
 import { QuestionHandler } from "./question-handler.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
-
-// ---------------------------------------------------------------------------
-// Migration guard
-// ---------------------------------------------------------------------------
-
-let csvMigrated = false;
-
-/**
- * Run CSV→JSONL migration once on first write if CSV file exists.
- *
- * Sets csvMigrated BEFORE calling migrateQnaFromCsv to prevent re-entry.
- * If the migration throws, csvMigrated is already true, so the next call
- * will skip migration entirely — no duplicate entries are appended.
- */
-async function ensureMigrated(projectDir: string): Promise<void> {
-	if (csvMigrated) return;
-	// Set flag first to prevent re-entry on failure
-	csvMigrated = true;
-	const csvPath = path.join(projectDir, ".pi", "context", "qna.csv");
-	if (fs.existsSync(csvPath)) {
-		try {
-			const result = await migrateQnaFromCsv(projectDir);
-			if (result.migrated > 0 || result.skipped > 0) {
-				console.warn(
-					`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
-				);
-			}
-		} catch (err) {
-			// Migration failed but csvMigrated is already true.
-			// Log a warning so the user knows migration had issues.
-			console.warn(`Migration warning: ${(err as Error).message}`);
-		}
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Utility: format entries as markdown table
@@ -90,6 +56,27 @@ function formatTable(
 // ---------------------------------------------------------------------------
 
 export default function askUser(pi: ExtensionAPI): void {
+	// ── CSV→JSONL migration at session start ─────────────────────────
+	// Migration runs once per session when the session starts, not on
+	// every first ask_user call. This avoids delaying the first question
+	// when CSV has many rows.
+	pi.on("session_start", async (_event, ctx) => {
+		const projectDir = ctx.sessionManager.getCwd();
+		const csvPath = path.join(projectDir, ".pi", "context", "qna.csv");
+		if (fs.existsSync(csvPath)) {
+			try {
+				const result = await migrateQnaFromCsv(projectDir);
+				if (result.migrated > 0 || result.skipped > 0) {
+					console.warn(
+						`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
+					);
+				}
+			} catch (err) {
+				console.warn(`Migration warning: ${(err as Error).message}`);
+			}
+		}
+	});
+
 	// ── ask_user tool (unchanged except storage backend) ──────────────
 	pi.registerTool({
 		name: "ask_user",
@@ -115,15 +102,6 @@ export default function askUser(pi: ExtensionAPI): void {
 			details: Record<string, unknown>;
 		}> {
 			const projectDir = ctx.sessionManager.getCwd();
-
-			// Run CSV→JSONL migration on first write
-			// Wrapped in try/catch so a migration failure doesn't crash the tool
-			try {
-				await ensureMigrated(projectDir);
-			} catch (err) {
-				console.warn(`Migration warning: ${(err as Error).message}`);
-			}
-
 			const handler = new QuestionHandler(projectDir, ctx);
 			return handler.handle(params);
 		},
