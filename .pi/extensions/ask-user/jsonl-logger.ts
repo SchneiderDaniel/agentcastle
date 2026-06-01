@@ -499,7 +499,8 @@ export async function migrateQnaFromCsv(
 		return { migrated, skipped };
 	} catch (err) {
 		// Temp file (former CSV) remains on disk for potential manual recovery.
-		// The caller's csvMigrated flag prevents re-entry and duplicate writes.
+		// Migration runs once per session (called from session_start handler), so
+		// even on failure no duplicate writes occur within the same session.
 		throw err;
 	}
 }

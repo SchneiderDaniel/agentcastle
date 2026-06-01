@@ -10,7 +10,7 @@
   - `multi-select` — Pick zero or more from a list
 - **`ask_user_read` tool** — LLM retrieves past Q&A entries (by id, list, or text search)
 - **`/qna` command** — Browse logged Q&A history in the TUI
-- **Persistent log** — All interactions saved to `.pi/context/qna.jsonl` (auto-migrates from legacy `.csv`)
+- **Persistent log** — All interactions saved to `.pi/context/qna.jsonl` (legacy `.csv` auto-migrated at session start)
 
 ## How it works
 
