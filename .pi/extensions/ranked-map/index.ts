@@ -1,15 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { resolve, join } from "node:path";
-import type { CachedIndex, RankedFileScore } from "./types.ts";
+import { join } from "node:path";
 import { loadRankedMapConfig } from "./config.ts";
-import { buildCtagsArgs, buildSymbolIndex } from "./ctags.ts";
-import { loadCachedIndex } from "./cache.ts";
-import { selectMode, dumpAllFiles, formatOutput } from "./format.ts";
-import { computeKeywordScores, computeRecencyScores, rankFiles } from "./scoring.ts";
-import { runKeywordSearch } from "./search.ts";
-import { runGitRecency, getGitHead } from "./git.ts";
+import { RankedMapEngine } from "./engine.ts";
 
 export default function rankedMap(pi: ExtensionAPI): void {
 	pi.registerTool({
@@ -66,96 +59,38 @@ export default function rankedMap(pi: ExtensionAPI): void {
 					? params.tokenBudget
 					: config.tokenBudget;
 			const cacheDir = join(cwd, ".pi", "cache");
-			const cachePath = join(cacheDir, "ranked-map-index.json");
 			const exec = pi.exec.bind(pi);
 
-			const currentHead = await getGitHead(exec, cwd, signal);
-			let index: CachedIndex | null = currentHead ? loadCachedIndex(cachePath, currentHead) : null;
+			const engine = new RankedMapEngine(config, exec, cwd);
 
-			if (!index) {
-				try {
-					if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
-					const { command, args } = buildCtagsArgs(targetDir, 0);
-					const result = await pi.exec(command, args, { cwd, timeout: 30_000, signal });
-					if (result.code !== 0 && (!result.stdout || result.stdout.trim().length === 0)) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `ctags failed (exit code ${result.code}): ${result.stderr || "unknown error"}\n\nEnsure universal-ctags is installed with JSON output support.`,
-								},
-							],
-							details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<
-								string,
-								unknown
-							>,
-						};
-					}
-					index = buildSymbolIndex(result.stdout, currentHead || "unknown");
-					try {
-						writeFileSync(cachePath, JSON.stringify(index), "utf-8");
-					} catch {
-						/* non-critical */
-					}
-				} catch (err) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `Failed to build symbol index: ${err instanceof Error ? err.message : String(err)}\nEnsure universal-ctags is installed.`,
-							},
-						],
-						details: {
-							success: false,
-							error: err instanceof Error ? err.message : String(err),
-						} as Record<string, unknown>,
-					};
-				}
+			// Phase 1: Build or load symbol index
+			let index;
+			try {
+				index = await engine.buildOrLoadIndex(targetDir, cacheDir, signal);
+			} catch (err) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `Failed to build symbol index: ${err instanceof Error ? err.message : String(err)}\nEnsure universal-ctags is installed.`,
+						},
+					],
+					details: {
+						success: false,
+						error: err instanceof Error ? err.message : String(err),
+					} as Record<string, unknown>,
+				};
 			}
 
-			const totalSymbols = Object.values(index.symbols).flat().length;
-			const mode = selectMode(query, totalSymbols, config.autoThreshold);
-			const modeLabel = mode === "full_dump" ? "full_dump" : "ranked";
+			// Phase 2: Rank/dump files
+			const ranked = await engine.rank(index, query, budget, signal);
 
-			let ranked: { files: RankedFileScore[]; totalTokens: number; truncated: boolean };
-			if (mode === "full_dump") {
-				ranked = dumpAllFiles(index.symbols, budget);
-			} else {
-				let keywordScores: Record<string, number> = {};
-				if (query) {
-					const { fileMatches, terms } = await runKeywordSearch(
-						exec,
-						query,
-						targetDir,
-						cwd,
-						signal,
-					);
-					keywordScores = computeKeywordScores(fileMatches, terms);
-				}
-				const fileDates = await runGitRecency(exec, config.recencyWindowDays, cwd, signal);
-				const recencyScores = computeRecencyScores(fileDates, config.recencyWindowDays);
-				ranked = rankFiles(keywordScores, recencyScores, config.weights, budget, index.symbols);
-			}
+			// Phase 3: Add file previews (ranked mode only)
+			const filesWithPreviews = engine.addPreviews(ranked.files, targetDir, ranked.mode);
 
-			const filesWithPreviews = ranked.files.map((f) => {
-				if (mode === "full_dump") return f;
-				let preview = "";
-				try {
-					const fullPath = resolve(cwd, targetDir, f.path);
-					if (existsSync(fullPath))
-						preview = readFileSync(fullPath, "utf-8").split("\n").slice(0, 5).join("\n");
-				} catch {
-					/* empty preview */
-				}
-				return { ...f, preview };
-			});
+			// Phase 4: Format output
+			const output = engine.format(filesWithPreviews, budget, ranked.truncated, ranked.mode);
 
-			const output = formatOutput(
-				filesWithPreviews,
-				budget,
-				ranked.truncated,
-				modeLabel as "ranked" | "full_dump",
-			);
 			const symbolCount = Object.values(index.symbols).flat().length;
 			const fileCount = Object.keys(index.symbols).length;
 			const displayMode =
