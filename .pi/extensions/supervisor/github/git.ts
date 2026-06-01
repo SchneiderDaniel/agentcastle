@@ -39,9 +39,10 @@ export async function commitAndPush(
 	const commitResult = await pi.exec("git", ["commit", "-m", message], { cwd });
 	if (commitResult.code !== 0) {
 		const output = (commitResult.stderr || "") + (commitResult.stdout || "");
-		if (!output.includes("nothing to commit")) {
-			throw new Error(`git commit failed: ${output.trim()}`);
+		if (output.includes("nothing to commit")) {
+			throw new Error("No changes to commit — developer produced no output");
 		}
+		throw new Error(`git commit failed: ${output.trim()}`);
 	}
 	await pushBranch(pi, cwd, remote, branch);
 }

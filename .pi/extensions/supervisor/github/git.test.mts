@@ -82,14 +82,15 @@ describe("commitAndPush()", () => {
 		assert.deepEqual(calls[2].args, ["push", "origin", "feature"]);
 	});
 
-	it("pushes even when git commit returns 'nothing to commit'", async () => {
-		const { pi, calls } = createMockPi([
+	it("throws when git commit returns 'nothing to commit' (no changes)", async () => {
+		const { pi } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 1, stdout: "", stderr: "nothing to commit" },
-			{ code: 0, stdout: "", stderr: "" },
 		]);
-		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
-		assert.equal(calls.length, 3);
+		await assert.rejects(
+			() => commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg"),
+			/No changes to commit/,
+		);
 	});
 
 	it("throws when git add fails", async () => {
@@ -109,5 +110,17 @@ describe("commitAndPush()", () => {
 			() => commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg"),
 			/git commit failed/,
 		);
+	});
+
+	it("does not push when nothing to commit (short-circuits before push)", async () => {
+		const { pi, calls } = createMockPi([
+			{ code: 0, stdout: "", stderr: "" },
+			{ code: 1, stdout: "", stderr: "nothing to commit" },
+		]);
+		await assert.rejects(
+			() => commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg"),
+			/No changes to commit/,
+		);
+		assert.equal(calls.length, 2); // add + commit, no push
 	});
 });
