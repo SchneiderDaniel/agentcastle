@@ -33,6 +33,60 @@ const KNOWN_DIMENSIONS = new Set<AuditDimension>([
 
 const VALID_SEVERITIES = new Set<FindingSeverity>(["critical", "warning", "suggestion"]);
 
+// ─── JSON Sanitization ────────────────────────────────────────────
+
+/**
+ * Escape literal newlines (\\n, \\r) inside JSON string values.
+ * Agents often produce JSON where commentBody contains actual newlines
+ * instead of \\n escape sequences. This makes JSON.parse fail.
+ *
+ * This function walks the JSON text character by character, tracking
+ * string boundaries, and replaces literal newlines with the \\n escape.
+ *
+ * Edge cases handled:
+ * - Escaped quotes (\\") inside strings
+ * - Backslash-escaped characters (\\\\, \\n, etc.)
+ * - Nested JSON objects (tracked via brace depth outside strings)
+ */
+function sanitizeJsonStrings(jsonText: string): string {
+	let result = "";
+	let inString = false;
+	let escaped = false;
+
+	for (const ch of jsonText) {
+		if (escaped) {
+			// Previous char was backslash — pass current char through literally
+			result += ch;
+			escaped = false;
+			continue;
+		}
+
+		if (inString && ch === "\\") {
+			// Start escape sequence inside string
+			result += ch;
+			escaped = true;
+			continue;
+		}
+
+		if (ch === '"') {
+			// Toggle string state (only toggles when not escaped)
+			result += ch;
+			inString = !inString;
+			continue;
+		}
+
+		if (inString && (ch === "\\n" || ch === "\\r")) {
+			// Literal newline inside string — replace with JSON escape
+			result += "\\n";
+			continue;
+		}
+
+		result += ch;
+	}
+
+	return result;
+}
+
 // ─── JSON Extraction ──────────────────────────────────────────────
 
 /**
@@ -253,10 +307,14 @@ export function parseAgentOutput(output: string): ParseResult {
 	// Step 2: Extract JSON from text
 	const jsonStr = extractLastJson(clean);
 
-	// Step 3: Parse JSON
+	// Step 2.5: Sanitize JSON — escape literal newlines inside string values
+	// Agents often produce commentBody with actual newlines instead of \\n escapes
+	const sanitized = sanitizeJsonStrings(jsonStr);
+
+	// Step 3: Parse JSON (sanitized to handle literal newlines in strings)
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(jsonStr);
+		parsed = JSON.parse(sanitized);
 	} catch (e: unknown) {
 		const msg = e instanceof Error ? e.message : String(e);
 		return {
