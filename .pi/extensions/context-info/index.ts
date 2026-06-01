@@ -76,10 +76,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		state.config = loadConfig();
 
 		// Detect worktree each session — git worktree can change across sessions
-		state.worktreeName = getWorktreeName(ctx.cwd);
+		state.footerConfig.worktreeName = getWorktreeName(ctx.cwd);
 		// Deferred I/O — read pi settings on first session
-		if (!state.thinkingLevel) {
-			state.thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
+		if (!state.footerConfig.thinkingLevel) {
+			state.footerConfig.thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
 		}
 
 		if (state.config === null) {
@@ -92,7 +92,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 		const cw = ctx.model?.contextWindow;
 		if (typeof cw === "number" && cw > 0) {
-			state.lastContextWindow = cw;
+			state.footerConfig.lastContextWindow.value = cw;
 		}
 
 		// Install custom footer
@@ -147,7 +147,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 	pi.on("thinking_level_select", async (event, ctx: ExtensionContext) => {
 		if (!state) return;
-		state.thinkingLevel = event.level;
+		state.footerConfig.thinkingLevel = event.level;
 		if (state.config) {
 			state.callInstallFooter();
 		}
@@ -157,7 +157,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		if (!state) return;
 		const cw = event.model?.contextWindow;
 		if (typeof cw === "number" && cw > 0) {
-			state.lastContextWindow = cw;
+			state.footerConfig.lastContextWindow.value = cw;
 		}
 		if (state.config) {
 			state.callInstallFooter();
@@ -178,10 +178,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		// Capture cache stats from raw event usage
 		const eventUsage = msg.usage;
 		if (eventUsage && typeof eventUsage.cacheRead === "number") {
-			state.cacheRead = eventUsage.cacheRead;
+			state.footerConfig.cacheRead = eventUsage.cacheRead;
 		}
 		if (eventUsage && typeof eventUsage.cacheWrite === "number") {
-			state.cacheWrite = eventUsage.cacheWrite;
+			state.footerConfig.cacheWrite = eventUsage.cacheWrite;
 		}
 		const usage = ctx.getContextUsage();
 		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
@@ -212,4 +212,4 @@ export default function contextInfo(pi: ExtensionAPI): void {
 }
 
 // Re-export types for consumers
-export type { ThresholdEntry, TpsSample, ContextStatusBarConfig } from "./types.js";
+export type { ThresholdEntry, TpsSample, ContextStatusBarConfig, FooterConfig } from "./types.js";

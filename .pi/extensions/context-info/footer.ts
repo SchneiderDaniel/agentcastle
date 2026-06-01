@@ -7,7 +7,7 @@
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { FooterState } from "./footer-state.js";
+import type { ContextStatusBarConfig, FooterConfig } from "./types.js";
 import {
 	formatSessionTimer,
 	formatTokens,
@@ -23,8 +23,12 @@ import {
 /** Module-scope process start time — captures true pi process launch time */
 export const processStartTime = Date.now();
 
-export function installFooter(ctx: ExtensionContext, state: FooterState): void {
-	const { config, worktreeName, thinkingLevel } = state;
+export function installFooter(
+	ctx: ExtensionContext,
+	config: ContextStatusBarConfig | null,
+	footerConfig: FooterConfig,
+): void {
+	const { worktreeName, thinkingLevel } = footerConfig;
 	if (!config || config.enabled === false) {
 		ctx.ui.setFooter(undefined);
 		return;
@@ -42,8 +46,8 @@ export function installFooter(ctx: ExtensionContext, state: FooterState): void {
 				// ── Compute token usage ───────────────────────
 				const usage = ctx.getContextUsage();
 				const tokens = usage?.tokens ?? null;
-				const cw = usage?.contextWindow ?? state.lastContextWindow;
-				if (cw && cw > 0) state.lastContextWindow = cw;
+				const cw = usage?.contextWindow ?? footerConfig.lastContextWindow.value;
+				if (cw && cw > 0) footerConfig.lastContextWindow.value = cw;
 
 				// ── LEFT: Git info ───────────────────────────
 				const branch = footerData.getGitBranch();
@@ -83,7 +87,7 @@ export function installFooter(ctx: ExtensionContext, state: FooterState): void {
 
 				// ── Tool call counter ─────────────────────────
 				const toolStr =
-					theme.fg("dim", "🔧") + " " + theme.fg("muted", String(state.toolCallCount));
+					theme.fg("dim", "🔧") + " " + theme.fg("muted", String(footerConfig.toolCallCount.value));
 				centerStr += " " + theme.fg("dim", "·") + " " + toolStr;
 
 				// ── RIGHT: Session timer + token usage + percentage ──
@@ -101,10 +105,12 @@ export function installFooter(ctx: ExtensionContext, state: FooterState): void {
 				let tokenDisplay = "";
 				if (tokens !== null && tokens !== undefined) {
 					const currentFmt = formatTokens(tokens);
-					const maxFmt = state.lastContextWindow ? formatTokens(state.lastContextWindow) : "?";
+					const maxFmt = footerConfig.lastContextWindow.value
+						? formatTokens(footerConfig.lastContextWindow.value)
+						: "?";
 					const pct =
-						state.lastContextWindow && state.lastContextWindow > 0
-							? Math.round((tokens / state.lastContextWindow) * 100)
+						footerConfig.lastContextWindow.value && footerConfig.lastContextWindow.value > 0
+							? Math.round((tokens / footerConfig.lastContextWindow.value) * 100)
 							: null;
 
 					const usageHex = pickThresholdHex(tokens, config.thresholds);
@@ -116,8 +122,11 @@ export function installFooter(ctx: ExtensionContext, state: FooterState): void {
 						const pctColor = pct >= 90 ? "error" : pct >= 70 ? "warning" : "dim";
 						tokenDisplay += " " + theme.fg(pctColor, `[${pct}%]`);
 					}
-				} else if (state.lastContextWindow) {
-					tokenDisplay = theme.fg("dim", `◉ .../${formatTokens(state.lastContextWindow)}`);
+				} else if (footerConfig.lastContextWindow.value) {
+					tokenDisplay = theme.fg(
+						"dim",
+						`◉ .../${formatTokens(footerConfig.lastContextWindow.value)}`,
+					);
 				} else {
 					tokenDisplay = theme.fg("dim", "◉ .../?");
 				}
@@ -132,9 +141,9 @@ export function installFooter(ctx: ExtensionContext, state: FooterState): void {
 				}
 
 				// ── TPS computation ───────────────────────────
-				const computed = computeTps(state.tpsSamples);
+				const computed = computeTps(footerConfig.tpsSamples);
 				if (computed !== null) {
-					state.lastComputedTps = computed;
+					footerConfig.lastComputedTps.value = computed;
 				}
 
 				// ── Build row 1: left │ center │ right ──────────
@@ -166,13 +175,11 @@ export function installFooter(ctx: ExtensionContext, state: FooterState): void {
 				const left2 = extStr || "";
 				const rightParts: string[] = [];
 				if (config.showTps) {
-					const tpsDisplay = formatTps(state.lastComputedTps);
+					const tpsDisplay = formatTps(footerConfig.lastComputedTps.value);
 					rightParts.push(theme.fg("dim", tpsDisplay));
 				}
 				if (config.showCache) {
-					const cacheRead = state.cacheRead;
-					const cacheWrite = state.cacheWrite;
-					const cacheStr = formatCacheStats(cacheRead, cacheWrite);
+					const cacheStr = formatCacheStats(footerConfig.cacheRead, footerConfig.cacheWrite);
 					rightParts.push(theme.fg("dim", cacheStr));
 				}
 				const right2 = rightParts.join(" " + sep + " ");
