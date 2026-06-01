@@ -151,7 +151,7 @@ export function sendPipelineError(
 		if (config?.bellOnComplete) {
 			process.stdout.write("\x07");
 		}
-	} else {
-		ctx.ui.setStatus("supervisor", undefined);
 	}
+	// Always clear supervisor status on error — avoids stale error text in footer
+	ctx.ui.setStatus("supervisor", undefined);
 }

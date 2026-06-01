@@ -174,20 +174,23 @@ export function installFooter(
 				row1 = truncateToWidth(row1, width);
 
 				// ── Build row 2 (ext statuses left, TPS + cache right) ──
-				if (extStr || config.showTps || config.showCache) {
-					const left2 = extStr || "";
-					const rightParts: string[] = [];
-					if (config.showTps) {
-						const tpsDisplay = formatTps(lastComputedTps.value);
-						rightParts.push(theme.fg("dim", tpsDisplay));
-					}
-					if (config.showCache) {
-						const cacheRead = cacheReadRef?.value;
-						const cacheWrite = cacheWriteRef?.value;
-						const cacheStr = formatCacheStats(cacheRead, cacheWrite);
-						rightParts.push(theme.fg("dim", cacheStr));
-					}
-					const right2 = rightParts.join(" " + sep + " ");
+				const left2 = extStr || "";
+				const rightParts: string[] = [];
+				if (config.showTps) {
+					const tpsDisplay = formatTps(lastComputedTps.value);
+					rightParts.push(theme.fg("dim", tpsDisplay));
+				}
+				if (config.showCache) {
+					const cacheRead = cacheReadRef?.value;
+					const cacheWrite = cacheWriteRef?.value;
+					const cacheStr = formatCacheStats(cacheRead, cacheWrite);
+					rightParts.push(theme.fg("dim", cacheStr));
+				}
+				const right2 = rightParts.join(" " + sep + " ");
+
+				// Skip row 2 when both sides are effectively empty after building
+				// Prevents blank rows when all extension statuses filter to empty string
+				if (left2 || right2) {
 					const lw = visibleWidth(left2);
 					const rw = visibleWidth(right2);
 					const gap = Math.max(0, width - lw - rw);
