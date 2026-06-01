@@ -9,26 +9,25 @@
  */
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ContextStatusBarConfig, TpsSample } from "./types.js";
+import type { ContextStatusBarConfig, FooterConfig } from "./types.js";
 
 /** Callback signature for installing the footer */
-export type InstallFooterFn = (ctx: ExtensionContext, state: FooterState) => void;
+export type InstallFooterFn = (
+	ctx: ExtensionContext,
+	config: ContextStatusBarConfig | null,
+	footerConfig: FooterConfig,
+) => void;
 
 export class FooterState {
+	// ── Footer data (shared reference for mutation) ───────────────
+	footerConfig: FooterConfig;
+
 	// ── State properties ──────────────────────────────────────────
 	config: ContextStatusBarConfig | null = null;
-	lastContextWindow: number | undefined = undefined;
 	emitted = false;
-	thinkingLevel = "";
-	worktreeName: string | null = null;
-	timerInterval: ReturnType<typeof setInterval> | null = null;
-	tpsSamples: TpsSample[] = [];
-	lastComputedTps: number | null = null;
 	lastSampledOutput: number | undefined = undefined;
-	toolCallCount = 0;
 	startupWidgetActive = false;
-	cacheRead: number | undefined = undefined;
-	cacheWrite: number | undefined = undefined;
+	timerInterval: ReturnType<typeof setInterval> | null = null;
 
 	ctx: ExtensionContext;
 	installFooterCb: InstallFooterFn;
@@ -36,11 +35,21 @@ export class FooterState {
 	constructor(ctx: ExtensionContext, installFooterCb: InstallFooterFn = () => {}) {
 		this.ctx = ctx;
 		this.installFooterCb = installFooterCb;
+		this.footerConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+		};
 	}
 
-	/** Invoke the footer install callback with current context and state */
+	/** Invoke the footer install callback with current context and footerConfig */
 	callInstallFooter(): void {
-		this.installFooterCb(this.ctx, this);
+		this.installFooterCb(this.ctx, this.config, this.footerConfig);
 	}
 
 	// ── Timer management ─────────────────────────────────────────
@@ -67,22 +76,25 @@ export class FooterState {
 		if (typeof output !== "number" || output < 0) return;
 		// Detect reset between responses (new response starts from 0)
 		if (typeof this.lastSampledOutput === "number" && output < this.lastSampledOutput) {
-			this.tpsSamples.length = 0;
+			this.footerConfig.tpsSamples.length = 0;
 		}
 		this.lastSampledOutput = output;
 		const now = Date.now();
-		this.tpsSamples.push({ time: now, cumulativeTokens: output });
+		this.footerConfig.tpsSamples.push({ time: now, cumulativeTokens: output });
 		// Prune samples older than 30s
 		const cutoff = now - 30_000;
-		while (this.tpsSamples.length > 0 && this.tpsSamples[0]!.time < cutoff) {
-			this.tpsSamples.shift();
+		while (
+			this.footerConfig.tpsSamples.length > 0 &&
+			this.footerConfig.tpsSamples[0]!.time < cutoff
+		) {
+			this.footerConfig.tpsSamples.shift();
 		}
 	}
 
 	// ── Tool call tracking ────────────────────────────────────────
 
 	addToolCall(): void {
-		this.toolCallCount++;
+		this.footerConfig.toolCallCount.value++;
 		this.callInstallFooter();
 	}
 
@@ -90,16 +102,16 @@ export class FooterState {
 
 	resetProperties(): void {
 		this.config = null;
-		this.lastContextWindow = undefined;
 		this.emitted = false;
-		this.thinkingLevel = "";
-		this.worktreeName = null;
-		this.tpsSamples.length = 0;
-		this.lastComputedTps = null;
 		this.lastSampledOutput = undefined;
-		this.toolCallCount = 0;
 		this.startupWidgetActive = false;
-		this.cacheRead = undefined;
-		this.cacheWrite = undefined;
+		this.footerConfig.worktreeName = null;
+		this.footerConfig.thinkingLevel = "";
+		this.footerConfig.tpsSamples.length = 0;
+		this.footerConfig.lastComputedTps.value = null;
+		this.footerConfig.lastContextWindow.value = undefined;
+		this.footerConfig.toolCallCount.value = 0;
+		this.footerConfig.cacheRead = undefined;
+		this.footerConfig.cacheWrite = undefined;
 	}
 }
