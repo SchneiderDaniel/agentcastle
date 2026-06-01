@@ -34,6 +34,35 @@ function errResponse(text: string, extra: Record<string, unknown> = {}) {
 	};
 }
 
+export function buildSearchErrorText(
+	searcherName: string,
+	exitCode: number | null,
+	killed: boolean | undefined,
+	stderr: string,
+	engineStr: string,
+	directory: string,
+): string {
+	const isMissingTool = [/command not found/i, /not recognized/i, /internal error/i].some((p) =>
+		p.test(stderr),
+	);
+	const isPathError = [/No such file or directory/i, /ENOENT/i, /not found/i].some((p) =>
+		p.test(stderr),
+	);
+	let errorText: string;
+	if (killed) {
+		errorText = `${searcherName} process killed (exit ${exitCode}).`;
+	} else if (!stderr.trim()) {
+		errorText = `${searcherName} failed (exit ${exitCode}) with no error output.`;
+	} else if (isMissingTool) {
+		errorText = `${searcherName} failed (exit ${exitCode}): ${stderr}\n\nEnsure ${engineStr} installed.`;
+	} else if (isPathError) {
+		errorText = `${searcherName} failed (exit ${exitCode}): ${stderr}\nDirectory "${directory}" not found or inaccessible.`;
+	} else {
+		errorText = `${searcherName} failed (exit ${exitCode}): ${stderr}`;
+	}
+	return errorText;
+}
+
 async function verifyDirectory(
 	cwd: string,
 	directory: string,
@@ -217,19 +246,15 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				}
 				const stderr = result.stderr || "";
 				const engineStr = useRipgrep ? "ripgrep (`rg --version`)" : "grep";
-				const isPathError = [/No such file or directory/i, /ENOENT/i, /not found/i].some((p) =>
-					p.test(stderr),
+
+				const errorText = buildSearchErrorText(
+					searcherName,
+					result.code,
+					result.killed,
+					stderr,
+					engineStr,
+					directory,
 				);
-				const isMissingTool =
-					[/command not found/i, /not recognized/i, /internal error/i].some((p) =>
-						p.test(stderr),
-					) || !stderr.trim();
-				let errorText: string;
-				if (isPathError)
-					errorText = `${searcherName} failed (exit ${result.code}): ${stderr}\nDirectory "${directory}" not found or inaccessible.`;
-				else if (isMissingTool)
-					errorText = `${searcherName} failed (exit ${result.code}): ${stderr || "unknown error"}\n\nEnsure ${engineStr} installed.`;
-				else errorText = `${searcherName} failed (exit ${result.code}): ${stderr}`;
 				return errResponse(errorText, {
 					exitCode: result.code,
 					stderr: result.stderr,
