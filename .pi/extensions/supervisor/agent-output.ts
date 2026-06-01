@@ -96,6 +96,9 @@ function sanitizeJsonStrings(jsonText: string): string {
  * - JSON embedded in markdown code fences (```json ... ```)
  * - JSON with surrounding text
  * - Multiple JSON objects (picks last)
+ *
+ * Brace matching is string-boundary aware — { and } inside JSON string
+ * values (e.g., tool args like {"pattern":"function.*{"}) are ignored.
  */
 function extractLastJson(raw: string): string {
 	// Try to find JSON in ```json or ``` code fences first
@@ -111,32 +114,80 @@ function extractLastJson(raw: string): string {
 	}
 
 	// No code fence found — look for outermost JSON object in raw text
-	// Find the last complete JSON object by scanning from the end
+	// Use string-boundary-aware brace matching to handle {/} inside JSON string values.
+	// Without this, tool args like {"pattern":"function.*{"} leave the brace stack
+	// unbalanced, causing extractLastJson to miss the agent output JSON entirely.
+	let inString = false;
+	let escaped = false;
 	const braceStack: number[] = [];
 	let lastCompleteStart = -1;
 	for (let i = 0; i < raw.length; i++) {
-		if (raw[i] === "{") {
-			braceStack.push(i);
-		} else if (raw[i] === "}") {
-			if (braceStack.length > 0) {
-				const start = braceStack.pop()!;
-				if (braceStack.length === 0) {
-					// This is a complete top-level JSON object
-					lastCompleteStart = start;
+		const ch = raw[i];
+
+		// Previous char was backslash — skip this char (it's escaped)
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+
+		// Backslash inside string starts escape sequence
+		if (inString && ch === "\\") {
+			escaped = true;
+			continue;
+		}
+
+		// Quote toggles string state
+		if (ch === '"') {
+			inString = !inString;
+			continue;
+		}
+
+		// Only count braces outside string values
+		if (!inString) {
+			if (ch === "{") {
+				braceStack.push(i);
+			} else if (ch === "}") {
+				if (braceStack.length > 0) {
+					const start = braceStack.pop()!;
+					if (braceStack.length === 0) {
+						// This is a complete top-level JSON object
+						lastCompleteStart = start;
+					}
 				}
 			}
 		}
 	}
 
 	if (lastCompleteStart >= 0) {
-		// Find the matching closing brace
+		// Find the matching closing brace (also string-boundary aware)
 		let depth = 0;
+		let strOpen = false;
+		let esc = false;
 		for (let i = lastCompleteStart; i < raw.length; i++) {
-			if (raw[i] === "{") depth++;
-			else if (raw[i] === "}") {
-				depth--;
-				if (depth === 0) {
-					return raw.slice(lastCompleteStart, i + 1);
+			const c = raw[i];
+
+			if (esc) {
+				esc = false;
+				continue;
+			}
+
+			if (strOpen && c === "\\") {
+				esc = true;
+				continue;
+			}
+
+			if (c === '"') {
+				strOpen = !strOpen;
+				continue;
+			}
+
+			if (!strOpen) {
+				if (c === "{") depth++;
+				else if (c === "}") {
+					depth--;
+					if (depth === 0) {
+						return raw.slice(lastCompleteStart, i + 1);
+					}
 				}
 			}
 		}

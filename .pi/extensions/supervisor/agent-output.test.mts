@@ -561,3 +561,89 @@ describe("characterization — extractSummaryLine compatibility", () => {
 		assert.equal((result as AgentOutput).summary, undefined);
 	});
 });
+
+describe("extractLastJson — string-boundary-aware brace matching", () => {
+	it("extracts JSON from text with braces in tool args", () => {
+		const fullLog = [
+			'🔧 search_code {"pattern":"function.*{","path":"/src"}',
+			"✓ search_code",
+			'🔧 read_file {"path":"/src/{feature,x}.ts"}',
+			"✓ read_file",
+			"💭 I see the issue",
+			"",
+			'{"commentBody":"Architect review","action":"COMPLETE","agentName":"architect"}',
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse JSON from text with tool arg braces");
+		assert.equal((result as AgentOutput).commentBody, "Architect review");
+		assert.equal((result as AgentOutput).action, "COMPLETE");
+	});
+
+	it("extracts JSON when tool args have unbalanced braces", () => {
+		const fullLog = [
+			'🔧 search_code {"pattern":"if({{{","path":"/src"}',
+			"✓ search_code",
+			"💭 Found issue",
+			"",
+			'{"commentBody":"Fix nested brace","action":"COMPLETE","agentName":"architect"}',
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse JSON despite unbalanced braces in tool args");
+		assert.equal((result as AgentOutput).commentBody, "Fix nested brace");
+	});
+
+	it("extracts JSON when commentBody contains braces", () => {
+		const fullLog =
+			'{"commentBody":"Fix {the off-by-one} in loop","action":"COMPLETE","agentName":"architect"}';
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse JSON with braces in commentBody");
+		assert.equal((result as AgentOutput).commentBody, "Fix {the off-by-one} in loop");
+	});
+
+	it("extracts JSON with mixed content (tool logs, thinking, JSON)", () => {
+		const fullLog = [
+			'🔧 read_file {"path":"/src/auth.ts"}',
+			"✓ read_file",
+			"💭 Need to check the auth flow",
+			'🔧 search_code {"query":"function login"}',
+			"✓ search_code",
+			"",
+			'{"commentBody":"Mixed content review","action":"COMPLETE","agentName":"architect"}',
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse JSON from mixed content");
+		assert.equal((result as AgentOutput).commentBody, "Mixed content review");
+	});
+
+	it("still extracts code-fenced JSON correctly", () => {
+		const fullLog = [
+			"Some text before",
+			"",
+			"\`\`\`json",
+			'{"commentBody":"Code fenced","action":"COMPLETE","agentName":"researcher"}',
+			"\`\`\`",
+			"Some text after",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse code-fenced JSON");
+		assert.equal((result as AgentOutput).commentBody, "Code fenced");
+	});
+
+	it("handles pure JSON (no surrounding text)", () => {
+		const json = '{"commentBody":"Pure JSON","action":"COMPLETE","agentName":"architect"}';
+		const result = parseAgentOutput(json);
+		assert.ok(isAgentOutput(result), "must parse pure JSON");
+		assert.equal((result as AgentOutput).commentBody, "Pure JSON");
+	});
+
+	it("extracts last JSON when multiple JSON objects present", () => {
+		const fullLog = [
+			'{"commentBody":"First JSON","action":"COMPLETE","agentName":"architect"}',
+			"some text",
+			'{"commentBody":"Last JSON","action":"COMPLETE","agentName":"architect"}',
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must pick last JSON object");
+		assert.equal((result as AgentOutput).commentBody, "Last JSON");
+	});
+});
