@@ -6,6 +6,7 @@
 
 import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { buildAgentRunResult } from "./session-result.ts";
 import type { AgentRunState, AgentRunResult } from "./types";
 
@@ -288,5 +289,55 @@ describe("runAgentInProcess — budget param wiring", () => {
 		assert.equal(result.toolCount, 30);
 		assert.equal(result.tokenCount, 100000);
 		assert.equal(result.success, false);
+	});
+});
+
+// ─── noTools parameter (ask_user bug fix) ─────────────────────────
+
+describe("createAgentSession — noTools parameter prevents ask_user leak", () => {
+	const source = readFileSync(".pi/extensions/supervisor/agent-session-runner.ts", "utf-8");
+
+	it("noTools is 'builtin' when tools.length > 0 (explicit allowlist)", () => {
+		const lines = source.split("\n");
+		const toolsLine = lines.findIndex((l) => l.includes("tools:") && l.includes("tools.length"));
+		assert.ok(toolsLine >= 0, "should have a tools line that checks tools.length");
+
+		for (let i = toolsLine; i < Math.min(toolsLine + 10, lines.length); i++) {
+			if (lines[i].includes("noTools:")) {
+				assert.ok(
+					lines[i].includes('tools.length > 0 ? "builtin"'),
+					`noTools line must use tools.length > 0 check (got: ${lines[i].trim()})`,
+				);
+				return;
+			}
+		}
+		assert.fail("noTools line not found near tools line in createAgentSession call");
+	});
+
+	it("does NOT pass noTools when tools.length === 0 (no explicit tools)", () => {
+		const hasUndefinedCase = source.includes("noTools: tools.length === 0 ? undefined");
+		const hasTernary = source.includes('noTools: tools.length > 0 ? "builtin" : undefined');
+		assert.ok(hasUndefinedCase || hasTernary, "noTools must be undefined when tools.length === 0");
+	});
+
+	it("createAgentSession tools uses tools.length > 0 ternary", () => {
+		const toolsLine = source
+			.split("\n")
+			.find((l) => l.includes("tools:") && l.includes("tools.length"));
+		assert.ok(toolsLine, "tools line must exist");
+		assert.ok(
+			toolsLine.includes("tools.length > 0 ? tools : undefined"),
+			`tools must use tools.length > 0 ternary (got: ${toolsLine.trim()})`,
+		);
+	});
+
+	it("createAgentSession has noTools:builtin alongside tools for defense-in-depth", () => {
+		const match = source.match(
+			/tools:\s*tools\.length\s*>\s*0\s*\?\s*tools\s*:\s*undefined,\n\s*noTools:\s*tools\.length\s*>\s*0\s*\?\s*"builtin"\s*:\s*undefined,/,
+		);
+		assert.ok(
+			match,
+			"createAgentSession call must have both tools and noTools using tools.length > 0 ternary",
+		);
 	});
 });
