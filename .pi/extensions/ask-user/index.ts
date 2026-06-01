@@ -15,14 +15,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { QuestionParams, QnaReadParams } from "./types.ts";
 import {
-	appendQnaEntry,
 	migrateQnaFromCsv,
 	listQnaEntries,
 	getQnaEntry,
 	queryQnaEntries,
 	readQnaEntries,
 } from "./jsonl-logger.ts";
-import { renderScrollableDialog } from "./question-ui.ts";
+import { QuestionHandler } from "./question-handler.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -115,9 +114,7 @@ export default function askUser(pi: ExtensionAPI): void {
 			content: Array<{ type: "text"; text: string }>;
 			details: Record<string, unknown>;
 		}> {
-			const { question, mode = "choice" } = params;
-			const sm = ctx.sessionManager;
-			const projectDir = sm.getCwd();
+			const projectDir = ctx.sessionManager.getCwd();
 
 			// Run CSV→JSONL migration on first write
 			// Wrapped in try/catch so a migration failure doesn't crash the tool
@@ -127,144 +124,8 @@ export default function askUser(pi: ExtensionAPI): void {
 				console.warn(`Migration warning: ${(err as Error).message}`);
 			}
 
-			// ── Freetext mode ──────────────────────────────────────────
-			if (mode === "freetext") {
-				const answer = await ctx.ui.input(question, "");
-				if (answer === undefined || answer.trim() === "") {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "User cancelled the question. Ask if they want to skip this topic and move on.",
-							},
-						],
-						details: {} as Record<string, unknown>,
-					};
-				}
-
-				const trimmedAnswer = answer.trim();
-				const timestamp = new Date().toISOString();
-
-				try {
-					await appendQnaEntry(projectDir, timestamp, question, trimmedAnswer);
-				} catch (err) {
-					ctx.ui.notify(`Failed to save Q&A entry: ${(err as Error).message}`, "error");
-				}
-
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `User answered: "${trimmedAnswer}"`,
-						},
-					],
-					details: { answer: trimmedAnswer },
-				};
-			}
-
-			// ── Choice mode (default) ──────────────────────────────────
-			const options = params.options ?? [];
-
-			// Build SelectItems. Map labels back to values after selection.
-			const labelToValue: Array<{ label: string; value: string }> = [];
-			const items: Array<{ value: string; label: string }> = [];
-
-			for (let i = 0; i < options.length; i++) {
-				const opt = options[i]!;
-				const suffix = opt.recommended ? " (Recommended)" : "";
-				const label = `${i + 1}. ${opt.label}${suffix}`;
-				labelToValue.push({ label, value: opt.value });
-				items.push({ value: label, label });
-			}
-
-			let otherLabel = "";
-			if (!params.disableOther) {
-				otherLabel = `${items.length + 1}. Other (type your answer)`;
-				items.push({ value: otherLabel, label: otherLabel });
-			}
-
-			// Use custom scrollable dialog so long questions (with code
-			// blocks) can be scrolled independently from the option list.
-			const selectedLabel = (await ctx.ui.custom((tui, theme, _keybindings, done) =>
-				renderScrollableDialog(
-					tui,
-					theme as { fg: (color: string, text: string) => string },
-					done,
-					question,
-					items,
-					labelToValue,
-					otherLabel,
-				),
-			)) as string | undefined;
-
-			const timestamp = new Date().toISOString();
-
-			// User cancelled (Esc)
-			if (selectedLabel === undefined) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: "User cancelled the question. Ask if they want to skip this topic and move on.",
-						},
-					],
-					details: {} as Record<string, unknown>,
-				};
-			}
-
-			// User picked "Other" — ask for custom text (only when not disabled)
-			if (!params.disableOther && selectedLabel === otherLabel) {
-				const customAnswer = await ctx.ui.input("Type your answer:", "");
-				if (customAnswer === undefined || customAnswer.trim() === "") {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: "User cancelled or left 'Other' empty. Re-ask or mark this topic as unresolved.",
-							},
-						],
-						details: {} as Record<string, unknown>,
-					};
-				}
-
-				const trimmedCustom = customAnswer.trim();
-
-				try {
-					await appendQnaEntry(sm.getCwd(), timestamp, question, trimmedCustom);
-				} catch (err) {
-					ctx.ui.notify(`Failed to save Q&A entry: ${(err as Error).message}`, "error");
-				}
-
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `User chose "Other" and answered: "${trimmedCustom}"`,
-						},
-					],
-					details: { selected: "__other__", customAnswer: trimmedCustom },
-				};
-			}
-
-			// User picked a predefined option
-			const selectedValue =
-				labelToValue.find((e) => e.label === selectedLabel)?.value ?? selectedLabel;
-
-			try {
-				await appendQnaEntry(sm.getCwd(), timestamp, question, selectedValue);
-			} catch (err) {
-				ctx.ui.notify(`Failed to save Q&A entry: ${(err as Error).message}`, "error");
-			}
-
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `User selected: "${selectedLabel}"`,
-					},
-				],
-				details: { selected: selectedValue, label: selectedLabel },
-			};
+			const handler = new QuestionHandler(projectDir, ctx);
+			return handler.handle(params);
 		},
 	});
 
