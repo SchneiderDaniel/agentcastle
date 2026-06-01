@@ -83,6 +83,9 @@ export function jsonLineToNormalizedEvent(line: string): NormalizedEvent | null 
 			case "agent_end":
 				return { kind: "agent_end" };
 
+			case "done":
+				return { kind: "done", message: ev.message };
+
 			default:
 				return null;
 		}
@@ -167,6 +170,9 @@ export function sessionEventToNormalizedEvent(ev: Record<string, unknown>): Norm
 			return { kind: "agent_end" };
 		case "session":
 			return { kind: "session" };
+
+		case "done":
+			return { kind: "done", message: ev.message as any };
 
 		default:
 			return null;

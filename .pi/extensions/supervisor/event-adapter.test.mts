@@ -192,6 +192,61 @@ describe("jsonLineToNormalizedEvent", () => {
 		);
 	});
 
+	it("converts done at top level", () => {
+		const result = jsonLineToNormalizedEvent(
+			JSON.stringify({
+				type: "done",
+				message: {
+					content: [{ type: "text", text: "final answer" }],
+					usage: { input: 10, output: 5 },
+				},
+			}),
+		);
+		assert.ok(result);
+		assert.equal(result!.kind, "done");
+		if (result!.kind === "done") {
+			assert.equal(result!.message.content?.[0]?.type, "text");
+			assert.equal(result!.message.content?.[0]?.text, "final answer");
+			assert.equal(result!.message.usage?.input, 10);
+			assert.equal(result!.message.usage?.output, 5);
+		}
+	});
+
+	it("converts done at top level without usage", () => {
+		const result = jsonLineToNormalizedEvent(
+			JSON.stringify({
+				type: "done",
+				message: {
+					content: [{ type: "text", text: "done" }],
+				},
+			}),
+		);
+		assert.ok(result);
+		assert.equal(result!.kind, "done");
+		if (result!.kind === "done") {
+			assert.equal(result!.message.content?.[0]?.text, "done");
+		}
+	});
+
+	it("converts done at top level with thinking and text content", () => {
+		const result = jsonLineToNormalizedEvent(
+			JSON.stringify({
+				type: "done",
+				message: {
+					content: [
+						{ type: "thinking", thinking: "deep thought" },
+						{ type: "text", text: "result" },
+					],
+				},
+			}),
+		);
+		assert.ok(result);
+		assert.equal(result!.kind, "done");
+		if (result!.kind === "done") {
+			assert.equal(result!.message.content?.length, 2);
+		}
+	});
+
 	it("returns null for unknown event types", () => {
 		const result = jsonLineToNormalizedEvent(JSON.stringify({ type: "unknown_xyz" }));
 		assert.equal(result, null);
@@ -309,6 +364,53 @@ describe("sessionEventToNormalizedEvent", () => {
 		assert.equal(result!.kind, "done");
 		if (result!.kind === "done") {
 			assert.equal(result!.message.content?.[0]?.type, "text");
+		}
+	});
+
+	it("converts done at top level", () => {
+		const result = sessionEventToNormalizedEvent({
+			type: "done",
+			message: {
+				content: [{ type: "text", text: "final" }],
+				usage: { input: 10, output: 5 },
+			},
+		});
+		assert.ok(result);
+		assert.equal(result!.kind, "done");
+		if (result!.kind === "done") {
+			assert.equal(result!.message.content?.[0]?.text, "final");
+			assert.equal(result!.message.usage?.input, 10);
+		}
+	});
+
+	it("converts done at top level without usage", () => {
+		const result = sessionEventToNormalizedEvent({
+			type: "done",
+			message: {
+				content: [{ type: "text", text: "done" }],
+			},
+		});
+		assert.ok(result);
+		assert.equal(result!.kind, "done");
+		if (result!.kind === "done") {
+			assert.equal(result!.message.content?.[0]?.text, "done");
+		}
+	});
+
+	it("converts done at top level with thinking and text", () => {
+		const result = sessionEventToNormalizedEvent({
+			type: "done",
+			message: {
+				content: [
+					{ type: "thinking", thinking: "thought" },
+					{ type: "text", text: "result" },
+				],
+			},
+		});
+		assert.ok(result);
+		assert.equal(result!.kind, "done");
+		if (result!.kind === "done") {
+			assert.equal(result!.message.content?.length, 2);
 		}
 	});
 
