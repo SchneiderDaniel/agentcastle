@@ -106,7 +106,7 @@ export async function handleSupervisorCommand(
 		const loopItem = findIssueItem(items, issueNum);
 		if (!loopItem) {
 			ctx.ui.notify(`Issue #${issueNum} not on project board #${config.projectNumber}.`, "error");
-			ctx.ui.setStatus("supervisor", "");
+			ctx.ui.setStatus("supervisor", undefined);
 			return;
 		}
 
@@ -420,7 +420,7 @@ export async function handleSupervisorCommand(
 				stopReason,
 			);
 		} else {
-			ctx.ui.setStatus("supervisor", "");
+			ctx.ui.setStatus("supervisor", undefined);
 		}
 	} catch (err: unknown) {
 		// Also cleanup on error
