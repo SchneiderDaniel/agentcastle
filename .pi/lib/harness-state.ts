@@ -5,6 +5,9 @@
  * Factory pattern: createHarnessState() produces isolated instance per session.
  * No globals, no singletons.
  *
+ * All three state components now delegate storage to TimedMap<K,V>,
+ * removing ~60 lines of duplicated Map boilerplate.
+ *
  * Used by:
  *  - agent-harness extension handlers (pi.on("tool_call"))
  */
@@ -111,6 +114,7 @@ export interface HarnessState {
 // ── Constants ──
 
 import { CACHE_TTL_TURNS } from "./harness-rules.ts";
+import { TimedMap } from "./timed-map.ts";
 const MAX_ERRORS_PER_TOOL = 3;
 
 /** Time-based TTL for cache entries (in ms). 30 seconds. */
@@ -123,48 +127,39 @@ export const CACHE_TTL_MS = 30_000;
  * Each agent session gets its own state via this factory.
  */
 export function createHarnessState(): HarnessState {
-	// ── Read Cache ──
+	// ── Read Cache (TimedMap with dual TTL + batch awareness) ──
 
-	const cacheMap = new Map<string, CacheEntry>();
+	const cacheMap = new TimedMap<string, CacheEntry>({
+		ttlTurns: CACHE_TTL_TURNS,
+		ttlMs: CACHE_TTL_MS,
+	});
 
 	const readCache: ReadCache = {
 		get(key: string, currentTurn: number, currentBatchId?: number): CacheEntry | null {
-			const entry = cacheMap.get(key);
-			if (!entry) return null;
-
-			// Batch-aware check: if both entry and current call have batchId
-			// and they match, the entry is valid regardless of turn diff
-			if (currentBatchId !== undefined && entry.batchId !== undefined) {
-				if (currentBatchId === entry.batchId) {
-					// Same batch — entry is valid (not a different response cycle)
+			// Batch-aware bypass: if both entry and current call share the same
+			// batchId, the entry is valid regardless of turn diff (parallel calls)
+			if (currentBatchId !== undefined) {
+				const entry = cacheMap.peek(key);
+				if (entry && entry.batchId !== undefined && entry.batchId === currentBatchId) {
 					return entry;
 				}
 			}
 
-			// Turn-based TTL
-			const turnDiff = currentTurn - entry.turn;
-			if (turnDiff >= CACHE_TTL_TURNS) {
-				cacheMap.delete(key);
-				return null;
-			}
-
-			// Time-based TTL (monotonic clock, 30s)
-			const timeDiff = Date.now() - entry.timestamp;
-			if (timeDiff >= CACHE_TTL_MS) {
-				cacheMap.delete(key);
-				return null;
-			}
-
-			return entry;
+			// Standard TTL check via TimedMap
+			return cacheMap.get(key, currentTurn);
 		},
 
 		set(key: string, content: string, turn: number, batchId?: number): void {
-			cacheMap.set(key, {
-				content,
+			cacheMap.set(
+				key,
+				{
+					content,
+					turn,
+					timestamp: Date.now(),
+					batchId,
+				},
 				turn,
-				timestamp: Date.now(),
-				batchId,
-			});
+			);
 		},
 
 		clear(): void {
@@ -172,22 +167,21 @@ export function createHarnessState(): HarnessState {
 		},
 	};
 
-	// ── Error Tracker ──
+	// ── Error Tracker (TimedMap with per-key array storage + decay) ──
 
-	const errorMap = new Map<string, ErrorEntry[]>();
+	const errorMap = new TimedMap<string, ErrorEntry[]>();
 
 	const errorTracker: ErrorTracker = {
 		push(toolName: string, entry: ErrorEntry): void {
 			let errors = errorMap.get(toolName);
 			if (!errors) {
 				errors = [];
-				errorMap.set(toolName, errors);
 			}
 			errors.push(entry);
-			// Evict oldest if over limit
 			if (errors.length > MAX_ERRORS_PER_TOOL) {
 				errors.shift();
 			}
+			errorMap.set(toolName, errors);
 		},
 
 		getLastErrors(toolName: string): ErrorEntry[] {
@@ -199,19 +193,27 @@ export function createHarnessState(): HarnessState {
 		},
 
 		decay(): void {
-			for (const [, errors] of errorMap) {
-				if (errors.length > 0) {
-					errors.shift();
+			// Remove 1 oldest error per tool via TimedMap.decay (array shift)
+			errorMap.decay();
+			// Clean up empty arrays left by decay
+			for (const [toolName, errors] of errorMap.entries()) {
+				if (errors.length === 0) {
+					errorMap.delete(toolName);
 				}
 			}
 		},
 	};
 
-	// ── Call Counter ──
+	// ── Call Counter (TimedMap with composite-key + lastKey tracking) ──
+
+	interface ConsecutiveState {
+		toolName: string;
+		count: number;
+		sinceTurn: number;
+	}
 
 	let lastKey: string | null = null;
-	let consecutiveCount = 0;
-	let sinceTurn = 0;
+	const callMap = new TimedMap<string, ConsecutiveState>();
 
 	/** Build composite key from toolName and optional subKey. */
 	function makeKey(toolName: string, subKey?: string): string {
@@ -221,38 +223,41 @@ export function createHarnessState(): HarnessState {
 	const callCounter: CallCounter = {
 		record(toolName: string, sessionTurn: number, _toolCallIndex: number, subKey?: string): void {
 			const key = makeKey(toolName, subKey);
-			if (key !== lastKey) {
-				// Composite key changed — reset counter
-				lastKey = key;
-				consecutiveCount = 1;
-				sinceTurn = sessionTurn;
+			if (key === lastKey) {
+				// Same composite key — increment consecutive count
+				const existing = callMap.get(key);
+				if (existing) {
+					existing.count++;
+					// In-place mutation; no need to re-set
+				}
 			} else {
-				consecutiveCount++;
+				// Composite key changed — start fresh chain
+				lastKey = key;
+				callMap.set(key, { toolName, count: 1, sinceTurn: sessionTurn });
 			}
 		},
 
 		getConsecutive(toolName: string, subKey?: string): ConsecutiveInfo {
 			const key = makeKey(toolName, subKey);
-			if (key !== lastKey) {
+			const state = callMap.get(key);
+			if (!state || key !== lastKey) {
 				return { toolName: "", count: 0, sinceTurn: 0 };
 			}
 			return {
-				toolName,
-				count: consecutiveCount,
-				sinceTurn,
+				toolName: state.toolName,
+				count: state.count,
+				sinceTurn: state.sinceTurn,
 			};
 		},
 
 		reset(): void {
+			callMap.clear();
 			lastKey = null;
-			consecutiveCount = 0;
-			sinceTurn = 0;
 		},
 
 		turnBoundaryReset(): void {
+			callMap.clear();
 			lastKey = null;
-			consecutiveCount = 0;
-			sinceTurn = 0;
 		},
 	};
 
