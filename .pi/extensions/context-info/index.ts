@@ -9,90 +9,20 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { ContextStatusBarConfig, TpsSample } from "./types.js";
 import { loadConfig, readPiSetting } from "./config.js";
 import { getWorktreeName } from "./git-helpers.js";
 import { tryEmit } from "./telemetry.js";
-import { processStartTime, installFooter } from "./footer.js";
+import { installFooter } from "./footer.js";
+import { FooterState } from "./footer-state.js";
 import { showWelcomeBanner, readSessionExtState } from "./welcome.js";
 import { listLocalExtensions } from "./extensions.js";
 import { listLocalPrompts } from "./prompts.js";
 import { listLocalSkills } from "./skills.js";
 
 export default function contextInfo(pi: ExtensionAPI): void {
-	// State — enclosed in closure, not module scope
-	let config: ContextStatusBarConfig | null = null;
-	let lastContextWindow: number | undefined;
-	let emitted = false;
-	let thinkingLevel = ""; // empty = unknown until first thinking_level_select
-	let worktreeName: string | null = null;
-	let timerInterval: ReturnType<typeof setInterval> | null = null;
-
-	// ── Startup widget state ───────────────────────────────────────
-	const startupWidgetActive = { value: false };
-
-	// ── Tool call counter state ────────────────────────────────────
-	const toolCallCount = { value: 0 };
-
-	// ── TPS state ──────────────────────────────────────────────────
-	const tpsSamples: TpsSample[] = [];
-	const lastComputedTps: { value: number | null } = { value: null };
-	let lastSampledOutput: number | undefined = undefined;
-	const lastContextWindowRef: { value: number | undefined } = { value: undefined };
-	const telemetryState: { emitted: boolean; lastContextWindow?: number } = { emitted: false };
-
-	// ── Cache stats state ─────────────────────────────────────────
-	const cacheReadRef: { value: number | undefined } = { value: undefined };
-	const cacheWriteRef: { value: number | undefined } = { value: undefined };
-
-	function syncTelemetryState() {
-		telemetryState.lastContextWindow = lastContextWindow;
-	}
-
-	function sampleTps(output: number | undefined) {
-		if (typeof output !== "number" || output < 0) return;
-		// Detect reset between responses (new response starts from 0)
-		if (typeof lastSampledOutput === "number" && output < lastSampledOutput) {
-			tpsSamples.length = 0;
-		}
-		lastSampledOutput = output;
-		const now = Date.now();
-		tpsSamples.push({ time: now, cumulativeTokens: output });
-		// Prune samples older than 30s
-		const cutoff = now - 30_000;
-		while (tpsSamples.length > 0 && tpsSamples[0]!.time < cutoff) {
-			tpsSamples.shift();
-		}
-	}
-
-	// ── Timer helpers ──────────────────────────────────────────────
-	function startTimer(ctx: ExtensionContext) {
-		stopTimer();
-		timerInterval = setInterval(() => {
-			if (config) {
-				installFooter(
-					ctx,
-					config,
-					worktreeName,
-					thinkingLevel,
-					tpsSamples,
-					lastComputedTps,
-					lastContextWindowRef,
-					{ value: lastSampledOutput },
-					toolCallCount,
-					cacheReadRef,
-					cacheWriteRef,
-				);
-			}
-		}, 1000);
-	}
-
-	function stopTimer() {
-		if (timerInterval !== null) {
-			clearInterval(timerInterval);
-			timerInterval = null;
-		}
-	}
+	// FooterState — single source of truth for all mutable state
+	// Initialized per session in session_start handler
+	let state: FooterState | undefined;
 
 	// ── Commands ────────────────────────────────────────────────────
 
@@ -290,59 +220,35 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	// ── Hooks ──────────────────────────────────────────────────────
 
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
-		config = loadConfig();
-		lastContextWindow = undefined;
-		emitted = false;
-		telemetryState.emitted = false;
-		// Reset TPS state on new session
-		tpsSamples.length = 0;
-		lastComputedTps.value = null;
-		lastSampledOutput = undefined;
-		toolCallCount.value = 0;
-		// Reset cache stats
-		cacheReadRef.value = undefined;
-		cacheWriteRef.value = undefined;
+		state = new FooterState(ctx, installFooter);
+		state.resetProperties();
+		state.config = loadConfig();
 
 		// Detect worktree each session — git worktree can change across sessions
-		worktreeName = getWorktreeName(ctx.cwd);
+		state.worktreeName = getWorktreeName(ctx.cwd);
 		// Deferred I/O — read pi settings on first session
-		if (!thinkingLevel) {
-			thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
+		if (!state.thinkingLevel) {
+			state.thinkingLevel = readPiSetting("defaultThinkingLevel") || "";
 		}
 
-		if (config === null) {
+		if (state.config === null) {
 			ctx.ui.setFooter(undefined);
 			ctx.ui.setStatus("contextUsage", undefined);
 			ctx.ui.setWidget("agentcastle-welcome", undefined);
-			stopTimer();
+			state.stopTimer();
 			return;
 		}
 
 		const cw = ctx.model?.contextWindow;
 		if (typeof cw === "number" && cw > 0) {
-			lastContextWindow = cw;
-			lastContextWindowRef.value = cw;
+			state.lastContextWindow = cw;
 		}
 
-		syncTelemetryState();
-
 		// Install custom footer
-		installFooter(
-			ctx,
-			config,
-			worktreeName,
-			thinkingLevel,
-			tpsSamples,
-			lastComputedTps,
-			lastContextWindowRef,
-			{ value: lastSampledOutput },
-			toolCallCount,
-			cacheReadRef,
-			cacheWriteRef,
-		);
+		state.callInstallFooter();
 
 		// Start live timer
-		startTimer(ctx);
+		state.startTimer();
 
 		// Custom working indicator — subtle dot pulse
 		ctx.ui.setWorkingIndicator({
@@ -366,14 +272,22 @@ export default function contextInfo(pi: ExtensionAPI): void {
 
 		// ── Startup welcome banner ──────────────────────────────
 		const extState = readSessionExtState();
-		showWelcomeBanner(ctx, startupWidgetActive, sessionId, extState.logger, extState.advice);
+		const startupRef = {
+			get value() {
+				return state!.startupWidgetActive;
+			},
+			set value(v: boolean) {
+				state!.startupWidgetActive = v;
+			},
+		};
+		showWelcomeBanner(ctx, startupRef, sessionId, extState.logger, extState.advice);
 	});
 
 	// Clear welcome banner and explain-* widgets on first user input
 	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
-		if (startupWidgetActive.value) {
+		if (state && state.startupWidgetActive) {
 			ctx.ui.setWidget("agentcastle-welcome", undefined);
-			startupWidgetActive.value = false;
+			state.startupWidgetActive = false;
 		}
 		ctx.ui.setWidget("explain-extensions", undefined);
 		ctx.ui.setWidget("explain-prompts", undefined);
@@ -381,96 +295,68 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	});
 
 	pi.on("thinking_level_select", async (event, ctx: ExtensionContext) => {
-		thinkingLevel = event.level;
-		if (config)
-			installFooter(
-				ctx,
-				config,
-				worktreeName,
-				thinkingLevel,
-				tpsSamples,
-				lastComputedTps,
-				lastContextWindowRef,
-				{ value: lastSampledOutput },
-				toolCallCount,
-				cacheReadRef,
-				cacheWriteRef,
-			);
+		if (!state) return;
+		state.thinkingLevel = event.level;
+		if (state.config) {
+			state.callInstallFooter();
+		}
 	});
 
 	pi.on("model_select", async (event, ctx: ExtensionContext) => {
+		if (!state) return;
 		const cw = event.model?.contextWindow;
 		if (typeof cw === "number" && cw > 0) {
-			lastContextWindow = cw;
-			lastContextWindowRef.value = cw;
+			state.lastContextWindow = cw;
 		}
-		syncTelemetryState();
-		if (config)
-			installFooter(
-				ctx,
-				config,
-				worktreeName,
-				thinkingLevel,
-				tpsSamples,
-				lastComputedTps,
-				lastContextWindowRef,
-				{ value: lastSampledOutput },
-				toolCallCount,
-				cacheReadRef,
-				cacheWriteRef,
-			);
-		tryEmit(ctx, telemetryState);
+		if (state.config) {
+			state.callInstallFooter();
+		}
+		tryEmit(ctx, state);
 	});
 
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
-		if (config)
-			installFooter(
-				ctx,
-				config,
-				worktreeName,
-				thinkingLevel,
-				tpsSamples,
-				lastComputedTps,
-				lastContextWindowRef,
-				{ value: lastSampledOutput },
-				toolCallCount,
-				cacheReadRef,
-				cacheWriteRef,
-			);
+		if (state && state.config) {
+			state.callInstallFooter();
+		}
 	});
 
 	pi.on("message_end", async (event, ctx: ExtensionContext) => {
+		if (!state) return;
 		const msg = event.message;
 		if (!msg || msg.role !== "assistant") return;
 		// Capture cache stats from raw event usage
 		const eventUsage = msg.usage;
 		if (eventUsage && typeof eventUsage.cacheRead === "number") {
-			cacheReadRef.value = eventUsage.cacheRead;
+			state.cacheRead = eventUsage.cacheRead;
 		}
 		if (eventUsage && typeof eventUsage.cacheWrite === "number") {
-			cacheWriteRef.value = eventUsage.cacheWrite;
+			state.cacheWrite = eventUsage.cacheWrite;
 		}
-		syncTelemetryState();
 		const usage = ctx.getContextUsage();
 		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
-			tryEmit(ctx, telemetryState);
+			tryEmit(ctx, state);
 		}
 	});
 
 	pi.on("message_update", async (event: any, _ctx: ExtensionContext) => {
+		if (!state) return;
 		// Sample streaming output tokens for TPS estimation
 		const output = event.assistantMessageEvent?.partial?.usage?.output;
 		if (typeof output === "number") {
-			sampleTps(output);
+			state.sampleTps(output);
 		}
 	});
 
 	pi.on("tool_execution_end", async () => {
-		toolCallCount.value += 1;
+		if (state) {
+			state.addToolCall();
+		}
 	});
 
 	pi.on("session_shutdown", async () => {
-		stopTimer();
+		if (state) {
+			state.stopTimer();
+		}
 	});
 }
 
