@@ -13,6 +13,17 @@
 - **Prompt integration** — Injects mode-aware `promptSnippet` and `promptGuidelines` so the LLM knows how to use the tool
 - **No external dependencies** — Uses `ctags` for indexing, `ripgrep` for keyword search, `git` for recency
 
+## Architecture
+
+The extension is orchestrated by a **`RankedMapEngine`** class (`engine.ts`) that separates the pipeline into independently testable phases:
+
+- **`buildOrLoadIndex()`** — Look up git HEAD, try cache, fall back to ctags + parsing
+- **`rank()`** — Select mode (full-dump vs ranked), compute keyword + recency scores, combine and truncate by token budget
+- **`addPreviews()`** — Read first 5 lines per file for ranked mode previews
+- **`format()`** — Shape results into the final `RankedMapResult` output
+
+Each phase accepts `ExecFn` + config via constructor, making all methods testable in isolation without running the full tool.
+
 ## How it works
 
 1. On first call, the extension builds a symbol index via `ctags --output-format=json -R` over the target directory
