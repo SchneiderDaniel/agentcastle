@@ -424,6 +424,31 @@ describe("parseAgentOutput — edge cases", () => {
 		assert.ok((result as AgentOutput).commentBody?.includes("line breaks"));
 	});
 
+	it("handles literal newlines in JSON string values (agent-style output)", () => {
+		// Agents often output JSON with actual \n characters instead of \\n escapes
+		const input = `{"action":"COMPLETE","agentName":"architect","commentBody":"## Architecture\nMy approach"}`;
+		const result = parseAgentOutput(input);
+		assert.ok(isAgentOutput(result), "should parse despite literal newline");
+		const agentOut = result as AgentOutput;
+		assert.ok(agentOut.commentBody?.includes("Architecture"));
+		assert.ok(agentOut.commentBody?.includes("My approach"));
+	});
+
+	it("handles literal newline in JSON inside code fence", () => {
+		const input = [
+			"```json",
+			"{",
+			'  "action": "COMPLETE",',
+			'  "agentName": "researcher",',
+			'  "commentBody": "## Findings\nFound stuff"',
+			"}",
+			"```",
+		].join("\n");
+		const result = parseAgentOutput(input);
+		assert.ok(isAgentOutput(result), "should parse literal newline in code fence");
+		assert.ok((result as AgentOutput).commentBody?.includes("Findings"));
+	});
+
 	it("strips ANSI codes from JSON extracted from code fences", () => {
 		const input = [
 			"```json",

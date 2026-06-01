@@ -75,9 +75,9 @@ function sanitizeJsonStrings(jsonText: string): string {
 			continue;
 		}
 
-		if (inString && (ch === "\\n" || ch === "\\r")) {
+		if (inString && (ch === "\n" || ch === "\r")) {
 			// Literal newline inside string — replace with JSON escape
-			result += "\\n";
+			result += ch === "\n" ? "\\n" : "\\r";
 			continue;
 		}
 
