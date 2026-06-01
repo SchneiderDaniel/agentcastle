@@ -1318,3 +1318,74 @@ describe("Empty JSONL file edge cases", () => {
 		assert.strictEqual(entry, undefined);
 	});
 });
+
+// ============================================================================
+// Unit tests: readError helper (ask_user_read error unification)
+// ============================================================================
+
+interface ContentResult {
+	content: Array<{ type: "text"; text: string }>;
+	details: Record<string, unknown>;
+}
+
+function readError(message: string): ContentResult {
+	return {
+		content: [{ type: "text", text: JSON.stringify({ entries: [], count: 0, error: message }) }],
+		details: { entries: [], count: 0, error: message },
+	};
+}
+
+describe("readError (ask_user_read error unification)", () => {
+	it("returns correct ContentResult shape", () => {
+		const result = readError("test error");
+		assert.ok(Array.isArray(result.content));
+		assert.strictEqual(result.content.length, 1);
+		assert.strictEqual(result.content[0]!.type, "text");
+	});
+
+	it("includes error message in content text JSON", () => {
+		const result = readError("test error");
+		const parsed = JSON.parse(result.content[0]!.text);
+		assert.deepStrictEqual(parsed.entries, []);
+		assert.strictEqual(parsed.count, 0);
+		assert.strictEqual(parsed.error, "test error");
+		assert.strictEqual(parsed.message, undefined, "Should use 'error' not 'message' key");
+	});
+
+	it("includes error message in details", () => {
+		const result = readError("test error");
+		assert.deepStrictEqual(result.details.entries, []);
+		assert.strictEqual(result.details.count, 0);
+		assert.strictEqual(result.details.error, "test error");
+	});
+
+	it("handles all expected error messages", () => {
+		const messages = [
+			"id parameter is required for get action",
+			"text parameter is required for query action",
+			"Unknown action: invalid",
+			"Error reading Q&A history: something broke",
+			"No Q&A history yet",
+			"Entry #42 not found",
+		];
+		for (const msg of messages) {
+			const result = readError(msg);
+			const parsed = JSON.parse(result.content[0]!.text);
+			assert.strictEqual(parsed.error, msg, `Message: "${msg}"`);
+		}
+	});
+
+	it("details.error matches content.error", () => {
+		const msg = "Something went wrong";
+		const result = readError(msg);
+		const parsed = JSON.parse(result.content[0]!.text);
+		assert.strictEqual(parsed.error, result.details.error);
+	});
+
+	it("content is a single text block", () => {
+		const result = readError("error");
+		assert.strictEqual(result.content.length, 1);
+		assert.strictEqual(result.content[0]!.type, "text");
+		assert.ok(typeof result.content[0]!.text === "string");
+	});
+});
