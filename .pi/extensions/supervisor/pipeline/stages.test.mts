@@ -832,13 +832,12 @@ describe("handlePostAgentSuccess()", () => {
 		assert.equal(success, false, "git push failure must return false — pipeline should stop");
 	});
 
-	it("developer git commit returns 'nothing to commit' — still pushes, push succeeds — returns true", async () => {
+	it("developer commit returns 'nothing to commit' — throws, returns false (halts pipeline)", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi(
 			[
 				{ code: 0, stdout: "", stderr: "" }, // git add succeeds
-				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit
-				{ code: 0, stdout: "", stderr: "" }, // git push succeeds
+				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit (throws now)
 			],
 			calls,
 		);
@@ -867,45 +866,11 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
-		assert.equal(success, true, "'nothing to commit' + push succeeds — pipeline should continue");
-	});
-
-	it("developer git commit returns 'nothing to commit' — still pushes, push fails — returns false", async () => {
-		const calls: ExecCall[] = [];
-		const pi = createMockPi(
-			[
-				{ code: 0, stdout: "", stderr: "" }, // git add succeeds
-				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit
-				{ code: 1, stdout: "", stderr: "fatal: permission denied" }, // git push fails
-			],
-			calls,
-		);
-		const ctx = createMockCtx();
-		const result: AgentRunResult = {
-			...baseResult,
-			agentName: "developer",
-			textOutput: "IMPLEMENTATION_COMPLETE",
-			textOnly: "IMPLEMENTATION_COMPLETE",
-		};
-		const filteredData: FilteredIssueData = {
-			body: "",
-			comments: [],
-		};
-
-		const success = await handlePostAgentSuccess(
-			pi,
-			ctx,
-			result,
-			"developer",
-			42,
-			mockConfig,
-			filteredData,
-			"/repo/worktree",
-			"feature-branch",
-			"Test issue",
-		);
-
-		assert.equal(success, false, "'nothing to commit' + push fails — pipeline should stop");
+		assert.equal(success, false, "'nothing to commit' now throws — pipeline should stop");
+		assert.equal(calls.length, 2, "should only call add + commit, NO push");
+		// Verify the error message is about no changes
+		const addCall = calls[1];
+		assert.ok(addCall.args.includes("commit"), "second call should be commit");
 	});
 
 	it("developer with worktreePath undefined — returns true (no-op)", async () => {

@@ -126,14 +126,16 @@ describe("commitAndPush", () => {
 		assert.strictEqual(calls.length, 1); // only add, not commit/push
 	});
 
-	it("handles 'nothing to commit' gracefully (continues to push)", async () => {
+	it("throws when 'nothing to commit' (no changes — prevents pipeline progression)", async () => {
 		const { pi, calls } = makeMockPi([
 			{ code: 0, stdout: "" },
 			{ code: 1, stderr: "nothing to commit" },
-			{ code: 0, stdout: "Everything up-to-date" },
 		]);
-		await commitAndPush(pi as any, "/cwd", "origin", "branch", "msg");
-		assert.strictEqual(calls.length, 3); // add + commit(ignored) + push
+		await assert.rejects(
+			() => commitAndPush(pi as any, "/cwd", "origin", "branch", "msg"),
+			/No changes to commit/,
+		);
+		assert.strictEqual(calls.length, 2); // add + commit, no push
 	});
 });
 
