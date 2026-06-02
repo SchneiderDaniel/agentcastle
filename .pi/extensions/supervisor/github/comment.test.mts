@@ -343,7 +343,7 @@ describe("extractStructuredAuditOutput() — COMMENT_BODY_END stripping", () => 
 		assert.equal(result?.commentBody, "## Audit Rejected\nIssues found.");
 	});
 
-	it("strips COMMENT_BODY_END with content after it", () => {
+	it("strips COMMENT_BODY_END and trailing content after it", () => {
 		const output = [
 			"AUDIT_DECISION: APPROVED",
 			"COMMENT_BODY: ## Audit Approved",
@@ -354,9 +354,7 @@ describe("extractStructuredAuditOutput() — COMMENT_BODY_END stripping", () => 
 		const result = extractStructuredAuditOutput(output);
 		assert.ok(result !== null);
 		assert.equal(result?.decision, "APPROVED");
-		// regex stops at end-of-string or next marker — content after
-		// COMMENT_BODY_END without marker is still part of comment body
-		assert.ok(result?.commentBody?.includes("Looks good."));
-		assert.ok(result?.commentBody?.includes("some trailing text"));
+		// COMMENT_BODY_END and everything after it is stripped
+		assert.equal(result?.commentBody, "## Audit Approved\nLooks good.");
 	});
 });

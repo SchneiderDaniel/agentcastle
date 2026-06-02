@@ -54,7 +54,8 @@ function sanitizeJsonStrings(jsonText: string): string {
 	let inString = false;
 	let escaped = false;
 
-	for (const ch of jsonText) {
+	for (let i = 0; i < jsonText.length; i++) {
+		const ch = jsonText[i];
 		if (escaped) {
 			// Previous char was backslash — pass current char through literally
 			result += ch;
@@ -70,9 +71,35 @@ function sanitizeJsonStrings(jsonText: string): string {
 		}
 
 		if (ch === '"') {
-			// Toggle string state (only toggles when not escaped)
-			result += ch;
-			inString = !inString;
+			// Track if in string: when encountering double-quote inside a string,
+			// look ahead for JSON structural char (,, }, ], :) to distinguish
+			// structural close from unescaped content quote (e.g. in markdown).
+			if (inString) {
+				let j = i + 1;
+				while (
+					j < jsonText.length &&
+					(jsonText[j] === " " ||
+						jsonText[j] === "\t" ||
+						jsonText[j] === "\n" ||
+						jsonText[j] === "\r")
+				) {
+					j++;
+				}
+				const next = j < jsonText.length ? jsonText[j] : "";
+
+				if (next === "," || next === "}" || next === "]" || next === ":") {
+					// Structural close — end of string value
+					result += ch;
+					inString = false;
+				} else {
+					// Unescaped content quote (e.g. markdown "text" in commentBody)
+					result += '\\"';
+				}
+			} else {
+				// Opening quote — start of string value or key
+				result += ch;
+				inString = true;
+			}
 			continue;
 		}
 
