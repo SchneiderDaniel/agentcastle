@@ -6,6 +6,8 @@
  */
 
 import { readFileSync } from "node:fs";
+import { createPerTurnState, flushTurn } from "./per-turn.ts";
+import type { PerTurnState } from "./per-turn.ts";
 
 const TRUNCATE_RESULT_LINES = 8;
 const THINKING_PREVIEW_CHARS = 120;
@@ -199,29 +201,8 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 	const toolCounts: Record<string, { calls: number; errors: number; totalDurationMs: number }> = {};
 	const fileMods: Array<{ action: string; path: string; timestamp: string; size?: number }> = [];
 
-	// Per-turn tracking
-	let currentTurnIndex = -1;
-	let currentTurnTokens = 0;
-	let currentTurnCost = 0;
-	let currentTurnToolCount = 0;
-	let currentTurnErrorCount = 0;
-	const perTurnTokens: ParsedSessionStats["perTurnTokens"] = [];
-
-	function flushTurn() {
-		if (currentTurnIndex >= 0) {
-			perTurnTokens.push({
-				turnIndex: currentTurnIndex,
-				tokens: currentTurnTokens,
-				cost: currentTurnCost,
-				toolCount: currentTurnToolCount,
-				errorCount: currentTurnErrorCount,
-			});
-		}
-		currentTurnTokens = 0;
-		currentTurnCost = 0;
-		currentTurnToolCount = 0;
-		currentTurnErrorCount = 0;
-	}
+	// Per-turn tracking — uses shared PerTurnState from per-turn.ts
+	const turnState: PerTurnState = createPerTurnState();
 
 	for (const entry of entries) {
 		if (entry.type === "model_change") {
@@ -251,8 +232,8 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 					totalTokens += usage.totalTokens ?? 0;
 					const cost = usage.cost?.total ?? 0;
 					totalCost += cost;
-					currentTurnTokens += usage.totalTokens ?? 0;
-					currentTurnCost += cost;
+					turnState.currentTurnTokens += usage.totalTokens ?? 0;
+					turnState.currentTurnCost += cost;
 				}
 
 				// File modifications from tool calls
@@ -284,20 +265,20 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 				if (!toolCounts[tn]) toolCounts[tn] = { calls: 0, errors: 0, totalDurationMs: 0 };
 				toolCounts[tn].calls++;
 				if (msg.isError) toolCounts[tn].errors++;
-				currentTurnToolCount++;
-				if (msg.isError) currentTurnErrorCount++;
+				turnState.currentTurnToolCount++;
+				if (msg.isError) turnState.currentTurnErrorCount++;
 			}
 
 			// Turn boundaries
 			if (role === "user") {
-				flushTurn();
-				currentTurnIndex++;
-			} else if (role === "assistant" && currentTurnIndex < 0) {
-				currentTurnIndex = 0;
+				flushTurn(turnState);
+				turnState.currentTurnIndex++;
+			} else if (role === "assistant" && turnState.currentTurnIndex < 0) {
+				turnState.currentTurnIndex = 0;
 			}
 		}
 	}
-	flushTurn();
+	flushTurn(turnState);
 
 	return {
 		sessionId: header.id ?? "?",
@@ -319,7 +300,7 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 		compactions,
 		toolStats: toolCounts,
 		fileModifications: fileMods,
-		perTurnTokens,
+		perTurnTokens: turnState.perTurnTokens,
 	};
 }
 
