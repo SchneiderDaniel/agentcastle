@@ -324,6 +324,55 @@ export function buildAgentResultEntry(
 	};
 }
 
+// ─── Researcher Output Validation ─────────────────────────────────
+
+/**
+ * Check if a researcher comment body has substantive findings or just empty
+ * template headers (e.g. "### Best Practices\n- —").
+ *
+ * Returns the original commentBody if it has real content,
+ * or a graceful degradation fallback message if it's empty headers only.
+ */
+function validateResearcherFindings(commentBody: string): string {
+	// Check for graceful degradation message already present
+	if (commentBody.includes("No relevant results found")) {
+		return commentBody;
+	}
+
+	// Split into non-empty lines, trim each
+	const lines = commentBody
+		.split("\n")
+		.map((l) => l.trim())
+		.filter((l) => l.length > 0);
+
+	// Count substantive bullets: lines starting with "- " that have content
+	// after the dash (not just "- —", "-", or empty dash variants)
+	const bulletContent = lines.filter((l) => {
+		if (!l.startsWith("- ") && l !== "-") return false;
+		const content = l.startsWith("- ") ? l.slice(2).trim() : l.slice(1).trim();
+		// Empty bullet or just em-dash
+		if (content === "" || content === "—" || content === "-") return false;
+		return true;
+	});
+
+	// Also count any non-header, non-empty lines that aren't just dashes
+	// (e.g. potential freeform text)
+	const nonHeaderNonEmpty = lines.filter((l) => {
+		if (l.startsWith("#")) return false;
+		if (l.startsWith("- ") || l === "-") return false;
+		if (l === "—" || l.startsWith("—")) return false;
+		return l.length > 0;
+	});
+
+	// If no substantive bullets and no substantive non-header text,
+	// the research is empty — replace with graceful degradation message
+	if (bulletContent.length === 0 && nonHeaderNonEmpty.length === 0) {
+		return "## Research Findings — No relevant results found for this topic.";
+	}
+
+	return commentBody;
+}
+
 // ─── Post-Agent Success Processing ────────────────────────────────
 
 /**
@@ -348,11 +397,13 @@ export async function handlePostAgentSuccess(
 		// thinking:high) have only tool logs in textOutput; the JSON lives in output
 		// (built from session messages).
 		let commentBody: string | null = null;
+		let extractionSource = "";
 
 		// Primary: textOutput — contains JSON from streaming deltas
 		if (result.textOutput) {
 			commentBody = extractAgentCommentBody(result.textOutput);
 			if (commentBody) {
+				extractionSource = "result.textOutput";
 				console.warn(`[supervisor] ${agentName} commentBody extracted from result.textOutput`);
 			}
 		}
@@ -361,6 +412,7 @@ export async function handlePostAgentSuccess(
 		if (!commentBody && result.output) {
 			commentBody = extractAgentCommentBody(result.output);
 			if (commentBody) {
+				extractionSource = "result.output";
 				console.warn(
 					`[supervisor] ${agentName} commentBody extracted from result.output (fallback)`,
 				);
@@ -372,9 +424,23 @@ export async function handlePostAgentSuccess(
 		if (!commentBody && result.thinkingOutput) {
 			commentBody = extractAgentCommentBody(result.thinkingOutput);
 			if (commentBody) {
+				extractionSource = "result.thinkingOutput";
 				console.warn(
 					`[supervisor] ${agentName} commentBody extracted from result.thinkingOutput (fallback)`,
 				);
+			}
+		}
+
+		// Validate researcher output: if commentBody is just empty headers with no
+		// actual findings (e.g. "### Best Practices\n- —"), replace with fallback.
+		if (commentBody && agentName === "researcher") {
+			const validated = validateResearcherFindings(commentBody);
+			if (validated !== commentBody) {
+				console.warn(
+					`[supervisor] researcher commentBody has no substantive findings ` +
+						`(source: ${extractionSource}). Replacing with graceful degradation message.`,
+				);
+				commentBody = validated;
 			}
 		}
 

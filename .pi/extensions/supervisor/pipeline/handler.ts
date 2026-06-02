@@ -14,7 +14,7 @@ import type {
 import { loadConfig, resolveTimeoutMs } from "../config.ts";
 import { findIssueItem, getItemStatusName, filterIssueData } from "../github/index.ts";
 import { buildAgentTask, generateBranchName, summarizeComments } from "../agent-task.ts";
-import { runAgent } from "../agent-runner.ts";
+import { runAgent, runAgentSubprocess } from "../agent-runner.ts";
 import { WORKFLOW } from "../workflow.ts";
 import { runTscAndLspAudit } from "../pipeline-audit.ts";
 import { buildPipelineSummary, validateAgentResult } from "../pipeline-output.ts";
@@ -500,11 +500,11 @@ async function executeAgent(
 		ctx.ui.notify(`Agent ${agent.config.name} exceeded budget — not retrying`, "warning");
 	} else if (!result.success) {
 		ctx.ui.notify(`Agent ${agent.config.name} failed. Retrying once...`, "warning");
-		result = await runAgent(
+		// Skip in-process path on retry — already failed. Go straight to subprocess.
+		result = await runAgentSubprocess(
 			agent,
 			task,
 			ctx,
-			pi,
 			timeoutMs,
 			agentCwd,
 			maxToolCalls,
