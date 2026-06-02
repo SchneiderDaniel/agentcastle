@@ -3,13 +3,7 @@
 // Agents output structured JSON; this function parses and validates it.
 // No regex fallback, no text marker scanning, no lastIndexOf lookups.
 
-import type {
-	AgentOutput,
-	FailedParse,
-	ParseResult,
-	FindingSeverity,
-	AuditDimension,
-} from "./types.ts";
+import type { AgentOutput, FailedParse, ParseResult, FindingSeverity } from "./types.ts";
 
 // ─── ANSI Stripping ──────────────────────────────────────────────
 
@@ -37,18 +31,6 @@ const THINKING_PREFIX_RE = /^💭\s*/gm;
 function stripThinkingPrefix(text: string): string {
 	return text.replace(THINKING_PREFIX_RE, "");
 }
-
-// ─── Known Auditing Dimensions ────────────────────────────────────
-
-const KNOWN_DIMENSIONS = new Set<AuditDimension>([
-	"architecture-compliance",
-	"ticket-fulfillment",
-	"tests-passed",
-	"test-quality",
-	"correctness-safety",
-	"code-quality",
-	"completeness",
-]);
 
 const VALID_SEVERITIES = new Set<FindingSeverity>(["critical", "warning", "suggestion"]);
 
