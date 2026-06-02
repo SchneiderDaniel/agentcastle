@@ -210,8 +210,23 @@ export async function runAgentInProcess(
 			}
 		}, 2000);
 
+		let watchdogStarted = false;
+
 		unsubscribe = session.subscribe((event: any) => {
 			try {
+				// ── Lazy watchdog start ──
+				// Start watchdog on first streaming or tool event — not on lifecycle
+				// events (session/agent_start/turn_start) that arrive before LLM API call.
+				// This prevents false stall detection when model takes >30s for first token.
+				// message_update always carries LLM deltas; tool_execution_start means LLM
+				// has responded with a tool call.
+				if (!watchdogStarted) {
+					if (event.type === "message_update" || event.type === "tool_execution_start") {
+						watchdogHandle?.start();
+						watchdogStarted = true;
+					}
+				}
+
 				// Update last event time for idle detection and watchdog
 				lastEventTime = Date.now();
 				watchdogHandle?.reset();
@@ -258,9 +273,6 @@ export async function runAgentInProcess(
 				}
 			}
 		});
-
-		// Start watchdog now that subscription is active
-		watchdogHandle?.start();
 
 		// ── Bug 2 fix: Properly settle session.prompt() on timeout ──
 		// When timeout fires, session.abort() is called but session.prompt()
