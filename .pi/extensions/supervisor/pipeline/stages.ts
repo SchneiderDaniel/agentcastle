@@ -503,7 +503,7 @@ async function handleAuditorOutput(
 
 	// Structured path: build comment from AgentOutput
 	if (actionFromOutput === "APPROVED") {
-		const bodyToPost = commentBodyFromOutput || buildApprovalCommentFromOutput(result.textOnly);
+		const bodyToPost = commentBodyFromOutput || buildApprovalCommentFromOutput(agentOutput);
 		if (bodyToPost) {
 			try {
 				await postIssueComment(pi, issueNum, config.repo, bodyToPost);
