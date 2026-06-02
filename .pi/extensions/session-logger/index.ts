@@ -35,7 +35,7 @@ function writeExtState(value: boolean): void {
 }
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { LoggerPipeline } from "./pipeline.ts";
-import { generateMissingReports, recoverMissingReports } from "./report.ts";
+import { generateMissingReports } from "./report.ts";
 import type { SessionLoggerGate } from "./types.ts";
 
 export function createSessionLoggerGate(initiallyEnabled = true): SessionLoggerGate {
@@ -146,4 +146,4 @@ export default function (pi: ExtensionAPI): void {
 }
 
 // Re-export for backward compatibility (existing tests import from index.ts)
-export { generateMissingReports, recoverMissingReports };
+export { generateMissingReports };
