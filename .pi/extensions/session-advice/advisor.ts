@@ -363,7 +363,7 @@ function detectStructuralSearchUnderuse(data: SessionData): AdviceEntry[] {
  * Rule 6: Excessive turns + high error rate.
  */
 function detectExcessiveTurns(data: SessionData): AdviceEntry[] {
-	const toolCalls = data.entries.filter((e) => e.toolName);
+	const toolCalls = data.entries.filter((e) => e.type === "tool_use" && e.toolName);
 	const errors = data.entries.filter((e) => e.isError);
 	const uniqueTools = new Set(toolCalls.map((e) => e.toolName));
 	const editedFiles = new Set(

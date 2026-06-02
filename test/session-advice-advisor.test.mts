@@ -62,6 +62,19 @@ function readToolError(turnIndex: number): SessionEntry {
 	};
 }
 
+/** Create a pair of tool_use + tool_result entries simulating a parsed JSONL. */
+function toolCallPair(
+	toolName: string,
+	turnIndex: number,
+	args: Record<string, unknown> = {},
+	isError: boolean = false,
+): [SessionEntry, SessionEntry] {
+	return [
+		{ type: "tool_use", toolName, args, text: "", turnIndex },
+		{ type: "tool_result", toolName, isError, args: {}, text: "ok", turnIndex },
+	];
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -240,5 +253,105 @@ describe("renderAdviceToMarkdown", () => {
 		const result = analyzeSession(data);
 		const md = renderAdviceToMarkdown(result);
 		assert.ok(md.includes("test-session"), "should include session ID");
+	});
+});
+
+describe("analyzeSession → excessive-turns / high-error-rate", () => {
+	it("does NOT fire excessive-turns for 8 actual tool calls (16 entries) — bug: was double-counting tool_result", () => {
+		// 8 actual tool invocations produce 8 tool_use + 8 tool_result = 16 entries with toolName set
+		// With the bug: toolCalls.length = 16 > 15 → false positive
+		// After fix: toolCalls.length = 8 ≤ 15 → no warning
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 8; i++) {
+			entries.push(...toolCallPair("read", i, { path: "/src/file.ts" }));
+		}
+		const data = makeSession(entries);
+		const result = analyzeSession(data);
+		const excessive = result.entries.filter((e) => e.category === "excessive-turns");
+		assert.strictEqual(excessive.length, 0, "8 tool calls should not trigger excessive-turns");
+	});
+
+	it("fires excessive-turns for 16 actual tool calls with few files/tools", () => {
+		// 16 actual tool invocations → 32 entries with toolName
+		// Should detect excessive turns correctly
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 16; i++) {
+			entries.push(...toolCallPair("read", i, { path: "/src/file.ts" }));
+		}
+		const data = makeSession(entries);
+		const result = analyzeSession(data);
+		const excessive = result.entries.filter((e) => e.category === "excessive-turns");
+		assert.ok(excessive.length >= 1, "16 tool calls should trigger excessive-turns");
+		// Detail should reference 16 tool calls, not 32
+		const detail = excessive[0]?.detail ?? "";
+		assert.ok(detail.startsWith("16"), "detail should say 16, not 32");
+	});
+
+	it("error rate correctly calculated with tool_use-only count", () => {
+		// 8 actual tool invocations, 3 errors
+		// With bug: 3/16 = 18.75% → below 25% threshold, doesn't fire
+		// After fix: 3/8 = 37.5% → above 25% threshold, fires
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 5; i++) {
+			entries.push(...toolCallPair("read", i, { path: "/src/file.ts" }));
+		}
+		// 3 errored calls
+		entries.push(...toolCallPair("read", 5, { path: "/src/missing.ts" }, true));
+		entries.push(...toolCallPair("bash", 6, { command: "bad" }, true));
+		entries.push(...toolCallPair("read", 7, { path: "/src/nope.ts" }, true));
+
+		const data = makeSession(entries);
+		const result = analyzeSession(data);
+		const highError = result.entries.filter((e) => e.category === "high-error-rate");
+		assert.ok(highError.length >= 1, "3/8 errors (37.5%) should trigger high-error-rate");
+		// Detail should reference 3/8, not 3/16
+		const detail = highError[0]?.detail ?? "";
+		assert.ok(detail.startsWith("3/8"), "detail should say 3/8 errors, not 3/16");
+	});
+
+	it("low error rate with many calls does NOT fire high-error-rate", () => {
+		// 1 error out of 10 calls = 10% → below 25% threshold
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 9; i++) {
+			entries.push(...toolCallPair("read", i, { path: "/src/file.ts" }));
+		}
+		entries.push(...toolCallPair("read", 9, { path: "/src/missing.ts" }, true));
+
+		const data = makeSession(entries);
+		const result = analyzeSession(data);
+		const highError = result.entries.filter((e) => e.category === "high-error-rate");
+		assert.strictEqual(highError.length, 0, "1/10 errors should not trigger high-error-rate");
+	});
+
+	it("low error rate with insufficient errors does NOT fire (need ≥2 errors)", () => {
+		// 1 error out of 2 calls = 50% > 25% but errors.length=1 < 2
+		const entries: SessionEntry[] = [];
+		entries.push(...toolCallPair("read", 0, { path: "/src/file.ts" }));
+		entries.push(...toolCallPair("read", 1, { path: "/src/missing.ts" }, true));
+
+		const data = makeSession(entries);
+		const result = analyzeSession(data);
+		const highError = result.entries.filter((e) => e.category === "high-error-rate");
+		assert.strictEqual(highError.length, 0, "single error should not trigger even with high rate");
+	});
+
+	it("detail message in excessive-turns uses accurate count, not doubled", () => {
+		// 16 tool calls, 1 file changed, 1 tool used → should trigger
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 16; i++) {
+			entries.push(...toolCallPair("read", i, { path: "/src/file.ts" }));
+		}
+		const data = makeSession(entries);
+		const result = analyzeSession(data);
+		const excessive = result.entries.filter((e) => e.category === "excessive-turns");
+		assert.ok(excessive.length >= 1, "should trigger excessive-turns");
+		// Detail must say "16 tool calls" not "32 tool calls"
+		const detail = excessive[0]?.detail ?? "";
+		assert.match(detail, /^16 tool calls/, "detail must show 16 tool calls, not 32");
+		assert.doesNotMatch(
+			detail,
+			/^32 tool calls/,
+			"detail must not double-count tool_result entries",
+		);
 	});
 });
