@@ -13,8 +13,12 @@
  *   detectMismatchAndSuggest() → BashCommand(cmd).detectMismatch()
  *   suggestRedirection()   → BashCommand(cmd).suggestRedirection()
  *
- * All constants remain in harness-rules.ts for shared access.
+ * Constants imported from constants.ts (shared with harness-rules.ts).
  */
+
+// ── Imports ──
+
+import { READ_BASH_CMDS, FILE_MODIFY_SIGNALS } from "./constants.ts";
 
 // ── Re-export the segment type ──
 
@@ -25,24 +29,6 @@ export interface BashSegment {
 	/** Output redirect detected on segment (e.g., > or >>). */
 	redirect?: "write" | "append" | "read";
 }
-
-/** Bash file-reading commands that should use `read` tool instead. */
-const READ_BASH_CMDS: readonly string[] = ["cat", "head", "tail", "less", "more"];
-
-/**
- * Bash commands that modify files — triggers read cache invalidation.
- */
-const FILE_MODIFY_SIGNALS: readonly string[] = [
-	"sed",
-	"echo",
-	"cat",
-	"tee",
-	"mv",
-	"cp",
-	"rm",
-	"chmod",
-	"dd",
-];
 
 // ── Tokenizer (extracted from harness-rules.ts) ──
 

@@ -13,14 +13,16 @@
  * Zero pi dependencies — domain layer only.
  */
 
-// ── Imports from bash-command.ts ──
+// ── Imports ──
 
+import { READ_BASH_CMDS, FILE_MODIFY_SIGNALS } from "./constants.ts";
 import { parseBashCmd as parseBashCmdImpl } from "./bash-command.ts";
 
-// ── Re-export BashCommand class for direct use ──
+// ── Re-export BashCommand class and constants for direct use ──
 
 export { BashCommand } from "./bash-command.ts";
 export type { BashSegment } from "./bash-command.ts";
+export { READ_BASH_CMDS, FILE_MODIFY_SIGNALS };
 
 // ── Constants ──
 
@@ -35,9 +37,6 @@ export const BASH_SEARCH_SIGNALS: readonly string[] = [
 	"`rg`",
 	"`grep`",
 ];
-
-/** Bash file-reading commands that should use `read` tool instead. */
-export const READ_BASH_CMDS: readonly string[] = ["cat", "head", "tail", "less", "more"];
 
 /** Dedicated search tools available to the agent. */
 export const SEARCH_TOOLS = new Set(["ripgrep_search", "structural_search"]);
@@ -66,21 +65,6 @@ export const MULTI_VERB_TOOLS = new Set([
 	"kubectl",
 	"gh",
 ]);
-
-/**
- * Bash commands that modify files — triggers read cache invalidation.
- */
-export const FILE_MODIFY_SIGNALS: readonly string[] = [
-	"sed",
-	"echo",
-	"cat",
-	"tee",
-	"mv",
-	"cp",
-	"rm",
-	"chmod",
-	"dd",
-];
 
 /** Max errors tracked per tool before triggering retry block. */
 export const MAX_ERRORS_PER_TOOL = 3;
