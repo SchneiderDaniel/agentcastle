@@ -82,7 +82,10 @@ export function handleThinkingDelta(
 		while ((nlIdx = state.liveThinking.indexOf("\n")) !== -1) {
 			const line = state.liveThinking.slice(0, nlIdx);
 			state.liveThinking = state.liveThinking.slice(nlIdx + 1);
-			if (line.trim()) pushLog(state, `💭 ${line}`);
+			if (line.trim()) {
+				pushLog(state, `💭 ${line}`);
+				state.thinkingPushedThisTurn = true;
+			}
 		}
 		return { flush: true, workingChange: prevPhase !== "thinking" };
 	}
@@ -137,7 +140,10 @@ export function handleTextDelta(
 		while ((nlIdx = state.liveText.indexOf("\n")) !== -1) {
 			const line = state.liveText.slice(0, nlIdx);
 			state.liveText = state.liveText.slice(nlIdx + 1);
-			if (line.trim()) pushLog(state, line);
+			if (line.trim()) {
+				pushLog(state, line);
+				state.textPushedThisTurn = true;
+			}
 		}
 		return { flush: true, workingChange: prevPhase !== "text" };
 	}
