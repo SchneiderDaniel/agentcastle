@@ -329,6 +329,9 @@ export async function runAgentInProcess(
 					}
 				}
 
+				// Capture messages BEFORE dispose — dispose may clear session state
+				const messages = session?.state?.messages || [];
+
 				// Cleanup
 				try {
 					session?.dispose();
@@ -342,8 +345,6 @@ export async function runAgentInProcess(
 				ctx.ui.setWidget(widgetId, undefined);
 				ctx.ui.setWorkingMessage(undefined);
 				ctx.ui.setStatus("supervisor", undefined);
-
-				const messages = session?.state?.messages || [];
 				return buildAgentRunResult(state, agentName, false, durationMs, messages);
 			}
 			// Re-throw other errors to be caught by outer catch
