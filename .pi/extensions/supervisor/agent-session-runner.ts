@@ -216,6 +216,18 @@ export async function runAgentInProcess(
 				lastEventTime = Date.now();
 				watchdogHandle?.reset();
 
+				// Pause watchdog during long-running tool execution (e.g. web_crawl).
+				// Tool execution produces zero SDK events while running — without pause,
+				// a 30s crawl would trigger the watchdog timeout erroneously.
+				// Only pause for tool_execution_start/end (process-managed tools).
+				// SDK-provider-managed tools (e.g. web_search) emit their own events
+				// and don't need special handling.
+				if (event.type === "tool_execution_start") {
+					watchdogHandle?.pause();
+				} else if (event.type === "tool_execution_end") {
+					watchdogHandle?.resume();
+				}
+
 				// Instrument: count events by kind
 				const eventKind = event?.type || "unknown";
 				instrumenter?.incrementEvent(eventKind);

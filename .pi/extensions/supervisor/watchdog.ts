@@ -20,7 +20,11 @@ export interface WatchdogHandle {
 	start: () => void;
 	/** Stop the watchdog interval */
 	stop: () => void;
-	/** The current elapsed time since last reset (0 if never reset) */
+	/** Pause elapsed-time accumulation (e.g. during long-running tool execution) */
+	pause: () => void;
+	/** Resume elapsed-time accumulation after pause */
+	resume: () => void;
+	/** The current elapsed time since last reset (0 if never reset). Excludes paused intervals. */
 	getElapsedMs: () => number;
 	/** Whether the watchdog is currently running */
 	isRunning: () => boolean;
@@ -43,10 +47,23 @@ export function createWatchdog(options: WatchdogOptions): WatchdogHandle {
 	let intervalId: ReturnType<typeof setInterval> | undefined;
 	let running = false;
 	let onTimeoutFired = false;
+	let paused = false;
+	let pauseStartTime = 0;
+	let totalPausedMs = 0;
+
+	const getEffectiveElapsed = (): number => {
+		if (lastEventTime === 0) return 0;
+		let elapsed = Date.now() - lastEventTime - totalPausedMs;
+		if (paused) {
+			elapsed -= Date.now() - pauseStartTime;
+		}
+		return elapsed;
+	};
 
 	const check = () => {
 		if (lastEventTime === 0) return; // never reset — not started yet
-		const elapsed = Date.now() - lastEventTime;
+		if (paused) return; // don't count paused time
+		const elapsed = getEffectiveElapsed();
 		if (elapsed >= options.timeoutMs && !onTimeoutFired) {
 			onTimeoutFired = true;
 			options.onTimeout(elapsed);
@@ -57,12 +74,15 @@ export function createWatchdog(options: WatchdogOptions): WatchdogHandle {
 		reset: () => {
 			lastEventTime = Date.now();
 			onTimeoutFired = false;
+			totalPausedMs = 0;
 		},
 		start: () => {
 			if (running) return;
 			running = true;
 			onTimeoutFired = false;
 			lastEventTime = Date.now();
+			totalPausedMs = 0;
+			paused = false;
 			intervalId = setInterval(check, options.checkIntervalMs);
 		},
 		stop: () => {
@@ -72,10 +92,17 @@ export function createWatchdog(options: WatchdogOptions): WatchdogHandle {
 			}
 			running = false;
 		},
-		getElapsedMs: () => {
-			if (lastEventTime === 0) return 0;
-			return Date.now() - lastEventTime;
+		pause: () => {
+			if (!running || paused) return;
+			paused = true;
+			pauseStartTime = Date.now();
 		},
+		resume: () => {
+			if (!paused) return;
+			totalPausedMs += Date.now() - pauseStartTime;
+			paused = false;
+		},
+		getElapsedMs: () => getEffectiveElapsed(),
 		isRunning: () => running,
 	};
 

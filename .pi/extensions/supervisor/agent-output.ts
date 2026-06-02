@@ -120,12 +120,76 @@ function sanitizeJsonStrings(jsonText: string): string {
  * values (e.g., tool args like {"pattern":"function.*{"}) are ignored.
  */
 function extractLastJson(raw: string): string {
-	// Primary: string-boundary-aware brace matching.
-	// Finds the last complete JSON {…} object, correctly ignoring
-	// braces inside string values. Handles JSON with/without
-	// markdown code fences. The old fence-regex-first approach
-	// broke when commentBody contained triple-backtick code blocks
-	// — the regex stopped at the first ``` inside the string.
+	// Step 1: Find all markdown code fence regions (```json or ```).
+	// Unlike the old regex approach, we scan character-by-character
+	// to find matching fence pairs. This correctly handles triple
+	// backticks inside JSON string values (e.g. markdown code blocks
+	// in commentBody) — they are inside a string and don't close the
+	// outer fence. We track string boundaries to skip ``` inside strings.
+	const fenceContents: string[] = [];
+	let pos = 0;
+	while (pos < raw.length) {
+		// Find opening ``` (optionally followed by "json")
+		const fenceStart = raw.indexOf("```", pos);
+		if (fenceStart === -1) break;
+
+		// Skip past optional language tag and newline
+		let afterOpen = fenceStart + 3;
+		if (raw.startsWith("json", afterOpen)) {
+			afterOpen += 4;
+		}
+		// Skip whitespace/newline after opening fence
+		while (
+			afterOpen < raw.length &&
+			(raw[afterOpen] === " " ||
+				raw[afterOpen] === "\t" ||
+				raw[afterOpen] === "\n" ||
+				raw[afterOpen] === "\r")
+		) {
+			afterOpen++;
+		}
+
+		// Scan for closing ``` — string-boundary aware
+		// We look for ``` that is NOT inside a JSON string value.
+		let inString = false;
+		let escaped = false;
+		let fenceEnd = -1;
+		for (let i = afterOpen; i < raw.length; i++) {
+			const ch = raw[i];
+			if (escaped) {
+				escaped = false;
+				continue;
+			}
+			if (inString && ch === "\\") {
+				escaped = true;
+				continue;
+			}
+			if (ch === '"') {
+				inString = !inString;
+				continue;
+			}
+			if (!inString && ch === "`" && raw.startsWith("```", i)) {
+				fenceEnd = i;
+				break;
+			}
+		}
+
+		if (fenceEnd !== -1) {
+			fenceContents.push(raw.slice(afterOpen, fenceEnd).trim());
+			pos = fenceEnd + 3;
+		} else {
+			// Unclosed fence — skip past the opening
+			pos = afterOpen;
+		}
+	}
+
+	// If we found fence content, use the LAST one (JSON is final output)
+	if (fenceContents.length > 0) {
+		return fenceContents[fenceContents.length - 1];
+	}
+
+	// Step 2: No code fences — fall back to string-boundary-aware brace
+	// matching for bare JSON objects (or JSON inside unclosed/malformed fences).
 	let inString = false;
 	let escaped = false;
 	const braceStack: number[] = [];
@@ -133,25 +197,21 @@ function extractLastJson(raw: string): string {
 	for (let i = 0; i < raw.length; i++) {
 		const ch = raw[i];
 
-		// Previous char was backslash — skip this char (it's escaped)
 		if (escaped) {
 			escaped = false;
 			continue;
 		}
 
-		// Backslash inside string starts escape sequence
 		if (inString && ch === "\\") {
 			escaped = true;
 			continue;
 		}
 
-		// Quote toggles string state
 		if (ch === '"') {
 			inString = !inString;
 			continue;
 		}
 
-		// Only count braces outside string values
 		if (!inString) {
 			if (ch === "{") {
 				braceStack.push(i);
@@ -159,7 +219,6 @@ function extractLastJson(raw: string): string {
 				if (braceStack.length > 0) {
 					const start = braceStack.pop()!;
 					if (braceStack.length === 0) {
-						// This is a complete top-level JSON object
 						lastCompleteStart = start;
 					}
 				}
@@ -200,20 +259,6 @@ function extractLastJson(raw: string): string {
 				}
 			}
 		}
-		// If we reach here, braces are unbalanced — fall through to fence
-	}
-
-	// Fallback: try markdown code fences (```json or ```).
-	// Only used when brace matching found no complete top-level object.
-	const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)```/g;
-	let fenceMatch: RegExpExecArray | null;
-	let lastFence: string | null = null;
-	while ((fenceMatch = fenceRegex.exec(raw)) !== null) {
-		lastFence = fenceMatch[1].trim();
-	}
-
-	if (lastFence) {
-		return lastFence;
 	}
 
 	return raw;
