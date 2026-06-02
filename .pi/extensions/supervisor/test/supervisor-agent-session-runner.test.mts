@@ -763,16 +763,13 @@ describe("Phase 3: validateAgentResult (Bug C)", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("Phase 4: pipeline — validateAgentResult integration (Bug C)", () => {
-	const source = readFileSync(".pi/extensions/supervisor/pipeline.ts", "utf-8");
+	const source = readFileSync(".pi/extensions/supervisor/pipeline/handler.ts", "utf-8");
+	const outputSource = readFileSync(".pi/extensions/supervisor/pipeline-output.ts", "utf-8");
 
-	it("4.1: pipeline.ts calls validateAgentResult(result) after runAgent and before retry check", () => {
-		// Find lines between "let result = await runAgent" and "if (!result.success)"
+	it("4.1: pipeline/handler.ts calls validateAgentResult(result) after runAgent and before retry check", () => {
 		const afterRunAgent = source.split("let result = await runAgent(");
-		assert.ok(afterRunAgent.length >= 2, "runAgent call exists in pipeline.ts");
-
-		// After first runAgent call, find the block up to the !result.success check
+		assert.ok(afterRunAgent.length >= 2, "runAgent call exists in pipeline/handler.ts");
 		const remainder = afterRunAgent.slice(1).join("let result = await runAgent(");
-		// Check validateAgentResult appears before the !result.success check
 		const beforeRetryCheck = remainder.split("if (!result.success)")[0] || "";
 		assert.ok(
 			beforeRetryCheck.includes("validateAgentResult("),
@@ -780,25 +777,20 @@ describe("Phase 4: pipeline — validateAgentResult integration (Bug C)", () => 
 		);
 	});
 
-	it("4.2: validateAgentResult defined/imported in pipeline.ts", () => {
-		// Either defined as a function or imported
-		const hasDef =
-			source.includes("function validateAgentResult(") ||
-			(source.includes("validateAgentResult") &&
-				source.includes("import") &&
-				source.includes("validateAgentResult"));
+	it("4.2: validateAgentResult imported in pipeline/handler.ts from pipeline-output.ts", () => {
 		assert.ok(
-			hasDef || source.includes("function validateAgentResult("),
-			"validateAgentResult must be defined or imported in pipeline.ts",
+			source.includes("import") &&
+				source.includes("validateAgentResult") &&
+				source.includes("../pipeline-output.ts"),
+			"validateAgentResult must be imported from pipeline-output.ts",
 		);
 	});
 
 	it("4.3: validateAgentResult mutates success to false when tokenCount=0 and toolCount>5", () => {
-		// Check the validation logic exists
 		const hasLogic =
-			source.includes("tokenCount === 0") &&
-			source.includes("toolCount > 5") &&
-			source.includes("result.success = false");
+			outputSource.includes("tokenCount === 0") &&
+			outputSource.includes("toolCount > 5") &&
+			outputSource.includes("result.success = false");
 		assert.ok(
 			hasLogic,
 			"validateAgentResult must check tokenCount===0 and toolCount>5, then set success=false",

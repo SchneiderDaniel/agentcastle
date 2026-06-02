@@ -8,7 +8,7 @@
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/structural-analyzer/test/structural-analyzer.test.mts
  *
- * Integration test runs real ast-grep against test/fixtures/structural-sample/
+ * Integration test runs real ast-grep against .pi/extensions/structural-analyzer/test/fixtures/structural-sample/
  * (skipped if ast-grep binary not installed).
  */
 
@@ -539,9 +539,13 @@ describe("integration: ast-grep binary", () => {
 		"runs sg scan with console.log pattern on fixture dir",
 		{ skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 },
 		() => {
-			const sampleDir = resolve("test/fixtures/structural-sample");
+			const sampleDir = resolve(
+				".pi/extensions/structural-analyzer/test/fixtures/structural-sample",
+			);
 			if (!existsSync(sampleDir)) {
-				throw new Error("test/fixtures/structural-sample/ not found");
+				throw new Error(
+					".pi/extensions/structural-analyzer/test/fixtures/structural-sample/ not found",
+				);
 			}
 
 			const binary = "ast-grep";
@@ -581,9 +585,13 @@ describe("integration: ast-grep binary", () => {
 		"runs sg scan with try/catch pattern on Python fixtures",
 		{ skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 },
 		() => {
-			const sampleDir = resolve("test/fixtures/structural-sample");
+			const sampleDir = resolve(
+				".pi/extensions/structural-analyzer/test/fixtures/structural-sample",
+			);
 			if (!existsSync(sampleDir)) {
-				throw new Error("test/fixtures/structural-sample/ not found");
+				throw new Error(
+					".pi/extensions/structural-analyzer/test/fixtures/structural-sample/ not found",
+				);
 			}
 
 			const binary = "ast-grep";

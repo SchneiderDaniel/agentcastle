@@ -64,7 +64,7 @@ function checkFile(filePath: string): ProblematicLine[] {
 // ---------------------------------------------------------------------------
 
 for (const file of FILES_TO_CHECK) {
-	const filePath = join(__dirname, file);
+	const filePath = join(__dirname, "../", file);
 
 	describe(`supervisor status clearing — ${file}`, () => {
 		it("does NOT contain setStatus('supervisor', '') — uses undefined instead", () => {

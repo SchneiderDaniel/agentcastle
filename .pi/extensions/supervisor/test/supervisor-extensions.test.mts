@@ -7,6 +7,7 @@
  */
 
 import assert from "node:assert";
+import { existsSync } from "node:fs";
 import { describe, it } from "node:test";
 
 // ---------------------------------------------------------------------------
@@ -33,7 +34,14 @@ function resolveExtensions(extensionsRaw: string | undefined): string[] {
 	}
 
 	for (const ext of extensions) {
-		base.push("--extension", `.pi/extensions/${ext}.ts`);
+		// Try single-file extension first, then directory-based
+		const filePath = `.pi/extensions/${ext}.ts`;
+		const dirPath = `.pi/extensions/${ext}/index.ts`;
+		if (existsSync(dirPath)) {
+			base.push("--extension", dirPath);
+		} else {
+			base.push("--extension", filePath);
+		}
 	}
 
 	if (!extensions.includes("context-info")) {
@@ -303,12 +311,12 @@ describe("production agent files — extensions field", () => {
 		{
 			name: "developer",
 			expected:
-				"agent-harness,caveman,crawl4ai,format-on-save,piignore,ranked-map,ripgrep-search,tsc-checkpoint,structural-analyzer",
+				"agent-harness,caveman,crawl4ai,format-on-save,piignore,ranked-map,ripgrep-search,tsc-checkpoint,structural-analyzer,worktree-sandbox",
 		},
 		{
 			name: "auditor",
 			expected:
-				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer,worktree-sandbox",
 		},
 	];
 
@@ -356,21 +364,19 @@ describe("context-info extension auto-injection", () => {
 		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/context-info.ts"]);
 	});
 
-	it("P3.2: other extensions → appends context-info", () => {
+	it("P3.2: other extensions → appends context-info (directory-based paths)", () => {
 		const result = resolveExtensions("caveman,crawl4ai");
-		assert.deepStrictEqual(result, [
-			"--extension",
-			".pi/extensions/caveman.ts",
-			"--extension",
-			".pi/extensions/crawl4ai.ts",
-			"--extension",
-			".pi/extensions/context-info.ts",
-		]);
+		// Both caveman and crawl4ai are directory-based -> resolve to /index.ts
+		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
+		assert.ok(result.some((r) => r.includes("crawl4ai/index.ts")));
+		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 
 	it("P3.3: context-info already in list → no duplication", () => {
 		const result = resolveExtensions("caveman,context-info");
-		const contextInfoCount = result.filter((s) => s.includes("context-info.ts")).length;
+		const contextInfoCount = result.filter(
+			(s) => s.includes("context-info") && !s.includes("--extension"),
+		).length;
 		assert.strictEqual(contextInfoCount, 1);
 	});
 

@@ -7,7 +7,7 @@
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/ranked-map/test/codebase-mapper.test.mts
  *
- * Integration test runs real ctags against test/fixtures/ctags-sample/
+ * Integration test runs real ctags against .pi/extensions/ranked-map/test/fixtures/ctags-sample/
  * (skipped if ctags not installed).
  */
 
@@ -407,11 +407,11 @@ describe("integration: ctags binary", () => {
 		"runs ctags on a sample directory and returns parseable JSONL",
 		{ skip: !hasCtags || !hasJsonFormat ? skipMsg : false },
 		() => {
-			const sampleDir = resolve("test/fixtures/ctags-sample");
+			const sampleDir = resolve(".pi/extensions/ranked-map/test/fixtures/ctags-sample");
 			if (!existsSync(sampleDir)) {
 				// Create minimal sample dir if missing
 				throw new Error(
-					"test/fixtures/ctags-sample/ not found. Create it with .py/.ts files containing known symbols.",
+					".pi/extensions/ranked-map/test/fixtures/ctags-sample/ not found. Create it with .py/.ts files containing known symbols.",
 				);
 			}
 

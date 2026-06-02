@@ -325,9 +325,9 @@ describe("production agent files — thinking field", () => {
 	const agents = [
 		{ name: "architect", expected: "high" },
 		{ name: "researcher", expected: "medium" },
-		{ name: "developer", expected: "low" },
+		{ name: "developer", expected: "medium" },
 		{ name: "test-designer", expected: "medium" },
-		{ name: "auditor", expected: "medium" },
+		{ name: "auditor", expected: "high" },
 	];
 
 	for (const agent of agents) {

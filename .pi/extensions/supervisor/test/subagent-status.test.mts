@@ -245,7 +245,7 @@ describe("R2: Token count coloring by context window %", () => {
 		assert.ok(!result.includes("<warning>"));
 	});
 
-	it("threshold boundary: exactly 90% is not error (<=90% is warning)", () => {
+	it("threshold boundary: token coloring removed from subagent line", () => {
 		const result = buildSubagentStatusLine(
 			"developer",
 			startedAt,
@@ -257,11 +257,11 @@ describe("R2: Token count coloring by context window %", () => {
 			undefined,
 			mockTheme,
 		);
-		assert.ok(result.includes("<warning>"));
+		assert.ok(!result.includes("<warning>"));
 		assert.ok(!result.includes("<error>"));
 	});
 
-	it("threshold boundary: just over 90% is error", () => {
+	it("threshold boundary: token coloring removed from subagent line", () => {
 		const result = buildSubagentStatusLine(
 			"developer",
 			startedAt,
@@ -273,10 +273,11 @@ describe("R2: Token count coloring by context window %", () => {
 			undefined,
 			mockTheme,
 		);
-		assert.ok(result.includes("<error>"));
+		assert.ok(!result.includes("<error>"));
+		assert.ok(!result.includes("<warning>"));
 	});
 
-	it("coloring works with no theme provided (no crash, no color)", () => {
+	it("no theme: no crash, no color", () => {
 		const result = buildSubagentStatusLine(
 			"developer",
 			startedAt,
@@ -291,7 +292,7 @@ describe("R2: Token count coloring by context window %", () => {
 		assert.ok(!result.includes("<warning>"));
 	});
 
-	it("AC4: status prefix still 'subagent:' when context info available", () => {
+it("AC4: status prefix still 'subagent:' when context info available", () => {
 		const result = buildSubagentStatusLine(
 			"developer",
 			startedAt,

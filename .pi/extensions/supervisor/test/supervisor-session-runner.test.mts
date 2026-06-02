@@ -71,16 +71,24 @@ describe("agent-session-runner.ts — fix verification", () => {
 
 	it("A.2: getModel call uses type assertion for provider arg", () => {
 		const lines = source.split("\n");
-		const getModelLines = lines.filter(
-			(l) => l.includes("getModel(") && !l.trim().startsWith("//"),
-		);
-		const hasTypeAssertion = getModelLines.some(
-			(l) => l.includes("as any") || l.includes("as KnownProvider"),
-		);
-		assert.ok(
-			hasTypeAssertion,
-			`getModel call must use type assertion for provider arg. Found: [${getModelLines.join(" | ")}]`,
-		);
+		const getModelIndices = lines
+			.map((l, i) => (l.includes("getModel(") && !l.trim().startsWith("//") ? i : -1))
+			.filter((i) => i >= 0);
+		// Check the getModel line AND the next few lines for type assertion
+		const hasTypeAssertion = getModelIndices.some((idx) => {
+			// Look at up to 5 lines starting from the getModel call
+			for (let i = idx; i < Math.min(idx + 5, lines.length); i++) {
+				if (
+					lines[i]!.includes("as any") ||
+					lines[i]!.includes("as KnownProvider") ||
+					lines[i]!.includes("as Parameters<typeof getModel>")
+				) {
+					return true;
+				}
+			}
+			return false;
+		});
+		assert.ok(hasTypeAssertion, "getModel call must use type assertion for provider arg");
 	});
 
 	it("A.3: no signal property in prompt options arg", () => {

@@ -7,7 +7,7 @@
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/ranked-map/test/ranked-map.test.mts
  *
- * Integration test runs real ctags against test/fixtures/ctags-sample/
+ * Integration test runs real ctags against .pi/extensions/ranked-map/test/fixtures/ctags-sample/
  * (skipped if ctags not installed).
  */
 
@@ -1542,7 +1542,7 @@ describe("integration: real tools", () => {
 	const ctagsSkip = !hasCtags || !hasCtagsJson ? "ctags with JSON output not installed" : false;
 
 	it("real ctags on fixture dir produces parseable JSONL", { skip: ctagsSkip }, () => {
-		const sampleDir = resolve("test/fixtures/ctags-sample");
+		const sampleDir = resolve(".pi/extensions/ranked-map/test/fixtures/ctags-sample");
 		const stdout = execSync(
 			"ctags -R --output-format=json --exclude=node_modules --exclude=.git .",
 			{
@@ -1563,7 +1563,7 @@ describe("integration: real tools", () => {
 		"real rg --files-with-matches for query returns expected files",
 		{ skip: !hasRg ? "rg not installed" : false },
 		() => {
-			const sampleDir = resolve("test/fixtures/ctags-sample");
+			const sampleDir = resolve(".pi/extensions/ranked-map/test/fixtures/ctags-sample");
 			const stdout = execSync("rg --files-with-matches --ignore-case login .", {
 				cwd: sampleDir,
 				encoding: "utf-8",
@@ -1599,7 +1599,7 @@ describe("integration: real tools", () => {
 		"full pipeline: buildSymbolIndex → computeKeywordScores → computeRecencyScores → rankFiles → formatOutput produces valid shape",
 		{ skip: !hasCtags || !hasCtagsJson ? ctagsSkip : false },
 		() => {
-			const sampleDir = resolve("test/fixtures/ctags-sample");
+			const sampleDir = resolve(".pi/extensions/ranked-map/test/fixtures/ctags-sample");
 			const stdout = execSync(
 				"ctags -R --output-format=json --exclude=node_modules --exclude=.git .",
 				{

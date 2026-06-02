@@ -85,8 +85,8 @@ describe("generateBranchName", () => {
 // COMMENT_BODY) instead of running gh CLI commands. Pipeline reads markers
 // and handles PR creation/comment posting programmatically.
 
-describe("buildAgentTask — auditor structured output markers", () => {
-	it("contains AUDIT_DECISION: APPROVED marker", () => {
+describe("buildAgentTask — auditor JSON output markers", () => {
+	it("contains JSON action: APPROVED and REJECTED markers", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -99,11 +99,11 @@ describe("buildAgentTask — auditor structured output markers", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(task.includes("AUDIT_DECISION: APPROVED"), "Should contain APPROVED marker");
-		assert.ok(task.includes("AUDIT_DECISION: REJECTED"), "Should contain REJECTED marker");
+		assert.ok(task.includes('"action": "APPROVED"'), "Should contain APPROVED action");
+		assert.ok(task.includes('"action": "REJECTED"'), "Should contain REJECTED action");
 	});
 
-	it("contains PR_BODY and COMMENT_BODY markers for approved flow", () => {
+	it("contains prBody and commentBody keys in approved flow", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -116,11 +116,11 @@ describe("buildAgentTask — auditor structured output markers", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(task.includes("PR_BODY:"), "Should contain PR_BODY marker");
-		assert.ok(task.includes("COMMENT_BODY:"), "Should contain COMMENT_BODY marker");
+		assert.ok(task.includes('"prBody"'), "Should contain prBody key");
+		assert.ok(task.includes('"commentBody"'), "Should contain commentBody key");
 	});
 
-	it("contains PR_TITLE with issue number and title", () => {
+	it("contains prTitle with issue number", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -133,7 +133,7 @@ describe("buildAgentTask — auditor structured output markers", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(task.includes("PR_TITLE: feat(#42): Fix bug"), "Should contain PR_TITLE with issue");
+		assert.ok(task.includes('"prTitle"'), "Should contain prTitle key");
 	});
 
 	it("contains git diff defaultBranch instruction", () => {
@@ -152,7 +152,7 @@ describe("buildAgentTask — auditor structured output markers", () => {
 		assert.ok(task.includes("git diff main"), "Should contain git diff main instruction");
 	});
 
-	it("contains REJECT marker with COMMENT_BODY", () => {
+	it("contains commentBody in REJECT flow section", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -165,8 +165,8 @@ describe("buildAgentTask — auditor structured output markers", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		const rejectSection = task.substring(task.lastIndexOf("AUDIT_DECISION: REJECTED"));
-		assert.ok(rejectSection.includes("COMMENT_BODY:"), "REJECT flow contains COMMENT_BODY marker");
+		const rejectSection = task.substring(task.lastIndexOf('"action": "REJECTED"'));
+		assert.ok(rejectSection.includes('"commentBody"'), "REJECT flow contains commentBody key");
 	});
 
 	it("contains structured output format heading", () => {
@@ -206,8 +206,8 @@ describe("buildAgentTask — auditor structured output markers", () => {
 // Phase 3: other agents (structured output markers)
 // ---------------------------------------------------------------------------
 
-describe("buildAgentTask — other agents (structured output markers)", () => {
-	it("architect task: COMMENT_BODY/COMMENT_BODY_END markers instead of gh CLI", () => {
+describe("buildAgentTask — other agents (JSON output markers)", () => {
+	it("architect task: JSON output instead of gh CLI", () => {
 		const task = buildAgentTask(
 			"architect",
 			42,
@@ -220,9 +220,8 @@ describe("buildAgentTask — other agents (structured output markers)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("COMMENT_BODY:"));
-		assert.ok(task.includes("COMMENT_BODY_END"));
-		assert.ok(task.includes("ARCHITECTURE_COMPLETE"));
+		assert.ok(task.includes('"commentBody"'), "JSON commentBody key");
+		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action");
 		// No gh CLI calls in architect task
 		assert.ok(!task.includes("gh issue comment"));
 	});
@@ -251,7 +250,7 @@ describe("buildAgentTask — other agents (structured output markers)", () => {
 			task.includes("Work from current directory") || task.includes("worktree already set up"),
 			"Worktree pre-setup mentioned",
 		);
-		assert.ok(task.includes("IMPLEMENTATION_COMPLETE"), "Completion marker present");
+		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action present");
 	});
 
 	it("researcher task: web_crawl + ## Research Findings", () => {
@@ -271,7 +270,7 @@ describe("buildAgentTask — other agents (structured output markers)", () => {
 		assert.ok(task.includes("## Research Findings"), "Research Findings heading");
 	});
 
-	it("test-designer task: COMMENT_BODY markers for test plan output", () => {
+	it("test-designer task: JSON output with commentBody", () => {
 		const task = buildAgentTask(
 			"test-designer",
 			42,
@@ -285,9 +284,8 @@ describe("buildAgentTask — other agents (structured output markers)", () => {
 			"worktree-git-issue-",
 		);
 		assert.ok(task.includes("test plan"), "Test plan reference");
-		assert.ok(task.includes("COMMENT_BODY:"), "COMMENT_BODY marker for output");
-		assert.ok(task.includes("COMMENT_BODY_END"), "COMMENT_BODY_END marker");
-		assert.ok(task.includes("TEST_PLAN_COMPLETE"), "Completion marker");
+		assert.ok(task.includes('"commentBody"'), "JSON commentBody key");
+		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action");
 	});
 
 	it("unknown agent name → default fallback task without crash", () => {
@@ -489,8 +487,7 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 		assert.ok(task.includes("test plan"), "Test-designer task unchanged");
 	});
 
-	it("All existing tests still pass with new optional params — backward compat", () => {
-		// Same call as existing tests — no worktreePath, no branchName
+	it("backward compat — auditor task has git diff and JSON markers without optional params", () => {
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -504,6 +501,6 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 			"worktree-git-issue-",
 		);
 		assert.ok(task.includes("git diff main"), "Existing auditor behavior preserved");
-		assert.ok(task.includes("AUDIT_DECISION"), "Existing auditor behavior preserved");
+		assert.ok(task.includes('"action"'), "JSON action key present");
 	});
 });

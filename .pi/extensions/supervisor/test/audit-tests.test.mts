@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const SCRIPT = resolve(__dirname, "../.pi/scripts/audit-tests.sh");
+const SCRIPT = resolve(__dirname, "../../../../.pi/scripts/audit-tests.sh");
 
 // ---------------------------------------------------------------------------
 // Phase 3a: --worktree-path override flag

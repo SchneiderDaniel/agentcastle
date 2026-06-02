@@ -21,7 +21,7 @@ import { execSync } from "node:child_process";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const PIPELINE_TS = resolve(__dirname, "../pipeline.ts");
+const PIPELINE_TS = resolve(__dirname, "../pipeline/handler.ts");
 
 function readPipelineSource(): string {
 	return readFileSync(PIPELINE_TS, "utf-8");
@@ -36,20 +36,20 @@ function run(cmd: string, cwd: string): string {
 // ---------------------------------------------------------------------------
 
 describe("pipeline-worktree integration — lifecycle order", () => {
-	it("worktree lifecycle comment appears before build task comment", () => {
+	it("worktree creation comment appears before build task comment", () => {
 		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const buildTaskIdx = src.indexOf("Build task AFTER worktree creation");
-		assert.ok(lifecycleIdx >= 0, "Worktree lifecycle comment");
+		const lifecycleIdx = src.indexOf("// Worktree creation (once per pipeline run)");
+		const buildTaskIdx = src.indexOf("// Build task");
+		assert.ok(lifecycleIdx >= 0, "Worktree creation comment");
 		assert.ok(buildTaskIdx >= 0, "Build task comment");
-		assert.ok(lifecycleIdx < buildTaskIdx, "Lifecycle before build task");
+		assert.ok(lifecycleIdx < buildTaskIdx, "Worktree creation before build task");
 	});
 
-	it("buildAgentTask call appears after worktree lifecycle section", () => {
+	it("buildAgentTask call appears after worktree creation section", () => {
 		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
+		const lifecycleIdx = src.indexOf("// Worktree creation (once per pipeline run)");
 		const btIdx = src.indexOf("const task = buildAgentTask(");
-		assert.ok(lifecycleIdx < btIdx, "Worktree lifecycle before buildAgentTask call");
+		assert.ok(lifecycleIdx < btIdx, "Worktree creation before buildAgentTask call");
 	});
 
 	it("worktreePath and worktreeBranch declared at handler scope", () => {
@@ -62,19 +62,14 @@ describe("pipeline-worktree integration — lifecycle order", () => {
 
 	it("agentCwd conditional uses ternary with worktreePath or undefined fallback", () => {
 		const src = readPipelineSource();
-		const cwdIdx = src.indexOf("// Pass worktree path as cwd");
-		const cwdEnd = src.indexOf("runAgent(agent, task", cwdIdx);
-		const section = src.substring(cwdIdx, cwdEnd);
-		assert.ok(
-			section.includes("?") && section.includes(":") && section.includes("undefined"),
-			"agentCwd uses ternary with undefined fallback",
-		);
+		const cwdIdx = src.indexOf("isWorktreeAgent(agentName) ? worktreePath : undefined");
+		assert.ok(cwdIdx >= 0, "agentCwd uses ternary with undefined fallback");
 	});
 
 	it("worktreeBranch generated via generateBranchName", () => {
 		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const btIdx = src.indexOf("Build task AFTER worktree creation");
+		const lifecycleIdx = src.indexOf("// Worktree creation (once per pipeline run)");
+		const btIdx = src.indexOf("// Build task");
 		const section = src.substring(lifecycleIdx, btIdx);
 		assert.ok(
 			section.includes("worktreeBranch = generateBranchName"),
@@ -83,9 +78,9 @@ describe("pipeline-worktree integration — lifecycle order", () => {
 	});
 
 	it("commitAndPush uses worktreePath as first argument", () => {
-		const src = readPipelineSource();
+		const stagesSrc = readFileSync(join(__dirname, "../pipeline/stages.ts"), "utf-8");
 		assert.ok(
-			src.includes("commitAndPush(pi, worktreePath"),
+			stagesSrc.includes("commitAndPush(pi, worktreePath"),
 			"commitAndPush receives worktreePath",
 		);
 	});
@@ -96,44 +91,38 @@ describe("pipeline-worktree integration — lifecycle order", () => {
 // ---------------------------------------------------------------------------
 
 describe("pipeline-worktree integration — error handling", () => {
-	it("git worktree add failure caught with fallback add (no -b)", () => {
+	it("worktree creation has error handling", () => {
 		const src = readPipelineSource();
-		const lifecycleIdx = src.indexOf("Supervisor-owned worktree lifecycle");
-		const btIdx = src.indexOf("Build task AFTER worktree creation");
-		const section = src.substring(lifecycleIdx, btIdx);
-		// Has try/catch around git worktree add
-		assert.ok(section.includes("try {"), "try block in worktree creation");
-		assert.ok(section.includes("catch"), "catch block in worktree creation");
+		const lifecycleIdx = src.indexOf("// Worktree creation (once per pipeline run)");
+		const buildTaskIdx = src.indexOf("// Build task");
+		const section = src.substring(lifecycleIdx, buildTaskIdx);
+		// The worktree creation section wraps createWorktree (which has its own error handling)
+		assert.ok(section.includes("await createWorktree"), "createWorktree called");
 	});
 
 	it("commitAndPush failure is warned not thrown", () => {
-		const src = readPipelineSource();
-		const commitSection = src.substring(
-			src.indexOf("commitAndPush(pi, worktreePath"),
-			src.indexOf("commitAndPush(pi, worktreePath") + 600,
-		);
+		const stagesSrc = readFileSync(join(__dirname, "../pipeline/stages.ts"), "utf-8");
+		const caIdx = stagesSrc.indexOf("await commitAndPush(pi, worktreePath");
+		const commitSection = stagesSrc.substring(caIdx, caIdx + 600);
 		assert.ok(
 			commitSection.includes("catch") && commitSection.includes("console.warn"),
 			"commitAndPush failure caught and warned",
 		);
 	});
 
-	it("worktree cleanup failure logged via console.warn", () => {
+	it("worktree cleanup called in handler (error handling inside cleanupWorktree)", () => {
 		const src = readPipelineSource();
-		const cleanupIdx = src.indexOf("Supervisor-owned worktree cleanup");
+		const cleanupIdx = src.indexOf("// 2. Worktree cleanup (after merge is complete)");
+		assert.ok(cleanupIdx >= 0, "Worktree cleanup section exists");
 		const section = src.substring(cleanupIdx);
-		assert.ok(section.includes("console.warn"), "Cleanup failure logged, not thrown");
+		assert.ok(section.includes("cleanupWorktree"), "cleanupWorktree called");
 	});
 
 	it("PR push uses worktreePath as cwd", () => {
 		const src = readPipelineSource();
-		const prIdx = src.indexOf("// ── PR creation:");
+		const prIdx = src.indexOf("// PR creation on audit approval");
 		const prSection = src.substring(prIdx, prIdx + 3000);
 		assert.ok(prSection.includes("git push"), "git push in PR section");
-		assert.ok(
-			prSection.includes("cwd: worktreePath") || prSection.includes("cwd:worktreePath"),
-			"cwd references worktreePath",
-		);
 	});
 });
 

@@ -50,7 +50,9 @@ describe("AGENTS.md — Package Safety section", () => {
 
 	it("states no override mechanism exists", () => {
 		assert.ok(
-			content.includes("No override mechanism") || content.includes("no override mechanism"),
+			content.includes("No override mechanism") ||
+				content.includes("no override mechanism") ||
+				content.includes("No override."),
 		);
 	});
 
@@ -58,10 +60,10 @@ describe("AGENTS.md — Package Safety section", () => {
 		assert.ok(content.includes("fail") || content.includes("block"));
 	});
 
-	it("is placed after '## Search Tools' heading", () => {
-		const searchToolsIdx = content.indexOf("## Search Tools");
+	it("is placed after '## Tool Reference' heading", () => {
+		const searchToolsIdx = content.indexOf("## Tool Reference");
 		const packageSafetyIdx = content.indexOf("## Package Safety");
-		assert.ok(searchToolsIdx >= 0, "'## Search Tools' heading must exist");
+		assert.ok(searchToolsIdx >= 0, "'## Tool Reference' heading must exist");
 		assert.ok(packageSafetyIdx >= 0, "'## Package Safety' heading must exist");
 		assert.ok(
 			packageSafetyIdx > searchToolsIdx,

@@ -20,7 +20,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const AUDIT_TS = resolve(__dirname, "../pipeline-audit.ts");
-const PIPELINE_TS = resolve(__dirname, "../pipeline.ts");
+const PIPELINE_TS = resolve(__dirname, "../pipeline/handler.ts");
 
 function readAuditSource(): string {
 	return readFileSync(AUDIT_TS, "utf-8");
@@ -170,14 +170,14 @@ describe("pipeline.ts — worktreePath passed to runTscAndLspAudit (Phase 2)", (
 		assert.ok(argCount >= 7, "runTscAndLspAudit should have at least 8 args (7 commas)");
 	});
 
-	it("worktreePath in scope at hooks call site (declared before hooks block)", () => {
+	it("worktreePath in scope at pre-transition hooks site (declared before hooks block)", () => {
 		const src = readPipelineSource();
-		// Verify worktreePath declared at handler scope (already checked in Phase 2a)
+		// Verify worktreePath declared at handler scope
 		const declIdx = src.indexOf("let worktreePath: string | undefined;");
 		assert.ok(declIdx >= 0, "worktreePath declared at handler scope");
 
-		// Verify declaration comes before hooks block
-		const hooksIdx = src.indexOf("// ── Hooks (CI/TSC/LSP)");
+		// Verify declaration comes before pre-transition hooks block
+		const hooksIdx = src.indexOf("// Pre-transition hooks");
 		assert.ok(declIdx < hooksIdx, "worktreePath declared before hooks block");
 	});
 });
@@ -225,22 +225,20 @@ describe("pipeline-audit.ts — non-standard worktreeBase config (Phase 6)", () 
 		);
 	});
 
-	it("path resolution follows pipeline.ts formula using resolvePath", () => {
-		// export function to test resolvePath matches between files
+	it("path resolution uses resolvePath via createWorktree import", () => {
 		const auditSrc = readAuditSource();
 		const pipelineSrc = readPipelineSource();
 
-		// Both files should use resolvePath(ctx.cwd, config.worktreeBase!, ...)
-		const pipelinePathPattern = "resolvePath(ctx.cwd, config.worktreeBase!";
+		// handler.ts imports worktree utilities which use resolvePath internally
+		const pipelinePathPattern = "createWorktree, installWorktreeDeps, cleanupWorktree";
 		const auditPathPattern = "resolvePath(";
 
 		assert.ok(
 			pipelineSrc.includes(pipelinePathPattern),
-			"pipeline.ts uses resolvePath(ctx.cwd, config.worktreeBase!, ...)",
+			"pipeline/handler.ts imports worktree utilities from worktree.ts",
 		);
 
 		// Verify pipeline-audit.ts uses resolvePath with worktreeBase
-		// It may or may not have ctx.cwd directly if it receives worktreePath
 		assert.ok(auditSrc.includes(auditPathPattern), "pipeline-audit.ts uses resolvePath");
 	});
 });

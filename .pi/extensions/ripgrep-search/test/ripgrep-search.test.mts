@@ -7,7 +7,7 @@
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/ripgrep-search/test/ripgrep-search.test.mts
  *
- * Integration test runs real rg against test/fixtures/ripgrep-sample/
+ * Integration test runs real rg against .pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample/
  * (skipped if rg binary not installed).
  */
 
@@ -911,9 +911,9 @@ describe("integration: rg binary", () => {
 		'searches "5000" on fixture dir and returns 2 results',
 		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
 		() => {
-			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			const sampleDir = resolve(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample");
 			if (!existsSync(sampleDir)) {
-				throw new Error("test/fixtures/ripgrep-sample/ not found");
+				throw new Error(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample/ not found");
 			}
 
 			const stdout = execSync(
@@ -952,9 +952,9 @@ describe("integration: rg binary", () => {
 		'searches "TODO" on fixture dir and returns 0 results',
 		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
 		() => {
-			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			const sampleDir = resolve(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample");
 			if (!existsSync(sampleDir)) {
-				throw new Error("test/fixtures/ripgrep-sample/ not found");
+				throw new Error(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample/ not found");
 			}
 
 			// rg exits with code 1 when no matches found — execSync throws on non-zero
@@ -986,9 +986,9 @@ describe("integration: rg binary", () => {
 		'searches "TIMEOUT_MS" with max_count=1 and respects per-file limit',
 		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
 		() => {
-			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			const sampleDir = resolve(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample");
 			if (!existsSync(sampleDir)) {
-				throw new Error("test/fixtures/ripgrep-sample/ not found");
+				throw new Error(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample/ not found");
 			}
 
 			// TIMEOUT_MS appears once per file, so max_count=1 should still return 2
@@ -1015,9 +1015,9 @@ describe("integration: rg binary", () => {
 		"column values are 1-indexed character positions",
 		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
 		() => {
-			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			const sampleDir = resolve(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample");
 			if (!existsSync(sampleDir)) {
-				throw new Error("test/fixtures/ripgrep-sample/ not found");
+				throw new Error(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample/ not found");
 			}
 
 			const stdout = execSync(
@@ -1044,9 +1044,9 @@ describe("integration: rg binary", () => {
 		"--max-columns=200 enforced (lines over 200 chars truncated)",
 		{ skip: !hasRg ? skipMsg : false, timeout: 15_000 },
 		() => {
-			const sampleDir = resolve("test/fixtures/ripgrep-sample");
+			const sampleDir = resolve(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample");
 			if (!existsSync(sampleDir)) {
-				throw new Error("test/fixtures/ripgrep-sample/ not found");
+				throw new Error(".pi/extensions/ripgrep-search/test/fixtures/ripgrep-sample/ not found");
 			}
 
 			const stdout = execSync(

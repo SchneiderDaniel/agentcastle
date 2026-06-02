@@ -88,7 +88,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 		assert.ok(!task.includes("SUMMARY_FILE"), "Auditor prompt should not contain SUMMARY_FILE");
 	});
 
-	it("contains AUDIT_DECISION structured output marker instruction", async () => {
+	it("contains JSON structured output with action markers", async () => {
 		const { buildAgentTask } = await import("../agent-task.ts");
 		const task = buildAgentTask(
 			"auditor",
@@ -103,12 +103,16 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 			"worktree-git-issue-",
 		);
 		assert.ok(
-			task.includes("AUDIT_DECISION"),
-			"Auditor prompt should contain AUDIT_DECISION instruction",
+			task.includes('"action": "APPROVED"'),
+			"Auditor prompt should contain APPROVED action",
+		);
+		assert.ok(
+			task.includes('"action": "REJECTED"'),
+			"Auditor prompt should contain REJECTED action",
 		);
 	});
 
-	it("contains PR_TITLE / PR_BODY / COMMENT_BODY instructions", async () => {
+	it("contains prTitle / prBody / commentBody JSON keys", async () => {
 		const { buildAgentTask } = await import("../agent-task.ts");
 		const task = buildAgentTask(
 			"auditor",
@@ -122,9 +126,9 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("PR_TITLE"), "Auditor prompt should contain PR_TITLE");
-		assert.ok(task.includes("PR_BODY"), "Auditor prompt should contain PR_BODY");
-		assert.ok(task.includes("COMMENT_BODY"), "Auditor prompt should contain COMMENT_BODY");
+		assert.ok(task.includes('"prTitle"'), "Auditor prompt should contain prTitle");
+		assert.ok(task.includes('"prBody"'), "Auditor prompt should contain prBody");
+		assert.ok(task.includes('"commentBody"'), "Auditor prompt should contain commentBody");
 	});
 
 	it("no longer contains --body-file for submodule fallback", async () => {
@@ -189,10 +193,7 @@ describe("buildAgentTask — auditor with submodules (Phase 3)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(
-			task.includes("submodule") || task.includes("SUBMODULE"),
-			"Should mention submodules exist",
-		);
+		assert.ok(task.includes("Submodules"), "Should mention submodules exist");
 		assert.ok(!task.includes("cd sub/a"), "Should not contain shell cd to submodule");
 	});
 

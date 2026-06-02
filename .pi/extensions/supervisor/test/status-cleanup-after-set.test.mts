@@ -93,7 +93,7 @@ const FILES_TO_CHECK = [
 ];
 
 for (const file of FILES_TO_CHECK) {
-	const filePath = join(__dirname, file);
+	const filePath = join(__dirname, "../", file);
 
 	describe(`supervisor status cleanup — ${file}`, () => {
 		it("every setStatus('supervisor', text) has a matching clear (setStatus with undefined) after it", () => {

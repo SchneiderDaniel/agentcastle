@@ -236,7 +236,7 @@ describe("agent-runner dispatch logic", () => {
 			"agent-runner.ts exports runAgent function",
 		);
 		assert.ok(
-			source.includes("return await runAgentInProcess("),
+			source.includes("const result = await runAgentInProcess("),
 			"runAgent calls runAgentInProcess (in-process primary path)",
 		);
 	});
@@ -253,8 +253,8 @@ describe("agent-runner dispatch logic", () => {
 		const source = readFileSync(".pi/extensions/supervisor/agent-runner.ts", "utf-8");
 		assert.ok(
 			source.includes("try {") &&
-				source.includes("} catch (err) {") &&
-				source.includes("return await runAgentInProcess(") &&
+				source.includes("} catch (err: unknown) {") &&
+				source.includes("const result = await runAgentInProcess(") &&
 				source.includes("return await runAgentSubprocess("),
 			"runAgent has try/catch dispatch (in-process → subprocess fallback)",
 		);
@@ -263,7 +263,7 @@ describe("agent-runner dispatch logic", () => {
 	it("3.4: fallback logs warning with [supervisor] prefix", () => {
 		const source = readFileSync(".pi/extensions/supervisor/agent-runner.ts", "utf-8");
 		assert.ok(
-			source.includes("[supervisor] In-process runner failed, falling back to subprocess"),
+			source.includes("[supervisor] In-process runner failed (result.success=false)"),
 			"fallback path logs warning",
 		);
 	});
