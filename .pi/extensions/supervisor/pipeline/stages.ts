@@ -341,22 +341,43 @@ export async function handlePostAgentSuccess(
 	worktreeBranch: string | undefined,
 	issueTitle: string,
 ): Promise<boolean> {
-	// Try textOutput first (should contain content from handleDone/handleTextDelta).
-	// If textOutput yields no commentBody, fall back to output (raw messages/stdout).
-	// textOutput is always non-empty when tools are used (tool log entries),
-	// so a simple || fallback would never reach output.
-	let commentBody = extractAgentCommentBody(result.textOutput || "");
-	if (!commentBody && result.output) {
-		commentBody = extractAgentCommentBody(result.output);
-		if (commentBody) {
-			console.warn(
-				`[supervisor] ${agentName} commentBody extracted from result.output (fallback) — textOutput may lack JSON`,
-			);
-		}
-	}
-
 	// Agent comments: architect, test-designer, researcher
 	if (agentName === "architect" || agentName === "test-designer" || agentName === "researcher") {
+		// Try both sources independently. Streaming models (researcher, test-designer)
+		// have JSON in textOutput from deltas. Non-streaming models (architect with
+		// thinking:high) have only tool logs in textOutput; the JSON lives in output
+		// (built from session messages).
+		let commentBody: string | null = null;
+
+		// Primary: textOutput — contains JSON from streaming deltas
+		if (result.textOutput) {
+			commentBody = extractAgentCommentBody(result.textOutput);
+			if (commentBody) {
+				console.warn(`[supervisor] ${agentName} commentBody extracted from result.textOutput`);
+			}
+		}
+
+		// Fallback 1: output (session messages) — non-streaming models have JSON here
+		if (!commentBody && result.output) {
+			commentBody = extractAgentCommentBody(result.output);
+			if (commentBody) {
+				console.warn(
+					`[supervisor] ${agentName} commentBody extracted from result.output (fallback)`,
+				);
+			}
+		}
+
+		// Fallback 2: thinkingOutput — models with thinking:high may emit
+		// JSON in thinking blocks which land in thinkingOutputLines
+		if (!commentBody && result.thinkingOutput) {
+			commentBody = extractAgentCommentBody(result.thinkingOutput);
+			if (commentBody) {
+				console.warn(
+					`[supervisor] ${agentName} commentBody extracted from result.thinkingOutput (fallback)`,
+				);
+			}
+		}
+
 		if (commentBody) {
 			try {
 				await postIssueComment(pi, issueNum, config.repo, commentBody);
@@ -370,9 +391,9 @@ export async function handlePostAgentSuccess(
 			}
 		} else {
 			console.warn(
-				`[supervisor] ${agentName} completed but no commentBody found in output. ` +
-					`textOutput length: ${(result.textOutput || "").length}, ` +
-					`output length: ${(result.output || "").length}`,
+				`[supervisor] ${agentName} completed but no commentBody found. ` +
+					`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
+					`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
 			);
 		}
 	}
