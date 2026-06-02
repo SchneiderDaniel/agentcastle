@@ -49,6 +49,13 @@ function isValidISODatetime(s: string): boolean {
 	if (typeof s !== "string" || s.length < 10) return false;
 	const d = new Date(s);
 	if (isNaN(d.getTime())) return false;
+	// Catch overflow dates like "2026-02-30" that JS Date silently rolls forward
+	const iso = d.toISOString();
+	// Compare date portion (first 10 chars) to detect overflow
+	// Using date-only comparison avoids false rejections from timezone normalization:
+	// d.toISOString() always emits Z-suffix UTC, while input may have +HH:MM offset
+	// or no timezone at all.
+	if (iso.slice(0, 10) !== s.slice(0, 10)) return false;
 	return true;
 }
 
@@ -404,6 +411,36 @@ describe("isValidISODatetime", () => {
 	it("rejects invalid date like month 13", () => {
 		// new Date("2026-13-01") produces NaN
 		assert.ok(!isValidISODatetime("2026-13-01"));
+	});
+
+	it("rejects overflow date like Feb 30", () => {
+		// new Date("2026-02-30") silently rolls to Mar 2
+		assert.ok(!isValidISODatetime("2026-02-30"));
+	});
+
+	it("rejects overflow date like Apr 31", () => {
+		// new Date("2026-04-31") silently rolls to May 1
+		assert.ok(!isValidISODatetime("2026-04-31"));
+	});
+
+	it("rejects overflow date with time component", () => {
+		assert.ok(!isValidISODatetime("2026-02-30T19:00:00.000Z"));
+	});
+
+	it("still accepts valid leap year date 2024-02-29", () => {
+		assert.ok(isValidISODatetime("2024-02-29"));
+	});
+
+	it("still accepts valid date 2026-03-01", () => {
+		assert.ok(isValidISODatetime("2026-03-01"));
+	});
+
+	it("still rejects invalid month 2026-00-01", () => {
+		assert.ok(!isValidISODatetime("2026-00-01"));
+	});
+
+	it("still rejects invalid day 2026-01-00", () => {
+		assert.ok(!isValidISODatetime("2026-01-00"));
 	});
 });
 

@@ -63,9 +63,13 @@ export function isValidISODatetime(s: string): boolean {
 	if (typeof s !== "string" || s.length < 10) return false;
 	const d = new Date(s);
 	if (isNaN(d.getTime())) return false;
-	// Ensure the parsed date matches the original string (catches invalid dates like "2026-13-01")
+	// Catch overflow dates like "2026-02-30" that JS Date silently rolls forward
 	const iso = d.toISOString();
-	// Accept both full ISO and truncated forms — just check it parses to a valid date
+	// Compare date portion (first 10 chars) to detect overflow
+	// Using date-only comparison avoids false rejections from timezone normalization:
+	// d.toISOString() always emits Z-suffix UTC, while input may have +HH:MM offset
+	// or no timezone at all.
+	if (iso.slice(0, 10) !== s.slice(0, 10)) return false;
 	return true;
 }
 
