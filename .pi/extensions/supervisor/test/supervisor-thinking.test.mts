@@ -278,7 +278,8 @@ describe("runAgent() thinking flag construction", () => {
 		const model = "opencode-go/deepseek-v4-flash";
 		const args = ["-p", "--mode", "json", "task"];
 		if (model) args.push("--model", model);
-		if ("high") args.push("--thinking", "high");
+		const thinkingLevel = "high";
+		if (thinkingLevel) args.push("--thinking", thinkingLevel);
 
 		assert.ok(args.includes("--model"));
 		assert.ok(args.includes("--thinking"));

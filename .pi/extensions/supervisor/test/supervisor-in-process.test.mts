@@ -50,7 +50,7 @@ describe("SupervisorMessageDetails — rawOutput fields", () => {
 			// hasRawOutput omitted — should still be valid
 		};
 		assert.strictEqual(details.rawOutput, "raw output");
-		assert.strictEqual(details.hasRawOutput, undefined);
+		assert.strictEqual((details as any)["hasRawOutput"], undefined);
 	});
 });
 

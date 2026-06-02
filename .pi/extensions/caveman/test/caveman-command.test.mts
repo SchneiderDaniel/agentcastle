@@ -9,7 +9,6 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { registerCavemanCommand } from "../command.ts";
 import { createConfigStore } from "../config.ts";
-import { createAnimationController } from "../animation.ts";
 import type { Level } from "../types.ts";
 
 // ---------------------------------------------------------------------------
@@ -59,15 +58,12 @@ function setupTest(initialLevel: Level = "off") {
 	const configStore = createConfigStore();
 	configStore.setLevel(initialLevel);
 
-	const animController = createAnimationController({
-		getShowStatus: () => configStore.getConfig().showStatus,
-		getLevel: () => configStore.getLevel(),
-	});
+	const syncStatus = () => {};
 
 	const pi = makeMockPi();
 	const mockPi = pi as unknown as Parameters<typeof registerCavemanCommand>[0];
 
-	registerCavemanCommand(mockPi, configStore, animController);
+	registerCavemanCommand(mockPi, configStore, syncStatus);
 
 	// Extract the handler and completions from the registration call
 	const regCall = pi.calls.find((c) => c.name === "registerCommand");
@@ -76,7 +72,7 @@ function setupTest(initialLevel: Level = "off") {
 		getArgumentCompletions: (prefix: string) => unknown[] | null;
 	};
 
-	return { configStore, animController, pi: mockPi, piCalls: pi.calls, def, ...makeMockCtx() };
+	return { configStore, pi: mockPi, piCalls: pi.calls, def, ...makeMockCtx() };
 }
 
 // ---------------------------------------------------------------------------
@@ -160,7 +156,7 @@ describe("command.ts — getArgumentCompletions", () => {
 		const { def } = setupTest();
 		const result = def.getArgumentCompletions("l");
 		assert.ok(result !== null);
-		assert.ok(result!.some((item: { value: string }) => item.value === "lite"));
+		assert.ok(result!.some((item: unknown) => (item as { value: string }).value === "lite"));
 	});
 
 	it("'x' returns null", () => {

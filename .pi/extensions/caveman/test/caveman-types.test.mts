@@ -7,18 +7,8 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import {
-	LEVELS,
-	STOP_ALIASES,
-	CAVEMAN_COMMAND_OPTIONS,
-	DEFAULT_CONFIG,
-} from "../types.ts";
-import {
-	ANIMATIONS,
-	CAVEMAN_BASE,
-	INTENSITY,
-	FIRE_FRAMES,
-} from "../prompts.ts";
+import { LEVELS, STOP_ALIASES, CAVEMAN_COMMAND_OPTIONS, DEFAULT_CONFIG } from "../types.ts";
+import { CAVEMAN_BASE, INTENSITY } from "../prompts.ts";
 
 // ---------------------------------------------------------------------------
 // types.ts
@@ -53,24 +43,6 @@ describe("types.ts — CAVEMAN_COMMAND_OPTIONS", () => {
 			assert.ok(typeof opt.value === "string");
 			assert.ok(typeof opt.label === "string");
 			assert.ok(typeof opt.description === "string");
-		}
-	});
-});
-
-describe("types.ts — Animation interface", () => {
-	it("ANIMATIONS has entries for lite, full, ultra with correct intervals", () => {
-		assert.ok("lite" in ANIMATIONS);
-		assert.ok("full" in ANIMATIONS);
-		assert.ok("ultra" in ANIMATIONS);
-		assert.ok(!("off" in ANIMATIONS));
-
-		assert.strictEqual(ANIMATIONS.lite.interval, 300);
-		assert.strictEqual(ANIMATIONS.full.interval, 200);
-		assert.strictEqual(ANIMATIONS.ultra.interval, 100);
-
-		for (const key of ["lite", "full", "ultra"] as const) {
-			assert.ok(Array.isArray(ANIMATIONS[key].frames));
-			assert.strictEqual(typeof ANIMATIONS[key].label, "string");
 		}
 	});
 });
@@ -114,11 +86,5 @@ describe("prompts.ts — INTENSITY", () => {
 	it("ultra includes 'Abbreviate' and arrow syntax", () => {
 		assert.ok(INTENSITY.ultra.includes("Abbreviate"));
 		assert.ok(INTENSITY.ultra.includes("→"));
-	});
-});
-
-describe("prompts.ts — FIRE_FRAMES", () => {
-	it("has 8 animation frames", () => {
-		assert.strictEqual(FIRE_FRAMES.length, 8);
 	});
 });

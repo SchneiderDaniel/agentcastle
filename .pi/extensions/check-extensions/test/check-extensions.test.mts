@@ -18,10 +18,7 @@ import { execFile } from "node:child_process";
 // Phase 1: changelog-parser.ts
 // ═══════════════════════════════════════════════════════════════════════
 
-import {
-	parseChangelog,
-	type ChangeEntry,
-} from "../changelog-parser.ts";
+import { parseChangelog, type ChangeEntry } from "../changelog-parser.ts";
 
 describe("changelog-parser", () => {
 	it("parses valid changelog with all categories", () => {
@@ -565,11 +562,7 @@ describe("issue-builder", () => {
 // Phase 4: ast-scanner.ts — AST-based file scanning
 // ═══════════════════════════════════════════════════════════════════════
 
-import {
-	scanExtensionsAST,
-	type ASTFinding,
-	type ASTScanningResult,
-} from "../ast-scanner.ts";
+import { scanExtensionsAST, type ASTScanningResult } from "../ast-scanner.ts";
 
 /**
  * Resolve ast-grep binary path from npm global prefix.
@@ -1027,10 +1020,7 @@ describe("ast-scanner", () => {
 // Phase 5: change-resolver.ts — Changelog-to-usage context mapping
 // ═══════════════════════════════════════════════════════════════════════
 
-import {
-	resolveRelevance,
-	type StructuredChange,
-} from "../change-resolver.ts";
+import { resolveRelevance, type StructuredChange } from "../change-resolver.ts";
 
 describe("change-resolver", () => {
 	it("returns true when changelog event matches finding args", () => {
@@ -1046,6 +1036,7 @@ describe("change-resolver", () => {
 			file: "index.ts",
 			apiName: "pi.on",
 			line: 1,
+			column: 1,
 			lineContent: 'pi.on("tool_call", handler)',
 			changelogVersion: "",
 			isBreaking: false,
@@ -1076,6 +1067,7 @@ describe("change-resolver", () => {
 			file: "index.ts",
 			apiName: "pi.on",
 			line: 5,
+			column: 1,
 			lineContent: 'pi.on("session_start", handler)',
 			changelogVersion: "",
 			isBreaking: false,
@@ -1106,6 +1098,7 @@ describe("change-resolver", () => {
 			file: "index.ts",
 			apiName: "pi.on",
 			line: 1,
+			column: 1,
 			lineContent: 'pi.on("session_start", handler)',
 			changelogVersion: "",
 			isBreaking: false,
@@ -1132,6 +1125,7 @@ describe("change-resolver", () => {
 			file: "index.ts",
 			apiName: "pi.on",
 			line: 5,
+			column: 1,
 			lineContent: 'pi.on("tool_call", handler)',
 			changelogVersion: "",
 			isBreaking: false,
@@ -1162,6 +1156,7 @@ describe("change-resolver", () => {
 			file: "index.ts",
 			apiName: "pi.registerCommand",
 			line: 1,
+			column: 1,
 			lineContent: 'pi.registerCommand("my-cmd", { description: "", handler: async () => {} })',
 			changelogVersion: "",
 			isBreaking: false,
@@ -1180,10 +1175,7 @@ describe("change-resolver", () => {
 // Phase 6: migration-generator.ts — Before/after code snippets
 // ═══════════════════════════════════════════════════════════════════════
 
-import {
-	generateMigrationSnippet,
-	type MigrationSnippet,
-} from "../migration-generator.ts";
+import { generateMigrationSnippet, type MigrationSnippet } from "../migration-generator.ts";
 
 describe("migration-generator", () => {
 	it("generates snippet for pi.on tool_call → tool_before_call", () => {
@@ -1249,10 +1241,7 @@ describe("migration-generator", () => {
 // Phase 7: impact-scorer.ts — Cross-extension impact scoring
 // ═══════════════════════════════════════════════════════════════════════
 
-import {
-	computeImpactScore,
-	type ImpactScore,
-} from "../impact-scorer.ts";
+import { computeImpactScore, type ImpactScore } from "../impact-scorer.ts";
 
 describe("impact-scorer", () => {
 	it("scores no findings as 'none' severity", () => {
@@ -1269,6 +1258,7 @@ describe("impact-scorer", () => {
 				file: "index.ts",
 				apiName: "pi.on",
 				line: 1,
+				column: 1,
 				lineContent: "",
 				changelogVersion: "",
 				isBreaking: false,
@@ -1289,6 +1279,7 @@ describe("impact-scorer", () => {
 				file: "index.ts",
 				apiName: "pi.on",
 				line: 1,
+				column: 1,
 				lineContent: "",
 				changelogVersion: "",
 				isBreaking: true,
@@ -1309,6 +1300,7 @@ describe("impact-scorer", () => {
 				file: "index.ts",
 				apiName: "pi.on",
 				line: 1,
+				column: 1,
 				lineContent: "",
 				changelogVersion: "",
 				isBreaking: true,
@@ -1321,6 +1313,7 @@ describe("impact-scorer", () => {
 				file: "index.ts",
 				apiName: "pi.registerCommand",
 				line: 2,
+				column: 1,
 				lineContent: "",
 				changelogVersion: "",
 				isBreaking: true,
@@ -1342,6 +1335,7 @@ describe("impact-scorer", () => {
 				file: "a.ts",
 				apiName: "pi.on",
 				line: 1,
+				column: 1,
 				lineContent: "",
 				changelogVersion: "",
 				isBreaking: true,
@@ -1354,6 +1348,7 @@ describe("impact-scorer", () => {
 				file: "a.ts",
 				apiName: "pi.exec",
 				line: 2,
+				column: 1,
 				lineContent: "",
 				changelogVersion: "",
 				isBreaking: true,
@@ -1366,6 +1361,7 @@ describe("impact-scorer", () => {
 				file: "a.ts",
 				apiName: "ctx.ui",
 				line: 3,
+				column: 1,
 				lineContent: "",
 				changelogVersion: "",
 				isBreaking: false,
@@ -1390,6 +1386,7 @@ describe("impact-scorer", () => {
 			file: "index.ts",
 			apiName: `api.${i}`,
 			line: i + 1,
+			column: 1,
 			lineContent: "",
 			changelogVersion: "",
 			isBreaking: true,
@@ -1407,10 +1404,7 @@ describe("impact-scorer", () => {
 // Phase 8: manifest-reader.ts — Extension manifest parsing
 // ═══════════════════════════════════════════════════════════════════════
 
-import {
-	readManifest,
-	type ExtensionManifest,
-} from "../manifest-reader.ts";
+import { readManifest, type ExtensionManifest } from "../manifest-reader.ts";
 
 describe("manifest-reader", () => {
 	let tmpDir: string;
@@ -1532,7 +1526,6 @@ import {
 	buildMigrationSection,
 	buildIssueBodyWithSnippets,
 	buildImpactSummary,
-	type ExecFn,
 } from "../issue-builder.ts";
 
 describe("issue-builder-extended", () => {
@@ -1624,6 +1617,7 @@ describe("issue-builder-extended", () => {
 					file: "index.ts",
 					apiName: "pi.on",
 					line: 1,
+					column: 1,
 					lineContent: 'pi.on("tool_call", handler)',
 					changelogVersion: "1.0.0",
 					isBreaking: true,
@@ -1676,11 +1670,7 @@ describe("issue-builder-extended", () => {
 // Phase 11: constants.ts — Extracted configuration constants
 // ═══════════════════════════════════════════════════════════════════════
 
-import {
-	PI_CHANGELOG_PATH,
-	API_PATTERNS,
-	CHANGELOG_API_TO_PATTERN,
-} from "../constants.ts";
+import { PI_CHANGELOG_PATH, API_PATTERNS, CHANGELOG_API_TO_PATTERN } from "../constants.ts";
 
 describe("constants", () => {
 	it("PI_CHANGELOG_PATH is a non-empty string", () => {

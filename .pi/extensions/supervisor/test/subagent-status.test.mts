@@ -86,6 +86,7 @@ describe("R2: Subagent 'subagent:' label prefix", () => {
 			false,
 			undefined,
 			now,
+			undefined,
 			new MockTheme(),
 		);
 		assert.ok(result.startsWith("subagent: developer"));
@@ -100,6 +101,7 @@ describe("R2: Subagent 'subagent:' label prefix", () => {
 			false,
 			undefined,
 			now,
+			undefined,
 			new MockTheme(),
 		);
 		assert.ok(result.includes("⏱"));
@@ -116,6 +118,7 @@ describe("R2: Subagent 'subagent:' label prefix", () => {
 			false,
 			undefined,
 			now,
+			undefined,
 			new MockTheme(),
 		);
 		assert.ok(!result.includes("📊"));
@@ -130,6 +133,7 @@ describe("R2: Subagent 'subagent:' label prefix", () => {
 			false,
 			undefined,
 			now,
+			undefined,
 			new MockTheme(),
 		);
 		assert.ok(!result.includes("🔧"));
@@ -150,6 +154,7 @@ describe("R2: Token count coloring by context window %", () => {
 			false,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		// Should not contain any theme color wrapping
@@ -167,6 +172,7 @@ describe("R2: Token count coloring by context window %", () => {
 			true,
 			undefined,
 			now,
+			undefined,
 			mockTheme,
 		);
 		assert.ok(!result.includes("<error>"));
@@ -183,6 +189,7 @@ describe("R2: Token count coloring by context window %", () => {
 			true,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		assert.ok(result.includes("<error>"));
@@ -199,6 +206,7 @@ describe("R2: Token count coloring by context window %", () => {
 			true,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		assert.ok(result.includes("<warning>"));
@@ -215,6 +223,7 @@ describe("R2: Token count coloring by context window %", () => {
 			true,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		assert.ok(!result.includes("<error>"));
@@ -230,6 +239,7 @@ describe("R2: Token count coloring by context window %", () => {
 			true,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		assert.ok(!result.includes("<warning>"));
@@ -244,6 +254,7 @@ describe("R2: Token count coloring by context window %", () => {
 			true,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		assert.ok(result.includes("<warning>"));
@@ -259,6 +270,7 @@ describe("R2: Token count coloring by context window %", () => {
 			true,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		assert.ok(result.includes("<error>"));
@@ -288,6 +300,7 @@ describe("R2: Token count coloring by context window %", () => {
 			true,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		assert.ok(result.startsWith("subagent: developer"));
@@ -313,6 +326,7 @@ describe("Integration: combined footer line construction", () => {
 			true,
 			100_000,
 			now,
+			undefined,
 			mockTheme,
 		);
 		const footerLine = joinExtensionStatuses([cavemanStatus, subagentStatus]);
@@ -328,6 +342,7 @@ describe("Integration: combined footer line construction", () => {
 			false,
 			undefined,
 			now,
+			undefined,
 			mockTheme,
 		);
 		const footerLine = joinExtensionStatuses([status]);

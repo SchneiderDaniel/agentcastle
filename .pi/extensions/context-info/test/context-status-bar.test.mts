@@ -155,6 +155,7 @@ function loadConfig(rawSettings: Record<string, unknown> | null): {
 		thresholds: DEFAULT_THRESHOLDS,
 		showTimer: true,
 		showTps: true,
+		showCache: true,
 	};
 
 	if (!rawSettings || typeof rawSettings !== "object") {

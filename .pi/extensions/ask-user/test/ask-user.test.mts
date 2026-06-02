@@ -10,6 +10,7 @@
 
 import assert from "node:assert";
 import fs from "node:fs";
+import type { PathLike } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { describe, it, beforeEach, afterEach } from "node:test";
@@ -962,7 +963,7 @@ describe("migrateQnaFromCsv", () => {
 		const origWarn = console.warn;
 		console.warn = (msg: string) => warnings.push(msg);
 
-		fs.unlinkSync = (target: string) => {
+		fs.unlinkSync = (target: PathLike) => {
 			if (target.includes(".tmp.")) {
 				throw new Error("Simulated unlink failure");
 			}

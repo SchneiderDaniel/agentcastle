@@ -194,7 +194,7 @@ describe("tool stats merge logic (snapshot integration)", () => {
 			cwd: tmpDir,
 			version: 1,
 		};
-		const entries = [header];
+		const entries: any[] = [header];
 		for (const tn of toolNames) {
 			entries.push({
 				type: "message",
@@ -254,18 +254,20 @@ describe("tool stats merge logic (snapshot integration)", () => {
 		const meta = mergeAndWriteMetadata("test-merge-1", ["read", "write"], execs);
 
 		assert.ok(meta.toolStats, "toolStats should be present");
+		const ts = meta.toolStats!;
 		// Parsed (JSONL) has 1 read call, computed has 2 — merge keeps parsed count
-		assert.strictEqual(meta.toolStats.read.calls, 1, "read calls from parsed");
+		assert.strictEqual(ts.read.calls, 1, "read calls from parsed");
 		// Duration overridden from computed: 150 + 250 = 400
-		assert.strictEqual(meta.toolStats.read.totalDurationMs, 400, "read duration from computed");
-		assert.strictEqual(meta.toolStats.write.calls, 1, "write calls from parsed");
-		assert.strictEqual(meta.toolStats.write.totalDurationMs, 400, "write duration from computed");
+		assert.strictEqual(ts.read.totalDurationMs, 400, "read duration from computed");
+		assert.strictEqual(ts.write.calls, 1, "write calls from parsed");
+		assert.strictEqual(ts.write.totalDurationMs, 400, "write duration from computed");
 	});
 
 	it("no snapshot — totalDurationMs stays 0 (recovery path)", () => {
 		const meta = mergeAndWriteMetadata("test-no-snapshot", ["read"], []);
-		assert.strictEqual(meta.toolStats.read.calls, 1);
-		assert.strictEqual(meta.toolStats.read.totalDurationMs, 0, "duration 0 without snapshot");
+		const ts = meta.toolStats!;
+		assert.strictEqual(ts.read.calls, 1);
+		assert.strictEqual(ts.read.totalDurationMs, 0, "duration 0 without snapshot");
 	});
 
 	it("in-flight tools (no endTime) — duration only from complete execs", () => {
@@ -274,8 +276,9 @@ describe("tool stats merge logic (snapshot integration)", () => {
 			{ ...makeExec("bash", { durationMs: 0 }), endTime: null },
 		];
 		const meta = mergeAndWriteMetadata("test-inflight", ["bash"], execs);
-		assert.strictEqual(meta.toolStats.bash.calls, 1); // parsed count
-		assert.strictEqual(meta.toolStats.bash.totalDurationMs, 200); // only complete
+		const ts = meta.toolStats!;
+		assert.strictEqual(ts.bash.calls, 1); // parsed count
+		assert.strictEqual(ts.bash.totalDurationMs, 200); // only complete
 	});
 
 	it("tools from snapshot not in JSONL are added", () => {
@@ -284,10 +287,11 @@ describe("tool stats merge logic (snapshot integration)", () => {
 			makeExec("write", { durationMs: 200 }), // write not in JSONL
 		];
 		const meta = mergeAndWriteMetadata("test-extra-tools", ["read"], execs);
-		assert.strictEqual(meta.toolStats.read.calls, 1);
-		assert.strictEqual(meta.toolStats.read.totalDurationMs, 100);
-		assert.strictEqual(meta.toolStats.write.calls, 1);
-		assert.strictEqual(meta.toolStats.write.totalDurationMs, 200);
+		const ts = meta.toolStats!;
+		assert.strictEqual(ts.read.calls, 1);
+		assert.strictEqual(ts.read.totalDurationMs, 100);
+		assert.strictEqual(ts.write.calls, 1);
+		assert.strictEqual(ts.write.totalDurationMs, 200);
 	});
 
 	it("snapshot preserved across round-trip metadata.json", () => {
@@ -306,11 +310,12 @@ describe("tool stats merge logic (snapshot integration)", () => {
 			makeExec("edit", { durationMs: 444, isError: true }),
 		];
 		const meta = mergeAndWriteMetadata("test-multi", ["read", "write", "bash", "edit"], execs);
-		assert.strictEqual(meta.toolStats.read.totalDurationMs, 111);
-		assert.strictEqual(meta.toolStats.write.totalDurationMs, 222);
-		assert.strictEqual(meta.toolStats.bash.totalDurationMs, 333);
-		assert.strictEqual(meta.toolStats.edit.totalDurationMs, 444);
+		const ts = meta.toolStats!;
+		assert.strictEqual(ts.read.totalDurationMs, 111);
+		assert.strictEqual(ts.write.totalDurationMs, 222);
+		assert.strictEqual(ts.bash.totalDurationMs, 333);
+		assert.strictEqual(ts.edit.totalDurationMs, 444);
 		// Error count comes from parsed (JSONL) — our JSONL sets isError: false
-		assert.strictEqual(meta.toolStats.edit.errors, 0, "errors from parsed (not set in JSONL)");
+		assert.strictEqual(ts.edit.errors, 0, "errors from parsed (not set in JSONL)");
 	});
 });

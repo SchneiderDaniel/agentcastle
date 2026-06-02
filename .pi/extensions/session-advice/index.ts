@@ -35,6 +35,18 @@ function writeExtState(value: boolean): void {
 	}
 }
 
+export function getSessionAdviceState(): boolean {
+	try {
+		const statePath = ".pi/state/session-extensions.json";
+		const raw = fs.readFileSync(statePath, "utf-8");
+		const data = JSON.parse(raw) as Record<string, boolean | null>;
+		return data.advice ?? true;
+	} catch {
+		// File missing or corrupt — assume enabled (default)
+		return true;
+	}
+}
+
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AdvicePipeline } from "./advice-pipeline.ts";
 import { backfillMissingAdvice, handleShutdown, createGhIssue } from "./advice-pipeline.ts";

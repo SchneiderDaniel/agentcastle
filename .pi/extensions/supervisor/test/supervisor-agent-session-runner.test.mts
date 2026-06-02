@@ -14,11 +14,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { readFileSync } from "node:fs";
-import type {
-	AgentRunState,
-	AgentPhase,
-	AgentRunResult,
-} from "../types.ts";
+import type { AgentRunState, AgentPhase, AgentRunResult } from "../types.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
@@ -94,8 +90,9 @@ function createState(overrides?: Partial<AgentRunState>): AgentRunState {
 		contextInfoReceived: false,
 		thinkingPushedThisTurn: false,
 		textPushedThisTurn: false,
+		budgetExceeded: false,
 		...overrides,
-	};
+	} as AgentRunState;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -512,7 +509,7 @@ function buildAgentRunResultWithScan(
 			.filter((m) => m && m.role === "assistant" && m.usage)
 			.reduce((sum, m) => {
 				const u = m.usage;
-				const total = u.totalTokens ?? u.input + u.output ?? 0;
+				const total = u.totalTokens ?? (u.input ?? 0) + (u.output ?? 0);
 				return sum + (typeof total === "number" && !Number.isNaN(total) ? total : 0);
 			}, 0);
 		tokenCount = Math.max(state.tokenCount, scannedSum);

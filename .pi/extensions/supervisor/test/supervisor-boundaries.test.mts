@@ -42,6 +42,9 @@ function createState(overrides?: Partial<AgentRunState>): AgentRunState {
 		contextInfoReceived: false,
 		thinkingPushedThisTurn: false,
 		textPushedThisTurn: false,
+		budgetExceeded: false,
+		maxToolCalls: 0,
+		agentTokenBudget: 0,
 		...overrides,
 	};
 }
@@ -194,7 +197,7 @@ describe("Phase 1: Pure function boundaries — no throw on bad input", () => {
 
 		it("1.18: processSessionEvent with undefined assistantMessageEvent.type does not throw", () => {
 			const state = createState();
-			const ev = { type: "message_update", assistantMessageEvent: { type: undefined } };
+			const ev = { type: "message_update", assistantMessageEvent: { type: undefined } } as any;
 			const result = processSessionEvent(ev, state);
 			assert.deepEqual(result, { flush: false, workingChange: false });
 		});
@@ -527,7 +530,7 @@ describe("Phase 6: Edge cases — multi-error storms, nested boundaries", () => 
 		const state = createState();
 
 		// message_end with null message
-		let result = processSessionEvent({ type: "message_end", message: null }, state);
+		let result = processSessionEvent({ type: "message_end", message: null } as any, state);
 		assert.deepEqual(result, { flush: false, workingChange: false });
 
 		// message_update with message object missing content
@@ -538,7 +541,7 @@ describe("Phase 6: Edge cases — multi-error storms, nested boundaries", () => 
 					type: "done",
 					message: { content: null },
 				},
-			},
+			} as any,
 			state,
 		);
 		assert.equal(result.flush, true);
@@ -553,7 +556,7 @@ describe("Phase 6: Edge cases — multi-error storms, nested boundaries", () => 
 					role: "assistant",
 					content: "not an array string content",
 				},
-			},
+			} as any,
 			state,
 		);
 		// Should not throw — the function accesses content as array but if it's not,

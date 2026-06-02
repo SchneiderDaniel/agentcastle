@@ -22,7 +22,8 @@ function captureRender(
 	fg?: (color: string, text: string) => string,
 ): (width: number) => string[] {
 	let renderFn: ((width: number) => string[]) | null = null;
-	let notifyArgs: { msg: string; type: string } | null = null;
+	let notifyMsg = "";
+	let notifyType = "";
 
 	const mockPi = {
 		registerCommand: (_name: string, cmd: { description: string; handler: Function }) => {
@@ -40,7 +41,8 @@ function captureRender(
 						renderFn = widget.render;
 					},
 					notify: (msg: string, type: string) => {
-						notifyArgs = { msg, type };
+						notifyMsg = msg;
+						notifyType = type;
 					},
 					setFooter: () => {},
 					setStatus: () => {},
@@ -56,12 +58,9 @@ function captureRender(
 
 	factoryCall(mockPi);
 
-	if (!renderFn && notifyArgs) {
-		// Return a helper that indicates notification was called
-		const nMsg = notifyArgs.msg;
-		const nType = notifyArgs.type;
+	if (!renderFn && notifyMsg) {
 		return ((_width: number) => {
-			throw new Error(`NOTIFICATION:${nMsg}:${nType}`);
+			throw new Error(`NOTIFICATION:${notifyMsg}:${notifyType}`);
 		}) as unknown as (width: number) => string[];
 	}
 
