@@ -35,6 +35,16 @@ export interface SgResult {
 	results: SgMatch[];
 }
 
+/**
+ * Response shape from interpretSgExecResult.
+ * Matches the AgentToolResult contract used by pi.exec tool execution.
+ */
+export interface ExecResultResponse {
+	content: Array<{ type: "text"; text: string }>;
+	details: Record<string, unknown>;
+	isError?: boolean;
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Pure Functions (exported for unit testing)
 // ═══════════════════════════════════════════════════════════════════════
@@ -71,6 +81,96 @@ export function validatePattern(pattern: string): string | null {
 	}
 
 	return null;
+}
+
+/**
+ * Interpret the result of an ast-grep exec call and return the appropriate
+ * response shape based on exit code, stdout, and stderr.
+ *
+ * Replaces the fragile keyword-heuristic error detection with exit-code-based logic.
+ * ast-grep convention:
+ *   - code 0 = success (stdout may contain JSONL matches or be empty)
+ *   - code 1 = no matches found (empty stdout, empty stderr)
+ *   - all other non-zero codes = real errors
+ *
+ * When stderr is non-empty with any exit code, it's treated as an error
+ * (exit code 1 with non-empty stderr means ast-grep encountered an issue).
+ */
+export function interpretSgExecResult(
+	code: number,
+	stdout: string,
+	stderr: string,
+	pattern: string,
+	language: string,
+): ExecResultResponse {
+	const trimmedStdout = (stdout || "").trim();
+	const trimmedStderr = (stderr || "").trim();
+
+	// If there's actual stdout content, parse it regardless of exit code
+	// (ast-grep may produce partial results even on non-zero exit)
+	if (trimmedStdout.length > 0) {
+		const sgResult = parseSgOutput(stdout);
+		const json = JSON.stringify(sgResult, null, 2);
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text:
+						`Structural search results for pattern: ${pattern}\n` +
+						`Language: ${language}\n` +
+						`Matches: ${sgResult.matches}\n\n` +
+						"```json\n" +
+						json +
+						"\n```",
+				},
+			],
+			details: { success: true, ...sgResult } as Record<string, unknown>,
+		};
+	}
+
+	// No stdout content
+	if (code === 0) {
+		// ast-grep succeeded but produced no output
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `No matches found for pattern "${pattern}" in language "${language}".`,
+				},
+			],
+			details: { success: true, matches: 0, results: [] } as Record<string, unknown>,
+		};
+	}
+
+	// Exit code 1 with empty stderr = legitimate no-match (ast-grep convention)
+	if (code === 1 && trimmedStderr.length === 0) {
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `No matches found for pattern "${pattern}" in language "${language}".`,
+				},
+			],
+			details: { success: true, matches: 0, results: [] } as Record<string, unknown>,
+		};
+	}
+
+	// Everything else is a real error
+	const stderrMsg = trimmedStderr || "(no stderr)";
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text: `ast-grep failed (exit code ${code}): ${stderrMsg}`,
+			},
+		],
+		details: {
+			success: false,
+			exitCode: code,
+			stderr: stderr,
+		} as Record<string, unknown>,
+		isError: true,
+	};
 }
 
 /**
@@ -205,67 +305,14 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 				timeout: 30_000,
 			});
 
-			if (result.code !== 0) {
-				// ast-grep exits with code 0 on success, code 1 when no matches found
-				// — in that case stdout is empty, stderr may have a message
-				if (!result.stdout || result.stdout.trim().length === 0) {
-					const stderrMsg = result.stderr?.trim() || "";
-					// If stderr mentions "unknown language" or similar, return error
-					if (
-						stderrMsg &&
-						(stderrMsg.toLowerCase().includes("unknown") ||
-							stderrMsg.toLowerCase().includes("error") ||
-							stderrMsg.toLowerCase().includes("not found"))
-					) {
-						return {
-							content: [
-								{
-									type: "text" as const,
-									text: `ast-grep failed (exit code ${result.code}): ${stderrMsg}`,
-								},
-							],
-							details: { success: false, exitCode: result.code, stderr: result.stderr } as Record<
-								string,
-								unknown
-							>,
-							isError: true,
-						};
-					}
-
-					// No matches found (exit code 1, empty stdout)
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `No matches found for pattern "${pattern}" in language "${language}".`,
-							},
-						],
-						details: { success: true, matches: 0, results: [] } as Record<string, unknown>,
-					};
-				}
-			}
-
-			// Parse JSONL output
-			const sgResult = parseSgOutput(result.stdout);
-
-			// Format as pretty JSON for LLM consumption
-			const json = JSON.stringify(sgResult, null, 2);
-
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text:
-							`Structural search results for pattern: ${pattern}\n` +
-							`Language: ${language}\n` +
-							`Matches: ${sgResult.matches}\n\n` +
-							"```json\n" +
-							json +
-							"\n```",
-					},
-				],
-				details: { success: true, ...sgResult } as Record<string, unknown>,
-			};
+			// Use the extracted pure function to interpret the exec result
+			return interpretSgExecResult(
+				result.code,
+				result.stdout || "",
+				result.stderr || "",
+				pattern,
+				language,
+			);
 		},
 	});
 }

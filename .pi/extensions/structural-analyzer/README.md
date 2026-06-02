@@ -47,6 +47,16 @@ structural_search(pattern="class $A extends $B", language="py")
 - `ast-grep` installed globally: `npm i -g @ast-grep/cli`
 - No npm dependencies — all peer deps are pi-provided
 
+### Error handling
+
+`structural_search` uses exit-code-based error detection. ast-grep conventions:
+- **Exit code 0** — Success. Results parsed from JSONL output.
+- **Exit code 1, empty stderr** — No matches found (legitimate, returns `matches: 0`).
+- **Exit code 1, non-empty stderr** — ast-grep error (returns `isError: true` with the stderr message).
+- **Exit code ≥ 2** — Process error (permission denied, segfault, OOM kill, etc.). Always returns `isError: true`.
+
+This replaces the old keyword-heuristic approach that only caught stderr messages containing "unknown", "error", or "not found".
+
 ### When to use structural_search vs ripgrep_search
 
 | Use case | Tool |
