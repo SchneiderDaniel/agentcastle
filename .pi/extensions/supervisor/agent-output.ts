@@ -120,22 +120,12 @@ function sanitizeJsonStrings(jsonText: string): string {
  * values (e.g., tool args like {"pattern":"function.*{"}) are ignored.
  */
 function extractLastJson(raw: string): string {
-	// Try to find JSON in ```json or ``` code fences first
-	const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)```/g;
-	let fenceMatch: RegExpExecArray | null;
-	let lastFence: string | null = null;
-	while ((fenceMatch = fenceRegex.exec(raw)) !== null) {
-		lastFence = fenceMatch[1].trim();
-	}
-
-	if (lastFence) {
-		return lastFence;
-	}
-
-	// No code fence found — look for outermost JSON object in raw text
-	// Use string-boundary-aware brace matching to handle {/} inside JSON string values.
-	// Without this, tool args like {"pattern":"function.*{"} leave the brace stack
-	// unbalanced, causing extractLastJson to miss the agent output JSON entirely.
+	// Primary: string-boundary-aware brace matching.
+	// Finds the last complete JSON {…} object, correctly ignoring
+	// braces inside string values. Handles JSON with/without
+	// markdown code fences. The old fence-regex-first approach
+	// broke when commentBody contained triple-backtick code blocks
+	// — the regex stopped at the first ``` inside the string.
 	let inString = false;
 	let escaped = false;
 	const braceStack: number[] = [];
@@ -210,6 +200,20 @@ function extractLastJson(raw: string): string {
 				}
 			}
 		}
+		// If we reach here, braces are unbalanced — fall through to fence
+	}
+
+	// Fallback: try markdown code fences (```json or ```).
+	// Only used when brace matching found no complete top-level object.
+	const fenceRegex = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+	let fenceMatch: RegExpExecArray | null;
+	let lastFence: string | null = null;
+	while ((fenceMatch = fenceRegex.exec(raw)) !== null) {
+		lastFence = fenceMatch[1].trim();
+	}
+
+	if (lastFence) {
+		return lastFence;
 	}
 
 	return raw;

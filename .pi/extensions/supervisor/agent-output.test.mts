@@ -459,6 +459,27 @@ describe("parseAgentOutput — edge cases", () => {
 		assert.ok(isAgentOutput(result));
 		assert.equal((result as AgentOutput).action, "COMPLETE");
 	});
+
+	it("extracts JSON with triple-backtick code blocks inside commentBody", () => {
+		// Real agents (researcher, architect) include markdown code blocks
+		// in their commentBody. The old fence regex stopped at the first ```
+		// inside a JSON string value, truncating the JSON. Brace matching
+		// (primary since the fix) correctly ignores ``` inside strings.
+		const input = [
+			"```json",
+			"{",
+			'  "action": "COMPLETE",',
+			'  "agentName": "researcher",',
+			'  "commentBody": "## Research Findings\\n\\n### Best Practices\\n- Use `structuredClone()` for deep copies\\n```ts\\nconst copy = structuredClone(obj);\\n```\\n- Source: https://example.com"',
+			"}",
+			"```",
+		].join("\n");
+		const result = parseAgentOutput(input);
+		assert.ok(isAgentOutput(result), "should extract JSON with triple backticks in commentBody");
+		const agentOut = result as AgentOutput;
+		assert.ok(agentOut.commentBody?.includes("structuredClone"));
+		assert.ok(agentOut.commentBody?.includes("```ts"));
+	});
 });
 
 // ─── Characterization: current resolveNextStatus + extractStructuredAuditOutput ──
