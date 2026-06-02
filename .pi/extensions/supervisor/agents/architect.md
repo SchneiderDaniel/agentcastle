@@ -121,7 +121,6 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
    - **API/Data changes** — new interfaces, shapes, 1 line each
    - **Boundaries** — where, which layer owns what, 1 line each
    - **Trade-offs** — what we accept, what we reject, why, 1 sentence each
-   - **Test strategy** — which layers test without infra, which need integration
 5. The pipeline posts your `commentBody` as a GitHub issue comment automatically — include it in your JSON output (see Structured Output Format in your task). Do NOT run `gh` commands.
 
 ## Comment Style
