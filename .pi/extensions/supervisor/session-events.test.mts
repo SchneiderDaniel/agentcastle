@@ -36,31 +36,35 @@ function createState(overrides?: Partial<AgentRunState>): AgentRunState {
 	};
 }
 
-// ─── Phase 1: text_end/thinking_end dedup flag fix (flag outside if) ──────
+// ─── Phase 1: text_end/thinking_end dedup flag fix ────────────────
 
 describe("text_end and thinking_end — dedup flag fix (Phase 3)", () => {
-	it("text_end sets textPushedThisTurn=true even when liveText is empty", () => {
+	it("text_end leaves textPushedThisTurn=false when liveText is empty and no delta was pushed", () => {
 		const state = createState();
-		state.liveText = ""; // empty — all content streamed as complete lines
+		state.liveText = "";
 		const ev = {
 			type: "message_update",
 			assistantMessageEvent: { type: "text_end" },
 		};
 		processSessionEvent(ev, state);
-		assert.equal(state.textPushedThisTurn, true, "flag should be set even when buffer empty");
+		assert.equal(state.textPushedThisTurn, false, "empty text_end must not block fallback capture");
 		assert.equal(state.liveText, "", "liveText should be cleared");
 		assert.equal(state.textOutputLines.length, 0, "no text output (buffer was empty)");
 	});
 
-	it("thinking_end sets thinkingPushedThisTurn=true even when liveThinking is empty", () => {
+	it("thinking_end leaves thinkingPushedThisTurn=false when liveThinking is empty and no delta was pushed", () => {
 		const state = createState();
-		state.liveThinking = ""; // empty
+		state.liveThinking = "";
 		const ev = {
 			type: "message_update",
 			assistantMessageEvent: { type: "thinking_end" },
 		};
 		processSessionEvent(ev, state);
-		assert.equal(state.thinkingPushedThisTurn, true, "flag should be set even when buffer empty");
+		assert.equal(
+			state.thinkingPushedThisTurn,
+			false,
+			"empty thinking_end must not block fallback capture",
+		);
 		assert.equal(state.liveThinking, "", "liveThinking should be cleared");
 	});
 
@@ -88,9 +92,9 @@ describe("text_end and thinking_end — dedup flag fix (Phase 3)", () => {
 		assert.ok(state.thinkingOutputLines[0]?.includes("some thinking"));
 	});
 
-	it("empty buffer text_end + message_end does not produce duplicate push", () => {
+	it("empty buffer text_end + message_end captures fallback content", () => {
 		const state = createState();
-		// text_end with empty buffer
+		// text_end with empty buffer and no prior text_delta
 		processSessionEvent(
 			{
 				type: "message_update",
@@ -98,29 +102,28 @@ describe("text_end and thinking_end — dedup flag fix (Phase 3)", () => {
 			},
 			state,
 		);
-		assert.equal(state.textPushedThisTurn, true);
+		assert.equal(state.textPushedThisTurn, false);
 
-		// message_end follows
+		// message_end follows with full content from provider
 		processSessionEvent(
 			{
 				type: "message_end",
 				message: {
 					role: "assistant",
-					content: [{ type: "text", text: "streamed content" }],
+					content: [{ type: "text", text: "fallback content" }],
 				},
 			},
 			state,
 		);
-		// textOutputLines should be empty (text_end had empty buffer, message_end
-		// should NOT push because textPushedThisTurn flag blocks it)
-		assert.equal(state.textOutputLines.length, 0, "no duplicate from empty text_end + message_end");
+		assert.equal(state.textOutputLines.length, 1, "fallback content captured");
+		assert.equal(state.textOutputLines[0], "fallback content");
 	});
 });
 
 // ─── Phase 2: Full streaming chain — no duplicate output (trigger scenario) ──
 // Reproduce exact trigger: text_delta with complete newline-delimited chunks
-// empties buffer, text_end fires with empty liveText, flag is set unconditionally,
-// message_end does NOT re-push.
+// empties buffer, delta handler marks content as pushed, and message_end
+// does NOT re-push.
 
 describe("full streaming chain — no duplicate output (Phase 2)", () => {
 	it('text_delta("Hello\\nWorld\\n") → text_end → message_end does not re-push to fullLog', () => {
@@ -150,7 +153,7 @@ describe("full streaming chain — no duplicate output (Phase 2)", () => {
 			"fullLog has 'World' once from delta handler",
 		);
 
-		// Step 2: text_end with empty buffer — flag set unconditionally
+		// Step 2: text_end with empty buffer — flag remains true from delta handler
 		processSessionEvent(
 			{
 				type: "message_update",
@@ -215,7 +218,7 @@ describe("full streaming chain — no duplicate output (Phase 2)", () => {
 			"fullLog has 'Step 2' once from delta handler",
 		);
 
-		// Step 2: thinking_end with empty buffer — flag set unconditionally
+		// Step 2: thinking_end with empty buffer — flag remains true from delta handler
 		processSessionEvent(
 			{
 				type: "message_update",

@@ -480,13 +480,14 @@ describe("processNormalizedEvent", () => {
 	it("handles thinking_delta", () => {
 		const state = createState();
 		const result = processNormalizedEvent({ kind: "thinking_delta", delta: "step\n" }, state);
+		assert.equal(state.thinkingPushedThisTurn, true);
 		assert.equal(result.flush, true);
 	});
 
-	it("handles thinking_end", () => {
+	it("handles thinking_end without prior delta", () => {
 		const state = createState();
 		const result = processNormalizedEvent({ kind: "thinking_end" }, state);
-		assert.equal(state.thinkingPushedThisTurn, true);
+		assert.equal(state.thinkingPushedThisTurn, false);
 		assert.equal(result.flush, true);
 	});
 
@@ -500,13 +501,14 @@ describe("processNormalizedEvent", () => {
 	it("handles text_delta", () => {
 		const state = createState();
 		const result = processNormalizedEvent({ kind: "text_delta", delta: "hello\n" }, state);
+		assert.equal(state.textPushedThisTurn, true);
 		assert.equal(result.flush, true);
 	});
 
-	it("handles text_end", () => {
+	it("handles text_end without prior delta", () => {
 		const state = createState();
 		const result = processNormalizedEvent({ kind: "text_end" }, state);
-		assert.equal(state.textPushedThisTurn, true);
+		assert.equal(state.textPushedThisTurn, false);
 		assert.equal(result.flush, true);
 	});
 

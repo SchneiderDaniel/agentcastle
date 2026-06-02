@@ -137,7 +137,7 @@ describe("processJsonLine — budget check at message_end (Phase 1)", () => {
 // ─── Phase 3: Dedup flag fix via JSON line text_end/thinking_end ────
 
 describe("processJsonLine — dedup flag fix (Phase 3)", () => {
-	it("text_end sets textPushedThisTurn=true even when liveText is empty", () => {
+	it("text_end leaves textPushedThisTurn=false when liveText is empty and no delta was pushed", () => {
 		const state = createState();
 		state.liveText = "";
 		processJsonLine(
@@ -147,11 +147,11 @@ describe("processJsonLine — dedup flag fix (Phase 3)", () => {
 			}),
 			state,
 		);
-		assert.equal(state.textPushedThisTurn, true, "flag should be set even when buffer empty");
+		assert.equal(state.textPushedThisTurn, false, "empty text_end must not block fallback capture");
 		assert.equal(state.liveText, "", "liveText should be cleared");
 	});
 
-	it("thinking_end sets thinkingPushedThisTurn=true even when liveThinking is empty", () => {
+	it("thinking_end leaves thinkingPushedThisTurn=false when liveThinking is empty and no delta was pushed", () => {
 		const state = createState();
 		state.liveThinking = "";
 		processJsonLine(
@@ -161,7 +161,11 @@ describe("processJsonLine — dedup flag fix (Phase 3)", () => {
 			}),
 			state,
 		);
-		assert.equal(state.thinkingPushedThisTurn, true, "flag should be set even when buffer empty");
+		assert.equal(
+			state.thinkingPushedThisTurn,
+			false,
+			"empty thinking_end must not block fallback capture",
+		);
 		assert.equal(state.liveThinking, "", "liveThinking should be cleared");
 	});
 
