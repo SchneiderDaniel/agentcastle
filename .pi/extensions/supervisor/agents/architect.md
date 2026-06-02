@@ -116,6 +116,7 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
 2. Analyze the requirements described in the issue body
 3. Deeply explore the codebase structure relevant to the change using bash and read tools
 4. Post a single, concise comment:
+   Start every comment with `## Architecture` as the top-level heading, then the sections below:
    - **Approach** — patterns, what changes, 1-2 sentences
    - **Components affected** — qualified names, 1 line each
    - **API/Data changes** — new interfaces, shapes, 1 line each
