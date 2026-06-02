@@ -14,10 +14,14 @@ export function isJsonMode(): boolean {
 
 export function tryEmit(
 	ctx: { getContextUsage: () => { tokens?: number | null; contextWindow?: number } | undefined },
-	state: { emitted: boolean; lastContextWindow?: number },
+	state: {
+		emitted: boolean;
+		footerConfig: { lastContextWindow: { value: number | undefined } };
+	},
 ): void {
 	if (state.emitted) return;
-	if (!state.lastContextWindow || state.lastContextWindow <= 0) return;
+	const cw = state.footerConfig.lastContextWindow.value;
+	if (!cw || cw <= 0) return;
 	const usage = ctx.getContextUsage();
 	if (!usage || typeof usage.tokens !== "number" || usage.tokens <= 0) return;
 	state.emitted = true;
@@ -26,7 +30,7 @@ export function tryEmit(
 		JSON.stringify({
 			type: "context_info",
 			contextTokens: usage.tokens,
-			contextWindow: state.lastContextWindow,
+			contextWindow: cw,
 		}),
 	);
 }
