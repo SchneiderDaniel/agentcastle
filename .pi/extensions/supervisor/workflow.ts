@@ -223,8 +223,14 @@ export function computeAuditScoreFromFindings(findings: Finding[]): AuditScore {
 	const failedDimensions = new Set<string>();
 
 	for (const finding of findings) {
-		// Only critical and warning findings fail a dimension
-		if (finding.severity === "critical" || finding.severity === "warning") {
+		// Only critical and warning findings fail a dimension, and only
+		// if the dimension is in KNOWN_AUDIT_DIMENSIONS — unknown/custom
+		// dimensions (e.g., "tests-passed", user-defined ones) do not
+		// affect the score.
+		if (
+			(finding.severity === "critical" || finding.severity === "warning") &&
+			KNOWN_AUDIT_DIMENSIONS.includes(finding.dimension as (typeof KNOWN_AUDIT_DIMENSIONS)[number])
+		) {
 			failedDimensions.add(finding.dimension);
 		}
 	}

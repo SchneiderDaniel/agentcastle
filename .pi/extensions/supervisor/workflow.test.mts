@@ -183,7 +183,7 @@ describe("computeAuditScoreFromFindings", () => {
 		assert.equal(result.total, 6);
 	});
 
-	it("handles unknown dimensions gracefully", () => {
+	it("handles unknown dimensions gracefully — unknown dimensions do NOT affect score", () => {
 		const findings: Finding[] = [
 			{
 				severity: "critical",
@@ -193,7 +193,46 @@ describe("computeAuditScoreFromFindings", () => {
 				remedy: "Fix",
 			},
 		];
-		// Unknown dimensions still count as failed
+		// Unknown dimensions should NOT affect score (not in KNOWN_AUDIT_DIMENSIONS)
+		const result = computeAuditScoreFromFindings(findings);
+		assert.equal(result.passing, 6);
+		assert.equal(result.total, 6);
+	});
+
+	it("filters out tests-passed dimension — not in KNOWN_AUDIT_DIMENSIONS", () => {
+		const findings: Finding[] = [
+			{
+				severity: "critical",
+				dimension: "tests-passed",
+				symptom: "Tests failing",
+				consequence: "Unreliable",
+				remedy: "Fix tests",
+			},
+		];
+		// "tests-passed" is NOT in KNOWN_AUDIT_DIMENSIONS, so filtered out
+		const result = computeAuditScoreFromFindings(findings);
+		assert.equal(result.passing, 6);
+		assert.equal(result.total, 6);
+	});
+
+	it("known dimension still fails after filtering unknown dimensions", () => {
+		const findings: Finding[] = [
+			{
+				severity: "critical",
+				dimension: "custom-dimension",
+				symptom: "Issue",
+				consequence: "Bad",
+				remedy: "Fix",
+			},
+			{
+				severity: "critical",
+				dimension: "code-quality",
+				symptom: "Issue",
+				consequence: "Bad",
+				remedy: "Fix",
+			},
+		];
+		// custom-dimension is filtered out, but code-quality still counts
 		const result = computeAuditScoreFromFindings(findings);
 		assert.equal(result.passing, 5);
 		assert.equal(result.total, 6);
@@ -203,13 +242,12 @@ describe("computeAuditScoreFromFindings", () => {
 		const dimensions = [
 			"architecture-compliance",
 			"ticket-fulfillment",
-			"tests-passed",
 			"test-quality",
 			"correctness-safety",
 			"code-quality",
 			"completeness",
 		];
-		const findings: Finding[] = dimensions.slice(0, 6).map((d) => ({
+		const findings: Finding[] = dimensions.map((d) => ({
 			severity: "critical" as const,
 			dimension: d,
 			symptom: "Issue",
