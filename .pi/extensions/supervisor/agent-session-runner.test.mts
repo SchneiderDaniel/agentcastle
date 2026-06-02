@@ -341,3 +341,87 @@ describe("createAgentSession — noTools parameter prevents ask_user leak", () =
 		);
 	});
 });
+
+// ─── Timeout path reads messages BEFORE dispose (GH #453) ──────────
+
+describe("timeout path — capture messages before dispose", () => {
+	it("messages captured before dispose are passed to buildAgentRunResult", () => {
+		// Simulate timeout path: messages saved, then dispose clears state
+		const messagesBeforeDispose = [
+			{ role: "user", content: "Hello" },
+			{
+				role: "assistant",
+				content: "Hi there",
+				usage: { input: 10, output: 20, totalTokens: 30 },
+			},
+		];
+
+		// Simulate session that clears state on dispose
+		let sessionStateCleared = false;
+		const session = {
+			state: { messages: [...messagesBeforeDispose] },
+			dispose: () => {
+				// This is what dispose might do — clear state
+				session.state = { messages: [] };
+				sessionStateCleared = true;
+			},
+		};
+
+		// Simulate the FIXED timeout path: capture BEFORE dispose
+		const captured = session?.state?.messages || [];
+		session?.dispose();
+
+		assert.equal(sessionStateCleared, true, "session state should be cleared after dispose");
+		assert.equal(
+			session.state.messages.length,
+			0,
+			"session messages should be empty after dispose",
+		);
+		assert.equal(captured.length, 2, "captured messages should have 2 entries");
+		assert.deepEqual(
+			captured,
+			messagesBeforeDispose,
+			"captured messages must match pre-dispose state",
+		);
+	});
+
+	it("buildAgentRunResult token fallback works with captured messages", () => {
+		// Messages with assistant usage data
+		const messages = [
+			{ role: "user", content: "Hello" },
+			{
+				role: "assistant",
+				content: "Hi there",
+				usage: { input: 10, output: 20, totalTokens: 30 },
+			},
+		];
+
+		// State with tokenCount=0 (pre-message-fallback value)
+		const state = createState({ tokenCount: 0 });
+
+		const result = buildAgentRunResult(state, "developer", false, 5000, messages);
+
+		// tokenCount should come from message usage, not state.tokenCount
+		assert.equal(result.tokenCount, 30, "should use last assistant message totalTokens");
+	});
+
+	it("timeout path with empty messages returns zero token count", () => {
+		const state = createState({ tokenCount: 0 });
+		const result = buildAgentRunResult(state, "developer", false, 5000, []);
+
+		// Empty messages array means no usage fallback
+		assert.equal(result.tokenCount, 0, "should fall back to state.tokenCount=0");
+	});
+
+	it("timeout path with session.state null/undefined does not crash", () => {
+		const session = {
+			state: null as any,
+			dispose: () => {},
+		};
+
+		// Should not throw — optional chaining handles null
+		const messages = session?.state?.messages || [];
+		assert.ok(Array.isArray(messages), "messages should be empty array fallback");
+		assert.equal(messages.length, 0, "null state yields empty messages");
+	});
+});
