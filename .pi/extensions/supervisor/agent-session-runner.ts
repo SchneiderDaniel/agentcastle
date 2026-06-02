@@ -409,6 +409,9 @@ export async function runAgentInProcess(
 			heartbeatTimer = null;
 		}
 
+		// Capture messages BEFORE dispose — dispose may clear session state
+		const messages = session?.state?.messages || [];
+
 		// Unsubscribe and dispose
 		try {
 			unsubscribe?.();
@@ -422,7 +425,6 @@ export async function runAgentInProcess(
 		ctx.ui.setStatus("supervisor", undefined);
 
 		const durationMs = Date.now() - startedAt;
-		const messages = session?.state?.messages || [];
 
 		return buildAgentRunResult(state, agentName, true, durationMs, messages);
 	} catch (err: unknown) {

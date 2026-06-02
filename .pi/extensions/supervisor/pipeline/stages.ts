@@ -341,11 +341,22 @@ export async function handlePostAgentSuccess(
 	worktreeBranch: string | undefined,
 	issueTitle: string,
 ): Promise<boolean> {
-	const agentOutput = result.textOutput || result.output || "";
+	// Try textOutput first (should contain content from handleDone/handleTextDelta).
+	// If textOutput yields no commentBody, fall back to output (raw messages/stdout).
+	// textOutput is always non-empty when tools are used (tool log entries),
+	// so a simple || fallback would never reach output.
+	let commentBody = extractAgentCommentBody(result.textOutput || "");
+	if (!commentBody && result.output) {
+		commentBody = extractAgentCommentBody(result.output);
+		if (commentBody) {
+			console.warn(
+				`[supervisor] ${agentName} commentBody extracted from result.output (fallback) — textOutput may lack JSON`,
+			);
+		}
+	}
 
 	// Agent comments: architect, test-designer, researcher
 	if (agentName === "architect" || agentName === "test-designer" || agentName === "researcher") {
-		const commentBody = extractAgentCommentBody(agentOutput);
 		if (commentBody) {
 			try {
 				await postIssueComment(pi, issueNum, config.repo, commentBody);
@@ -357,6 +368,12 @@ export async function handlePostAgentSuccess(
 					}`,
 				);
 			}
+		} else {
+			console.warn(
+				`[supervisor] ${agentName} completed but no commentBody found in output. ` +
+					`textOutput length: ${(result.textOutput || "").length}, ` +
+					`output length: ${(result.output || "").length}`,
+			);
 		}
 	}
 
@@ -393,7 +410,8 @@ export async function handlePostAgentSuccess(
 
 	// Audit output processing
 	if (agentName === "auditor") {
-		await handleAuditorOutput(pi, ctx, agentOutput, result, issueNum, config);
+		const auditorOutput = result.textOutput || result.output || "";
+		await handleAuditorOutput(pi, ctx, auditorOutput, result, issueNum, config);
 	}
 
 	// Default: pipeline should continue

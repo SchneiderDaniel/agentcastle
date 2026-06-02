@@ -832,12 +832,12 @@ describe("handlePostAgentSuccess()", () => {
 		assert.equal(success, false, "git push failure must return false — pipeline should stop");
 	});
 
-	it("developer commit returns 'nothing to commit' — throws, returns false (halts pipeline)", async () => {
+	it("developer commit returns 'nothing to commit' — returns true (no changes to commit, not an error)", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi(
 			[
 				{ code: 0, stdout: "", stderr: "" }, // git add succeeds
-				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit (throws now)
+				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit → returns silently
 			],
 			calls,
 		);
@@ -866,11 +866,12 @@ describe("handlePostAgentSuccess()", () => {
 			"Test issue",
 		);
 
-		assert.equal(success, false, "'nothing to commit' now throws — pipeline should stop");
-		assert.equal(calls.length, 2, "should only call add + commit, NO push");
-		// Verify the error message is about no changes
-		const addCall = calls[1];
-		assert.ok(addCall.args.includes("commit"), "second call should be commit");
+		assert.equal(success, true, "'nothing to commit' returns silently — pipeline continues");
+		// calls: git add, git commit, git diff (README check) — NO git push
+		assert.equal(calls.length, 3, "should call add + commit + diff, NO push");
+		// Verify the commit call happened
+		const commitCall = calls[1];
+		assert.ok(commitCall.args.includes("commit"), "second call should be commit");
 	});
 
 	it("developer with worktreePath undefined — returns true (no-op)", async () => {
