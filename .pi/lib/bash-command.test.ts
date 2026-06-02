@@ -70,6 +70,28 @@ describe("BashCommand.isFileRead", () => {
 		assert.equal(new BashCommand("more file.ts").isFileRead(), true);
 	});
 
+	// ── Phase 1 characterization: each READ_BASH_CMDS value triggers isFileRead ──
+
+	it("cat triggers isFileRead (characterization)", () => {
+		assert.equal(new BashCommand("cat file.ts").isFileRead(), true);
+	});
+
+	it("head triggers isFileRead (characterization)", () => {
+		assert.equal(new BashCommand("head -5 f.ts").isFileRead(), true);
+	});
+
+	it("tail triggers isFileRead (characterization)", () => {
+		assert.equal(new BashCommand("tail -10 f.ts").isFileRead(), true);
+	});
+
+	it("less triggers isFileRead (characterization)", () => {
+		assert.equal(new BashCommand("less f.ts").isFileRead(), true);
+	});
+
+	it("more triggers isFileRead (characterization)", () => {
+		assert.equal(new BashCommand("more f.ts").isFileRead(), true);
+	});
+
 	it("false for cat with write redirect (cat >)", () => {
 		assert.equal(new BashCommand("cat > /tmp/foo").isFileRead(), false);
 	});
@@ -132,6 +154,48 @@ describe("BashCommand.isFileModify", () => {
 
 	it("detects dd command", () => {
 		assert.equal(new BashCommand("dd if=/dev/zero of=file bs=1M count=1").isFileModify(), true);
+	});
+
+	// ── Phase 1 characterization: each FILE_MODIFY_SIGNALS value triggers isFileModify ──
+
+	it("sed triggers isFileModify (characterization)", () => {
+		assert.equal(new BashCommand("sed -i 's/foo/bar/g' f.ts").isFileModify(), true);
+	});
+
+	it("echo triggers isFileModify (characterization)", () => {
+		// echo alone triggers isFileModify because "echo" is in FILE_MODIFY_SIGNALS
+		assert.equal(new BashCommand("echo hi").isFileModify(), true);
+		assert.equal(new BashCommand("echo hi > f.ts").isFileModify(), true);
+	});
+
+	it("cat triggers isFileModify (characterization)", () => {
+		// cat is in FILE_MODIFY_SIGNALS (used with redirect), so even plain cat returns true
+		assert.equal(new BashCommand("cat > f.ts").isFileModify(), true);
+		assert.equal(new BashCommand("cat file.ts").isFileModify(), true);
+	});
+
+	it("tee triggers isFileModify (characterization)", () => {
+		assert.equal(new BashCommand("tee f.ts").isFileModify(), true);
+	});
+
+	it("mv triggers isFileModify (characterization)", () => {
+		assert.equal(new BashCommand("mv a b").isFileModify(), true);
+	});
+
+	it("cp triggers isFileModify (characterization)", () => {
+		assert.equal(new BashCommand("cp a b").isFileModify(), true);
+	});
+
+	it("rm triggers isFileModify (characterization)", () => {
+		assert.equal(new BashCommand("rm f.ts").isFileModify(), true);
+	});
+
+	it("chmod triggers isFileModify (characterization)", () => {
+		assert.equal(new BashCommand("chmod +x f.sh").isFileModify(), true);
+	});
+
+	it("dd triggers isFileModify (characterization)", () => {
+		assert.equal(new BashCommand("dd if=/dev/zero of=f bs=1M count=1").isFileModify(), true);
 	});
 
 	it("does not flag read-only commands", () => {
@@ -222,6 +286,38 @@ describe("BashCommand.detectMismatch", () => {
 		const result = new BashCommand("").detectMismatch();
 		assert.equal(result, null);
 	});
+
+	// ── Phase 1 characterization: each READ_BASH_CMDS value triggers detectMismatch with "read" ──
+
+	it("cat triggers detectMismatch with 'read' suggestion (characterization)", () => {
+		const result = new BashCommand("cat file.ts").detectMismatch();
+		assert.notEqual(result, null);
+		assert.ok(result!.suggestion.includes("read"));
+	});
+
+	it("head triggers detectMismatch with 'read' suggestion (characterization)", () => {
+		const result = new BashCommand("head -5 f.ts").detectMismatch();
+		assert.notEqual(result, null);
+		assert.ok(result!.suggestion.includes("read"));
+	});
+
+	it("tail triggers detectMismatch with 'read' suggestion (characterization)", () => {
+		const result = new BashCommand("tail -10 f.ts").detectMismatch();
+		assert.notEqual(result, null);
+		assert.ok(result!.suggestion.includes("read"));
+	});
+
+	it("less triggers detectMismatch with 'read' suggestion (characterization)", () => {
+		const result = new BashCommand("less f.ts").detectMismatch();
+		assert.notEqual(result, null);
+		assert.ok(result!.suggestion.includes("read"));
+	});
+
+	it("more triggers detectMismatch with 'read' suggestion (characterization)", () => {
+		const result = new BashCommand("more f.ts").detectMismatch();
+		assert.notEqual(result, null);
+		assert.ok(result!.suggestion.includes("read"));
+	});
 });
 
 // ── Behavior: suggestRedirection ──
@@ -245,6 +341,28 @@ describe("BashCommand.suggestRedirection", () => {
 
 	it("backtick grep → ripgrep_search", () => {
 		assert.equal(new BashCommand("`grep foo`").suggestRedirection(), "ripgrep_search");
+	});
+
+	// ── Phase 1 characterization: each READ_BASH_CMDS value triggers suggestRedirection "read" ──
+
+	it("cat triggers suggestRedirection 'read' (characterization)", () => {
+		assert.equal(new BashCommand("cat file.ts").suggestRedirection(), "read");
+	});
+
+	it("head triggers suggestRedirection 'read' (characterization)", () => {
+		assert.equal(new BashCommand("head -5 f.ts").suggestRedirection(), "read");
+	});
+
+	it("tail triggers suggestRedirection 'read' (characterization)", () => {
+		assert.equal(new BashCommand("tail -10 f.ts").suggestRedirection(), "read");
+	});
+
+	it("less triggers suggestRedirection 'read' (characterization)", () => {
+		assert.equal(new BashCommand("less f.ts").suggestRedirection(), "read");
+	});
+
+	it("more triggers suggestRedirection 'read' (characterization)", () => {
+		assert.equal(new BashCommand("more f.ts").suggestRedirection(), "read");
 	});
 });
 
