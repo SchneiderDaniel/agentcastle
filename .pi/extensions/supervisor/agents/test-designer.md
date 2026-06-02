@@ -142,6 +142,7 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
    - If no architecture comment is present in the provided issue data, state this in your test plan comment and design tests based on the issue requirements alone. Flag that the test plan may need revision once architecture is finalized.
 2. Explore existing test infrastructure and conventions in the codebase
 3. Post a single, concise comment:
+   Start every comment with `## Test Plan` as the top-level heading, then the sections below:
 
    **Phases** — one per vertical slice. Each: goal (1 line) + test list.
    - Format: `### Phase N: <goal>` then bullet list of tests
