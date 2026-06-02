@@ -75,6 +75,7 @@ export function createWatchdog(options: WatchdogOptions): WatchdogHandle {
 			lastEventTime = Date.now();
 			onTimeoutFired = false;
 			totalPausedMs = 0;
+			paused = false;
 		},
 		start: () => {
 			if (running) return;

@@ -667,6 +667,82 @@ describe("extractLastJson — string-boundary-aware brace matching", () => {
 		assert.ok(isAgentOutput(result), "must pick last JSON object");
 		assert.equal((result as AgentOutput).commentBody, "Last JSON");
 	});
+
+	// ── Fence scanner regression tests ──
+	// Session 6 regression: brace-first approach broke architect because
+	// markdown template {…} after code fence was picked up as "last JSON".
+	// Fence scanner must find code-fenced JSON even when non-JSON braces
+	// appear after the fence.
+
+	it("ignores non-JSON braces in markdown after code fence", () => {
+		// Architect output: JSON in code fence, then markdown with template braces
+		const fullLog = [
+			"Here is my architecture analysis:",
+			"",
+			"```json",
+			'{"commentBody":"Architect design","action":"COMPLETE","agentName":"architect"}',
+			"```",
+			"",
+			"The implementation should use `{ key: value }` objects.",
+			"You can also use `{ foo: bar }` for config.",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse code-fenced JSON, not markdown template braces");
+		assert.equal((result as AgentOutput).commentBody, "Architect design");
+	});
+
+	it("handles triple-backtick code blocks with literal newlines in commentBody", () => {
+		// Researcher output: commentBody contains literal newlines and triple backticks.
+		// This happens when fullLog entries are joined with \n — the JSON string
+		// value contains literal newline characters (not \\n escape sequences).
+		// sanitizeJsonStrings later escapes them to \\n for valid JSON parsing.
+		const fullLog = [
+			"```json",
+			"{",
+			'  "action": "COMPLETE",',
+			'  "agentName": "researcher",',
+			`  "commentBody": "## Findings\n\n\`\`\`bash\ntest command\n\`\`\`\nDone"`,
+			"}",
+			"```",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(
+			isAgentOutput(result),
+			"must parse JSON despite literal newlines + triple backticks in commentBody",
+		);
+		const agentOut = result as AgentOutput;
+		assert.ok(agentOut.commentBody?.includes("test command"));
+		assert.ok(agentOut.commentBody?.includes("```bash"));
+	});
+
+	it("picks last code fence when multiple fences exist", () => {
+		// Agent may produce multiple code fences (e.g. showing example code
+		// then the JSON output). Fence scanner must pick the LAST one.
+		const fullLog = [
+			"```json",
+			'{"commentBody":"First JSON","action":"COMPLETE","agentName":"architect"}',
+			"```",
+			"Some text",
+			"```json",
+			'{"commentBody":"Final JSON","action":"COMPLETE","agentName":"architect"}',
+			"```",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse last code-fenced JSON");
+		assert.equal((result as AgentOutput).commentBody, "Final JSON");
+	});
+
+	it("handles code fence without 'json' language tag", () => {
+		// Agent may use bare ``` without language tag
+		const fullLog = [
+			"```",
+			'{"commentBody":"No lang tag","action":"COMPLETE","agentName":"architect"}',
+			"```",
+		].join("\n");
+		const result = parseAgentOutput(fullLog);
+		assert.ok(isAgentOutput(result), "must parse JSON in bare ``` fence");
+		assert.equal((result as AgentOutput).commentBody, "No lang tag");
+	});
 });
 
 // ─── Tests: thinking-prefix stripping — JSON in thinking blocks ────
