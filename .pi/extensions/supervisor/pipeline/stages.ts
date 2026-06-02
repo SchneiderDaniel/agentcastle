@@ -393,7 +393,8 @@ export async function handlePostAgentSuccess(
 			console.warn(
 				`[supervisor] ${agentName} completed but no commentBody found. ` +
 					`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
-					`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
+					`output: ${JSON.stringify((result.output || "").slice(0, 200))}, ` +
+					`thinkingOutput: ${JSON.stringify((result.thinkingOutput || "").slice(0, 200))}`,
 			);
 		}
 	}

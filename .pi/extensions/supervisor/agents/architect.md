@@ -137,4 +137,11 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
 - Reference specific file paths and function names in your proposals
 - When proposing boundaries, state which layer owns each new interface
 - When accepting a shortcut, document the future cost explicitly
-- When finished, output a JSON object with `"action": "COMPLETE", "agentName": "architect"` and your comment body (see Structured Output Format in your task). Fallback: if you cannot output JSON, output `ARCHITECTURE_COMPLETE` on its own line
+- When finished, output a JSON object with `"action": "COMPLETE", "agentName": "architect"` and your comment body (see Structured Output Format in your task). Fallback: if you cannot output JSON, output the following on separate lines:
+
+```
+ARCHITECTURE_COMPLETE
+COMMENT_BODY:
+<your architecture comment here>
+COMMENT_BODY_END
+```

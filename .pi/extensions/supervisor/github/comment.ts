@@ -93,7 +93,13 @@ export function extractStructuredAuditOutput(output: string): StructuredAuditOut
 		/COMMENT_BODY\s*:[^\S\n]*([\s\S]*?)(?=\n(?:SUBMODULE_PR|AUDIT_DECISION)\s*:|$)/,
 	);
 	if (commentBodyMatch) {
-		result.commentBody = commentBodyMatch[1].trim();
+		let body = commentBodyMatch[1].trim();
+		// Strip trailing COMMENT_BODY_END if present (safety)
+		const bodyEndIdx = body.lastIndexOf("COMMENT_BODY_END");
+		if (bodyEndIdx !== -1) {
+			body = body.slice(0, bodyEndIdx).trim();
+		}
+		result.commentBody = body;
 	}
 
 	return result;
@@ -109,6 +115,9 @@ export function extractAgentCommentBody(output: string): string | null {
 	if (isAgentOutputSuccess(parseResult)) {
 		const agentOutput = parseResult as AgentOutput;
 		if (agentOutput.commentBody) return agentOutput.commentBody;
+		// JSON parsed but commentBody missing/empty — fall through
+		// to regex extraction for backward compatibility with
+		// text marker fallbacks.
 	}
 
 	// Fallback: COMMENT_BODY marker extraction

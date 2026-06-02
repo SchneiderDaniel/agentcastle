@@ -289,4 +289,74 @@ describe("extractAgentCommentBody()", () => {
 		const result = extractAgentCommentBody(output);
 		assert.equal(result, "Trailing text");
 	});
+
+	it("extracts commentBody from AgentOutput JSON", () => {
+		const output = JSON.stringify({
+			action: "COMPLETE",
+			agentName: "architect",
+			commentBody: "## Architecture\nMy approach",
+		});
+		const result = extractAgentCommentBody(output);
+		assert.equal(result, "## Architecture\nMy approach");
+	});
+
+	it("falls through to regex when JSON parse succeeds but commentBody missing", () => {
+		const output =
+			JSON.stringify({ action: "COMPLETE", agentName: "architect" }) +
+			"\nCOMMENT_BODY: Fallback comment\nCOMMENT_BODY_END";
+		const result = extractAgentCommentBody(output);
+		assert.equal(result, "Fallback comment");
+	});
+
+	it("returns null from regex fallback when no COMMENT_BODY marker", () => {
+		const output = JSON.stringify({ action: "COMPLETE", agentName: "architect" });
+		const result = extractAgentCommentBody(output);
+		assert.equal(result, null);
+	});
+});
+
+// ─── Tests: extractStructuredAuditOutput — COMMENT_BODY_END stripping ──
+
+describe("extractStructuredAuditOutput() — COMMENT_BODY_END stripping", () => {
+	it("strips trailing COMMENT_BODY_END from comment body", () => {
+		const output = [
+			"AUDIT_DECISION: APPROVED",
+			"COMMENT_BODY: ## Audit Approved",
+			"All checks passed.",
+			"COMMENT_BODY_END",
+		].join("\n");
+		const result = extractStructuredAuditOutput(output);
+		assert.ok(result !== null);
+		assert.equal(result?.decision, "APPROVED");
+		assert.equal(result?.commentBody, "## Audit Approved\nAll checks passed.");
+	});
+
+	it("handles COMMENT_BODY without COMMENT_BODY_END (no stripping needed)", () => {
+		const output = [
+			"AUDIT_DECISION: REJECTED",
+			"COMMENT_BODY: ## Audit Rejected",
+			"Issues found.",
+		].join("\n");
+		const result = extractStructuredAuditOutput(output);
+		assert.ok(result !== null);
+		assert.equal(result?.decision, "REJECTED");
+		assert.equal(result?.commentBody, "## Audit Rejected\nIssues found.");
+	});
+
+	it("strips COMMENT_BODY_END with content after it", () => {
+		const output = [
+			"AUDIT_DECISION: APPROVED",
+			"COMMENT_BODY: ## Audit Approved",
+			"Looks good.",
+			"COMMENT_BODY_END",
+			"some trailing text",
+		].join("\n");
+		const result = extractStructuredAuditOutput(output);
+		assert.ok(result !== null);
+		assert.equal(result?.decision, "APPROVED");
+		// regex stops at end-of-string or next marker — content after
+		// COMMENT_BODY_END without marker is still part of comment body
+		assert.ok(result?.commentBody?.includes("Looks good."));
+		assert.ok(result?.commentBody?.includes("some trailing text"));
+	});
 });
