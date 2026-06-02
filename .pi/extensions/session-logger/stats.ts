@@ -1,4 +1,8 @@
 import type { Usage } from "@earendil-works/pi-ai";
+import { createPerTurnState, flushTurn } from "./per-turn.ts";
+import type { TurnStats, PerTurnState } from "./per-turn.ts";
+
+export type { TurnStats } from "./per-turn.ts";
 
 export interface ToolExecution {
 	toolCallId: string;
@@ -7,14 +11,6 @@ export interface ToolExecution {
 	endTime: number | null;
 	isError: boolean;
 	resultSize: number;
-}
-
-export interface TurnStats {
-	turnIndex: number;
-	tokens: number;
-	cost: number;
-	toolCount: number;
-	errorCount: number;
 }
 
 export interface StatsSnapshot {
@@ -84,7 +80,6 @@ export function createSessionStats(): SessionStats {
 	let thinkingChanges: Array<{ time: string; level: string }> = [];
 	let compactionCount = 0;
 	let toolExecutions: ToolExecution[] = [];
-	let perTurnTokens: TurnStats[] = [];
 	let fileModifications: Array<{
 		action: "read" | "write" | "edit";
 		path: string;
@@ -92,31 +87,11 @@ export function createSessionStats(): SessionStats {
 		size?: number;
 	}> = [];
 
-	// Current turn tracking
-	let currentTurnIndex = -1;
-	let currentTurnTokens = 0;
-	let currentTurnCost = 0;
-	let currentTurnToolCount = 0;
-	let currentTurnErrorCount = 0;
+	// Current turn tracking — uses shared PerTurnState from per-turn.ts
+	const turnState: PerTurnState = createPerTurnState();
 
 	// Track tool call IDs to execution objects
 	const pendingTools: Map<string, ToolExecution> = new Map();
-
-	function flushTurn() {
-		if (currentTurnIndex >= 0) {
-			perTurnTokens.push({
-				turnIndex: currentTurnIndex,
-				tokens: currentTurnTokens,
-				cost: currentTurnCost,
-				toolCount: currentTurnToolCount,
-				errorCount: currentTurnErrorCount,
-			});
-		}
-		currentTurnTokens = 0;
-		currentTurnCost = 0;
-		currentTurnToolCount = 0;
-		currentTurnErrorCount = 0;
-	}
 
 	return {
 		addUsage(usage: Usage) {
@@ -134,8 +109,8 @@ export function createSessionStats(): SessionStats {
 			totalCost += cost;
 
 			// Also track per-turn
-			currentTurnTokens += input + output + cacheRead + cacheWrite;
-			currentTurnCost += cost;
+			turnState.currentTurnTokens += input + output + cacheRead + cacheWrite;
+			turnState.currentTurnCost += cost;
 		},
 
 		seedStats(sm: { getEntries(): any[] }) {
@@ -165,22 +140,24 @@ export function createSessionStats(): SessionStats {
 			thinkingChanges = [];
 			compactionCount = 0;
 			toolExecutions = [];
-			perTurnTokens = [];
 			fileModifications = [];
-			currentTurnIndex = -1;
-			currentTurnTokens = 0;
-			currentTurnCost = 0;
-			currentTurnToolCount = 0;
-			currentTurnErrorCount = 0;
+			// Reset per-turn state via factory
+			const fresh = createPerTurnState();
+			turnState.currentTurnIndex = fresh.currentTurnIndex;
+			turnState.currentTurnTokens = fresh.currentTurnTokens;
+			turnState.currentTurnCost = fresh.currentTurnCost;
+			turnState.currentTurnToolCount = fresh.currentTurnToolCount;
+			turnState.currentTurnErrorCount = fresh.currentTurnErrorCount;
+			turnState.perTurnTokens.length = 0;
 			pendingTools.clear();
 		},
 
 		getSnapshot(): StatsSnapshot {
 			// Flush current turn if there's one open
-			if (currentTurnIndex >= 0 && currentTurnTokens > 0) {
-				const last = perTurnTokens[perTurnTokens.length - 1];
-				if (!last || last.turnIndex !== currentTurnIndex) {
-					flushTurn();
+			if (turnState.currentTurnIndex >= 0 && turnState.currentTurnTokens > 0) {
+				const last = turnState.perTurnTokens[turnState.perTurnTokens.length - 1];
+				if (!last || last.turnIndex !== turnState.currentTurnIndex) {
+					flushTurn(turnState);
 				}
 			}
 			return {
@@ -193,7 +170,7 @@ export function createSessionStats(): SessionStats {
 				thinkingChanges: [...thinkingChanges],
 				compactionCount,
 				toolExecutions: [...toolExecutions],
-				perTurnTokens: [...perTurnTokens],
+				perTurnTokens: [...turnState.perTurnTokens],
 				fileModifications: [...fileModifications],
 			};
 		},
@@ -234,18 +211,18 @@ export function createSessionStats(): SessionStats {
 				exec.resultSize = resultSize;
 				pendingTools.delete(toolCallId);
 			}
-			currentTurnToolCount++;
-			if (isError) currentTurnErrorCount++;
+			turnState.currentTurnToolCount++;
+			if (isError) turnState.currentTurnErrorCount++;
 		},
 
 		recordTurnStart(turnIndex: number) {
-			flushTurn();
-			currentTurnIndex = turnIndex;
+			flushTurn(turnState);
+			turnState.currentTurnIndex = turnIndex;
 		},
 
 		recordTurnEnd() {
-			flushTurn();
-			currentTurnIndex = -1;
+			flushTurn(turnState);
+			turnState.currentTurnIndex = -1;
 		},
 
 		recordFileModification(action: "read" | "write" | "edit", path: string, size?: number) {
