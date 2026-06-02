@@ -7,4 +7,4 @@ tmp/
 *.min.js
 *.min.css
 package-lock.json
-.flask_blogs/
+flask_blogs/

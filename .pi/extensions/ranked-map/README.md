@@ -57,16 +57,16 @@ In `.pi/settings.json`:
 
 ```json
 {
-  "rankedMap": {
-    "tokenBudget": 2048,
-    "autoThreshold": 20000,
-    "recencyWindowDays": 90,
-    "weights": {
-      "keyword": 0.6,
-      "recency": 0.3,
-      "fileSize": 0.1
-    }
-  }
+	"rankedMap": {
+		"tokenBudget": 2048,
+		"autoThreshold": 20000,
+		"recencyWindowDays": 90,
+		"weights": {
+			"keyword": 0.6,
+			"recency": 0.3,
+			"fileSize": 0.1
+		}
+	}
 }
 ```
 

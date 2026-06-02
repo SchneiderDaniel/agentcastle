@@ -8,48 +8,48 @@ Refactor the supervisor extension to reduce file sizes, eliminate `any` on API b
 
 ### File Overview
 
-| File | Lines | Issues |
-|------|-------|--------|
-| `pipeline.ts` | 861 | 🔴 >300 lines, raw `exec` wrapper, sync I/O in handler |
-| `github.ts` | 751 | 🔴 >300 lines, `Promise<any>` returns on API boundary |
-| `agent-session-runner.ts` | 362 | 🟡 >300 lines, `as any` cast |
-| `agent-stream.ts` | 315 | 🟡 >300 lines |
-| `agent-runner.ts` | 296 | 🟢 borderlines okay |
-| `session-events.ts` | 297 | 🟢 borderline, `(ev: any)` param type |
-| `session-widget.ts` | 210 | 🟢 OK |
-| `session-result.ts` | 174 | 🟢 OK |
-| `extensions.ts` | 190 | 🟢 OK |
-| `ci-gating.ts` | 229 | 🟢 OK |
-| `workflow.ts` | 121 | 🟢 OK |
-| `config.ts` | 222 | 🟢 OK (sync I/O at call time, acceptable) |
-| `types.ts` | 222 | 🟢 OK |
-| Others | <180 each | 🟢 OK |
-| **Total** | **5,375** | ~2000 lines in files >300 |
+| File                      | Lines     | Issues                                                 |
+| ------------------------- | --------- | ------------------------------------------------------ |
+| `pipeline.ts`             | 861       | 🔴 >300 lines, raw `exec` wrapper, sync I/O in handler |
+| `github.ts`               | 751       | 🔴 >300 lines, `Promise<any>` returns on API boundary  |
+| `agent-session-runner.ts` | 362       | 🟡 >300 lines, `as any` cast                           |
+| `agent-stream.ts`         | 315       | 🟡 >300 lines                                          |
+| `agent-runner.ts`         | 296       | 🟢 borderlines okay                                    |
+| `session-events.ts`       | 297       | 🟢 borderline, `(ev: any)` param type                  |
+| `session-widget.ts`       | 210       | 🟢 OK                                                  |
+| `session-result.ts`       | 174       | 🟢 OK                                                  |
+| `extensions.ts`           | 190       | 🟢 OK                                                  |
+| `ci-gating.ts`            | 229       | 🟢 OK                                                  |
+| `workflow.ts`             | 121       | 🟢 OK                                                  |
+| `config.ts`               | 222       | 🟢 OK (sync I/O at call time, acceptable)              |
+| `types.ts`                | 222       | 🟢 OK                                                  |
+| Others                    | <180 each | 🟢 OK                                                  |
+| **Total**                 | **5,375** | ~2000 lines in files >300                              |
 
 ### Anti-Patterns Found
 
-| # | Rule | Location | Severity | Detail |
-|---|------|----------|----------|--------|
-| C1 | `any` on API boundary | `github.ts:37` | 🟠 P1 | `ghJson()` returns `Promise<any>` — propagates to all callers |
-| C1 | `any` on API boundary | `github.ts:44` | 🟠 P1 | `ghGraphQL()` returns `Promise<any>` — all GraphQL callers untyped |
-| C1 | `any` on param type | `session-events.ts:28` | 🟡 P2 | `processSessionEvent(ev: any, state)` — event param untyped |
-| C1 | `as any` cast | `agent-session-runner.ts:96` | 🟡 P2 | `getModel(modelInfo.provider as any, modelInfo.modelId as any)` |
-| C1 | `as any` cast | `pipeline-audit.ts:138` | 🟡 P2 | `(e.data as any)?.issueNum === issueNum` |
-| R1 | Raw `child_process` | `pipeline.ts:16-22` | 🟠 P1 | `exec` from `node:child_process` wrapped as `execWithSignal` instead of `pi.exec()` |
-| M1 | File >300 lines | `pipeline.ts` (861) | 🟠 P1 | Monolithic handler: worktree mgmt, PR creation, status loop, hooks, error handling all in one |
-| M1 | File >300 lines | `github.ts` (751) | 🟠 P1 | GraphQL queries, project ops, dep checks, git helpers in one file |
-| M1 | File >300 lines | `agent-session-runner.ts` (362) | 🟡 P2 | In-process runner logic |
-| M1 | File >300 lines | `agent-stream.ts` (315) | 🟡 P2 | Stream helpers |
-| P12 | Sync I/O in async handler | `pipeline.ts:293` | 🟡 P2 | `existsSync()` in middle of async handler |
-| P12 | Sync I/O in async handler | `pipeline.ts:638` | 🟡 P2 | `writeFileSync()` in middle of async handler |
-| P7 | `process.cwd()` fallback | `extensions.ts:44-45,67,133` | 🟢 P3 | Used inside functions (computed at call time) but `ctx.cwd` preferred (R6) |
-| P4 | `catch (err)` no `:unknown` | `agent-runner.ts:43` | 🟢 P3 | Missing `err: unknown` annotation (TS 4.0+ may infer this) |
-| C10 | `.ts` extension | — | ✅ | Already used on all local imports ✓ |
-| C11 | `satisfies` | `pipeline.ts` | ✅ | `details satisfies SupervisorMessageDetails` ✓ |
-| C9 | Interfaces over types | — | ✅ | All types use `interface` ✓ |
-| C7 | Dynamic `import()` | — | ✅ | `await import(...)` used, no `require()` ✓ |
-| R2 | `pi.appendEntry()` | — | ✅ | Used in pipeline.ts for state persistence ✓ |
-| C4 | Closure state | — | ✅ | Module-level mutable state minimal (`_extToolsCache` only) ✓ |
+| #   | Rule                        | Location                        | Severity | Detail                                                                                        |
+| --- | --------------------------- | ------------------------------- | -------- | --------------------------------------------------------------------------------------------- |
+| C1  | `any` on API boundary       | `github.ts:37`                  | 🟠 P1    | `ghJson()` returns `Promise<any>` — propagates to all callers                                 |
+| C1  | `any` on API boundary       | `github.ts:44`                  | 🟠 P1    | `ghGraphQL()` returns `Promise<any>` — all GraphQL callers untyped                            |
+| C1  | `any` on param type         | `session-events.ts:28`          | 🟡 P2    | `processSessionEvent(ev: any, state)` — event param untyped                                   |
+| C1  | `as any` cast               | `agent-session-runner.ts:96`    | 🟡 P2    | `getModel(modelInfo.provider as any, modelInfo.modelId as any)`                               |
+| C1  | `as any` cast               | `pipeline-audit.ts:138`         | 🟡 P2    | `(e.data as any)?.issueNum === issueNum`                                                      |
+| R1  | Raw `child_process`         | `pipeline.ts:16-22`             | 🟠 P1    | `exec` from `node:child_process` wrapped as `execWithSignal` instead of `pi.exec()`           |
+| M1  | File >300 lines             | `pipeline.ts` (861)             | 🟠 P1    | Monolithic handler: worktree mgmt, PR creation, status loop, hooks, error handling all in one |
+| M1  | File >300 lines             | `github.ts` (751)               | 🟠 P1    | GraphQL queries, project ops, dep checks, git helpers in one file                             |
+| M1  | File >300 lines             | `agent-session-runner.ts` (362) | 🟡 P2    | In-process runner logic                                                                       |
+| M1  | File >300 lines             | `agent-stream.ts` (315)         | 🟡 P2    | Stream helpers                                                                                |
+| P12 | Sync I/O in async handler   | `pipeline.ts:293`               | 🟡 P2    | `existsSync()` in middle of async handler                                                     |
+| P12 | Sync I/O in async handler   | `pipeline.ts:638`               | 🟡 P2    | `writeFileSync()` in middle of async handler                                                  |
+| P7  | `process.cwd()` fallback    | `extensions.ts:44-45,67,133`    | 🟢 P3    | Used inside functions (computed at call time) but `ctx.cwd` preferred (R6)                    |
+| P4  | `catch (err)` no `:unknown` | `agent-runner.ts:43`            | 🟢 P3    | Missing `err: unknown` annotation (TS 4.0+ may infer this)                                    |
+| C10 | `.ts` extension             | —                               | ✅       | Already used on all local imports ✓                                                           |
+| C11 | `satisfies`                 | `pipeline.ts`                   | ✅       | `details satisfies SupervisorMessageDetails` ✓                                                |
+| C9  | Interfaces over types       | —                               | ✅       | All types use `interface` ✓                                                                   |
+| C7  | Dynamic `import()`          | —                               | ✅       | `await import(...)` used, no `require()` ✓                                                    |
+| R2  | `pi.appendEntry()`          | —                               | ✅       | Used in pipeline.ts for state persistence ✓                                                   |
+| C4  | Closure state               | —                               | ✅       | Module-level mutable state minimal (`_extToolsCache` only) ✓                                  |
 
 ## User Stories
 
@@ -118,9 +118,21 @@ Replace the `Promise<any>` returns with a typed pattern:
 ```typescript
 // github/types.ts
 export interface GhClient {
-  gh(pi: ExtensionAPI, args: string[], opts?: { signal?: AbortSignal; timeout?: number }): Promise<string>;
-  ghJson<T = unknown>(pi: ExtensionAPI, args: string[], opts?: { signal?: AbortSignal; timeout?: number }): Promise<T | null>;
-  ghGraphQL<T = unknown>(pi: ExtensionAPI, query: string, opts?: { signal?: AbortSignal; timeout?: number }): Promise<T | null>;
+	gh(
+		pi: ExtensionAPI,
+		args: string[],
+		opts?: { signal?: AbortSignal; timeout?: number },
+	): Promise<string>;
+	ghJson<T = unknown>(
+		pi: ExtensionAPI,
+		args: string[],
+		opts?: { signal?: AbortSignal; timeout?: number },
+	): Promise<T | null>;
+	ghGraphQL<T = unknown>(
+		pi: ExtensionAPI,
+		query: string,
+		opts?: { signal?: AbortSignal; timeout?: number },
+	): Promise<T | null>;
 }
 ```
 
@@ -134,9 +146,9 @@ No new tools. The `/supervisor` command remains the sole entry point. No tool si
 
 No changes. The extension only registers two message renderers and one command — all stay intact.
 
-| Event | Action |
-|-------|--------|
-| — | No lifecycle subscriptions. `registerMessageRenderer` + `registerCommand` only. |
+| Event | Action                                                                          |
+| ----- | ------------------------------------------------------------------------------- |
+| —     | No lifecycle subscriptions. `registerMessageRenderer` + `registerCommand` only. |
 
 ### State Management
 
@@ -144,20 +156,21 @@ No changes. State persists via `supervisor-summary` and `supervisor` customType 
 
 ### Error Handling
 
-| Error Scenario | Handling |
-|---------------|----------|
-| GraphQL parse/network failure | `catch (err: unknown)` → `err instanceof Error ? err.message : String(err)` → notify user + stop pipeline |
-| gh CLI error (auth missing, scope) | `gh()` throws with stderr → caught, scopes checked, user notified |
-| Worktree creation failure | Retry without `-b` flag, then idempotent if exists |
-| CI timeout | Configurable `ciGatingTimeoutSec`, default 300s, graceful skip |
-| Agent budget exceeded | Pipeline stops, no retry, result collected |
-| Agent failure | One retry, then pipeline stops |
+| Error Scenario                     | Handling                                                                                                  |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| GraphQL parse/network failure      | `catch (err: unknown)` → `err instanceof Error ? err.message : String(err)` → notify user + stop pipeline |
+| gh CLI error (auth missing, scope) | `gh()` throws with stderr → caught, scopes checked, user notified                                         |
+| Worktree creation failure          | Retry without `-b` flag, then idempotent if exists                                                        |
+| CI timeout                         | Configurable `ciGatingTimeoutSec`, default 300s, graceful skip                                            |
+| Agent budget exceeded              | Pipeline stops, no retry, result collected                                                                |
+| Agent failure                      | One retry, then pipeline stops                                                                            |
 
 ## Implementation Details
 
 ### Dependencies
 
 No new npm packages. Existing imports unchanged:
+
 - `@earendil-works/pi-coding-agent` — ExtensionAPI, SDK utilities
 - `@earendil-works/pi-ai` — model resolution
 - `node:fs`, `node:path`, `node:os`, `node:util` — Node built-ins
@@ -167,57 +180,57 @@ No new npm packages. Existing imports unchanged:
 ```typescript
 // github/types.ts — typed GraphQL response wrappers
 export interface ProjectFieldsResponse {
-  data?: {
-    viewer?: {
-      projectV2?: {
-        fields?: {
-          nodes?: Array<{
-            id: string;
-            name: string;
-            dataType?: string;
-            options?: Array<{ id: string; name: string }>;
-          }>;
-        };
-      };
-    };
-  };
-  errors?: Array<{ message: string }>;
+	data?: {
+		viewer?: {
+			projectV2?: {
+				fields?: {
+					nodes?: Array<{
+						id: string;
+						name: string;
+						dataType?: string;
+						options?: Array<{ id: string; name: string }>;
+					}>;
+				};
+			};
+		};
+	};
+	errors?: Array<{ message: string }>;
 }
 
 export interface ProjectItemsResponse {
-  data?: {
-    viewer?: {
-      projectV2?: {
-        items?: {
-          pageInfo: { hasNextPage: boolean; endCursor: string | null };
-          nodes?: Array<{
-            id: string;
-            content?: { url?: string; number?: number };
-            fieldValues?: {
-              nodes?: Array<{
-                name?: string;
-                text?: string;
-                field?: { id: string; name: string };
-              }>;
-            };
-          }>;
-        };
-      };
-    };
-  };
-  errors?: Array<{ message: string }>;
+	data?: {
+		viewer?: {
+			projectV2?: {
+				items?: {
+					pageInfo: { hasNextPage: boolean; endCursor: string | null };
+					nodes?: Array<{
+						id: string;
+						content?: { url?: string; number?: number };
+						fieldValues?: {
+							nodes?: Array<{
+								name?: string;
+								text?: string;
+								field?: { id: string; name: string };
+							}>;
+						};
+					}>;
+				};
+			};
+		};
+	};
+	errors?: Array<{ message: string }>;
 }
 
 // session-events.ts — typed event param
 export interface SessionEvent {
-  type: string;
-  toolName?: string;
-  toolCallId?: string;
-  args?: Record<string, unknown>;
-  partialResult?: unknown;
-  result?: unknown;
-  isError?: boolean;
-  // ... other fields as needed
+	type: string;
+	toolName?: string;
+	toolCallId?: string;
+	args?: Record<string, unknown>;
+	partialResult?: unknown;
+	result?: unknown;
+	isError?: boolean;
+	// ... other fields as needed
 }
 ```
 
@@ -225,82 +238,82 @@ export interface SessionEvent {
 
 #### Phase 1: `github/` extraction
 
-| File | Purpose | ~Lines | Depends On |
-|------|---------|--------|------------|
-| `github/types.ts` | GhClient interface, GraphQL response types | 60 | none |
-| `github/gh-client.ts` | `gh()`, `ghJson<T>()`, `ghGraphQL<T>()` with typed returns | 50 | `./types.ts` |
-| `github/project.ts` | getProjectFields, getProjectItems, getProjectId, findIssueItem, getItemStatusName, findStatusOption, setItemStatus | 150 | `./gh-client.ts`, `../types.ts` |
-| `github/deps.ts` | checkBlockedByDependencies, parseTimelineResponse | 70 | `./gh-client.ts`, `../types.ts` |
-| `github/pr.ts` | checkPrConflicts, createPullRequest | 80 | `./gh-client.ts`, `../types.ts` |
-| `github/comment.ts` | postIssueComment, extractAgentCommentBody, extractStructuredAuditOutput, buildAuditCommentFallback | 90 | `./gh-client.ts` |
-| `github/git.ts` | commitChanges, pushBranch, commitAndPush | 60 | `../types.ts` |
+| File                  | Purpose                                                                                                            | ~Lines | Depends On                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ | ------ | ------------------------------- |
+| `github/types.ts`     | GhClient interface, GraphQL response types                                                                         | 60     | none                            |
+| `github/gh-client.ts` | `gh()`, `ghJson<T>()`, `ghGraphQL<T>()` with typed returns                                                         | 50     | `./types.ts`                    |
+| `github/project.ts`   | getProjectFields, getProjectItems, getProjectId, findIssueItem, getItemStatusName, findStatusOption, setItemStatus | 150    | `./gh-client.ts`, `../types.ts` |
+| `github/deps.ts`      | checkBlockedByDependencies, parseTimelineResponse                                                                  | 70     | `./gh-client.ts`, `../types.ts` |
+| `github/pr.ts`        | checkPrConflicts, createPullRequest                                                                                | 80     | `./gh-client.ts`, `../types.ts` |
+| `github/comment.ts`   | postIssueComment, extractAgentCommentBody, extractStructuredAuditOutput, buildAuditCommentFallback                 | 90     | `./gh-client.ts`                |
+| `github/git.ts`       | commitChanges, pushBranch, commitAndPush                                                                           | 60     | `../types.ts`                   |
 
 #### Phase 2: `pipeline/` extraction
 
-| File | Purpose | ~Lines | Depends On |
-|------|---------|--------|------------|
-| `pipeline/index.ts` | `registerSupervisorCommand()` — thin entry | 15 | `./handler.ts` |
-| `pipeline/worktree.ts` | createWorktree, cleanupWorktree, installWorktreeDeps | 80 | `github/git.ts`, `config.ts` |
-| `pipeline/stages.ts` | Agent dispatch, marker matching, status transition | 120 | `./worktree.ts`, `github/project.ts`, `agent-runner.ts` |
-| `pipeline/hooks.ts` | CI/TSC/LSP pre-transition checks | 60 | `pipeline-audit.ts`, `ci-gating.ts` |
-| `pipeline/pr-creation.ts` | PR creation after audit → Done | 100 | `github/pr.ts`, `github/git.ts`, `pipeline-output.ts` |
-| `pipeline/notifications.ts` | Build summary, status updates, bell | 70 | `formatting.ts`, `pipeline-output.ts` |
-| `pipeline/handler.ts` | Main loop orchestrator (imports all above) | 180 | All `pipeline/*` modules, `github/` modules |
+| File                        | Purpose                                              | ~Lines | Depends On                                              |
+| --------------------------- | ---------------------------------------------------- | ------ | ------------------------------------------------------- |
+| `pipeline/index.ts`         | `registerSupervisorCommand()` — thin entry           | 15     | `./handler.ts`                                          |
+| `pipeline/worktree.ts`      | createWorktree, cleanupWorktree, installWorktreeDeps | 80     | `github/git.ts`, `config.ts`                            |
+| `pipeline/stages.ts`        | Agent dispatch, marker matching, status transition   | 120    | `./worktree.ts`, `github/project.ts`, `agent-runner.ts` |
+| `pipeline/hooks.ts`         | CI/TSC/LSP pre-transition checks                     | 60     | `pipeline-audit.ts`, `ci-gating.ts`                     |
+| `pipeline/pr-creation.ts`   | PR creation after audit → Done                       | 100    | `github/pr.ts`, `github/git.ts`, `pipeline-output.ts`   |
+| `pipeline/notifications.ts` | Build summary, status updates, bell                  | 70     | `formatting.ts`, `pipeline-output.ts`                   |
+| `pipeline/handler.ts`       | Main loop orchestrator (imports all above)           | 180    | All `pipeline/*` modules, `github/` modules             |
 
 #### Phase 3: Fix anti-patterns
 
-| File | Change | ~Lines |
-|------|--------|--------|
-| `github/types.ts` | Add typed return wrappers | +60 |
-| `session-events.ts` | Change `(ev: any)` → `(ev: SessionEvent)` | <5 |
-| `agent-session-runner.ts` | Replace `as any` with typed cast or type guard | <5 |
-| `pipeline-audit.ts` | Replace `as any` with typed accessor | <5 |
-| `pipeline/handler.ts` | Replace `execWithSignal` with `pi.exec()` | -30 (less code) |
-| `pipeline/handler.ts` | Replace `existsSync` → `fs.promises.access`, `writeFileSync` → `fs.promises.writeFile` | <10 |
-| `config.ts` | Keep `readFileSync` (module-level config loading, acceptable pattern) | no change |
+| File                      | Change                                                                                 | ~Lines          |
+| ------------------------- | -------------------------------------------------------------------------------------- | --------------- |
+| `github/types.ts`         | Add typed return wrappers                                                              | +60             |
+| `session-events.ts`       | Change `(ev: any)` → `(ev: SessionEvent)`                                              | <5              |
+| `agent-session-runner.ts` | Replace `as any` with typed cast or type guard                                         | <5              |
+| `pipeline-audit.ts`       | Replace `as any` with typed accessor                                                   | <5              |
+| `pipeline/handler.ts`     | Replace `execWithSignal` with `pi.exec()`                                              | -30 (less code) |
+| `pipeline/handler.ts`     | Replace `existsSync` → `fs.promises.access`, `writeFileSync` → `fs.promises.writeFile` | <10             |
+| `config.ts`               | Keep `readFileSync` (module-level config loading, acceptable pattern)                  | no change       |
 
 ### Test Strategy
 
-| Area | Strategy |
-|------|----------|
-| `github/types.ts` | Unit test typed GraphQL response parsing (mock JSON in, typed interface out) |
-| `github/gh-client.ts` | Integration test with gh CLI mock |
-| `pipeline/stages.ts` | Unit test marker matching, status resolution (pure logic, no io) |
-| `pipeline/worktree.ts` | Minimal — git worktree ops are inherently integration. Mock `pi.exec()` |
-| `session-events.ts` | Unit test typed event processing (already has test pattern in test files) |
+| Area                   | Strategy                                                                     |
+| ---------------------- | ---------------------------------------------------------------------------- |
+| `github/types.ts`      | Unit test typed GraphQL response parsing (mock JSON in, typed interface out) |
+| `github/gh-client.ts`  | Integration test with gh CLI mock                                            |
+| `pipeline/stages.ts`   | Unit test marker matching, status resolution (pure logic, no io)             |
+| `pipeline/worktree.ts` | Minimal — git worktree ops are inherently integration. Mock `pi.exec()`      |
+| `session-events.ts`    | Unit test typed event processing (already has test pattern in test files)    |
 
 ### Backward Compatibility
 
-| Contract | Preserved? | Notes |
-|----------|------------|-------|
-| `/supervisor <issue-number>` command | ✅ | Same name, same args |
-| `supervisor` config key | ✅ | Same shape |
-| `customType: "supervisor"` messages | ✅ | Same renderer |
-| `customType: "supervisor-summary"` messages | ✅ | Same renderer |
-| Status markers (`ARCHITECTURE_COMPLETE`, etc.) | ✅ | No change |
-| Agent file format (`.md` frontmatter) | ✅ | No change |
-| Worktree directory structure | ✅ | Same path logic |
-| Output formatting | ✅ | Same text, same TUI |
-| `gh` CLI auth | ✅ | Same `pi.exec("gh",...)` calls |
+| Contract                                       | Preserved? | Notes                          |
+| ---------------------------------------------- | ---------- | ------------------------------ |
+| `/supervisor <issue-number>` command           | ✅         | Same name, same args           |
+| `supervisor` config key                        | ✅         | Same shape                     |
+| `customType: "supervisor"` messages            | ✅         | Same renderer                  |
+| `customType: "supervisor-summary"` messages    | ✅         | Same renderer                  |
+| Status markers (`ARCHITECTURE_COMPLETE`, etc.) | ✅         | No change                      |
+| Agent file format (`.md` frontmatter)          | ✅         | No change                      |
+| Worktree directory structure                   | ✅         | Same path logic                |
+| Output formatting                              | ✅         | Same text, same TUI            |
+| `gh` CLI auth                                  | ✅         | Same `pi.exec("gh",...)` calls |
 
 ## Best Practices Compliance
 
-| Rule | Status | Notes |
-|------|--------|-------|
-| No `any` on API boundaries | ⚠️ → ✅ | Fix `ghJson`/`ghGraphQL` returns + `session-events.ts` param |
-| `details` uses `Record<string, unknown>` | ✅ | Already uses `satisfies SupervisorMessageDetails` |
-| State encapsulated in closure | ✅ | Minimal module state (`_extToolsCache` only) |
-| Explicit return type annotations | ✅ | All functions annotated |
-| No sync I/O at module init | ⚠️ | `readFileSync` in `config.ts` but only at call time, not module load — acceptable |
-| `AbortController` for spawn timeout | ✅ | Already uses AbortController pattern |
-| Child process `error` events handled | ✅ | Through `pi.exec()` error checking |
-| `catch` uses `instanceof Error` | ⚠️ | Fix `agent-runner.ts:43` `catch (err)` → `catch (err: unknown)` |
-| `import()` not `require()` | ✅ | Already compliant |
-| Discriminated unions for events | ⚠️ | Add typed `SessionEvent` union instead of `any` |
-| Files < 300 lines, entry < 100 lines | ⚠️ → ✅ | Split `pipeline.ts` (861) and `github.ts` (751) |
-| No circular imports | ✅ | Tree flows types → utils → modules → orchestrator → entry |
-| Entry point is registrations only | ✅ | `index.ts` already 17 lines, pure registrations |
-| M8: Signature changes update all consumers | ✅ | No param changes planned — new modules re-export same signatures |
+| Rule                                       | Status  | Notes                                                                             |
+| ------------------------------------------ | ------- | --------------------------------------------------------------------------------- |
+| No `any` on API boundaries                 | ⚠️ → ✅ | Fix `ghJson`/`ghGraphQL` returns + `session-events.ts` param                      |
+| `details` uses `Record<string, unknown>`   | ✅      | Already uses `satisfies SupervisorMessageDetails`                                 |
+| State encapsulated in closure              | ✅      | Minimal module state (`_extToolsCache` only)                                      |
+| Explicit return type annotations           | ✅      | All functions annotated                                                           |
+| No sync I/O at module init                 | ⚠️      | `readFileSync` in `config.ts` but only at call time, not module load — acceptable |
+| `AbortController` for spawn timeout        | ✅      | Already uses AbortController pattern                                              |
+| Child process `error` events handled       | ✅      | Through `pi.exec()` error checking                                                |
+| `catch` uses `instanceof Error`            | ⚠️      | Fix `agent-runner.ts:43` `catch (err)` → `catch (err: unknown)`                   |
+| `import()` not `require()`                 | ✅      | Already compliant                                                                 |
+| Discriminated unions for events            | ⚠️      | Add typed `SessionEvent` union instead of `any`                                   |
+| Files < 300 lines, entry < 100 lines       | ⚠️ → ✅ | Split `pipeline.ts` (861) and `github.ts` (751)                                   |
+| No circular imports                        | ✅      | Tree flows types → utils → modules → orchestrator → entry                         |
+| Entry point is registrations only          | ✅      | `index.ts` already 17 lines, pure registrations                                   |
+| M8: Signature changes update all consumers | ✅      | No param changes planned — new modules re-export same signatures                  |
 
 ## Migration Plan
 

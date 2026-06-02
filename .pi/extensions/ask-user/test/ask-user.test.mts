@@ -964,7 +964,7 @@ describe("migrateQnaFromCsv", () => {
 		console.warn = (msg: string) => warnings.push(msg);
 
 		fs.unlinkSync = (target: PathLike) => {
-			if (target.includes(".tmp.")) {
+			if (String(target).includes(".tmp.")) {
 				throw new Error("Simulated unlink failure");
 			}
 			return origUnlinkSync(target);

@@ -11,11 +11,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 
-import {
-	extractTestCommand,
-	parseFailedTests,
-	truncateOutput,
-} from "./helper/output-parser.mts";
+import { extractTestCommand, parseFailedTests, truncateOutput } from "./helper/output-parser.mts";
 
 import {
 	buildPlanWithCommand,
@@ -52,7 +48,8 @@ function simulateAuditDecision(
 	if (!command) {
 		return {
 			decision: "REJECT",
-			comment: "## Audit Rejected\n\nNo runnable test command found in test plan.\n\nPlease fix and resubmit.",
+			comment:
+				"## Audit Rejected\n\nNo runnable test command found in test plan.\n\nPlease fix and resubmit.",
 		};
 	}
 

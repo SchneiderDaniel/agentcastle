@@ -32,6 +32,7 @@ loop:
 Pick one extension from `.pi/extensions/` using `bash ls`. Prefer subdirectory extensions (they contain multiple files, more surface area). Single-file `.ts` extensions also eligible. Do NOT pick same extension twice in a row within same invocation.
 
 Selection method:
+
 ```bash
 ls -d /home/miria/git/main/.pi/extensions/*/   # subdirectory extensions
 ls /home/miria/git/main/.pi/extensions/*.ts     # single-file extensions
@@ -44,6 +45,7 @@ Pick randomly. Document which extension selected and why (e.g. "largest file cou
 Read the full extension before hunting. Use `read` to load all files.
 
 For subdirectory extensions:
+
 ```bash
 ls -la /home/miria/git/main/.pi/extensions/<name>/
 read /home/miria/git/main/.pi/extensions/<name>/index.ts
@@ -51,11 +53,13 @@ read /home/miria/git/main/.pi/extensions/<name>/<other-files>.ts
 ```
 
 For single-file extensions:
+
 ```bash
 read /home/miria/git/main/.pi/extensions/<name>.ts
 ```
 
 Understand:
+
 - Purpose (what does it register? tool? command? event handler?)
 - API surface (tool name, params, returns, events subscribed)
 - Dependencies (imports from pi packages, npm packages, node built-ins)
@@ -67,6 +71,7 @@ Understand:
 Apply each technique below. For each, document what you checked and whether found anything.
 
 #### 1. Boundary Analysis
+
 - Off-by-one in array/string operations (`<=` vs `<`, `length` vs `length-1`)
 - Empty/null/undefined states (empty arrays, null params, missing fields)
 - Edge values (0, empty string, `Number.MAX_SAFE_INTEGER`, negative numbers)
@@ -74,6 +79,7 @@ Apply each technique below. For each, document what you checked and whether foun
 - Timeout/expiry boundary (race between timeout and completion)
 
 #### 2. Type Safety Analysis
+
 - `any` types or unsafe casts (`as` without validation)
 - `details: {}` patterns (TypeBox schema vs plain object)
 - Missing/null checks on optional fields
@@ -81,6 +87,7 @@ Apply each technique below. For each, document what you checked and whether foun
 - Incorrect generic type parameters
 
 #### 3. Error Path Tracing
+
 - Unhandled promise rejections (no `.catch()`, no `try/catch`)
 - Silent errors (empty `catch` block, error swallowed)
 - Improper error propagation (returning error as success)
@@ -88,6 +95,7 @@ Apply each technique below. For each, document what you checked and whether foun
 - `try/catch` with no `catch` body or only `/* ok */`
 
 #### 4. Concurrency Analysis
+
 - Race conditions in file operations (multiple tools editing same file)
 - Async/await mismatch (forgotten `await`, mixing sync/async)
 - Shared mutable state across concurrent tool calls
@@ -95,6 +103,7 @@ Apply each technique below. For each, document what you checked and whether foun
 - Signal/abort not propagated to child operations
 
 #### 5. Input Validation
+
 - Missing parameter validation (tool params not checked)
 - Incorrect TypeBox schema (wrong types, missing constraints)
 - Path traversal (user path not sanitized, `../` injection)
@@ -102,12 +111,14 @@ Apply each technique below. For each, document what you checked and whether foun
 - JSON parse without try/catch
 
 #### 6. State Mutation Analysis
+
 - Module-level mutable state (global variables, arrays, objects)
 - State not rebuilt on `session_start`
 - State stored outside tool result `details`
 - Side effects in event handlers that modify session
 
 #### 7. Resource Lifecycle
+
 - File handles not closed (missing `finally` or cleanup)
 - Temp files not deleted after use
 - Event subscriptions not unsubscribed
@@ -115,6 +126,7 @@ Apply each technique below. For each, document what you checked and whether foun
 - Child processes not killed on timeout
 
 #### 8. Security Analysis
+
 - Command injection (user input in `execSync`, `pi.exec`, `bash`)
 - Path traversal (file paths from user input not resolved)
 - Trust boundary (LLM-generated content used in security decisions)
@@ -122,6 +134,7 @@ Apply each technique below. For each, document what you checked and whether foun
 - Prompt injection vectors (user content in prompts without sanitization)
 
 #### 9. Logic Errors
+
 - Wrong comparison operator (`=` vs `==` vs `===`)
 - Inverted condition (`!==` when should be `===`)
 - Incorrect variable used (copy-paste error, wrong variable name)
@@ -129,6 +142,7 @@ Apply each technique below. For each, document what you checked and whether foun
 - Wrong default value
 
 #### 10. API Misuse
+
 - Incorrect pi extension API usage (wrong event signature, missing return shape)
 - TypeBox schema not matching `prepareArguments` shape
 - Tool result format wrong (missing `content` array, wrong `details` shape)
@@ -185,8 +199,10 @@ Only create issue after proof is complete. Use `gh issue create` via `bash gh`.
 
 ### Code Evidence
 ```
+
 File: path/to/file.ts, line N-M
 <code snippet showing bug>
+
 ```
 
 ### Expected vs Actual
@@ -224,15 +240,19 @@ rm /tmp/bug-report-<ext-name>.md
 ```
 
 Read repo from `.pi/settings.json`:
+
 ```bash
 grep -o '"repo"[^,]*' /home/miria/git/main/.pi/settings.json | tail -1 | sed 's/.*"repo": *"\([^"]*\)".*/\1/'
 ```
 
 #### Labels
+
 Always add `bug` label. Add severity label if exists in repo: `severity:high`, `severity:medium`, `severity:low`.
 
 #### Existing Issues Check
+
 Before creating issue, check if similar bug already reported:
+
 ```bash
 gh issue list --repo <repo> --label bug --state open --json title --limit 30 \
   | grep -i "<keyword>"

@@ -3,11 +3,13 @@
  */
 
 /** Build a test plan comment containing a runnable bash command */
-export function buildPlanWithCommand(options: {
-	command?: string;
-	extraText?: string;
-	language?: string;
-} = {}): string {
+export function buildPlanWithCommand(
+	options: {
+		command?: string;
+		extraText?: string;
+		language?: string;
+	} = {},
+): string {
 	const cmd = options.command || "node --experimental-strip-types --test test/foo.test.mts";
 	const lang = options.language || "bash";
 	const extra = options.extraText ? "\n" + options.extraText : "";
@@ -23,12 +25,15 @@ Run with \`${cmd}\`.`;
 }
 
 /** Build a test plan comment with multiple code blocks */
-export function buildPlanWithMultipleBlocks(options: {
-	firstCommand?: string;
-	secondCommand?: string;
-} = {}): string {
+export function buildPlanWithMultipleBlocks(
+	options: {
+		firstCommand?: string;
+		secondCommand?: string;
+	} = {},
+): string {
 	const first = options.firstCommand || "npm install";
-	const second = options.secondCommand || "node --experimental-strip-types --test test/foo.test.mts";
+	const second =
+		options.secondCommand || "node --experimental-strip-types --test test/foo.test.mts";
 	return `## Test Plan
 
 ### Setup

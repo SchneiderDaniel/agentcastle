@@ -10,10 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, beforeEach, afterEach } from "node:test";
-import {
-	renderSessionToMarkdown,
-	parseSessionStats,
-} from "../renderer.ts";
+import { renderSessionToMarkdown, parseSessionStats } from "../renderer.ts";
 
 // ---------------------------------------------------------------------------
 // renderSessionToMarkdown — supervisor custom entry rendering

@@ -24,10 +24,7 @@ export interface ExecOptions {
  * Execute a command and return structured result.
  * Wraps execSync so callers can mock this function in tests.
  */
-export function runCommand(
-	command: string,
-	options: ExecOptions = {},
-): ExecResult {
+export function runCommand(command: string, options: ExecOptions = {}): ExecResult {
 	try {
 		const stdout = execSync(command, {
 			encoding: "utf-8",
@@ -65,9 +62,7 @@ export function mockRunCommand(result: ExecResult): typeof runCommand {
  * Create a mock runCommand factory that returns different results
  * based on the command string. Useful for testing multiple scenarios.
  */
-export function mockRunCommandFactory(
-	handler: (command: string) => ExecResult,
-): typeof runCommand {
+export function mockRunCommandFactory(handler: (command: string) => ExecResult): typeof runCommand {
 	return (command: string, _options?: ExecOptions): ExecResult => {
 		return handler(command);
 	};

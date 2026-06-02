@@ -50,6 +50,7 @@ structural_search(pattern="class $A extends $B", language="py")
 ### Error handling
 
 `structural_search` uses exit-code-based error detection. ast-grep conventions:
+
 - **Exit code 0** — Success. Results parsed from JSONL output.
 - **Exit code 1, empty stderr** — No matches found (legitimate, returns `matches: 0`).
 - **Exit code 1, non-empty stderr** — ast-grep error (returns `isError: true` with the stderr message).
@@ -59,12 +60,12 @@ This replaces the old keyword-heuristic approach that only caught stderr message
 
 ### When to use structural_search vs ripgrep_search
 
-| Use case | Tool |
-|----------|------|
+| Use case                                       | Tool                |
+| ---------------------------------------------- | ------------------- |
 | "Where is verify_token called with what args?" | `structural_search` |
-| "Find all TODO comments" | `ripgrep_search` |
-| "Show me every try/catch block" | `structural_search` |
-| "Search for error message 'timeout exceeded'" | `ripgrep_search` |
+| "Find all TODO comments"                       | `ripgrep_search`    |
+| "Show me every try/catch block"                | `structural_search` |
+| "Search for error message 'timeout exceeded'"  | `ripgrep_search`    |
 
 ## License
 

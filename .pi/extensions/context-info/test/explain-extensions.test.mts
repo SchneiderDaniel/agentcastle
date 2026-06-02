@@ -178,8 +178,7 @@ describe("listLocalExtensions", () => {
 
 describe("countExtensions", () => {
 	it("returns positive number matching actual .pi/extensions directory", async () => {
-		const { countExtensions, listLocalExtensions } =
-			await import("../extensions.ts");
+		const { countExtensions, listLocalExtensions } = await import("../extensions.ts");
 		const count = countExtensions();
 		const list = listLocalExtensions();
 		assert.strictEqual(count, list.length);

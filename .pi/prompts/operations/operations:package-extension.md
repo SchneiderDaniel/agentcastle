@@ -38,6 +38,7 @@ If user picks an extension not in `.pi/extensions/`, reject: "Extension <name> n
 ### Step 3 — Examine the extension
 
 Read the extension's entry file(s) to discover:
+
 - All imports — identify which are pi-provided (`@earendil-works/*`, `typebox`, node built-ins) vs third-party
 - If any third-party dependency found, note it must go in `dependencies` in package.json
 
@@ -49,25 +50,25 @@ Create or update the extension's `package.json`:
 
 ```json
 {
-  "name": "@agentcastle/<extension-name>",
-  "version": "0.1.0",
-  "description": "<short description from extension code>",
-  "keywords": ["pi-package", "<extension-name>"],
-  "license": "MIT",
-  "author": "SchneiderDaniel",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/SchneiderDaniel/agentcastle.git"
-  },
-  "type": "module",
-  "pi": {
-    "extensions": ["./index.ts"]
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
-  }
+	"name": "@agentcastle/<extension-name>",
+	"version": "0.1.0",
+	"description": "<short description from extension code>",
+	"keywords": ["pi-package", "<extension-name>"],
+	"license": "MIT",
+	"author": "SchneiderDaniel",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/SchneiderDaniel/agentcastle.git"
+	},
+	"type": "module",
+	"pi": {
+		"extensions": ["./index.ts"]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-ai": "*",
+		"@earendil-works/pi-coding-agent": "*",
+		"typebox": "*"
+	}
 }
 ```
 
@@ -80,6 +81,7 @@ If extension has subdirectories or multiple entry points, adjust `pi.extensions`
 The gallery card one-liner uses `package.json` `description` field — keep that punchy too.
 
 Create `README.md` with:
+
 - Package name as H1 heading
 - One-sentence elevator pitch (what problem it solves)
 - A `## Features` section listing every tool, command, event handler, and flag the extension registers
@@ -90,6 +92,7 @@ Create `README.md` with:
 - `## Requirements` / `## License` at bottom
 
 For `package.json`, optionally add `pi.image` or `pi.video` for gallery previews:
+
 ```json
 "pi": {
   "extensions": ["./index.ts"],

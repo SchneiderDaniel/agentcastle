@@ -9,11 +9,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import {
-	pushBranch,
-	commitChanges,
-	commitAndPush,
-} from "../github/git.ts";
+import { pushBranch, commitChanges, commitAndPush } from "../github/git.ts";
 import { createPullRequest } from "../github/pr.ts";
 
 // ---------------------------------------------------------------------------

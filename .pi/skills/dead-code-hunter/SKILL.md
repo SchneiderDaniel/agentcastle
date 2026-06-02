@@ -35,6 +35,7 @@ loop:
 Pick one extension from `.pi/extensions/` using `bash ls`. Prefer subdirectory extensions (they contain multiple files, more surface area). Single-file `.ts` extensions also eligible. Do NOT pick same extension twice in a row within same invocation.
 
 Selection method:
+
 ```bash
 ls -d /home/miria/git/main/.pi/extensions/*/   # subdirectory extensions
 ls /home/miria/git/main/.pi/extensions/*.ts     # single-file extensions
@@ -47,6 +48,7 @@ Pick randomly. Document which extension selected and why (e.g. "largest file cou
 Read the full extension before hunting. Use `read` to load all files.
 
 For subdirectory extensions:
+
 ```bash
 ls -la /home/miria/git/main/.pi/extensions/<name>/
 read /home/miria/git/main/.pi/extensions/<name>/index.ts
@@ -54,11 +56,13 @@ read /home/miria/git/main/.pi/extensions/<name>/<other-files>.ts
 ```
 
 For single-file extensions:
+
 ```bash
 read /home/miria/git/main/.pi/extensions/<name>.ts
 ```
 
 Understand:
+
 - Purpose (what does it register? tool? command? event handler?)
 - API surface (tool name, params, returns, events subscribed)
 - Call graph (which functions call which, which exports consumed where)
@@ -74,19 +78,21 @@ Understand:
 Apply each technique below. For each, document what you checked and whether found anything. Assign a **confidence level** to each finding:
 
 **Deterministic-first rule:** Every finding MUST be backed by either:
+
 - A `ripgrep_search` showing zero references (for unused symbols/imports)
 - A `structural_search` AST pattern match (for unreachable code / empty blocks)
 - Manual traced control flow (line-by-line proof code path cannot execute)
 
 Do NOT rely on asking the LLM "does this look dead to you?" — that is speculation, not evidence. If you cannot produce deterministic proof, skip the finding.
 
-| Confidence | Meaning | Typical for |
-|------------|---------|-------------|
-| 100% | Certain dead — code cannot execute or be referenced | Unreachable code after return/throw, function/method arg unused |
-| 90% | Strong evidence — dead unless dynamic invocation | Unused import, zombie dependency |
-| 60% | Likely dead — may be framework-invoked | Unused export, unused variable, empty block |
+| Confidence | Meaning                                             | Typical for                                                     |
+| ---------- | --------------------------------------------------- | --------------------------------------------------------------- |
+| 100%       | Certain dead — code cannot execute or be referenced | Unreachable code after return/throw, function/method arg unused |
+| 90%        | Strong evidence — dead unless dynamic invocation    | Unused import, zombie dependency                                |
+| 60%        | Likely dead — may be framework-invoked              | Unused export, unused variable, empty block                     |
 
 **Priority heuristic:** When multiple findings qualify, prefer filing:
+
 1. Higher confidence first (100% > 90% > 60%)
 2. Larger line count (more cleanup value)
 3. More likely to cause confusion or bugs if modified
@@ -96,16 +102,19 @@ Do NOT rely on asking the LLM "does this look dead to you?" — that is speculat
 Check for exported symbols, functions, and variables that nothing references.
 
 **Detection methods:**
+
 ```bash
 # Check if a function/export is referenced outside its declaration file
 ripgrep_search "myFunctionName" /home/miria/git/main/.pi/extensions/<name>/
 ```
+
 - Search for each public function name — if only its declaration matches, it is unused
 - Check private/helper functions — if only declaration + export line match, unused
 - Module-level `const`, `let`, `var` not referenced outside initial assignment
 - Parameters destructured but field never used in function body
 
 **Patterns:**
+
 ```typescript
 // UNUSED: exported but never imported by any other file
 export function helper(data: string) { ... }
@@ -125,43 +134,47 @@ function process({ name, age, email }: User) {
 Code paths that can never execute at runtime.
 
 **Patterns:**
+
 ```typescript
 // UNREACHABLE: after unconditional return
 function getConfig() {
-  return { color: "red" };
-  const extra = loadExtra();  // never runs
+	return { color: "red" };
+	const extra = loadExtra(); // never runs
 }
 
 // UNREACHABLE: after throw
 function validate(input: string) {
-  if (!input) throw new Error("required");
-  return input.trim();
-  console.log("validated");  // never runs
+	if (!input) throw new Error("required");
+	return input.trim();
+	console.log("validated"); // never runs
 }
 
 // UNREACHABLE: after break/continue in loop
 for (const item of items) {
-  if (item.skip) continue;
-  process(item);
-  break;
-  cleanup(item);  // never runs — break always before
+	if (item.skip) continue;
+	process(item);
+	break;
+	cleanup(item); // never runs — break always before
 }
 
 // UNREACHABLE: both branches of if/else return
 function getValue(n: number) {
-  if (n > 0) return "positive";
-  else return "non-positive";
-  console.log("done");  // never runs
+	if (n > 0) return "positive";
+	else return "non-positive";
+	console.log("done"); // never runs
 }
 
 // UNREACHABLE: exhaustive switch with default before case
 function handle(status: "ok" | "err") {
-  switch (status) {
-    default: return "unknown";
-    case "ok": return "all good";
-    case "err": return "error";
-  }
-  // switch always returns — anything after is dead
+	switch (status) {
+		default:
+			return "unknown";
+		case "ok":
+			return "all good";
+		case "err":
+			return "error";
+	}
+	// switch always returns — anything after is dead
 }
 ```
 
@@ -170,6 +183,7 @@ function handle(status: "ok" | "err") {
 Conditions that are always true or always false, making one branch dead.
 
 **Patterns:**
+
 ```typescript
 // DEAD BRANCH: constant condition
 const DEBUG = false;
@@ -206,22 +220,23 @@ function greet(name: string) {
 Conditions that always produce the same result.
 
 **Patterns:**
+
 ```typescript
 // REDUNDANT: identical branches
 if (condition) {
-  doSomething();
+	doSomething();
 } else {
-  doSomething();  // same as if branch
+	doSomething(); // same as if branch
 }
 // Could be: doSomething()
 
 // REDUNDANT: !! on boolean
 function toggle(flag: boolean) {
-  return !!flag;  // !! is redundant on boolean-typed param
+	return !!flag; // !! is redundant on boolean-typed param
 }
 
 // REDUNDANT: ternary returning boolean literal
-const result = condition ? true : false;  // could be: const result = condition
+const result = condition ? true : false; // could be: const result = condition
 
 // REDUNDANT: if-return-else-return
 if (x > 0) return true;
@@ -234,31 +249,37 @@ else return false;
 Identical or near-identical code blocks that should be unified.
 
 **Patterns:**
+
 ```typescript
 // DUPLICATE: same logic in two functions
 function formatA(name: string): string {
-  return `Hello, ${name}! Welcome.`;
+	return `Hello, ${name}! Welcome.`;
 }
 function formatB(user: string): string {
-  return `Hello, ${user}! Welcome.`;
+	return `Hello, ${user}! Welcome.`;
 }
 // Only variable name differs — identical logic
 
 // DUPLICATE: repeated condition chains
-if (role === "admin") { grantAccess(role); return; }
-if (role === "admin") { auditLog(role); }
+if (role === "admin") {
+	grantAccess(role);
+	return;
+}
+if (role === "admin") {
+	auditLog(role);
+}
 // Two separate if-checks for same condition
 
 // DUPLICATE: switch/case with same body
 switch (color) {
-  case "red":
-  case "blue":    // duplicate: both fall through to same handler expected
-  case "green":
-    processColor(color);
-    break;
-  case "red":     // duplicate case
-    processColor(color);  // second copy of same handler
-    break;
+	case "red":
+	case "blue": // duplicate: both fall through to same handler expected
+	case "green":
+		processColor(color);
+		break;
+	case "red": // duplicate case
+		processColor(color); // second copy of same handler
+		break;
 }
 ```
 
@@ -269,6 +290,7 @@ Function parameters that are never read in the body. Also includes unused functi
 **Confidence: 100%** — If a parameter is declared but never read in the function body, it is certainly unused. Exception: only if the parameter is part of an interface/override contract where the parent signature requires it.
 
 **Patterns:**
+
 ```typescript
 // UNUSED PARAM: callback with unused context
 function handler(event: Event, context: Context) {
@@ -296,6 +318,7 @@ Imports that are never referenced in the file body.
 **Confidence: 90%** — Strong evidence but could be side-effect import (e.g. `import "module-alias"`) or re-exported. Verify both cases.
 
 **Patterns:**
+
 ```typescript
 // ORPHANED: import never used
 import { readFile } from "fs/promises";
@@ -311,6 +334,7 @@ import type { SomeConfig } from "./types";
 ```
 
 **Detection method:**
+
 ```bash
 # For each import, search file for the imported symbol
 ripgrep_search "symbolName" /home/miria/git/main/.pi/extensions/<name>/<file>.ts
@@ -324,17 +348,18 @@ Code blocks with no statements or only comments.
 **Confidence: 60%** — Likely dead but may be intentional placeholder (TODO, future work, deliberate no-op). Check for explanatory comments before filing.
 
 **Patterns:**
+
 ```typescript
 // EMPTY: catch with no handling
 try {
-  await riskyOp();
+	await riskyOp();
 } catch {
-  // nothing
+	// nothing
 }
 
 // EMPTY: if block with no body
 if (condition) {
-  // TODO
+	// TODO
 }
 
 // EMPTY: function body empty
@@ -342,10 +367,10 @@ function noop() {}
 
 // EMPTY: switch case with nothing
 switch (x) {
-  case 1:
-    // intentional fallthrough (need comment)
-  case 2:
-    handleTwo();
+	case 1:
+	// intentional fallthrough (need comment)
+	case 2:
+		handleTwo();
 }
 ```
 
@@ -354,6 +379,7 @@ switch (x) {
 Event handlers or tool registrations that are never triggered or are overridden. Also includes code that is only invoked implicitly by pi framework (the pi-invocation pattern).
 
 **Pi-specific whitelist:** The following patterns are pi framework invocations — do NOT flag code reachable only through these as dead:
+
 - `pi.on(event, handler)` — handler invoked by pi runtime
 - `pi.registerTool({ ... })` — tool execute invoked by pi runtime
 - `pi.exec()` — child process execution
@@ -361,11 +387,13 @@ Event handlers or tool registrations that are never triggered or are overridden.
 - Any export consumed via pi extension manifest
 
 **Confidence:**
+
 - Event/tool handler body: 60% (framework-invoked, may be dead if never triggered)
 - pi.on with non-existent event name: 100% (certainly dead)
 - Tool with no prompt reference AND no external docs: 90% (very likely dead)
 
 **Patterns:**
+
 ```typescript
 // DEAD: handler registered but event never emitted by anything
 pi.on("never_emitted_event", async (event, ctx) => { ... });
@@ -390,36 +418,37 @@ Code that exists but has no functional effect.
 **Confidence: 90%** — Strong evidence unless the dead computation is intentional (e.g. calling a function for side effect but discarding its return value).
 
 **Patterns:**
+
 ```typescript
 // DEAD PATH: assignment to local var that is never read
 function compute(n: number) {
-  let temp = n * 2;
-  return n + 1;  // temp never used
+	let temp = n * 2;
+	return n + 1; // temp never used
 }
 
 // DEAD PATH: reassignment before first read
 let value = getDefault();
-value = getReal();  // first assignment is dead — overwritten before read
+value = getReal(); // first assignment is dead — overwritten before read
 
 // DEAD PATH: unused return value
 function save(data: string): boolean {
-  // ... persist ...
-  return true;
+	// ... persist ...
+	return true;
 }
-save("hello");  // return value discarded — intentional? If so, why return?
+save("hello"); // return value discarded — intentional? If so, why return?
 
 // DEAD PATH: variable set but only mutated, never read
 let cache = new Map<string, Result>();
 function lookup(key: string) {
-  // cache has entries set but never .get() called anywhere
-  cache.set(key, compute(key));
-  // never read from cache
+	// cache has entries set but never .get() called anywhere
+	cache.set(key, compute(key));
+	// never read from cache
 }
 
 // DEAD PATH: dead code in disabled conditional
 if (false) {
-  // This block never runs — deprecated feature?
-  legacyProcess(data);
+	// This block never runs — deprecated feature?
+	legacyProcess(data);
 }
 ```
 
@@ -427,9 +456,10 @@ if (false) {
 
 Packages declared in `package.json` but never imported in any source file. These bloat install size, increase attack surface, and mislead developers about actual dependencies.
 
-**Confidence: 90%** — Strong evidence. Only skip if the package is a build tool, type package (@types/*), or used via CLI command (not import).
+**Confidence: 90%** — Strong evidence. Only skip if the package is a build tool, type package (@types/\*), or used via CLI command (not import).
 
 **Detection method:**
+
 ```bash
 # List declared dependencies from package.json
 grep -E '"@[a-z]|"\w+' /home/miria/git/main/.pi/extensions/<name>/package.json | grep -v devDependencies
@@ -442,6 +472,7 @@ ripgrep_search "require('package-name')" /home/miria/git/main/.pi/extensions/<na
 Also check if the package is referenced in any configuration file (tsconfig, webpack, jest config, etc.) or used via CLI in npm scripts.
 
 **Patterns:**
+
 ```typescript
 // ZOMBIE: package.json declares axios but no file imports it
 // package.json: "axios": "^1.6.0"
@@ -515,6 +546,7 @@ Before filing, run through this checklist to reduce false positives:
 If code is ambiguous (possible false positive), skip it. Do not file speculative findings. When unsure, re-read the full file to trace the execution path. If still unsure, skip.
 
 Key validation rules:
+
 - **Unused export**: Must grep entire extension directory. If found in tests or config, still counts (only non-test code matters). If found in another production file, it is used → skip.
 - **Unreachable code**: Must trace control flow to prove no path reaches the line. Check all callers.
 - **Dead branch**: Must prove condition never varies at runtime. Check if variable is ever assigned elsewhere.
@@ -542,8 +574,10 @@ Only create issue after proof is complete. Use `gh issue create` via `bash gh`.
 
 ### Code Evidence
 ```
+
 File: path/to/file.ts, line N-M
 <code snippet showing dead code>
+
 ```
 
 ### Why It Is Dead
@@ -551,7 +585,9 @@ File: path/to/file.ts, line N-M
 
 ### Cross-Reference Proof
 ```
+
 <search output showing no references / no reachability>
+
 ```
 
 ### Confidence Assessment
@@ -566,12 +602,12 @@ File: path/to/file.ts, line N-M
 
 #### Severity Guide for Dead Code
 
-| Severity | Criteria |
-|----------|----------|
-| P0 | Dead code causes incorrect behavior (e.g. dead safety check, dead error handler) |
-| P1 | Dead code creates security surface (e.g. unused API endpoint, dead auth check) |
-| P2 | Dead code creates maintenance burden or confusion (unused export, dead branch) |
-| P3 | Cosmetic / trivial (empty block with comment, unused private var) |
+| Severity | Criteria                                                                         |
+| -------- | -------------------------------------------------------------------------------- |
+| P0       | Dead code causes incorrect behavior (e.g. dead safety check, dead error handler) |
+| P1       | Dead code creates security surface (e.g. unused API endpoint, dead auth check)   |
+| P2       | Dead code creates maintenance burden or confusion (unused export, dead branch)   |
+| P3       | Cosmetic / trivial (empty block with comment, unused private var)                |
 
 #### Issue Creation Command
 
@@ -592,15 +628,19 @@ rm /tmp/dead-code-report-<ext-name>.md
 ```
 
 Read repo from `.pi/settings.json`:
+
 ```bash
 grep -o '"repo"[^,]*' /home/miria/git/main/.pi/settings.json | tail -1 | sed 's/.*"repo": *"\([^"]*\)".*/\1/'
 ```
 
 #### Labels
+
 Always add `dead-code` label. Add severity label if exists in repo: `severity:high`, `severity:medium`, `severity:low`. If `dead-code` label does not exist on repo, use `bug` instead.
 
 #### Existing Issues Check
+
 Before creating issue, check if similar dead code already reported:
+
 ```bash
 gh issue list --repo <repo> --label dead-code --state open --json title --limit 30 \
   | grep -i "<keyword>"

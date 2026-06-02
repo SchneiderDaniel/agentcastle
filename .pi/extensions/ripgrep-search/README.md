@@ -47,10 +47,10 @@ In `.pi/settings.json`:
 
 ```json
 {
-  "ripgrepSearch": {
-    "searchBackend": "auto",
-    "maxLineLength": 200
-  }
+	"ripgrepSearch": {
+		"searchBackend": "auto",
+		"maxLineLength": 200
+	}
 }
 ```
 

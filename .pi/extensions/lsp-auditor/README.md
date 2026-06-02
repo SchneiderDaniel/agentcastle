@@ -49,16 +49,16 @@ In `.pi/settings.json`:
 
 ```json
 {
-  "lspAuditor": {
-    "servers": [
-      {
-        "extensions": [".ts", ".tsx", ".js", ".jsx"],
-        "command": "typescript-language-server",
-        "args": ["--stdio"],
-        "severityThreshold": "warning"
-      }
-    ]
-  }
+	"lspAuditor": {
+		"servers": [
+			{
+				"extensions": [".ts", ".tsx", ".js", ".jsx"],
+				"command": "typescript-language-server",
+				"args": ["--stdio"],
+				"severityThreshold": "warning"
+			}
+		]
+	}
 }
 ```
 

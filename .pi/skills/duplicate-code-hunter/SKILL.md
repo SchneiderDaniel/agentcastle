@@ -37,6 +37,7 @@ loop:
 Pick one extension from `.pi/extensions/` using `bash ls`. Prefer subdirectory extensions (they contain multiple files, more surface area). Single-file `.ts` extensions also eligible. Do NOT pick same extension twice in a row within same invocation.
 
 Selection method:
+
 ```bash
 ls -d /home/miria/git/main/.pi/extensions/*/   # subdirectory extensions
 ls /home/miria/git/main/.pi/extensions/*.ts     # single-file extensions
@@ -68,6 +69,7 @@ which jscpd
 Read the full extension before hunting. Use `read` to load all files.
 
 For subdirectory extensions:
+
 ```bash
 ls -la /home/miria/git/main/.pi/extensions/<name>/
 read /home/miria/git/main/.pi/extensions/<name>/index.ts
@@ -75,11 +77,13 @@ read /home/miria/git/main/.pi/extensions/<name>/<other-files>.ts
 ```
 
 For single-file extensions:
+
 ```bash
 read /home/miria/git/main/.pi/extensions/<name>.ts
 ```
 
 Understand:
+
 - Purpose (what does it register? tool? command? event handler?)
 - File count and structure (how many files, what patterns)
 - Code patterns (repeated blocks, similar function signatures, copy-paste regions)
@@ -87,6 +91,7 @@ Understand:
 - Module boundaries (which files share similar logic)
 
 **Duplicate susceptibility assessment:** Note patterns that increase duplicate risk:
+
 - Functions with very similar signatures (same params, same return shape)
 - Repeated conditional chains (if/else if or switch/case with similar bodies)
 - Helper/utility functions spread across multiple files
@@ -100,21 +105,21 @@ Apply each technique below. For each, document what you checked and whether foun
 
 #### Clone Type Classification
 
-| Type | Name | Definition | Confidence |
-|------|------|------------|------------|
-| Type 1 | Exact clone | Identical code except whitespace/comments | 100% |
-| Type 2 | Renamed clone | Same structure, identifiers/some literals differ | 90% |
-| Type 3 | Near-miss clone | Same structure with added/removed/modified statements | 70% |
-| Type 4 | Semantic clone | Different syntax, same functionality | 60%-LLM |
+| Type   | Name            | Definition                                            | Confidence |
+| ------ | --------------- | ----------------------------------------------------- | ---------- |
+| Type 1 | Exact clone     | Identical code except whitespace/comments             | 100%       |
+| Type 2 | Renamed clone   | Same structure, identifiers/some literals differ      | 90%        |
+| Type 3 | Near-miss clone | Same structure with added/removed/modified statements | 70%        |
+| Type 4 | Semantic clone  | Different syntax, same functionality                  | 60%-LLM    |
 
 **Deterministic priority:** Type 1 > Type 2 > Type 3 > Type 4. Always prefer filing higher clone types first.
 
-| Confidence | Meaning | Typical for |
-|------------|---------|-------------|
-| 100% | Certain — exact text match across two locations | Type 1 exact clone |
-| 90% | Strong — same AST shape, only names/literals differ | Type 2 renamed clone |
-| 70% | Likely — similar structure with minor differences | Type 3 near-miss clone |
-| 60% | LLM-assisted — different structure, same function | Type 4 semantic clone |
+| Confidence | Meaning                                             | Typical for            |
+| ---------- | --------------------------------------------------- | ---------------------- |
+| 100%       | Certain — exact text match across two locations     | Type 1 exact clone     |
+| 90%        | Strong — same AST shape, only names/literals differ | Type 2 renamed clone   |
+| 70%        | Likely — similar structure with minor differences   | Type 3 near-miss clone |
+| 60%        | LLM-assisted — different structure, same function   | Type 4 semantic clone  |
 
 ---
 
@@ -123,6 +128,7 @@ Apply each technique below. For each, document what you checked and whether foun
 Identical code block appears ≥2 times in the extension. Whitespace and comment differences tolerated.
 
 **Detection method A — jscpd (recommended):**
+
 ```bash
 # Run jscpd on the extension directory
 jscpd /home/miria/git/main/.pi/extensions/<name>/ --min-lines 5 --min-tokens 50 --output json
@@ -135,6 +141,7 @@ jscpd /home/miria/git/main/.pi/extensions/<name>/ --min-lines 5 --min-tokens 50 
 ```
 
 **Detection method B — ripgrep_search multi-line pattern (fallback):**
+
 ```bash
 # Extract first/last lines of suspected duplicate block into a literal file
 # Search for that literal pattern across all extension files
@@ -142,6 +149,7 @@ ripgrep_search "literal unique string from block" /home/miria/git/main/.pi/exten
 ```
 
 **Detection method C — manual block comparison:**
+
 ```bash
 # Extract suspected duplicate blocks to temp files and diff them
 read /home/miria/git/main/.pi/extensions/<name>/file.ts --offset 100 --limit 20 > /tmp/block1
@@ -150,26 +158,27 @@ diff /tmp/block1 /tmp/block2
 ```
 
 **Patterns:**
+
 ```typescript
 // EXACT CLONE — same 10-line block in two files
 // File A: do-something.ts
 function validateInput(data: Record<string, unknown>): boolean {
-  if (!data || typeof data !== "object") return false;
-  if (!data.id || typeof data.id !== "string") return false;
-  if (!data.name || typeof data.name !== "string") return false;
-  if (data.id.length > 100) return false;
-  if (data.name.length > 500) return false;
-  return true;
+	if (!data || typeof data !== "object") return false;
+	if (!data.id || typeof data.id !== "string") return false;
+	if (!data.name || typeof data.name !== "string") return false;
+	if (data.id.length > 100) return false;
+	if (data.name.length > 500) return false;
+	return true;
 }
 
 // File B: process-item.ts — identical function (same name, same body)
 function validateInput(data: Record<string, unknown>): boolean {
-  if (!data || typeof data !== "object") return false;
-  if (!data.id || typeof data.id !== "string") return false;
-  if (!data.name || typeof data.name !== "string") return false;
-  if (data.id.length > 100) return false;
-  if (data.name.length > 500) return false;
-  return true;
+	if (!data || typeof data !== "object") return false;
+	if (!data.id || typeof data.id !== "string") return false;
+	if (!data.name || typeof data.name !== "string") return false;
+	if (data.id.length > 100) return false;
+	if (data.name.length > 500) return false;
+	return true;
 }
 
 // EXACT CLONE — copy-paste with only renamed blocks
@@ -187,24 +196,28 @@ const logPath = path.join(ctx.cwd, "logs", "app.log");
 Same AST structure, same statement order, but identifiers and/or literal values differ.
 
 **Detection method A — structural_search AST matching:**
+
 ```bash
 # Use meta-variables to match structure regardless of identifiers
 structural_search "function $NAME($PARAMS) { $$$BODY }" ts
 ```
 
 For more specific patterns, search for the shape:
+
 ```bash
 # Find all functions with similar parameter patterns and body shapes
 structural_search "if (!$A || typeof $A !== $TYPE) $$$RETURN" ts
 ```
 
 **Detection method B — jscpd token mode:**
+
 ```bash
 # jscpd normalizes identifiers by default — output includes Type 2 clones
 jscpd /home/miria/git/main/.pi/extensions/<name>/ --min-lines 5 --min-tokens 50 --output json
 ```
 
 **Detection method C — manual comparison with normalized diff:**
+
 ```bash
 # Extract blocks, normalize identifiers, then diff
 # Create normalized versions by replacing identifiers with placeholders
@@ -214,20 +227,21 @@ diff /tmp/block1.norm /tmp/block2.norm
 ```
 
 **Patterns:**
+
 ```typescript
 // RENAMED CLONE — same logic, different variable names
 // Block A
 function formatUserMessage(name: string, age: number): string {
-  const greeting = `Hello, ${name}!`;
-  const details = `You are ${age} years old.`;
-  return `${greeting} ${details}`;
+	const greeting = `Hello, ${name}!`;
+	const details = `You are ${age} years old.`;
+	return `${greeting} ${details}`;
 }
 
 // Block B — same structure, different names
 function formatProductDescription(title: string, price: number): string {
-  const intro = `Introducing ${title}!`;
-  const pricing = `It costs $${price}.`;
-  return `${intro} ${pricing}`;
+	const intro = `Introducing ${title}!`;
+	const pricing = `It costs $${price}.`;
+	return `${intro} ${pricing}`;
 }
 
 // RENAMED CLONE — copy-paste with find-replace
@@ -247,6 +261,7 @@ const missingCode = 404;
 Same overall structure but with added, removed, or modified statements. Some statements differ while the block layout is preserved.
 
 **Detection method A — jscpd (handles near-miss with --min-lines + threshold):**
+
 ```bash
 # jscpd uses token-based comparison which naturally catches near-misses
 jscpd /home/miria/git/main/.pi/extensions/<name>/ --min-lines 5 --min-tokens 30 \
@@ -255,6 +270,7 @@ jscpd /home/miria/git/main/.pi/extensions/<name>/ --min-lines 5 --min-tokens 30 
 ```
 
 **Detection method B — pairwise line alignment:**
+
 ```bash
 # Extract two similar blocks and side-by-side diff
 diff --side-by-side --width=160 /tmp/block1 /tmp/block2
@@ -265,24 +281,25 @@ diff --side-by-side --width=160 /tmp/block1 /tmp/block2
 Only use when deterministic tools flag high-similarity blocks (>60% match) but classification between Type 2 and Type 3 is ambiguous. LLM role: classify the clone, not find it.
 
 **Patterns:**
+
 ```typescript
 // NEAR-MISS CLONE — same setup/teardown, different middle
 // Block A
 async function handleCreate(params: CreateParams, ctx: Context) {
-  const { name, data } = params;
-  const session = ctx.session;
-  const filePath = path.join(ctx.cwd, "data", name);
-  await fs.writeFile(filePath, JSON.stringify(data));
-  return { ok: true, path: filePath };
+	const { name, data } = params;
+	const session = ctx.session;
+	const filePath = path.join(ctx.cwd, "data", name);
+	await fs.writeFile(filePath, JSON.stringify(data));
+	return { ok: true, path: filePath };
 }
 
 // Block B — same setup, same teardown, different middle operation
 async function handleRead(params: ReadParams, ctx: Context) {
-  const { name } = params;                    // slightly different destructure
-  const session = ctx.session;                // same
-  const filePath = path.join(ctx.cwd, "data", name);  // same
-  const content = await fs.readFile(filePath, "utf-8"); // different op
-  return { ok: true, content };               // different return shape
+	const { name } = params; // slightly different destructure
+	const session = ctx.session; // same
+	const filePath = path.join(ctx.cwd, "data", name); // same
+	const content = await fs.readFile(filePath, "utf-8"); // different op
+	return { ok: true, content }; // different return shape
 }
 
 // NEAR-MISS — same condition chain, extra branch inserted
@@ -293,7 +310,7 @@ if (role === "viewer") return readOnly;
 return deny;
 
 // Block B — same branches plus one extra
-if (role === "superadmin") return fullAccess;  // inserted
+if (role === "superadmin") return fullAccess; // inserted
 if (role === "admin") return fullAccess;
 if (role === "editor") return limitedAccess;
 if (role === "viewer") return readOnly;
@@ -305,32 +322,35 @@ return deny;
 Different code structure and syntax but same functional behavior. LLM required for detection — this is the only technique where LLM opinion is acceptable as the primary detection mechanism.
 
 **Process:**
+
 1. LLM reads full extension and identifies functions/modules that appear to serve the same purpose
 2. LLM provides a reasoning chain showing why they are semantically equivalent
 3. Code snippet from both locations shown as proof
 4. Cross-referenced with at least one deterministic tool to confirm structural similarity
 
 **Constraints:**
+
 - Only file Type 4 findings if you can articulate a clear reasoning chain
 - Always show both code snippets
 - Confidence: 60% max
 - Prefer filing Type 1-3 over Type 4 when both exist
 
 **Patterns:**
+
 ```typescript
 // SEMANTIC CLONE — same behavior, different syntax
 // Version A: for loop
 function sumArrayA(items: number[]): number {
-  let total = 0;
-  for (let i = 0; i < items.length; i++) {
-    total += items[i];
-  }
-  return total;
+	let total = 0;
+	for (let i = 0; i < items.length; i++) {
+		total += items[i];
+	}
+	return total;
 }
 
 // Version B: reduce
 function sumArrayB(values: number[]): number {
-  return values.reduce((acc, v) => acc + v, 0);
+	return values.reduce((acc, v) => acc + v, 0);
 }
 ```
 
@@ -339,6 +359,7 @@ function sumArrayB(values: number[]): number {
 Duplicates that appear within the same file. Often from copy-paste within a single module.
 
 **Detection method:**
+
 ```bash
 # For each function/block in the file, search for its content elsewhere in the same file
 # Use distinctive lines from the block as search pattern
@@ -346,34 +367,35 @@ ripgrep_search "distinctive line from block" /home/miria/git/main/.pi/extensions
 ```
 
 **Patterns:**
+
 ```typescript
 // INTRA-FILE DUPLICATE — identical validation in two methods
 class DataManager {
-  async createRecord(data: Record<string, unknown>) {
-    if (!data.id || typeof data.id !== "string") throw new Error("invalid");  // ←
-    if (!data.name || typeof data.name !== "string") throw new Error("invalid"); // ←
-    // ... create logic
-  }
+	async createRecord(data: Record<string, unknown>) {
+		if (!data.id || typeof data.id !== "string") throw new Error("invalid"); // ←
+		if (!data.name || typeof data.name !== "string") throw new Error("invalid"); // ←
+		// ... create logic
+	}
 
-  async updateRecord(data: Record<string, unknown>) {
-    // same validation block repeated
-    if (!data.id || typeof data.id !== "string") throw new Error("invalid");  // ← dup
-    if (!data.name || typeof data.name !== "string") throw new Error("invalid"); // ← dup
-    // ... update logic
-  }
+	async updateRecord(data: Record<string, unknown>) {
+		// same validation block repeated
+		if (!data.id || typeof data.id !== "string") throw new Error("invalid"); // ← dup
+		if (!data.name || typeof data.name !== "string") throw new Error("invalid"); // ← dup
+		// ... update logic
+	}
 }
 
 // INTRA-FILE DUPLICATE — same config block repeated
 const TOOL_A_CONFIG = {
-  name: "tool-a",
-  description: "Does something",
-  params: t.Object({ input: t.String() }),
+	name: "tool-a",
+	description: "Does something",
+	params: t.Object({ input: t.String() }),
 };
 
 const TOOL_B_CONFIG = {
-  name: "tool-b",
-  description: "Does something else",
-  params: t.Object({ input: t.String() }),  // identical to TOOL_A_CONFIG.params
+	name: "tool-b",
+	description: "Does something else",
+	params: t.Object({ input: t.String() }), // identical to TOOL_A_CONFIG.params
 };
 ```
 
@@ -382,45 +404,60 @@ const TOOL_B_CONFIG = {
 The same condition chain appears in two or more places. Copy-pasted business logic.
 
 **Detection method A — structural_search:**
+
 ```bash
 # Find all if/else-if chains and compare their structures
 structural_search "if ($A) $$$THEN else if ($B) $$$ELSE" ts
 ```
 
 **Detection method B — ripgrep_search for literal condition text:**
+
 ```bash
 # Search for characteristic condition text
 ripgrep_search "role === "admin"" /home/miria/git/main/.pi/extensions/<name>/
 ```
 
 **Patterns:**
+
 ```typescript
 // REPEATED CONDITION CHAIN — same role check in two places
 function getAccessLevel(role: string): string {
-  if (role === "admin") return "full";
-  if (role === "editor") return "limited";
-  if (role === "viewer") return "read";
-  return "deny";
+	if (role === "admin") return "full";
+	if (role === "editor") return "limited";
+	if (role === "viewer") return "read";
+	return "deny";
 }
 
 function getPermissions(role: string): string[] {
-  if (role === "admin") return ["r", "w", "x"];  // ← same condition
-  if (role === "editor") return ["r", "w"];        // ← same condition
-  if (role === "viewer") return ["r"];             // ← same condition
-  return [];
+	if (role === "admin") return ["r", "w", "x"]; // ← same condition
+	if (role === "editor") return ["r", "w"]; // ← same condition
+	if (role === "viewer") return ["r"]; // ← same condition
+	return [];
 }
 
 // REPEATED SWITCH — same cases, different bodies
 switch (status) {
-  case "loading": showLoader(); break;
-  case "success": showData(); break;
-  case "error": showError(); break;
+	case "loading":
+		showLoader();
+		break;
+	case "success":
+		showData();
+		break;
+	case "error":
+		showError();
+		break;
 }
 // ... elsewhere ...
 switch (status) {
-  case "loading": displaySpinner(); break;   // diff body
-  case "success": renderContent(); break;     // diff body
-  case "error": displayAlert(); break;         // diff body
+	case "loading":
+		displaySpinner();
+		break; // diff body
+	case "success":
+		renderContent();
+		break; // diff body
+	case "error":
+		displayAlert();
+		break; // diff body
 }
 // Same condition chain is duplicated even though bodies differ
 ```
@@ -430,6 +467,7 @@ switch (status) {
 The same import or re-export pattern appears in multiple files, or files import the same module with redundant specifiers.
 
 **Detection method:**
+
 ```bash
 # Find all imports from a specific module
 ripgrep_search "from '"../common"" /home/miria/git/main/.pi/extensions/<name>/
@@ -437,6 +475,7 @@ ripgrep_search "from '"../common"" /home/miria/git/main/.pi/extensions/<name>/
 ```
 
 **Patterns:**
+
 ```typescript
 // DUPLICATE IMPORTS — three files import same thing with overlapping specifiers
 // File A: import { ToolContext } from "../types";
@@ -454,6 +493,7 @@ ripgrep_search "from '"../common"" /home/miria/git/main/.pi/extensions/<name>/
 Code blocks that appear in 3+ locations (not just 2). Higher impact — more maintenance burden, more bug-propagation risk.
 
 **Detection method:**
+
 ```bash
 # Use jscpd — it finds all clone locations, not just pairs
 jscpd /home/miria/git/main/.pi/extensions/<name>/ --min-lines 3 --output json
@@ -464,27 +504,40 @@ ripgrep_search "distinctive pattern" /home/miria/git/main/.pi/extensions/<name>/
 ```
 
 **Patterns:**
+
 ```typescript
 // TRIPLICATE — same error handling in 4 files
 // File A
 async function createItem(data: Data) {
-  try { return await db.insert(data); }
-  catch (err) { throw new AppError("create failed", { cause: err }); }
+	try {
+		return await db.insert(data);
+	} catch (err) {
+		throw new AppError("create failed", { cause: err });
+	}
 }
 // File B
 async function updateItem(data: Data) {
-  try { return await db.update(data); }
-  catch (err) { throw new AppError("update failed", { cause: err }); }
+	try {
+		return await db.update(data);
+	} catch (err) {
+		throw new AppError("update failed", { cause: err });
+	}
 }
 // File C
 async function deleteItem(id: string) {
-  try { return await db.delete({ id }); }
-  catch (err) { throw new AppError("delete failed", { cause: err }); }
+	try {
+		return await db.delete({ id });
+	} catch (err) {
+		throw new AppError("delete failed", { cause: err });
+	}
 }
 // File D
 async function queryItem(filter: Filter) {
-  try { return await db.find(filter); }
-  catch (err) { throw new AppError("query failed", { cause: err }); }
+	try {
+		return await db.find(filter);
+	} catch (err) {
+		throw new AppError("query failed", { cause: err });
+	}
 }
 ```
 
@@ -493,6 +546,7 @@ async function queryItem(filter: Filter) {
 Code blocks generated from templates or boilerplate that should be generated programmatically.
 
 **Detection method:**
+
 ```bash
 # Look for highly repetitive patterns in file headers, license blocks, config sections
 read /home/miria/git/main/.pi/extensions/<name>/<file>.ts | head -20
@@ -500,6 +554,7 @@ read /home/miria/git/main/.pi/extensions/<name>/<file>.ts | head -20
 ```
 
 **Patterns:**
+
 ```typescript
 // BOILERPLATE — same file header pattern
 // ~5 identical lines across 10+ files
@@ -520,12 +575,12 @@ Every suspected duplicate code finding MUST have deterministic proof. Rule: **"T
 
 #### Proof Standard Matrix
 
-| Clone Type | Proof Method 1 | Proof Method 2 | Proof Method 3 |
-|------------|---------------|---------------|---------------|
-| Type 1 | jscpd output or ripgrep_search | Read both blocks, visual comparison | diff between blocks shows 0 differences |
-| Type 2 | jscpd output | structural_search AST match | Normalized diff shows 0 differences |
-| Type 3 | jscpd output with --threshold | Structural line-alignment >60% match | LLM classification of clone type |
-| Type 4 | LLM semantic analysis | Structural similarity check | Both code snippets shown |
+| Clone Type | Proof Method 1                 | Proof Method 2                       | Proof Method 3                          |
+| ---------- | ------------------------------ | ------------------------------------ | --------------------------------------- |
+| Type 1     | jscpd output or ripgrep_search | Read both blocks, visual comparison  | diff between blocks shows 0 differences |
+| Type 2     | jscpd output                   | structural_search AST match          | Normalized diff shows 0 differences     |
+| Type 3     | jscpd output with --threshold  | Structural line-alignment >60% match | LLM classification of clone type        |
+| Type 4     | LLM semantic analysis          | Structural similarity check          | Both code snippets shown                |
 
 **Deterministic-only path:** For Type 1-2, all proof must be from deterministic tools. For Type 3, jscpd/lines alignment must identify the pair, LLM may classify. For Type 4, LLM is the primary detector but proof must include both code snippets with line references.
 
@@ -615,14 +670,18 @@ Only create issue after proof is complete. Use `gh issue create` via `bash gh`.
 
 **Location A:**
 ```
+
 File: path/to/file.ts, line N-M
 <code snippet showing block A>
+
 ```
 
 **Location B:**
 ```
+
 File: path/to/other.ts, line N-M
 <code snippet showing block B>
+
 ```
 
 ### Clone Type Classification
@@ -633,7 +692,9 @@ File: path/to/other.ts, line N-M
 
 ### Cross-Reference Proof
 ```
+
 <jscpd output, structural_search match, diff output, or other tool proof>
+
 ```
 
 ### Confidence Assessment
@@ -648,12 +709,12 @@ File: path/to/other.ts, line N-M
 
 #### Severity Guide
 
-| Severity | Criteria |
-|----------|----------|
-| P0 | Bug-propagation risk (same bug exists in multiple locations) |
-| P1 | Security duplication (same vulnerability copied across files) |
-| P2 | Significant duplication (15+ lines, 3+ locations, or complex business logic) |
-| P3 | Minor duplication (5-15 lines, 2 locations, boilerplate, convenience) |
+| Severity | Criteria                                                                     |
+| -------- | ---------------------------------------------------------------------------- |
+| P0       | Bug-propagation risk (same bug exists in multiple locations)                 |
+| P1       | Security duplication (same vulnerability copied across files)                |
+| P2       | Significant duplication (15+ lines, 3+ locations, or complex business logic) |
+| P3       | Minor duplication (5-15 lines, 2 locations, boilerplate, convenience)        |
 
 #### Issue Creation Command
 
@@ -674,15 +735,19 @@ rm /tmp/duplicate-code-report-<ext-name>.md
 ```
 
 Read repo from `.pi/settings.json`:
+
 ```bash
 grep -o '"repo"[^,]*' /home/miria/git/main/.pi/settings.json | tail -1 | sed 's/.*"repo": *"\([^"]*\)".*/\1/'
 ```
 
 #### Labels
+
 Always add `duplicate-code` label. Add severity label if exists in repo: `severity:high`, `severity:medium`, `severity:low`. If `duplicate-code` label does not exist on repo, use `enhancement` instead.
 
 #### Existing Issues Check
+
 Before creating issue, check if similar duplicate code already reported:
+
 ```bash
 gh issue list --repo <repo> --label duplicate-code --state open --json title --limit 30 \
   | grep -i "<keyword>"

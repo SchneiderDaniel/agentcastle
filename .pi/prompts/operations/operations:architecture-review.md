@@ -14,17 +14,18 @@ Requires: `gh` CLI authenticated.
 /architecture-review <target>
 ```
 
-| Target | What it analyzes |
-|--------|-----------------|
-| `root` (or omitted) | Main repo |
-| `<submodule-name>` | Submodule by name (resolved from `.gitmodules`) |
-| `<any-path>` | Arbitrary directory |
+| Target              | What it analyzes                                |
+| ------------------- | ----------------------------------------------- |
+| `root` (or omitted) | Main repo                                       |
+| `<submodule-name>`  | Submodule by name (resolved from `.gitmodules`) |
+| `<any-path>`        | Arbitrary directory                             |
 
 ## Workflow
 
 ### 1 — Resolve target
 
 Extract target from message:
+
 - `/architecture-review <target>` → use directly
 - Natural language: parse "of X", "in X", "for X", or single word matching submodule name or valid path
 - If nothing matches, treat as `root`
@@ -41,6 +42,7 @@ Use Pi tools to walk target:
 - `read` — inspect module interfaces directly
 
 Note friction points:
+
 - Where understanding requires bouncing between many small modules
 - Where modules are **shallow** — interface nearly as complex as implementation
 - Where pure functions extracted just for testability but real bugs hide in call patterns (no **locality**)
@@ -59,7 +61,7 @@ Create one GitHub issue listing all candidates.
 
 **Body structure:**
 
-```markdown
+````markdown
 ## Candidates
 
 ### 1. <short title> [Strong]
@@ -80,6 +82,7 @@ flowchart LR
     D[OrderModule] --> E[OrderRepo]
   end
 ```
+````
 
 ---
 
@@ -90,6 +93,7 @@ flowchart LR
 ## Top Recommendation
 
 **<candidate name>** — one sentence why.
+
 ```
 
 ### 4 — Create sub-issues
@@ -158,3 +162,4 @@ Use these terms exactly in every suggestion. No substitutions.
 ## Tone
 
 Lean editorial. No hedging, no throat-clearing, no "it's worth noting". Sentence → bullet if possible. Bullet → cut if possible.
+```

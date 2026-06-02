@@ -332,7 +332,7 @@ describe("production agent files — thinking field", () => {
 
 	for (const agent of agents) {
 		it(`${agent.name}.md has thinking: "${agent.expected}"`, () => {
-			const val = parseAgentFileThinking(`.pi/agents/${agent.name}.md`);
+			const val = parseAgentFileThinking(`.pi/extensions/supervisor/agents/${agent.name}.md`);
 			assert.strictEqual(val, agent.expected);
 		});
 	}
@@ -341,7 +341,7 @@ describe("production agent files — thinking field", () => {
 describe("production agent files — thinking validation passes for all", () => {
 	for (const agentName of ["architect", "researcher", "developer", "test-designer", "auditor"]) {
 		it(`${agentName}.md thinking passes validation`, () => {
-			const val = parseAgentFileThinking(`.pi/agents/${agentName}.md`);
+			const val = parseAgentFileThinking(`.pi/extensions/supervisor/agents/${agentName}.md`);
 			if (val !== undefined) {
 				assert.doesNotThrow(() => validateThinking(val));
 			}

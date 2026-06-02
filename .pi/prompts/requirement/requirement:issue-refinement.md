@@ -109,11 +109,11 @@ Identify:
 
 Inspect the issue and codebase context to determine whether the change involves **new or modified HTML templates, CSS, or browser-rendered JavaScript**. You must reach one of three outcomes:
 
-| Detection Outcome | Action |
-|---|---|
-| **Confident frontend** | Set `frontend_flag=true`. Announce: PHASE 1.5 (frontend refinement) will run after PHASE 1. |
-| **Unsure** | Call `ask_user` with exactly ONE confirmation question: *"Does this issue involve any UI changes (HTML, CSS, or browser-rendered JS)?"* — Options: `"Yes, it involves UI changes"` / `"No, no UI changes"`. Set `frontend_flag` based on answer. Do NOT ask any follow-up. |
-| **Confident no frontend** | Set `frontend_flag=false`. Skip silently — flow goes directly from PHASE 1 to PHASE 2 with no mention of a frontend phase. |
+| Detection Outcome         | Action                                                                                                                                                                                                                                                                     |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Confident frontend**    | Set `frontend_flag=true`. Announce: PHASE 1.5 (frontend refinement) will run after PHASE 1.                                                                                                                                                                                |
+| **Unsure**                | Call `ask_user` with exactly ONE confirmation question: _"Does this issue involve any UI changes (HTML, CSS, or browser-rendered JS)?"_ — Options: `"Yes, it involves UI changes"` / `"No, no UI changes"`. Set `frontend_flag` based on answer. Do NOT ask any follow-up. |
+| **Confident no frontend** | Set `frontend_flag=false`. Skip silently — flow goes directly from PHASE 1 to PHASE 2 with no mention of a frontend phase.                                                                                                                                                 |
 
 ### 0.5 — Determine Interview Topics
 

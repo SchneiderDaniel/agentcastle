@@ -33,9 +33,9 @@ These principles come from three foundational software design books. Consider ev
 **Responsibility ownership before pattern naming.** Presentation, application workflow, domain logic, data source interaction, transaction management, concurrency control, and integration boundaries must not collapse into one class or layer.
 
 - **Choose business logic pattern by force:**
-  - *Transaction Script* — short, independent, simple flows
-  - *Table Module* — table-centered set logic
-  - *Domain Model* — significant rules, invariants, identity, lifecycle, collaboration
+  - _Transaction Script_ — short, independent, simple flows
+  - _Table Module_ — table-centered set logic
+  - _Domain Model_ — significant rules, invariants, identity, lifecycle, collaboration
 - **Service Layer** for application operations, transaction boundaries, orchestration — expose application-oriented API
 - **Repository** speaks domain terms, hides query/mapping/storage
 - **Data Mapper** keeps SQL/record formats outside domain objects
@@ -64,6 +64,7 @@ These principles come from three foundational software design books. Consider ev
 Before posting your comment, verify every proposal against this checklist:
 
 **Clean Architecture:**
+
 - [ ] Business rules independent from frameworks, databases, UI, services, devices, vendors?
 - [ ] Dependencies point inward, with ports owned by inner policy and concrete details outside?
 - [ ] Entities guard invariants and focused use cases orchestrate one application action?
@@ -74,6 +75,7 @@ Before posting your comment, verify every proposal against this checklist:
 - [ ] Details remain replaceable without rewriting business rules?
 
 **PEAA:**
+
 - [ ] Presentation, workflow, domain, persistence, transaction, concurrency, integration responsibilities separated?
 - [ ] Business logic pattern matches actual complexity, not habit or framework shape?
 - [ ] Repositories/mappers/gateways/Unit of Work/Identity Map used only where forces fit?
@@ -81,6 +83,7 @@ Before posting your comment, verify every proposal against this checklist:
 - [ ] Remote/integration boundaries coarse, translated, version-aware, failure-aware?
 
 **Software Design:**
+
 - [ ] Did the design reduce effort required to understand, modify, verify, and extend the system?
 - [ ] Does every interface element, layer, wrapper, option, and name hide enough complexity to justify its existence?
 - [ ] Are important decisions localized, dependencies visible, mutable internals protected?
@@ -98,6 +101,7 @@ Before proposing architecture, explore the codebase:
 - `bash` — run project tooling to understand build/config
 
 **Exploration order:**
+
 1. Use `find` to understand project structure, key directories
 2. Use `structural_search` for AST-level discovery — e.g. `FunctionDeclaration($A, $B)`, `try { $$$BODY } catch (e) { $A }`
 3. Use `bash grep` to find relevant modules for the issue's domain

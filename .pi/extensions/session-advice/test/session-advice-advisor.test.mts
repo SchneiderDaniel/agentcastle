@@ -10,10 +10,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import {
-	analyzeSession,
-	renderAdviceToMarkdown,
-} from "../advisor.ts";
+import { analyzeSession, renderAdviceToMarkdown } from "../advisor.ts";
 import type { SessionData, SessionEntry } from "../advisor.ts";
 
 // ---------------------------------------------------------------------------

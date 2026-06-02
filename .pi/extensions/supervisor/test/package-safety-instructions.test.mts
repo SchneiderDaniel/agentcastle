@@ -1,7 +1,7 @@
 /**
  * Tests for npm package age check instructions in agent prompt files.
  *
- * Verifies AGENTS.md, .pi/agents/developer.md, and .pi/agents/researcher.md
+ * Verifies AGENTS.md, .pi/extensions/supervisor/agents/developer.md, and .pi/extensions/supervisor/agents/researcher.md
  * all contain the required package safety rules.
  *
  * Run with:
@@ -26,7 +26,7 @@ function readFile(relativePath: string): string {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("AGENTS.md — Package Safety section", () => {
-	const content = readFile("AGENTS.md");
+	const content = readFile("../../../AGENTS.md");
 
 	it("contains '## Package Safety' heading", () => {
 		assert.ok(content.includes("## Package Safety"));
@@ -75,7 +75,7 @@ describe("AGENTS.md — Package Safety section", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("developer.md — Package Safety Check instructions", () => {
-	const content = readFile(".pi/agents/developer.md");
+	const content = readFile("agents/developer.md");
 
 	it("contains 'Package Safety Check' reference", () => {
 		assert.ok(content.includes("Package Safety"));
@@ -137,7 +137,7 @@ describe("developer.md — Package Safety Check instructions", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("researcher.md — Package age reference", () => {
-	const content = readFile(".pi/agents/researcher.md");
+	const content = readFile("agents/researcher.md");
 
 	it("references npm package age or 'Package age'", () => {
 		assert.ok(
@@ -173,9 +173,9 @@ describe("researcher.md — Package age reference", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("Cross-file consistency", () => {
-	const agentsContent = readFile("AGENTS.md");
-	const devContent = readFile(".pi/agents/developer.md");
-	const resContent = readFile(".pi/agents/researcher.md");
+	const agentsContent = readFile("../../../AGENTS.md");
+	const devContent = readFile("agents/developer.md");
+	const resContent = readFile("agents/researcher.md");
 
 	it("all three files reference same 14-day threshold", () => {
 		for (const [name, c] of [

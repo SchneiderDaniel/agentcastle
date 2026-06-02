@@ -137,11 +137,11 @@ Capture the full diff output as `DIFF_CONTENT`.
 
 Generate **3 to 5 questions** total, regardless of PR size:
 
-| PR Scope | Question Count |
-|----------|---------------|
-| 1-2 files changed, few lines | 3 questions |
-| 3-5 files changed | 4 questions |
-| 6+ files changed or substantial logic | 5 questions |
+| PR Scope                              | Question Count |
+| ------------------------------------- | -------------- |
+| 1-2 files changed, few lines          | 3 questions    |
+| 3-5 files changed                     | 4 questions    |
+| 6+ files changed or substantial logic | 5 questions    |
 
 Target the lower end for trivial changes (config typos, doc fixes, renames) and the upper end for PRs with meaningful behavioral or structural changes. Never exceed 5 questions.
 
@@ -177,7 +177,8 @@ Question X of N:
 ```
 
 Example of CORRECT output (context shown inside ask_user, no analysis leaked):
-```
+
+````
 Question 1 of 5:
 [ask_user with question:
 "Here is a change from the PR:
@@ -185,7 +186,7 @@ Question 1 of 5:
 ```diff
 -  function validate(token) {
 +  async function validate(token) {
-```
+````
 
 Why was `validate` changed to async?
 
@@ -194,22 +195,25 @@ B. To support token revocation checks that require a database call
 C. To improve type safety with TypeScript
 D. To enable parallel validation of multiple tokens"
 and options ["A","B","C","D"], no recommended]
+
 ```
 
 Example of WRONG output (leaks answer — NEVER DO THIS):
 ```
+
 The diff shows token validation was made async to support database calls.
 
 Question 1 of 5:
 [ask_user...]
 ← The line above leaked the answer before the question!
-```
+
+````
 
 Example of WRONG context (annotations leak answer — NEVER DO THIS):
 ```diff
 -  function validate(token) {        ← OLD: synchronous
 +  async function validate(token) {   ← NEW: async — THIS IS THE KEY CHANGE
-```
+````
 
 ### 3.4 — Welcome message
 
@@ -261,12 +265,12 @@ For each of the N questions:
    - **header**: `Question X of N`
    - **question**: The context snippet first, then the question, then the choices. Format:
 
-```
+````
 Here is a change from the PR:
 
 ```diff
 <relevant diff excerpt — 5 to 25 lines, raw, no annotations>
-```
+````
 
 <question text — asks about understanding, not trivia>
 
@@ -274,6 +278,7 @@ A. <choice text>
 B. <choice text>
 C. <choice text>
 D. <choice text>
+
 ```
 
    - **options**: `["A", "B", "C", "D"]`
@@ -316,7 +321,9 @@ For each question presented in Step 3, re-examine the question text and choices 
 Count how many answers the user got correct. Calculate the percentage:
 
 ```
-SCORE = floor((correct_answers / total_questions) * 100)
+
+SCORE = floor((correct_answers / total_questions) \* 100)
+
 ```
 
 **Floor rule:** Apply `Math.floor()` — integer division. Example: 4/5 = 80% (pass). 3/4 = 75% (fail).
@@ -326,9 +333,11 @@ SCORE = floor((correct_answers / total_questions) * 100)
 Display:
 
 ```
+
 📊 Quiz Results: SCORE% (correct_answers/total_questions correct)
 
 Pass threshold: 80%
+
 ```
 
 ---
@@ -340,17 +349,20 @@ If the score is **≥80%**:
 ### 5a.1 — Report result
 
 ```
+
 ✅ Congratulations! You scored SCORE% — you understand this PR's changes.
 🚀 Auto-merging PR #NUMBER...
-```
+
+````
 
 ### 5a.2 — Merge the PR
 
 ```bash
 gh pr merge "$NUMBER" --repo "$REPO" --auto
-```
+````
 
 The `--auto` flag:
+
 - Uses the repo's default merge strategy (merge commit, squash, or rebase)
 - Automatically enables auto-merge (waits for required checks to pass)
 - Sets the merge to complete once all requirements are satisfied
@@ -417,12 +429,14 @@ Use `ask_user` to offer a retry:
 ### 5b.3 — Handle retry decision
 
 **If user chooses "Yes":**
+
 - Return to the per-question loop in Step 3.5.
 - Re-present the SAME questions from the conversation history (do NOT generate new questions).
 - Follow the same strict output rules (3.3) — do NOT leak answers during the retry.
 - Score the retry independently starting from Step 4.
 
 **If user chooses "No":**
+
 - Report: `👋 Exiting without merging. PR #NUMBER remains open.`
 - Exit. Do NOT merge.
 
@@ -430,17 +444,17 @@ Use `ask_user` to offer a retry:
 
 ## Edge Case Handling Summary
 
-| Scenario | Behavior |
-|----------|----------|
-| Zero open PRs across all repos | Report "No open PRs found" and exit |
-| Exactly one PR across all repos | Auto-skip selection, go straight to quiz |
-| Draft PR selected | Report draft status, return to PR list |
-| PR with merge conflicts | Report conflict, return to PR list |
-| Diff larger than context window | Truncate to first 3000 lines, note truncation |
-| Merge fails (e.g., branch protection) | Report error, exit without merging |
-| User declines retry after failing | Exit without merging |
-| Score exactly 80% (e.g., 4/5) | Pass — triggers merge |
-| Score 75% (e.g., 3/4) | Fail — triggers corrections + retry offer |
+| Scenario                              | Behavior                                      |
+| ------------------------------------- | --------------------------------------------- |
+| Zero open PRs across all repos        | Report "No open PRs found" and exit           |
+| Exactly one PR across all repos       | Auto-skip selection, go straight to quiz      |
+| Draft PR selected                     | Report draft status, return to PR list        |
+| PR with merge conflicts               | Report conflict, return to PR list            |
+| Diff larger than context window       | Truncate to first 3000 lines, note truncation |
+| Merge fails (e.g., branch protection) | Report error, exit without merging            |
+| User declines retry after failing     | Exit without merging                          |
+| Score exactly 80% (e.g., 4/5)         | Pass — triggers merge                         |
+| Score 75% (e.g., 3/4)                 | Fail — triggers corrections + retry offer     |
 
 ## Important Reminders
 

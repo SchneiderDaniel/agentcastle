@@ -13,17 +13,20 @@ Detailed pattern catalog for each clone type and detection technique. Use as ref
 **Definition:** Code fragments that are identical except for variations in whitespace, formatting, layout, and comments.
 
 **Characteristics:**
+
 - 100% token sequence match after normalization
 - Identical or nearly identical abstract syntax tree (AST)
 - Only syntactically insignificant differences (spaces, line breaks, indentation, comment text)
 - Also called "copy-paste clones"
 
 **Detection approaches:**
+
 - **String-based:** Normalize whitespace and compare raw text line by line
 - **Token-based:** Parse into tokens, normalize whitespace/newlines, compare token sequences
 - **AST-based:** Compare parsed ASTs node by node
 
 **Typical causes:**
+
 - Copy-paste with no modification
 - LLM-generated boilerplate repeated verbatim
 - Generated code from same template
@@ -34,17 +37,20 @@ Detailed pattern catalog for each clone type and detection technique. Use as ref
 **Definition:** Code fragments that are structurally identical but differ in identifier names (variable names, function names, type names) and/or literal values.
 
 **Characteristics:**
+
 - Same AST structure but leaf nodes (identifiers, literals) differ
 - Same statement order and nesting depth
 - Same control flow structure
 - Parameter count matches
 
 **Detection approaches:**
+
 - **Token-based with normalization:** Replace all identifiers with a placeholder token (e.g., `$ID`) and all literals with `$LIT`, then compare
 - **AST-based:** Compare AST structure ignoring identifier/literal leaf values
 - **Parameterized matching:** Extract structure with meta-variables
 
 **Typical causes:**
+
 - Copy-paste with find-and-replace (variable renaming)
 - Template-based code generation with different inputs
 - Parallel implementations that should share a function
@@ -54,17 +60,20 @@ Detailed pattern catalog for each clone type and detection technique. Use as ref
 **Definition:** Code fragments that have similar structure but with added, modified, or removed statements. The overall shape is preserved but details differ.
 
 **Characteristics:**
-- >60% structural similarity
+
+- > 60% structural similarity
 - Some statements added/removed/modified
 - Same overall flow but different intermediate steps
 - Similar entry/exit points but different internals
 
 **Detection approaches:**
+
 - **Token-based with threshold:** Allow N% token mismatch (e.g., jscpd --threshold 15)
 - **Line alignment:** Compare lines pairwise, count matches vs differences
 - **AST edit distance:** Measure minimum AST transformations to convert one block to another
 
 **Typical causes:**
+
 - Copy-paste with modifications (added error handling, changed input format)
 - Forked code that diverged slightly
 - Independent implementations of similar algorithm
@@ -74,17 +83,20 @@ Detailed pattern catalog for each clone type and detection technique. Use as ref
 **Definition:** Code fragments that implement the same functionality using different syntax, algorithms, or data structures.
 
 **Characteristics:**
+
 - Different AST structure
 - Different statement sequence
 - Same functional behavior
 - Different API/library usage to achieve same goal
 
 **Detection approaches:**
+
 - **LLM-assisted:** Read code and reason about functional equivalence
 - **Input-output analysis:** Compare results for same test inputs
 - **Documentation comparison:** Compare docstrings/descriptions
 
 **Typical causes:**
+
 - Multiple implementations of same business rule
 - Reimplemented library function
 - Different team members solving same problem differently
@@ -115,30 +127,31 @@ jscpd /path/to/target/ --min-lines 5 --min-tokens 50 --output json \
 ```
 
 **jscpd output structure:**
+
 ```json
 {
-  "statistics": {
-    "detectionDate": "2026-05-27T...",
-    "formats": {
-      "typescript": {
-        "total": { "lines": 500, "tokens": 2000, "sources": 10 },
-        "clones": 5,
-        "duplicatedLines": 120,
-        "duplicatedTokens": 480,
-        "percentage": 24.0
-      }
-    }
-  },
-  "duplicates": [
-    {
-      "format": "typescript",
-      "fragment": "const ... = ...",
-      "lines": 15,
-      "tokens": 60,
-      "firstFile": { "name": "/path/to/file.ts", "start": 42, "end": 57 },
-      "secondFile": { "name": "/path/to/other.ts", "start": 18, "end": 33 }
-    }
-  ]
+	"statistics": {
+		"detectionDate": "2026-05-27T...",
+		"formats": {
+			"typescript": {
+				"total": { "lines": 500, "tokens": 2000, "sources": 10 },
+				"clones": 5,
+				"duplicatedLines": 120,
+				"duplicatedTokens": 480,
+				"percentage": 24.0
+			}
+		}
+	},
+	"duplicates": [
+		{
+			"format": "typescript",
+			"fragment": "const ... = ...",
+			"lines": 15,
+			"tokens": 60,
+			"firstFile": { "name": "/path/to/file.ts", "start": 42, "end": 57 },
+			"secondFile": { "name": "/path/to/other.ts", "start": 18, "end": 33 }
+		}
+	]
 }
 ```
 
@@ -203,6 +216,7 @@ rm /tmp/blockA.ts /tmp/blockB.ts /tmp/blockA.norm /tmp/blockB.norm
 ```
 
 **diff exit codes:**
+
 - `0` — files are identical (Type 1 if before normalization, Type 2 if after normalization)
 - `1` — files differ
 - `2` — error
@@ -231,12 +245,12 @@ diff /tmp/blockA.norm /tmp/blockB.norm 2>&1 | grep -c '^[[:space:]]'  # unchange
 ```typescript
 // DUPLICATED across multiple extension files
 const MyTool: Tool = {
-  name: "my-tool",
-  description: "Does something",
-  params: t.Object({
-    input: t.String({ description: "The input" }),
-    output: t.Optional(t.String({ description: "Output format" })),
-  }),
+	name: "my-tool",
+	description: "Does something",
+	params: t.Object({
+		input: t.String({ description: "The input" }),
+		output: t.Optional(t.String({ description: "Output format" })),
+	}),
 };
 // Same structure repeated for each tool with only name/desc changing
 ```
@@ -246,21 +260,21 @@ const MyTool: Tool = {
 ```typescript
 // DUPLICATED — same read/write pattern in multiple files
 async function readConfig(path: string) {
-  try {
-    const content = await fs.readFile(path, "utf-8");
-    return JSON.parse(content);
-  } catch (err) {
-    throw new Error(`Failed to read config: ${err.message}`);
-  }
+	try {
+		const content = await fs.readFile(path, "utf-8");
+		return JSON.parse(content);
+	} catch (err) {
+		throw new Error(`Failed to read config: ${err.message}`);
+	}
 }
 
 async function readState(path: string) {
-  try {
-    const content = await fs.readFile(path, "utf-8");
-    return JSON.parse(content);
-  } catch (err) {
-    throw new Error(`Failed to read state: ${err.message}`);
-  }
+	try {
+		const content = await fs.readFile(path, "utf-8");
+		return JSON.parse(content);
+	} catch (err) {
+		throw new Error(`Failed to read state: ${err.message}`);
+	}
 }
 ```
 
@@ -269,10 +283,10 @@ async function readState(path: string) {
 ```typescript
 // DUPLICATED — same validation at start of each tool handler
 if (!params.input || typeof params.input !== "string") {
-  return { content: [{ type: "text", text: "Error: input required" }] };
+	return { content: [{ type: "text", text: "Error: input required" }] };
 }
 if (params.input.length > 10000) {
-  return { content: [{ type: "text", text: "Error: input too long" }] };
+	return { content: [{ type: "text", text: "Error: input too long" }] };
 }
 ```
 
@@ -281,12 +295,12 @@ if (params.input.length > 10000) {
 ```typescript
 // DUPLICATED — same try/catch/report pattern
 try {
-  const result = await someOperation(params);
-  return { content: [{ type: "text", text: JSON.stringify(result) }] };
+	const result = await someOperation(params);
+	return { content: [{ type: "text", text: JSON.stringify(result) }] };
 } catch (err) {
-  return {
-    content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
-  };
+	return {
+		content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+	};
 }
 ```
 
@@ -305,8 +319,8 @@ return final;
 ```typescript
 // DUPLICATED — same TypeBox schema defined in multiple files
 const ToolInput = t.Object({
-  path: t.String({ description: "File path" }),
-  content: t.String({ description: "File content" }),
+	path: t.String({ description: "File path" }),
+	content: t.String({ description: "File content" }),
 });
 // Same schema defined in 2+ files instead of shared
 ```
@@ -320,13 +334,13 @@ const ToolInput = t.Object({
 ```typescript
 // BEFORE — Duplicated 3 times
 function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+	return err instanceof Error ? err.message : String(err);
 }
 
 // AFTER — Shared helper in common module
 // utils.ts
 export function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+	return err instanceof Error ? err.message : String(err);
 }
 ```
 
@@ -334,14 +348,18 @@ export function getErrorMessage(err: unknown): string {
 
 ```typescript
 // BEFORE — Two places check same role conditions
-function getAccessLevel(role: string): string { /* ... */ }
-function getPermissions(role: string): string[] { /* ... */ }
+function getAccessLevel(role: string): string {
+	/* ... */
+}
+function getPermissions(role: string): string[] {
+	/* ... */
+}
 
 // AFTER — Consolidated into one data-driven lookup
 const ROLE_CONFIG = {
-  admin: { level: "full", permissions: ["r", "w", "x"] },
-  editor: { level: "limited", permissions: ["r", "w"] },
-  viewer: { level: "read", permissions: ["r"] },
+	admin: { level: "full", permissions: ["r", "w", "x"] },
+	editor: { level: "limited", permissions: ["r", "w"] },
+	viewer: { level: "read", permissions: ["r"] },
 } as const;
 ```
 
@@ -349,13 +367,17 @@ const ROLE_CONFIG = {
 
 ```typescript
 // BEFORE — Two nearly identical functions
-async function createRecord(data: Data) { /* insert */ }
-async function updateRecord(data: Data) { /* update */ }
+async function createRecord(data: Data) {
+	/* insert */
+}
+async function updateRecord(data: Data) {
+	/* update */
+}
 
 // AFTER — Parameterized function
 async function upsertRecord(data: Data, mode: "create" | "update") {
-  const operation = mode === "create" ? db.insert : db.update;
-  return operation(data);
+	const operation = mode === "create" ? db.insert : db.update;
+	return operation(data);
 }
 ```
 
@@ -377,25 +399,25 @@ function registerTool(name: string, description: string, handler: ToolHandler) {
 
 ## 5. Impact Assessment
 
-| Factor | Low Impact | Medium Impact | High Impact |
-|--------|-----------|---------------|-------------|
-| Lines duplicated | 5-10 | 11-30 | 30+ |
-| Locations | 2 | 3-4 | 5+ |
-| Logic complexity | Simple (validation, typing) | Moderate (control flow) | Complex (business logic, I/O) |
-| Bug-propagation risk | Low (unlikely to change) | Medium (may change independently) | High (bug fix in one copy missed in others) |
-| Cross-module impact | Same file | Same module, different files | Different modules entirely |
+| Factor               | Low Impact                  | Medium Impact                     | High Impact                                 |
+| -------------------- | --------------------------- | --------------------------------- | ------------------------------------------- |
+| Lines duplicated     | 5-10                        | 11-30                             | 30+                                         |
+| Locations            | 2                           | 3-4                               | 5+                                          |
+| Logic complexity     | Simple (validation, typing) | Moderate (control flow)           | Complex (business logic, I/O)               |
+| Bug-propagation risk | Low (unlikely to change)    | Medium (may change independently) | High (bug fix in one copy missed in others) |
+| Cross-module impact  | Same file                   | Same module, different files      | Different modules entirely                  |
 
 ---
 
 ## 6. False Positive Quick Reference
 
-| Situation | Action |
-|-----------|--------|
-| Generated code (templates, scaffolds) | Skip |
-| Mandatory boilerplate (license headers, TypeBox schema with different fields) | Skip |
-| Calling same library method with same args (legitimate usage) | Skip |
-| Intentional symmetry (encode/decode, serialize/deserialize) | Consider skipping |
-| `// dup` or `// intentional` comments | Skip |
-| Test code only (lower priority, still valid) | Flag at P3 |
-| Single-line repetition | Skip (too noisy) |
-| Generated by LLM as independent outputs | Flag — high risk of divergence |
+| Situation                                                                     | Action                         |
+| ----------------------------------------------------------------------------- | ------------------------------ |
+| Generated code (templates, scaffolds)                                         | Skip                           |
+| Mandatory boilerplate (license headers, TypeBox schema with different fields) | Skip                           |
+| Calling same library method with same args (legitimate usage)                 | Skip                           |
+| Intentional symmetry (encode/decode, serialize/deserialize)                   | Consider skipping              |
+| `// dup` or `// intentional` comments                                         | Skip                           |
+| Test code only (lower priority, still valid)                                  | Flag at P3                     |
+| Single-line repetition                                                        | Skip (too noisy)               |
+| Generated by LLM as independent outputs                                       | Flag — high risk of divergence |

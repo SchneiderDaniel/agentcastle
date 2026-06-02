@@ -1,28 +1,28 @@
 class App {
-    private name: string;
+	private name: string;
 
-    constructor(name: string) {
-        this.name = name;
-    }
+	constructor(name: string) {
+		this.name = name;
+	}
 
-    greet(): void {
-        console.log(`Hello from ${this.name}`);
-    }
+	greet(): void {
+		console.log(`Hello from ${this.name}`);
+	}
 
-    start(): void {
-        console.log("App started");
-    }
+	start(): void {
+		console.log("App started");
+	}
 
-    stop(): void {
-        console.log("App stopped");
-    }
+	stop(): void {
+		console.log("App stopped");
+	}
 }
 
 function bootstrap(): App {
-    const app = new App("MyApp");
-    app.greet();
-    app.start();
-    return app;
+	const app = new App("MyApp");
+	app.greet();
+	app.start();
+	return app;
 }
 
 // Entry point

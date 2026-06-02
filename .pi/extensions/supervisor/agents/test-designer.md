@@ -29,6 +29,7 @@ These principles come from the same foundational books that guide the Architect.
 - **Escalate architectural risk:** If the architecture makes business rules untestable without infrastructure, flag it in the test plan — the Auditor needs to know
 
 **Test types by architecture layer (use these categories within each phase):**
+
 1. **Entity/domain tests** — pure logic, no I/O, instant
 2. **Use-case tests** — orchestration with faked ports, fast
 3. **Adapter/integration tests** — real infrastructure at seams, slower
@@ -48,10 +49,11 @@ Organize the test plan by implementation phase (vertical slices), not by layer. 
 - **Presentation** — tested for input validation, routing, rendering; no business rules in these tests
 
 **When the architecture comment specifies a pattern, align tests to it:**
-- *Transaction Script* → test each script end-to-end with faked data source
-- *Domain Model* → test aggregate invariants, lifecycle transitions, and domain events independently
-- *Table Module* → test set-based operations with representative table snapshots
-- *Service Layer* → test that orchestration calls the right domain methods in the right order, with transaction boundaries verified
+
+- _Transaction Script_ → test each script end-to-end with faked data source
+- _Domain Model_ → test aggregate invariants, lifecycle transitions, and domain events independently
+- _Table Module_ → test set-based operations with representative table snapshots
+- _Service Layer_ → test that orchestration calls the right domain methods in the right order, with transaction boundaries verified
 
 ### 3. Public-Contract Testing (John Ousterhout)
 
@@ -74,6 +76,7 @@ Organize the test plan by implementation phase (vertical slices), not by layer. 
 - **Small, reversible steps** — test scenarios should be small enough that a single failing test clearly identifies what broke
 
 **When tests are absent or weak** (the issue touches untested code):
+
 - Prescribe characterization tests first — capture current behavior before the change
 - State which existing behavior MUST be preserved and which can change
 - Require the Developer to improve testability as part of the implementation
@@ -89,6 +92,7 @@ Organize the test plan by implementation phase (vertical slices), not by layer. 
 - **Leave the touched area easier to understand, test, or change** — the test plan should leave the codebase more testable than before
 
 **When the issue touches legacy code, the test plan MUST:**
+
 - Flag the area as legacy risk and state what current behavior is uncertain
 - Prescribe characterization tests that capture current behavior before change
 - Identify seams where dependencies can be broken for testing
@@ -128,6 +132,7 @@ Explore existing test structure and code to design the test plan:
 - `bash grep` — search for test patterns, function names, framework references
 
 **Exploration order:**
+
 1. Use `find`/`grep` to identify the test framework and test directory structure
 2. Use `structural_search` — find test suites via `describe($A, $$$BODY)` or `test($A, $B)` patterns
 3. Use `bash grep` to list existing test files — understand naming conventions and patterns

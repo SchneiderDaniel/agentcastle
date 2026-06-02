@@ -38,18 +38,10 @@ import type {
 } from "../types.ts";
 
 // Config
-import {
-	loadRankedMapConfig,
-	DEFAULT_CONFIG,
-	MAX_RECENCY_WINDOW_DAYS,
-} from "../config.ts";
+import { loadRankedMapConfig, DEFAULT_CONFIG, MAX_RECENCY_WINDOW_DAYS } from "../config.ts";
 
 // Ctags
-import {
-	parseCtagsOutput,
-	buildCtagsArgs,
-	buildSymbolIndex,
-} from "../ctags.ts";
+import { parseCtagsOutput, buildCtagsArgs, buildSymbolIndex } from "../ctags.ts";
 
 // Cache
 import { loadCachedIndex } from "../cache.ts";
@@ -64,11 +56,7 @@ import {
 } from "../format.ts";
 
 // Scoring
-import {
-	computeKeywordScores,
-	computeRecencyScores,
-	rankFiles,
-} from "../scoring.ts";
+import { computeKeywordScores, computeRecencyScores, rankFiles } from "../scoring.ts";
 
 // Adapters
 import { runKeywordSearch } from "../search.ts";
@@ -550,10 +538,7 @@ describe("DEFAULT_CONFIG", () => {
 
 describe("config module has no pi SDK imports", () => {
 	it("does not import from @earendil-works/pi-coding-agent", async () => {
-		const content = readFileSync(
-			resolve(__dirname, "../config.ts"),
-			"utf-8",
-		);
+		const content = readFileSync(resolve(__dirname, "../config.ts"), "utf-8");
 		assert.ok(
 			!content.includes("@earendil-works/pi-coding-agent"),
 			"config.ts should not import from pi-coding-agent",

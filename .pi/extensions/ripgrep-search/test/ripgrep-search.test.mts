@@ -23,19 +23,11 @@ import { tmpdir } from "node:os";
 // ═══════════════════════════════════════════════════════════════════════
 
 import type { RgMatch, RgResult, SearchConfig } from "../types.ts";
-import {
-	loadSearchConfig,
-	resolveBackend,
-	ripgrepAvailable,
-} from "../config.ts";
+import { loadSearchConfig, resolveBackend, ripgrepAvailable } from "../config.ts";
 import { buildRgArgs, buildGrepArgs } from "../args.ts";
 import { parseVimgrepOutput, parseGrepOutput } from "../parse.ts";
 import { validateQuery } from "../validate.ts";
-import {
-	registerTempDir,
-	cleanupTrackedTempDirs,
-	trackedTempDirs,
-} from "../temp.ts";
+import { registerTempDir, cleanupTrackedTempDirs, trackedTempDirs } from "../temp.ts";
 import { buildSearchErrorText } from "../index.ts";
 
 // ═══════════════════════════════════════════════════════════════════════

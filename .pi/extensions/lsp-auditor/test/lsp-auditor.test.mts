@@ -10,11 +10,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import type {
-	LspDiagnostic,
-	ServerMapping,
-	AuditResult,
-} from "../types.ts";
+import type { LspDiagnostic, ServerMapping, AuditResult } from "../types.ts";
 import {
 	severityValue,
 	thresholdValue,
@@ -23,15 +19,8 @@ import {
 	mergeResults,
 } from "../formatting.ts";
 import { buildServerMappings } from "../server-mappings.ts";
-import {
-	extractModifiedFiles,
-	groupFilesByServer,
-} from "../file-discovery.ts";
-import {
-	countRetryAttempts,
-	shouldRetry,
-	MAX_RETRIES,
-} from "../retry.ts";
+import { extractModifiedFiles, groupFilesByServer } from "../file-discovery.ts";
+import { countRetryAttempts, shouldRetry, MAX_RETRIES } from "../retry.ts";
 import { mapSessionEntriesToRetryEntries } from "../run-pre-audit.ts";
 
 // =========================================================================

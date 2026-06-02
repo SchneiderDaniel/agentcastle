@@ -23,11 +23,11 @@ No setup needed. All reference docs included.
 
 See `references/extension-spec.md` Mode Detection table.
 
-| Input | Mode | Action |
-|-------|------|--------|
+| Input                                              | Mode     | Action                                                  |
+| -------------------------------------------------- | -------- | ------------------------------------------------------- |
 | `refactor:<name>` / `update:<name>` / `fix:<name>` | Refactor | Read existing extension, audit, produce PRD + migration |
-| `$@` file in `.pi/extensions/` | Refactor | Same — read, audit, produce PRD |
-| Other / no arg | New | Analyze, research, design from scratch |
+| `$@` file in `.pi/extensions/`                     | Refactor | Same — read, audit, produce PRD                         |
+| Other / no arg                                     | New      | Analyze, research, design from scratch                  |
 
 ## Rules
 
@@ -48,6 +48,7 @@ See `references/extension-spec.md` Mode Detection table.
 ## Reference
 
 See [full spec](references/extension-spec.md) for:
+
 - Complete PRD template
 - Anti-pattern checklist (C1-C14, M1-M8, R1-R6, P1-P24)
 - Phase details (0-4)

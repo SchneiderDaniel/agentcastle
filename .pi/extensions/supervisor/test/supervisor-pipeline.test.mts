@@ -92,7 +92,10 @@ describe("pipeline handler — agentCwd for developer/auditor", () => {
 		const idx = src.indexOf("executeAgent(");
 		const endIdx = src.indexOf(");", idx);
 		const callSection = src.substring(idx, endIdx + 2);
-		assert.ok(callSection.includes("isWorktreeAgent"), "executeAgent uses isWorktreeAgent for agentCwd");
+		assert.ok(
+			callSection.includes("isWorktreeAgent"),
+			"executeAgent uses isWorktreeAgent for agentCwd",
+		);
 	});
 });
 

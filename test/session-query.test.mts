@@ -20,7 +20,10 @@ const FIXTURES_DIR = path.join(process.cwd(), "test", "fixtures");
 // Helpers
 // ---------------------------------------------------------------------------
 
-function runScript(args: string, cwd?: string): { stdout: string; stderr: string; exitCode: number } {
+function runScript(
+	args: string,
+	cwd?: string,
+): { stdout: string; stderr: string; exitCode: number } {
 	try {
 		const stdout = execSync(`${SCRIPT_PATH} ${args}`, {
 			cwd: cwd || process.cwd(),
@@ -37,7 +40,11 @@ function runScript(args: string, cwd?: string): { stdout: string; stderr: string
 	}
 }
 
-function runScriptPipe(input: string, args: string, cwd?: string): { stdout: string; stderr: string; exitCode: number } {
+function runScriptPipe(
+	input: string,
+	args: string,
+	cwd?: string,
+): { stdout: string; stderr: string; exitCode: number } {
 	try {
 		const stdout = execSync(`echo '${input}' | ${SCRIPT_PATH} ${args}`, {
 			cwd: cwd || process.cwd(),
@@ -138,7 +145,8 @@ describe("session-query.sh", () => {
 	});
 
 	it("pipe mode works", () => {
-		const jsonLine = '{"timestamp":"T1","agent":"user","tool":"message","error":null,"loop_step":1,"payload":{}}';
+		const jsonLine =
+			'{"timestamp":"T1","agent":"user","tool":"message","error":null,"loop_step":1,"payload":{}}';
 		const result = runScriptPipe(jsonLine, "'.'");
 		assert.strictEqual(result.exitCode, 0);
 		const parsed = JSON.parse(result.stdout.trim());
@@ -146,7 +154,8 @@ describe("session-query.sh", () => {
 	});
 
 	it("pipe mode with filter", () => {
-		const jsonLine = '{"timestamp":"T1","agent":"bash","tool":"bash","error":"fail","loop_step":1,"payload":{}}';
+		const jsonLine =
+			'{"timestamp":"T1","agent":"bash","tool":"bash","error":"fail","loop_step":1,"payload":{}}';
 		const result = runScriptPipe(jsonLine, "'select(.error != null)'");
 		assert.strictEqual(result.exitCode, 0);
 		const parsed = JSON.parse(result.stdout.trim());

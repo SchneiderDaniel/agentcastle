@@ -36,10 +36,7 @@ interface ContextInfoState {
  * Pure function: process a JSON line and update context-info state.
  * Returns true if state was mutated (widget flush needed).
  */
-function handleContextJsonLine(
-	line: string,
-	state: ContextInfoState,
-): boolean {
+function handleContextJsonLine(line: string, state: ContextInfoState): boolean {
 	if (!line.trim()) return false;
 	try {
 		const ev = JSON.parse(line);
@@ -64,12 +61,16 @@ function handleContextJsonLine(
 /**
  * Pure function: build widget lines given state.
  */
-function buildContextWidgetLines(
-	state: ContextInfoState,
-): string[] {
+function buildContextWidgetLines(state: ContextInfoState): string[] {
 	const lines: string[] = [];
-	if (state.contextInfoReceived && state.contextTokens !== undefined && state.contextWindow !== undefined) {
-		lines.push(`Context: ${formatTokens(state.contextTokens)}/${formatTokens(state.contextWindow)}`);
+	if (
+		state.contextInfoReceived &&
+		state.contextTokens !== undefined &&
+		state.contextWindow !== undefined
+	) {
+		lines.push(
+			`Context: ${formatTokens(state.contextTokens)}/${formatTokens(state.contextWindow)}`,
+		);
 	} else {
 		lines.push("Context: computing...");
 	}

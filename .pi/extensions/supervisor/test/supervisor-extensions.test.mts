@@ -314,7 +314,7 @@ describe("production agent files — extensions field", () => {
 
 	for (const agent of agents) {
 		it(`${agent.name}.md has extensions field matching expected`, () => {
-			const val = parseAgentFileExtensions(`.pi/agents/${agent.name}.md`);
+			const val = parseAgentFileExtensions(`.pi/extensions/supervisor/agents/${agent.name}.md`);
 			assert.strictEqual(val, agent.expected);
 		});
 	}
@@ -322,7 +322,7 @@ describe("production agent files — extensions field", () => {
 	it("supervisor.md does NOT exist (supervisor never loads in subagents)", () => {
 		let exists = false;
 		try {
-			readFileSync(".pi/agents/supervisor.md");
+			readFileSync(".pi/extensions/supervisor/agents/supervisor.md");
 			exists = true;
 		} catch {
 			/* expected */
@@ -334,7 +334,7 @@ describe("production agent files — extensions field", () => {
 describe("production agents resolve without supervisor in output", () => {
 	for (const name of ["architect", "test-designer", "developer", "auditor"]) {
 		it(`${name} extensions resolve without supervisor, with context-info`, () => {
-			const val = parseAgentFileExtensions(`.pi/agents/${name}.md`);
+			const val = parseAgentFileExtensions(`.pi/extensions/supervisor/agents/${name}.md`);
 			const result = resolveExtensions(val);
 			// Must not contain --no-extensions (should have --extension flags)
 			assert.notStrictEqual(result[0], "--no-extensions");
