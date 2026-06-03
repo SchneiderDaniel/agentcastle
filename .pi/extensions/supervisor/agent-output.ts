@@ -35,6 +35,29 @@ function stripThinkingPrefix(text: string): string {
 
 const VALID_SEVERITIES = new Set<FindingSeverity>(["critical", "warning", "suggestion"]);
 
+// ─── Smart Quote Detection ──────────────────────────────────────
+
+/**
+ * Check if a double-quote at position `i` in `text` is a structural close
+ * (end of JSON string value) or an unescaped content quote (e.g. markdown
+ * "text" inside commentBody).
+ *
+ * Heuristic: look ahead past whitespace for the next non-whitespace char.
+ * If it's `,`, `}`, `]`, or `:`, this `"` closes a JSON string value.
+ * Otherwise, it's an unescaped content quote inside a string.
+ */
+function isStructuralQuote(text: string, i: number): boolean {
+	let j = i + 1;
+	while (
+		j < text.length &&
+		(text[j] === " " || text[j] === "\t" || text[j] === "\n" || text[j] === "\r")
+	) {
+		j++;
+	}
+	const next = j < text.length ? text[j] : "";
+	return next === "," || next === "}" || next === "]" || next === ":";
+}
+
 // ─── JSON Sanitization ────────────────────────────────────────────
 
 /**
@@ -72,30 +95,13 @@ function sanitizeJsonStrings(jsonText: string): string {
 		}
 
 		if (ch === '"') {
-			// Track if in string: when encountering double-quote inside a string,
-			// look ahead for JSON structural char (,, }, ], :) to distinguish
-			// structural close from unescaped content quote (e.g. in markdown).
-			if (inString) {
-				let j = i + 1;
-				while (
-					j < jsonText.length &&
-					(jsonText[j] === " " ||
-						jsonText[j] === "\t" ||
-						jsonText[j] === "\n" ||
-						jsonText[j] === "\r")
-				) {
-					j++;
-				}
-				const next = j < jsonText.length ? jsonText[j] : "";
-
-				if (next === "," || next === "}" || next === "]" || next === ":") {
-					// Structural close — end of string value
-					result += ch;
-					inString = false;
-				} else {
-					// Unescaped content quote (e.g. markdown "text" in commentBody)
-					result += '\\"';
-				}
+			if (inString && isStructuralQuote(jsonText, i)) {
+				// Structural close — end of string value
+				result += ch;
+				inString = false;
+			} else if (inString) {
+				// Unescaped content quote (e.g. markdown "text" in commentBody)
+				result += '\\"';
 			} else {
 				// Opening quote — start of string value or key
 				result += ch;
@@ -175,7 +181,14 @@ function extractLastJson(raw: string): string {
 				continue;
 			}
 			if (ch === '"') {
-				inString = !inString;
+				if (inString && isStructuralQuote(raw, i)) {
+					// Structural close — end of string value
+					inString = false;
+				} else if (!inString) {
+					// Opening quote — start of string value or key
+					inString = true;
+				}
+				// else: content quote — stay in string, don't toggle
 				continue;
 			}
 			if (!inString && ch === "`" && raw.startsWith("```", i)) {
@@ -200,6 +213,9 @@ function extractLastJson(raw: string): string {
 
 	// Step 2: No code fences — fall back to string-boundary-aware brace
 	// matching for bare JSON objects (or JSON inside unclosed/malformed fences).
+	// Uses smart quote detection (isStructuralQuote) to handle unescaped
+	// double-quotes inside JSON string values that agents commonly produce
+	// in markdown-heavy commentBody fields.
 	let inString = false;
 	let escaped = false;
 	const braceStack: number[] = [];
@@ -218,7 +234,14 @@ function extractLastJson(raw: string): string {
 		}
 
 		if (ch === '"') {
-			inString = !inString;
+			if (inString && isStructuralQuote(raw, i)) {
+				// Structural close — end of string value
+				inString = false;
+			} else if (!inString) {
+				// Opening quote — start of string value or key
+				inString = true;
+			}
+			// else: content quote — stay in string, don't toggle
 			continue;
 		}
 
@@ -238,6 +261,7 @@ function extractLastJson(raw: string): string {
 
 	if (lastCompleteStart >= 0) {
 		// Find the matching closing brace (also string-boundary aware)
+		// Uses smart quote detection for consistency with the first scan.
 		let depth = 0;
 		let strOpen = false;
 		let esc = false;
@@ -255,7 +279,14 @@ function extractLastJson(raw: string): string {
 			}
 
 			if (c === '"') {
-				strOpen = !strOpen;
+				if (strOpen && isStructuralQuote(raw, i)) {
+					// Structural close — end of string value
+					strOpen = false;
+				} else if (!strOpen) {
+					// Opening quote — start of string value or key
+					strOpen = true;
+				}
+				// else: content quote — stay in string, don't toggle
 				continue;
 			}
 
