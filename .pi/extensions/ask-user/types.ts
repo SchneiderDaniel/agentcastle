@@ -28,14 +28,6 @@ export interface LabelValuePair {
 	value: string;
 }
 
-/** Result shape for the ask_user execute function. */
-export interface QuestionResult {
-	selected?: string;
-	label?: string;
-	customAnswer?: string;
-	answer?: string;
-}
-
 // ---------------------------------------------------------------------------
 // Q&A storage types
 // ---------------------------------------------------------------------------

@@ -22,13 +22,6 @@ interface LabelValuePair {
 	value: string;
 }
 
-interface QuestionResult {
-	selected?: string;
-	label?: string;
-	customAnswer?: string;
-	answer?: string;
-}
-
 interface QnaEntry {
 	datetime: string;
 	question: string;
