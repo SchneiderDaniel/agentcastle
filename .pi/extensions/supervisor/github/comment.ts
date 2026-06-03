@@ -19,9 +19,10 @@ import { getDebugLogger } from "../config/debug.ts";
 // inside code fences.
 
 export function sanitizeCommentBody(body: string): string {
-	// Insert zero-width space (U+200B) between # sequence and whitespace.
-	// Breaks GitHub heading pattern ^#{1,6}\s without visible artifact.
-	return body.replace(/^(#{1,6})(\s)/gm, "$1\u200B$2");
+	// Insert zero-width space (U+200B) after first # only.
+	// Breaks GitHub heading pattern ^#{1,6}\s, keeps remaining # clean.
+	// "## Architecture" → "#\u200B# Architecture" renders as "## Architecture".
+	return body.replace(/^(#)(#{0,5})(\s)/gm, "$1\u200B$2$3");
 }
 
 // ─── Post Issue Comment ───────────────────────────────────────────
