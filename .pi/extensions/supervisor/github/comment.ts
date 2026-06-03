@@ -11,20 +11,6 @@ import { gh } from "./gh-client.ts";
 import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
 import { getDebugLogger } from "../config/debug.ts";
 
-// ─── Sanitize Comment Body ─────────────────────────────────────────
-// Escape # at line start so GitHub doesn't render it as heading.
-// Pattern: lines starting with 1-6 # followed by space (GitHub heading).
-// Code-fenced blocks are not detected — this is a simple line-level escape.
-// In practice, agents produce plain-ish text and #heading lines are rare
-// inside code fences.
-
-export function sanitizeCommentBody(body: string): string {
-	// Insert zero-width space (U+200B) after first # only.
-	// Breaks GitHub heading pattern ^#{1,6}\s, keeps remaining # clean.
-	// "## Architecture" → "#\u200B# Architecture" renders as "## Architecture".
-	return body.replace(/^(#)(#{0,5})(\s)/gm, "$1\u200B$2$3");
-}
-
 // ─── Post Issue Comment ───────────────────────────────────────────
 
 export async function postIssueComment(
@@ -34,16 +20,15 @@ export async function postIssueComment(
 	body: string,
 ): Promise<void> {
 	const log = getDebugLogger();
-	const sanitized = sanitizeCommentBody(body);
-	const preview = sanitized.slice(0, 200).replace(/\n/g, " ");
+	const preview = body.slice(0, 200).replace(/\n/g, " ");
 	log.info("comment", `Posting comment on #${issueNum} (${repo})`, {
 		issueNum,
 		repo,
-		bodyLen: sanitized.length,
+		bodyLen: body.length,
 		preview,
 	});
 	try {
-		await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", sanitized]);
+		await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", body]);
 		log.info("comment", `Comment posted on #${issueNum}`);
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
