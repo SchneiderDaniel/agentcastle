@@ -1355,3 +1355,86 @@ describe("readError (ask_user_read error unification)", () => {
 		assert.ok(typeof result.content[0]!.text === "string");
 	});
 });
+
+// ============================================================================
+// Unit tests: successResult helper (ask_user_read success envelope)
+// ============================================================================
+
+function successResult<T extends { datetime: string; question: string; answer: string }>(
+	entries: T[],
+	count: number,
+): ContentResult {
+	return {
+		content: [
+			{
+				type: "text" as const,
+				text: JSON.stringify({
+					entries,
+					count,
+					...(entries.length === 0 ? { message: "No Q&A history yet" } : {}),
+				}),
+			},
+		],
+		details: { entries, count },
+	};
+}
+
+describe("successResult (ask_user_read success envelope)", () => {
+	it("returns correct ContentResult shape for non-empty entries", () => {
+		const entries = [
+			{ datetime: "2026-05-15T19:00:00.000Z", question: "Q1", answer: "A1" },
+			{ datetime: "2026-05-15T20:00:00.000Z", question: "Q2", answer: "A2" },
+		];
+		const result = successResult(entries, entries.length);
+		assert.ok(Array.isArray(result.content));
+		assert.strictEqual(result.content.length, 1);
+		assert.strictEqual(result.content[0]!.type, "text");
+
+		const parsed = JSON.parse(result.content[0]!.text);
+		assert.strictEqual(parsed.count, 2);
+		assert.strictEqual(parsed.entries.length, 2);
+		assert.ok(!parsed.message, "Should not have message when entries exist");
+
+		assert.strictEqual(result.details.count, 2);
+		assert.strictEqual((result.details.entries as Array<unknown>).length, 2);
+	});
+
+	it("returns message field when entries array is empty", () => {
+		const result = successResult([], 0);
+		const parsed = JSON.parse(result.content[0]!.text);
+		assert.strictEqual(parsed.count, 0);
+		assert.deepStrictEqual(parsed.entries, []);
+		assert.strictEqual(parsed.message, "No Q&A history yet");
+
+		assert.strictEqual(result.details.count, 0);
+		assert.deepStrictEqual(result.details.entries as Array<unknown>, []);
+	});
+
+	it("allows alternative count for single-entry display", () => {
+		const entry = { datetime: "2026-05-15T19:00:00.000Z", question: "Q1", answer: "A1" };
+		const result = successResult([entry], 1);
+		const parsed = JSON.parse(result.content[0]!.text);
+		assert.strictEqual(parsed.count, 1);
+		assert.strictEqual(parsed.entries.length, 1);
+		assert.strictEqual(parsed.entries[0]!.question, "Q1");
+		assert.ok(!parsed.message, "Should not have message when entry exists");
+	});
+
+	it("details object matches content JSON shape", () => {
+		const entries = [{ datetime: "2026-05-15T19:00:00.000Z", question: "Q1", answer: "A1" }];
+		const result = successResult(entries, 1);
+		const parsed = JSON.parse(result.content[0]!.text);
+		assert.strictEqual(parsed.count, result.details.count);
+		assert.strictEqual(
+			(parsed.entries as Array<unknown>).length,
+			(result.details.entries as Array<unknown>).length,
+		);
+	});
+
+	it("content is a single text block", () => {
+		const result = successResult([], 0);
+		assert.strictEqual(result.content.length, 1);
+		assert.strictEqual(result.content[0]!.type, "text");
+		assert.ok(typeof result.content[0]!.text === "string");
+	});
+});
