@@ -1670,13 +1670,31 @@ describe("issue-builder-extended", () => {
 // Phase 11: constants.ts — Extracted configuration constants
 // ═══════════════════════════════════════════════════════════════════════
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { PI_CHANGELOG_PATH, API_PATTERNS, CHANGELOG_API_TO_PATTERN } from "../constants.ts";
+
+const EXT_DIR = new URL("..", import.meta.url).pathname;
 
 describe("constants", () => {
 	it("PI_CHANGELOG_PATH is a non-empty string", () => {
 		assert.ok(typeof PI_CHANGELOG_PATH === "string");
 		assert.ok(PI_CHANGELOG_PATH.length > 0);
 		assert.ok(PI_CHANGELOG_PATH.includes("CHANGELOG.md"));
+	});
+
+	it("PI_CHANGELOG_PATH uses os.homedir() (not hardcoded)", () => {
+		// Verify the source imports homedir from node:os
+		const source = readFileSync(join(EXT_DIR, "constants.ts"), "utf-8");
+		assert.ok(
+			source.includes('import { homedir } from "node:os"'),
+			"constants.ts must import homedir from node:os",
+		);
+		assert.ok(
+			source.includes("join(") && source.includes("homedir()"),
+			"PI_CHANGELOG_PATH must use join with homedir()",
+		);
 	});
 
 	it("API_PATTERNS contains known pi API names", () => {
@@ -1687,39 +1705,160 @@ describe("constants", () => {
 		assert.ok(API_PATTERNS.includes("ctx.ui"));
 	});
 
+	it("API_PATTERNS every element starts with pi. or ctx.", () => {
+		assert.ok(API_PATTERNS.length > 0);
+		for (const p of API_PATTERNS) {
+			assert.ok(
+				typeof p === "string" && p.length > 0,
+				`API_PATTERNS element "${p}" must be non-empty string`,
+			);
+			assert.ok(
+				p.startsWith("pi.") || p.startsWith("ctx."),
+				`API_PATTERNS element "${p}" must start with pi. or ctx.`,
+			);
+		}
+	});
+
+	it("API_PATTERNS has no duplicate entries", () => {
+		const seen = new Set<string>();
+		for (const p of API_PATTERNS) {
+			assert.ok(!seen.has(p), `API_PATTERNS has duplicate: "${p}"`);
+			seen.add(p);
+		}
+	});
+
+	it("API_PATTERNS is not frozen (reliably const-bound)", () => {
+		// The constant binding itself prevents reassignment;
+		// the array should remain mutable (not frozen)
+		assert.ok(!Object.isFrozen(API_PATTERNS), "API_PATTERNS should not be frozen");
+	});
+
 	it("CHANGELOG_API_TO_PATTERN maps known aliases", () => {
 		assert.ok(CHANGELOG_API_TO_PATTERN["on"]?.includes("pi.on"));
 		assert.ok(CHANGELOG_API_TO_PATTERN["tool"]?.includes("pi.registerTool"));
 		assert.ok(CHANGELOG_API_TO_PATTERN["event"]?.includes("pi.on"));
 	});
 
-	it("CHANGELOG_API_TO_PATTERN has entries for all API_PATTERNS", () => {
-		for (const pattern of API_PATTERNS) {
-			const apiName = pattern.replace(/^pi\./, "").replace(/^ctx\./, "");
-			// The pattern may be mapped directly or as a known alias
-			const hasDirectMapping = Object.values(CHANGELOG_API_TO_PATTERN).some((patterns) =>
-				patterns.includes(pattern),
-			);
-			if (!hasDirectMapping) {
-				// It might be an expansion alias
-				if (apiName === "abort") continue; // Some ctx APIs have less aliases
-				if (apiName === "setSessionName") continue;
-				if (apiName === "appendEntry") continue;
-				if (apiName === "sendMessage") continue;
-				if (apiName === "registerShortcut") continue;
-				// Flag soft failures to encourage more mappings
+	it("CHANGELOG_API_TO_PATTERN is non-empty object with all non-empty array values", () => {
+		const keys = Object.keys(CHANGELOG_API_TO_PATTERN);
+		assert.ok(keys.length > 0, "CHANGELOG_API_TO_PATTERN must have at least one key");
+		for (const [key, value] of Object.entries(CHANGELOG_API_TO_PATTERN)) {
+			assert.ok(Array.isArray(value), `CHANGELOG_API_TO_PATTERN["${key}"] must be an array`);
+			assert.ok(value.length > 0, `CHANGELOG_API_TO_PATTERN["${key}"] must be non-empty`);
+		}
+	});
+
+	it("CHANGELOG_API_TO_PATTERN values are subsets of API_PATTERNS (no orphan patterns)", () => {
+		const apiSet = new Set(API_PATTERNS);
+		for (const [key, patterns] of Object.entries(CHANGELOG_API_TO_PATTERN)) {
+			for (const p of patterns) {
 				assert.ok(
-					hasDirectMapping,
-					`API_PATTERN "${pattern}" has no mapping in CHANGELOG_API_TO_PATTERN`,
+					apiSet.has(p),
+					`CHANGELOG_API_TO_PATTERN["${key}"] contains "${p}" which is not in API_PATTERNS`,
 				);
 			}
 		}
 	});
 
-	it("CHANGELOG_API_TO_PATTERN is frozen (no runtime mutations)", () => {
-		// The object itself should be immutable during execution
+	it("CHANGELOG_API_TO_PATTERN has entries for all API_PATTERNS", () => {
+		const allMappedPatterns = new Set(Object.values(CHANGELOG_API_TO_PATTERN).flat());
+		for (const pattern of API_PATTERNS) {
+			assert.ok(
+				allMappedPatterns.has(pattern),
+				`API_PATTERN "${pattern}" has no mapping in CHANGELOG_API_TO_PATTERN`,
+			);
+		}
+	});
+
+	it("CHANGELOG_API_TO_PATTERN is frozen at runtime", () => {
+		assert.ok(Object.isFrozen(CHANGELOG_API_TO_PATTERN), "CHANGELOG_API_TO_PATTERN must be frozen");
 		const keys = Object.keys(CHANGELOG_API_TO_PATTERN);
 		assert.ok(keys.length >= 10, "Should have at least 10 alias mappings");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 11b: Migration contract — index.ts no longer owns constants
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("migration-contract — index.ts", () => {
+	const indexSrc = readFileSync(join(EXT_DIR, "index.ts"), "utf-8");
+
+	it("does NOT import PI_CHANGELOG_PATH", () => {
+		assert.ok(
+			!indexSrc.includes("PI_CHANGELOG_PATH"),
+			"index.ts must not reference PI_CHANGELOG_PATH",
+		);
+	});
+
+	it("does NOT import API_PATTERNS", () => {
+		assert.ok(!indexSrc.includes("API_PATTERNS"), "index.ts must not reference API_PATTERNS");
+	});
+
+	it("does NOT import CHANGELOG_API_TO_PATTERN", () => {
+		assert.ok(
+			!indexSrc.includes("CHANGELOG_API_TO_PATTERN"),
+			"index.ts must not reference CHANGELOG_API_TO_PATTERN",
+		);
+	});
+
+	it("does NOT import from node:os", () => {
+		assert.ok(!indexSrc.includes('from "node:os"'), "index.ts must not import from node:os");
+	});
+
+	it("does NOT import from node:path", () => {
+		assert.ok(!indexSrc.includes('from "node:path"'), "index.ts must not import from node:path");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 11c: Consumer contract — pipeline.ts uses imports, not local defs
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("consumer-contract — pipeline.ts", () => {
+	const pipelineSrc = readFileSync(join(EXT_DIR, "pipeline.ts"), "utf-8");
+
+	it("imports PI_CHANGELOG_PATH from ./constants.ts", () => {
+		assert.ok(
+			pipelineSrc.includes("PI_CHANGELOG_PATH") && pipelineSrc.includes('from "./constants.ts"'),
+			"pipeline.ts must import PI_CHANGELOG_PATH from ./constants.ts",
+		);
+	});
+
+	it("imports API_PATTERNS from ./constants.ts", () => {
+		assert.ok(
+			pipelineSrc.includes("API_PATTERNS") && pipelineSrc.includes('from "./constants.ts"'),
+			"pipeline.ts must import API_PATTERNS from ./constants.ts",
+		);
+	});
+
+	it("imports CHANGELOG_API_TO_PATTERN from ./constants.ts", () => {
+		assert.ok(
+			pipelineSrc.includes("CHANGELOG_API_TO_PATTERN") &&
+				pipelineSrc.includes('from "./constants.ts"'),
+			"pipeline.ts must import CHANGELOG_API_TO_PATTERN from ./constants.ts",
+		);
+	});
+
+	it("does NOT re-define const PI_CHANGELOG_PATH locally", () => {
+		assert.ok(
+			!pipelineSrc.includes("const PI_CHANGELOG_PATH"),
+			"pipeline.ts must not define PI_CHANGELOG_PATH locally",
+		);
+	});
+
+	it("does NOT re-define const API_PATTERNS locally", () => {
+		assert.ok(
+			!pipelineSrc.includes("const API_PATTERNS"),
+			"pipeline.ts must not define API_PATTERNS locally",
+		);
+	});
+
+	it("does NOT re-define const CHANGELOG_API_TO_PATTERN locally", () => {
+		assert.ok(
+			!pipelineSrc.includes("const CHANGELOG_API_TO_PATTERN"),
+			"pipeline.ts must not define CHANGELOG_API_TO_PATTERN locally",
+		);
 	});
 });
 
