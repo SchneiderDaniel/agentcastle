@@ -10,19 +10,10 @@ import { describe, it, mock } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import type { ExecResult, ExecFn } from "../types.ts";
 import { ensureChromiumDeps, VENV_RETRY_TTL_MS, VENV_RETRY_MAX } from "../venv-setup.ts";
 
-interface ExecResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-type ExecHandler = (
-	cmd: string,
-	args: string[],
-	opts?: { timeout?: number; signal?: AbortSignal },
-) => Promise<ExecResult>;
+type ExecHandler = ExecFn;
 
 function makeMockExec(handler: ExecHandler) {
 	return mock.fn(handler) as ReturnType<typeof mock.fn<ExecHandler>> & {

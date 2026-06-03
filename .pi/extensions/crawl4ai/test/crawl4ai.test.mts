@@ -11,6 +11,7 @@
 
 import assert from "node:assert";
 import { describe, it, mock } from "node:test";
+import type { ExecResult, ExecFn } from "../types.ts";
 
 // ===========================================================================
 // direct-fetch.ts — htmlToMarkdown (pure function, no infra)
@@ -268,18 +269,6 @@ describe("directFetchCrawl", () => {
 // ===========================================================================
 // venv-setup.ts — ensurePythonVenv with mock exec
 // ===========================================================================
-
-interface ExecResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-type ExecFn = (
-	cmd: string,
-	args: string[],
-	opts?: { timeout?: number; signal?: AbortSignal },
-) => Promise<ExecResult>;
 
 function lazyPaths(cwd: string) {
 	return {

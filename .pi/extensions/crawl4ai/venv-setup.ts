@@ -9,7 +9,7 @@
  * up to max retries. This prevents permanent lockout without restart.
  */
 
-import type { OnUpdateCallback } from "./types";
+import type { ExecResult, ExecFn, OnUpdateCallback } from "./types.ts";
 
 // ── Configurable constants ──
 
@@ -29,20 +29,6 @@ export interface VenvCacheEntry {
 }
 
 export type VenvCache = Map<string, VenvCacheEntry>;
-
-interface ExecResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-interface ExecFn {
-	(
-		cmd: string,
-		args: string[],
-		opts?: { timeout?: number; signal?: AbortSignal },
-	): Promise<ExecResult>;
-}
 
 function lazyPaths(cwd: string) {
 	return {

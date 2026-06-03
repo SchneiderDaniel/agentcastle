@@ -10,20 +10,11 @@ import { describe, it, mock } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { ExecResult, ExecFn } from "../types.ts";
 import { CRAWL4AI_SCRIPT } from "../python-script.ts";
 import { shSingleQuote, runCrawl4aiScript } from "../executor.ts";
 
-interface ExecResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-type ExecHandler = (
-	cmd: string,
-	args: string[],
-	opts?: { timeout?: number; signal?: AbortSignal },
-) => Promise<ExecResult>;
+type ExecHandler = ExecFn;
 
 function makeMockExec(): ReturnType<typeof mock.fn<ExecHandler>> {
 	return mock.fn<ExecHandler>();
