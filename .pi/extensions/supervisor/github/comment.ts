@@ -19,7 +19,7 @@ import { getDebugLogger } from "../config/debug.ts";
 // inside code fences.
 
 export function sanitizeCommentBody(body: string): string {
-	return body.replace(/^#{1,6}\s/gm, (match) => `\\${match}`);
+	return body.replace(/^#{1,6}\s/gm, (match) => match.replace(/#/g, "&#35;"));
 }
 
 // ─── Post Issue Comment ───────────────────────────────────────────
