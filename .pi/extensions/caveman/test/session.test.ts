@@ -78,6 +78,58 @@ describe("resolveSessionLevel (pure function)", () => {
 		assert.equal(result.level, "full");
 		assert.equal(result.shouldAppendEntry, true);
 	});
+
+	// ---------------------------------------------------------------------------
+	// Bug #475: resolveSessionLevel must return LAST matching entry, not first
+	// ---------------------------------------------------------------------------
+
+	it("multiple level changes: lite→full→ultra → returns ultra (last)", () => {
+		const result = resolveSessionLevel(config({ defaultLevel: "lite" }), [
+			entry("lite"),
+			entry("full"),
+			entry("ultra"),
+		]);
+		assert.equal(result.level, "ultra");
+		assert.equal(result.shouldAppendEntry, false);
+	});
+
+	it("multiple level changes: lite→full → returns full (last)", () => {
+		const result = resolveSessionLevel(config({ defaultLevel: "lite" }), [
+			entry("lite"),
+			entry("full"),
+		]);
+		assert.equal(result.level, "full");
+		assert.equal(result.shouldAppendEntry, false);
+	});
+
+	it("multiple level changes: full→ultra→off → returns off (last)", () => {
+		const result = resolveSessionLevel(config({ defaultLevel: "full" }), [
+			entry("full"),
+			entry("ultra"),
+			entry("off"),
+		]);
+		assert.equal(result.level, "off");
+		assert.equal(result.shouldAppendEntry, false);
+	});
+
+	it("interleaved: non-caveman entries between level changes → returns last caveman-level", () => {
+		const result = resolveSessionLevel(config({ defaultLevel: "lite" }), [
+			{ type: "custom", customType: "other-type", data: { foo: "bar" } },
+			entry("lite"),
+			{ type: "custom", customType: "other-type", data: { baz: "qux" } },
+			entry("full"),
+			{ type: "custom", customType: "text-message", data: { text: "some message" } },
+			entry("ultra"),
+		]);
+		assert.equal(result.level, "ultra");
+		assert.equal(result.shouldAppendEntry, false);
+	});
+
+	it("single entry: resume with one caveman-level entry → returns that level", () => {
+		const result = resolveSessionLevel(config({ defaultLevel: "lite" }), [entry("full")]);
+		assert.equal(result.level, "full");
+		assert.equal(result.shouldAppendEntry, false);
+	});
 });
 
 // ---------------------------------------------------------------------------

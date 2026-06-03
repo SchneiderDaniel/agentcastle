@@ -48,7 +48,9 @@ export function resolveSessionLevel(
 	sessionEntries: SessionEntry[],
 ): ResolvedSessionLevel {
 	// Check for session-level override first (resuming a session)
-	for (const entry of sessionEntries) {
+	// Iterate backward to find the MOST RECENT caveman-level entry (fixes bug #475)
+	for (let i = sessionEntries.length - 1; i >= 0; i--) {
+		const entry = sessionEntries[i];
 		if (entry.type === "custom" && entry.customType === "caveman-level") {
 			const data = entry.data;
 			if (
