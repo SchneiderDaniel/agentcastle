@@ -35,6 +35,7 @@ import { createWatchdog } from "./watchdog.ts";
 import type { WatchdogHandle } from "./watchdog.ts";
 import { createInstrumenter } from "./instrumentation.ts";
 import type { InstrumenterHandle } from "./instrumentation.ts";
+import { getDebugLogger } from "./debug.ts";
 
 // ─── Main: runAgentInProcess ────────────────────────────────────────
 
@@ -56,9 +57,19 @@ export async function runAgentInProcess(
 	maxToolCalls?: number,
 	agentTokenBudget?: number,
 ): Promise<AgentRunResult> {
+	const log = getDebugLogger();
 	const effectiveCwd = cwd || ctx.cwd || process.cwd();
 	const agentName = agent.config.name;
 	const widgetId = `agent-${agentName}`;
+
+	log.info("agent-session-runner", `runAgentInProcess: ${agentName}`, {
+		effectiveCwd,
+		model: agent.config.model,
+		timeoutMs,
+		maxToolCalls,
+		agentTokenBudget,
+		taskLen: task.length,
+	});
 
 	// Set sandbox env var for worktree confinement extension (restored in finally)
 	const _prevSandboxEnv = process.env.WORKTREE_SANDBOX_PATH;
@@ -103,11 +114,18 @@ export async function runAgentInProcess(
 			);
 		} catch {
 			// getModel threw — try fallback
+			log.warn(
+				"agent-session-runner",
+				`getModel threw for ${modelInfo?.provider}/${modelInfo?.modelId}`,
+			);
 		}
 	}
 
 	// Build tool list
 	const tools = buildToolList(agent, effectiveCwd);
+	log.debug("agent-session-runner", `Built ${tools.length} tools for ${agentName}`, {
+		toolNames: tools.map((t: any) => t.name || "?"),
+	});
 
 	// Resolve extension paths for resource loader.
 	// Use supervisor cwd (ctx.cwd) so brand-new extensions like worktree-sandbox
@@ -151,12 +169,14 @@ export async function runAgentInProcess(
 			checkIntervalMs: WATCHDOG_CHECK_INTERVAL_MS,
 			onTimeout: async (elapsedMs: number) => {
 				watchdogFired = true;
-				const msg = `[supervisor] No events for ${Math.round(elapsedMs / 1000)}s — agent may be stuck`;
-				console.error(msg);
-				ctx.ui.notify(
-					`No agent events for ${Math.round(elapsedMs / 1000)}s — aborting stuck session`,
-					"warning",
+				const elapsedSec = Math.round(elapsedMs / 1000);
+				log.warn(
+					"agent-session-runner",
+					`Watchdog timeout — no events for ${elapsedSec}s, aborting ${agentName}`,
 				);
+				const msg = `[supervisor] No events for ${elapsedSec}s — agent may be stuck`;
+				console.error(msg);
+				ctx.ui.notify(`No agent events for ${elapsedSec}s — aborting stuck session`, "warning");
 				try {
 					await session!.abort();
 				} catch {
@@ -214,6 +234,8 @@ export async function runAgentInProcess(
 
 		unsubscribe = session.subscribe((event: any) => {
 			try {
+				const eType = event?.type || "unknown";
+
 				// ── Lazy watchdog start ──
 				// Start watchdog on first streaming or tool event — not on lifecycle
 				// events (session/agent_start/turn_start) that arrive before LLM API call.
@@ -221,9 +243,10 @@ export async function runAgentInProcess(
 				// message_update always carries LLM deltas; tool_execution_start means LLM
 				// has responded with a tool call.
 				if (!watchdogStarted) {
-					if (event.type === "message_update" || event.type === "tool_execution_start") {
+					if (eType === "message_update" || eType === "tool_execution_start") {
 						watchdogHandle?.start();
 						watchdogStarted = true;
+						log.debug("agent-session-runner", `Watchdog started for ${agentName} on ${eType}`);
 					}
 				}
 
@@ -237,14 +260,14 @@ export async function runAgentInProcess(
 				// Only pause for tool_execution_start/end (process-managed tools).
 				// SDK-provider-managed tools (e.g. web_search) emit their own events
 				// and don't need special handling.
-				if (event.type === "tool_execution_start") {
+				if (eType === "tool_execution_start") {
 					watchdogHandle?.pause();
-				} else if (event.type === "tool_execution_end") {
+				} else if (eType === "tool_execution_end") {
 					watchdogHandle?.resume();
 				}
 
 				// Instrument: count events by kind
-				const eventKind = event?.type || "unknown";
+				const eventKind = eType;
 				instrumenter?.incrementEvent(eventKind);
 
 				const result = processSessionEvent(event, state);
@@ -261,9 +284,10 @@ export async function runAgentInProcess(
 				}
 			} catch (evErr: unknown) {
 				const msg = evErr instanceof Error ? evErr.message : String(evErr);
-				console.error(
-					`[supervisor] session event error for ${agentName}: ${msg} (event type: ${event?.type})`,
-				);
+				log.error("agent-session-runner", `Session event error for ${agentName}`, {
+					eventType: event?.type,
+					error: msg,
+				});
 				// Show notification to user with diagnostic context
 				try {
 					const notificationCtx = buildErrorNotificationContext(event, evErr);
@@ -285,6 +309,7 @@ export async function runAgentInProcess(
 		const timeoutPromise = new Promise<void>((_, reject) => {
 			timeoutRef = setTimeout(async () => {
 				timedOut = true;
+				log.warn("agent-session-runner", `Agent ${agentName} timed out after ${timeoutMs}ms`);
 				try {
 					await session!.abort();
 				} catch {
@@ -364,6 +389,10 @@ export async function runAgentInProcess(
 		// which propagates to runAgent() → it checks result.success → subprocess fallback.
 		if (watchdogFired) {
 			const durationMs = Date.now() - startedAt;
+			log.warn(
+				"agent-session-runner",
+				`Watchdog fired for ${agentName} — no events >${WATCHDOG_TIMEOUT_MS / 1000}s`,
+			);
 			pushLog(
 				state,
 				`[Stall: ${agentName} aborted after ${formatDuration(durationMs)} — no events for >${WATCHDOG_TIMEOUT_MS / 1000}s]`,
@@ -387,6 +416,10 @@ export async function runAgentInProcess(
 
 			// Throw to trigger subprocess fallback in runAgent()
 			// Catch block handles session disposal, timer cleanup, widget clearing.
+			log.info(
+				"agent-session-runner",
+				`Throwing stall error to trigger subprocess fallback for ${agentName}`,
+			);
 			throw new Error(`Agent ${agentName} stalled: no events for >${WATCHDOG_TIMEOUT_MS / 1000}s`);
 		}
 
@@ -451,6 +484,13 @@ export async function runAgentInProcess(
 
 		const durationMs = Date.now() - startedAt;
 
+		log.info("agent-session-runner", `${agentName} completed successfully`, {
+			durationMs,
+			toolCount: state.toolCount,
+			tokenCount: state.tokenCount,
+			logLength: state.fullLog.length,
+		});
+
 		return buildAgentRunResult(state, agentName, true, durationMs, messages);
 	} catch (err: unknown) {
 		// Error path — always cleanup
@@ -470,6 +510,11 @@ export async function runAgentInProcess(
 
 		const durationMs = Date.now() - startedAt;
 		const errorMsg = err instanceof Error ? err.message : String(err);
+
+		log.warn("agent-session-runner", `${agentName} failed: ${errorMsg}`, {
+			durationMs,
+			toolCount: state.toolCount,
+		});
 
 		return {
 			output: `In-process agent failed: ${errorMsg}`,

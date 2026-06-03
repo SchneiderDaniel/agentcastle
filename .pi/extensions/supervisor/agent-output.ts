@@ -4,6 +4,7 @@
 // No regex fallback, no text marker scanning, no lastIndexOf lookups.
 
 import type { AgentOutput, FailedParse, ParseResult, FindingSeverity } from "./types.ts";
+import { getDebugLogger } from "./debug.ts";
 
 // ─── ANSI Stripping ──────────────────────────────────────────────
 
@@ -450,6 +451,10 @@ export function parseAgentOutput(output: string): ParseResult {
 		parsed = JSON.parse(sanitized);
 	} catch (e: unknown) {
 		const msg = e instanceof Error ? e.message : String(e);
+		getDebugLogger().warn("agent-output", `JSON parse failed: ${msg}`, {
+			jsonLen: jsonStr.length,
+			sanitizedLen: sanitized.length,
+		});
 		return {
 			error: `Failed to parse JSON from agent output: ${msg}`,
 			rawOutput: output,
@@ -457,6 +462,7 @@ export function parseAgentOutput(output: string): ParseResult {
 	}
 
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		getDebugLogger().warn("agent-output", "Parsed JSON not an object");
 		return {
 			error: "Parsed JSON must be an object (not array or primitive)",
 			rawOutput: output,
@@ -468,6 +474,14 @@ export function parseAgentOutput(output: string): ParseResult {
 	// Step 4: Validate
 	const validation = validateAgentOutput(data);
 	if (!validation.valid) {
+		getDebugLogger().warn(
+			"agent-output",
+			`Schema validation failed: ${validation.errors.join("; ")}`,
+			{
+				action: data.action,
+				agentName: data.agentName,
+			},
+		);
 		return {
 			error: `Agent output schema validation failed: ${validation.errors.join("; ")}`,
 			rawOutput: output,
