@@ -8,7 +8,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FilteredIssueData, AgentOutput } from "../config/types.ts";
 import { gh } from "./gh-client.ts";
-import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
+import {
+	parseAgentOutput,
+	isSuccess as isAgentOutputSuccess,
+	normalizeEscapes,
+} from "../agent/output.ts";
 import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Post Issue Comment ───────────────────────────────────────────
@@ -20,15 +24,19 @@ export async function postIssueComment(
 	body: string,
 ): Promise<void> {
 	const log = getDebugLogger();
-	const preview = body.slice(0, 200).replace(/\n/g, " ");
+	// Normalize escaped newlines as final safety net.
+	// Catches literal \\n sequences from any extraction path (JSON parsing,
+	// heading fallback, COMMENT_BODY marker, audit output fallback).
+	const normalized = normalizeEscapes(body);
+	const preview = normalized.slice(0, 200).replace(/\n/g, " ");
 	log.info("comment", `Posting comment on #${issueNum} (${repo})`, {
 		issueNum,
 		repo,
-		bodyLen: body.length,
+		bodyLen: normalized.length,
 		preview,
 	});
 	try {
-		await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", body]);
+		await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", normalized]);
 		log.info("comment", `Comment posted on #${issueNum}`);
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
@@ -260,6 +268,13 @@ export function extractAgentCommentBody(output: string): string | null {
 				lastBody = slice;
 			}
 		}
+	}
+
+	// Normalize escaped newlines in fallback extractions.
+	// When JSON parsing fails and we extract from raw text, literal \\n
+	// sequences from JSON string values survive. Convert to real newlines.
+	if (lastBody) {
+		lastBody = normalizeEscapes(lastBody);
 	}
 
 	return lastBody;

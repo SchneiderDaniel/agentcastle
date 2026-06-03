@@ -463,6 +463,14 @@ function validateAgentOutput(data: Record<string, unknown>): ValidationResult {
 	return { valid: errors.length === 0, errors };
 }
 
+// ─── Escape Normalization ──────────────────────────────────────────
+// Normalize literal \\n / \\r sequences that survived JSON.parse into real newlines.
+// Agents often produce \\n (double-escaped) in JSON string values.
+
+export function normalizeEscapes(s: string): string {
+	return s.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+}
+
 // ─── Main Parser ──────────────────────────────────────────────────
 
 /**
@@ -568,12 +576,7 @@ export function parseAgentOutput(output: string): ParseResult {
 		};
 	}
 
-	// Helper: normalize literal escape sequences that survived JSON.parse.
-	// When agents output \\n (double-escaped) in JSON text, JSON.parse produces
-	// literal backslash-n instead of actual newlines. This converts them back.
-	function normalizeEscapes(s: string): string {
-		return s.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
-	}
+	// Normalize escaped newlines — uses module-level normalizeEscapes
 
 	// Step 5: Build typed AgentOutput
 	const result: AgentOutput = {
