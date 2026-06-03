@@ -13,5 +13,10 @@
 		"declaration": false
 	},
 	"include": ["extensions/**/*.ts", "extensions/**/*.mts", "lib/**/*.ts", "scripts/**/*.ts"],
-	"exclude": ["sessions", "node_modules"]
+	"exclude": [
+		"sessions",
+		"node_modules",
+		"extensions/**/test/fixtures/**",
+		"extensions/**/fixtures/**"
+	]
 }
