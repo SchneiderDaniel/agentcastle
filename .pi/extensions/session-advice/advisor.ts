@@ -547,10 +547,3 @@ export function renderAdviceToMarkdown(result: AdviceResult): string {
 
 	return sections.join("\n");
 }
-
-/** Parse JSONL file and run analysis. Convenience for post-hoc scripts. */
-export function analyzeSessionFile(filepath: string): AdviceResult | null {
-	const data = parseJsonlFile(filepath);
-	if (!data) return null;
-	return analyzeSession(data);
-}

@@ -352,3 +352,16 @@ describe("analyzeSession → excessive-turns / high-error-rate", () => {
 		);
 	});
 });
+
+// ── Dead code removal verification ──
+
+describe("analyzeSessionFile removed (dead code)", () => {
+	it("should NOT be exported from advisor.ts", async () => {
+		const advisor = await import("../advisor.ts");
+		const exportNames = Object.keys(advisor);
+		assert.ok(
+			!exportNames.includes("analyzeSessionFile"),
+			"analyzeSessionFile was dead code (zero consumers) and should have been removed",
+		);
+	});
+});
