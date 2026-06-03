@@ -543,6 +543,13 @@ export function parseAgentOutput(output: string): ParseResult {
 		};
 	}
 
+	// Helper: normalize literal escape sequences that survived JSON.parse.
+	// When agents output \\n (double-escaped) in JSON text, JSON.parse produces
+	// literal backslash-n instead of actual newlines. This converts them back.
+	function normalizeEscapes(s: string): string {
+		return s.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+	}
+
 	// Step 5: Build typed AgentOutput
 	const result: AgentOutput = {
 		action: data.action as AgentOutput["action"],
@@ -553,13 +560,13 @@ export function parseAgentOutput(output: string): ParseResult {
 		result.summary = data.summary as string;
 	}
 	if (data.commentBody !== undefined && data.commentBody !== null) {
-		result.commentBody = data.commentBody as string;
+		result.commentBody = normalizeEscapes(data.commentBody as string);
 	}
 	if (data.prTitle !== undefined && data.prTitle !== null) {
 		result.prTitle = data.prTitle as string;
 	}
 	if (data.prBody !== undefined && data.prBody !== null) {
-		result.prBody = data.prBody as string;
+		result.prBody = normalizeEscapes(data.prBody as string);
 	}
 	if (data.auditScore !== undefined && data.auditScore !== null) {
 		result.auditScore = data.auditScore as { passing: number; total: number };
