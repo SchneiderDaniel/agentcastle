@@ -182,11 +182,10 @@ describe("analyzeSession → scoring weights", () => {
 		assert.ok(result.score > 0, "should produce non-zero score");
 	});
 
-	it("does NOT flag when no code files touched", () => {
+	it("scores 0 when no code files touched", () => {
 		const data = makeSession([bashEntry("npm test", 0), bashEntry("node build.js", 1)]);
 		const result = analyzeSession(data);
-		const gaps = result.entries.filter((e) => e.category === "tool-coverage-gap");
-		assert.strictEqual(gaps.length, 0);
+		assert.strictEqual(result.score, 0, "no code file touches should produce zero score");
 	});
 });
 
