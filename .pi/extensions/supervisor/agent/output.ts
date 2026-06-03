@@ -302,7 +302,8 @@ function extractLastJson(raw: string): string {
 		}
 	}
 
-	return raw;
+	// No valid JSON structure found — return empty instead of raw text
+	return "";
 }
 
 // ─── Validation Helpers ──────────────────────────────────────────
@@ -471,6 +472,12 @@ export function parseAgentOutput(output: string): ParseResult {
 
 	// Step 2: Extract JSON from text
 	const jsonStr = extractLastJson(stripped);
+	if (!jsonStr) {
+		getDebugLogger().warn("agent-output", "No JSON structure found in agent output", {
+			outputLen: stripped.length,
+		});
+		return { error: "No JSON structure found in agent output", rawOutput: output };
+	}
 
 	// Step 2.5: Sanitize JSON — escape literal newlines inside string values
 	// Agents often produce commentBody with actual newlines instead of \\n escapes
@@ -482,14 +489,31 @@ export function parseAgentOutput(output: string): ParseResult {
 		parsed = JSON.parse(sanitized);
 	} catch (e: unknown) {
 		const msg = e instanceof Error ? e.message : String(e);
-		getDebugLogger().warn("agent-output", `JSON parse failed: ${msg}`, {
-			jsonLen: jsonStr.length,
-			sanitizedLen: sanitized.length,
-		});
-		return {
-			error: `Failed to parse JSON from agent output: ${msg}`,
-			rawOutput: output,
-		};
+
+		// Auto-recovery: trailing non-JSON content (e.g. agent appends text after JSON)
+		// Error like "Unexpected non-whitespace character after JSON at position 3137"
+		const posMatch = msg.match(/position (\d+)/);
+		if (posMatch) {
+			const pos = parseInt(posMatch[1], 10);
+			if (pos > 10 && pos < sanitized.length) {
+				try {
+					parsed = JSON.parse(sanitized.slice(0, pos));
+				} catch {
+					// retry failed — fall through to error return
+				}
+			}
+		}
+
+		if (!parsed) {
+			getDebugLogger().warn("agent-output", `JSON parse failed: ${msg}`, {
+				jsonLen: jsonStr.length,
+				sanitizedLen: sanitized.length,
+			});
+			return {
+				error: `Failed to parse JSON from agent output: ${msg}`,
+				rawOutput: output,
+			};
+		}
 	}
 
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {

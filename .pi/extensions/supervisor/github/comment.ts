@@ -153,6 +153,36 @@ export function extractAgentCommentBody(output: string): string | null {
 		lastBody = body.trim();
 	}
 
+	// Fallback 2: structured section heading extraction
+	// When agent outputs markdown with ## Architecture / ## Research Findings / ## Test Plan /
+	// ## Audit (Approved|Rejected) but without COMMENT_BODY markers or valid JSON.
+	// Extract from the last occurrence of a known heading to end of output.
+	if (!lastBody) {
+		const sectionHeadings = [
+			"## Architecture",
+			"## Research Findings",
+			"## Test Plan",
+			"## Audit Approved",
+			"## Audit Rejected",
+		];
+		let bestIdx = -1;
+		let bestHeading = "";
+		for (const heading of sectionHeadings) {
+			const idx = output.lastIndexOf(heading);
+			if (idx > bestIdx) {
+				bestIdx = idx;
+				bestHeading = heading;
+			}
+		}
+		if (bestIdx !== -1) {
+			const slice = output.slice(bestIdx).trim();
+			// Only use extraction if it looks like substantive content (>100 chars, not just heading)
+			if (slice.length > bestHeading.length + 20) {
+				lastBody = slice;
+			}
+		}
+	}
+
 	return lastBody;
 }
 
