@@ -6,15 +6,15 @@
 // Both processJsonLine and processSessionEvent delegate to these via
 // processNormalizedEvent in event-adapter.ts.
 
-import type { AgentRunState } from "./types.ts";
-import type { NormalizedEvent, HandlerResult } from "./event-types.ts";
-import { phasePriority } from "./event-types.ts";
-import { pushLog } from "./agent-stream.ts";
-import { extractTextFromContent } from "./formatting.ts";
+import type { AgentRunState } from "../config/types.ts";
+import type { NormalizedEvent, HandlerResult } from "./types.ts";
+import { phasePriority } from "./types.ts";
+import { pushLog } from "../agent/stream.ts";
+import { extractTextFromContent } from "../config/formatting.ts";
 
 // ─── Re-export phasePriority for backward compat ─────────────────
 
-export { phasePriority } from "./event-types.ts";
+export { phasePriority } from "./types.ts";
 
 // ─── Constants ────────────────────────────────────────────────────
 

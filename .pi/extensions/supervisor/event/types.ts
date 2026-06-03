@@ -3,7 +3,7 @@
 // (from session-events) are converted to this common representation.
 // The discriminant `kind` enables exhaustive type narrowing.
 
-import type { AgentPhase } from "./types.ts";
+import type { AgentPhase } from "../config/types.ts";
 
 // ─── NormalizedEvent ─────────────────────────────────────────────
 

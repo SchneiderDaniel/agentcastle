@@ -3,8 +3,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildAgentRunResult, buildRawOutputFromMessages } from "../session-result.ts";
-import type { AgentRunState } from "../types";
+import { buildAgentRunResult, buildRawOutputFromMessages } from "../session/result.ts";
+import type { AgentRunState } from "../config/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

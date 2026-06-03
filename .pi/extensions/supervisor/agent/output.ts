@@ -3,8 +3,8 @@
 // Agents output structured JSON; this function parses and validates it.
 // No regex fallback, no text marker scanning, no lastIndexOf lookups.
 
-import type { AgentOutput, FailedParse, ParseResult, FindingSeverity } from "./types.ts";
-import { getDebugLogger } from "./debug.ts";
+import type { AgentOutput, FailedParse, ParseResult, FindingSeverity } from "../config/types.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // ─── ANSI Stripping ──────────────────────────────────────────────
 

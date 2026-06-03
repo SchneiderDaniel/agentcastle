@@ -2,9 +2,9 @@
 // Status notifications, pipeline completion summary, bell.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig, PipelineAgentResult, SupervisorMessageDetails } from "../types.ts";
-import { formatDuration } from "../formatting.ts";
-import { buildPipelineSummary } from "../pipeline-output.ts";
+import type { SupervisorConfig, PipelineAgentResult, SupervisorMessageDetails } from "../config/types.ts";
+import { formatDuration } from "../config/formatting.ts";
+import { buildPipelineSummary } from "../pipeline/output.ts";
 
 /**
  * Send pipeline completion notification.

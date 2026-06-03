@@ -2,14 +2,14 @@
 // PR creation logic: decoupled from handler, triggered on auditor approval.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig, PipelineAgentResult } from "../types.ts";
+import type { SupervisorConfig, PipelineAgentResult } from "../config/types.ts";
 import { writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 import { tmpdir } from "node:os";
-import { generateBranchName } from "../agent-task.ts";
+import { generateBranchName } from "../agent/task.ts";
 import { createPullRequest } from "../github/pr.ts";
-import { buildPipelineSummary } from "../pipeline-output.ts";
-import { getDebugLogger } from "../debug.ts";
+import { buildPipelineSummary } from "../pipeline/output.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 /**
  * Create a pull request after auditor approves and transitions to Done.

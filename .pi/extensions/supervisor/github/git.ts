@@ -2,7 +2,7 @@
 // commitChanges, pushBranch, commitAndPush.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getDebugLogger } from "../debug.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 /** Commit staged changes in a working directory. */
 export async function commitChanges(pi: ExtensionAPI, cwd: string, message: string): Promise<void> {

@@ -3,8 +3,8 @@
 // Pure function — no Pi API, no process spawning.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { TscDiagnostic } from "../tsc-checkpoint/index.ts";
-import { formatTscDiagnostics } from "../tsc-checkpoint/index.ts";
+import type { TscDiagnostic } from "../../tsc-checkpoint/index.ts";
+import { formatTscDiagnostics } from "../../tsc-checkpoint/index.ts";
 
 /**
  * Result from a tsc checkpoint run.
@@ -70,6 +70,6 @@ export function determineTscCheckpointDecision(
 export async function getRunTscCheckpoint(): Promise<
 	(pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>
 > {
-	const mod = await import("../tsc-checkpoint");
+	const mod = await import("../../tsc-checkpoint");
 	return mod.runTscCheckpoint;
 }

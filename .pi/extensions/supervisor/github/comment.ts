@@ -6,10 +6,10 @@
 // removed. All audit comment construction now goes through parseAgentOutput.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { FilteredIssueData, AgentOutput } from "../types.ts";
+import type { FilteredIssueData, AgentOutput } from "../config/types.ts";
 import { gh } from "./gh-client.ts";
-import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent-output.ts";
-import { getDebugLogger } from "../debug.ts";
+import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Post Issue Comment ───────────────────────────────────────────
 

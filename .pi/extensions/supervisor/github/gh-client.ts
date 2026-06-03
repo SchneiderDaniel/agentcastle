@@ -3,7 +3,7 @@
 // Replaces raw `Promise<any>` returns from the old github.ts.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getDebugLogger } from "../debug.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // ─── gh() — raw CLI wrapper ───────────────────────────────────────
 

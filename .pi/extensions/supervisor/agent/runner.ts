@@ -11,12 +11,12 @@ import type {
 	AgentPhase,
 	ParsedAgent,
 	DebugLogger,
-} from "./types.ts";
+} from "../config/types.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { resolveTools, resolveExtensions, resolveSkillPaths } from "./extensions.ts";
-import { formatDuration, extractSummaryLine, formatTokens } from "./formatting.ts";
-import { resolveTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
+import { resolveTools, resolveExtensions, resolveSkillPaths } from "../config/extensions.ts";
+import { formatDuration, extractSummaryLine, formatTokens } from "../config/formatting.ts";
+import { resolveTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } from "../config/config.ts";
 import {
 	processJsonLine,
 	getPhaseFromEvent,
@@ -26,14 +26,14 @@ import {
 	MAX_FULL_LOG,
 	WIDGET_LINES,
 	MAX_LIVE_THINKING,
-} from "./agent-stream.ts";
-import { buildWidgetLines, getWorkingMessage } from "./session-widget.ts";
-import { runAgentInProcess } from "./agent-session-runner.ts";
-import { buildErrorNotificationContext } from "./diagnostics.ts";
-import { getDebugLogger } from "./debug.ts";
+} from "./stream.ts";
+import { buildWidgetLines, getWorkingMessage } from "../session/widget.ts";
+import { runAgentInProcess } from "./session-runner.ts";
+import { buildErrorNotificationContext } from "../config/diagnostics.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
-export { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
+export { DEFAULT_AGENT_TIMEOUT_MS } from "../config/config.ts";
 
 // ─── createAgentRunState: shared state initialization ──────────────
 // Used by both runAgentSubprocess (agent-runner.ts) and

@@ -2,9 +2,9 @@
 // checkPrConflicts, createPullRequest.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { PrConflictInfo } from "../types.ts";
+import type { PrConflictInfo } from "../config/types.ts";
 import { gh, ghJson } from "./gh-client.ts";
-import { getDebugLogger } from "../debug.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Check PR Conflicts ──────────────────────────────────────────
 

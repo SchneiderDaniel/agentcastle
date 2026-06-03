@@ -3,7 +3,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { validateAgentTimeouts } from "../config.ts";
+import { validateAgentTimeouts } from "../config/config.ts";
 
 // ─── validateAgentTimeouts ────────────────────────────────────────
 

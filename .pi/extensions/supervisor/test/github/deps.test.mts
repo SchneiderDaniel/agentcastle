@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { checkBlockedByDependencies } from "../../github/deps.ts";
-import type { GhTimelineResponse } from "../../types";
+import type { GhTimelineResponse } from "../../config/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

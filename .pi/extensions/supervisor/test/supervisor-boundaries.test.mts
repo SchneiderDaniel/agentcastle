@@ -16,10 +16,10 @@
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 import { readFileSync } from "node:fs";
-import type { AgentRunState } from "../types.ts";
-import { processJsonLine } from "../agent-stream.ts";
-import { processSessionEvent } from "../session-events.ts";
-import { buildWidgetLines } from "../session-widget.ts";
+import type { AgentRunState } from "../config/types.ts";
+import { processJsonLine } from "../agent/stream.ts";
+import { processSessionEvent } from "../event/session-events.ts";
+import { buildWidgetLines } from "../session/widget.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

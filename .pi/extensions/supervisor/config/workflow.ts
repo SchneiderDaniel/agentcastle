@@ -1,7 +1,7 @@
 // ─── Workflow Config ──────────────────────────────────────────────
 // Config-driven pipeline: define transitions as data, not code.
 
-import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "./agent-output.ts";
+import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
 import type { AgentOutput, Finding, FilteredIssueData, ParseResult } from "./types.ts";
 
 export interface WorkflowStep {

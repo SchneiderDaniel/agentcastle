@@ -4,8 +4,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { processSessionEvent } from "../session-events.ts";
-import type { AgentRunState } from "../types";
+import { processSessionEvent } from "../event/session-events.ts";
+import type { AgentRunState } from "../config/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

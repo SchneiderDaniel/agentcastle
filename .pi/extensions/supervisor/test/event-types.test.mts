@@ -5,7 +5,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { NormalizedEvent } from "../event-types.ts";
+import type { NormalizedEvent } from "../event/types.ts";
 
 // ─── Compile-time check helpers ──────────────────────────────────
 

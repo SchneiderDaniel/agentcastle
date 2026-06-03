@@ -1,7 +1,7 @@
 // ─── Formatting helpers ──────────────────────────────────────────────
 // Pure formatting functions — no Pi API, no filesystem side effects.
 
-import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "./agent-output.ts";
+import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
 import type { AgentOutput } from "./types.ts";
 
 export function formatTokens(n: number): string {

@@ -23,7 +23,7 @@ function createStateWithCache(overrides?: Partial<FullAgentRunState>): FullAgent
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { AgentRunState } from "../types";
+import type { AgentRunState } from "../config/types";
 import {
 	handleToolExecutionStart,
 	handleToolExecutionEnd,
@@ -37,7 +37,7 @@ import {
 	handleDone,
 	handleContextInfo,
 	phasePriority,
-} from "../event-handlers.ts";
+} from "../event/handlers.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

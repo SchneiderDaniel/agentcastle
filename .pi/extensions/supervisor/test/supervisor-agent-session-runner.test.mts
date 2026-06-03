@@ -14,7 +14,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { readFileSync } from "node:fs";
-import type { AgentRunState, AgentPhase, AgentRunResult } from "../types.ts";
+import type { AgentRunState, AgentPhase, AgentRunResult } from "../config/types.ts";
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 

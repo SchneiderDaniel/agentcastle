@@ -5,7 +5,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { PipelineAgentResult } from "../../types.ts";
+import type { PipelineAgentResult } from "../../config/types.ts";
 import { handlePostPipeline } from "../../pipeline/handler.ts";
 
 // ─── Call tracking ────────────────────────────────────────────────

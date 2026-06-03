@@ -6,11 +6,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { processSessionEvent } from "../session-events.ts";
-import { buildAgentRunResult } from "../session-result.ts";
+import { processSessionEvent } from "../event/session-events.ts";
+import { buildAgentRunResult } from "../session/result.ts";
 import { extractAgentCommentBody } from "../github/comment.ts";
 import { handlePostAgentSuccess } from "../pipeline/stages.ts";
-import type { AgentRunState, FilteredIssueData, SupervisorConfig } from "../types.ts";
+import type { AgentRunState, FilteredIssueData, SupervisorConfig } from "../config/types.ts";
 
 interface ExecCall {
 	cmd: string;

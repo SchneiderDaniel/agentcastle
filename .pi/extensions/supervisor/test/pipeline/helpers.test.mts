@@ -3,7 +3,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { SupervisorConfig } from "../../types.ts";
+import type { SupervisorConfig } from "../../config/types.ts";
 import {
 	fetchIssue,
 	readProjectBoard,

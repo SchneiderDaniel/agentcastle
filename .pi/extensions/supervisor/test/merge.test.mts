@@ -4,7 +4,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { tryAutoMerge } from "../merge.ts";
+import { tryAutoMerge } from "../config/merge.ts";
 
 // ─── Mock Helpers ──────────────────────────────────────────────────
 

@@ -3,10 +3,10 @@
 // getItemStatusName, findStatusOption, setItemStatus.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { ProjectField, ProjectItem } from "../types.ts";
+import type { ProjectField, ProjectItem } from "../config/types.ts";
 import { ghGraphQL, gh } from "./gh-client.ts";
 import type { ProjectFieldsResponse, ProjectItemsResponse, ProjectIdResponse } from "./types.ts";
-import { getDebugLogger } from "../debug.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Get Project Fields ───────────────────────────────────────────
 

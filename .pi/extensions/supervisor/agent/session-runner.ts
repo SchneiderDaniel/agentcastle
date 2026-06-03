@@ -11,7 +11,7 @@
 //  6. Extract complete messages → build AgentRunResult (untruncated)
 //  7. Always dispose session on completion
 
-import type { ParsedAgent, AgentRunResult, AgentRunState } from "./types.ts";
+import type { ParsedAgent, AgentRunResult, AgentRunState } from "../config/types.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
 	createAgentSession,
@@ -21,21 +21,21 @@ import {
 	getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { getModel } from "@earendil-works/pi-ai";
-import { resolveExtensionPaths } from "./extensions.ts";
-import { formatDuration, extractSummaryLine } from "./formatting.ts";
-import { pushLog } from "./agent-stream.ts";
-import { buildWidgetLines, getWorkingMessage } from "./session-widget.ts";
-import { resolveModel, buildToolList } from "./session-model.ts";
-import { processSessionEvent } from "./session-events.ts";
-import { buildAgentRunResult } from "./session-result.ts";
-import { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
-import { createAgentRunState } from "./agent-runner.ts";
-import { calculateIdleWarning, buildErrorNotificationContext } from "./diagnostics.ts";
-import { createWatchdog } from "./watchdog.ts";
-import type { WatchdogHandle } from "./watchdog.ts";
-import { createInstrumenter } from "./instrumentation.ts";
-import type { InstrumenterHandle } from "./instrumentation.ts";
-import { getDebugLogger } from "./debug.ts";
+import { resolveExtensionPaths } from "../config/extensions.ts";
+import { formatDuration, extractSummaryLine } from "../config/formatting.ts";
+import { pushLog } from "./stream.ts";
+import { buildWidgetLines, getWorkingMessage } from "../session/widget.ts";
+import { resolveModel, buildToolList } from "../session/model.ts";
+import { processSessionEvent } from "../event/session-events.ts";
+import { buildAgentRunResult } from "../session/result.ts";
+import { DEFAULT_AGENT_TIMEOUT_MS } from "../config/config.ts";
+import { createAgentRunState } from "./runner.ts";
+import { calculateIdleWarning, buildErrorNotificationContext } from "../config/diagnostics.ts";
+import { createWatchdog } from "../config/watchdog.ts";
+import type { WatchdogHandle } from "../config/watchdog.ts";
+import { createInstrumenter } from "../config/instrumentation.ts";
+import type { InstrumenterHandle } from "../config/instrumentation.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Main: runAgentInProcess ────────────────────────────────────────
 

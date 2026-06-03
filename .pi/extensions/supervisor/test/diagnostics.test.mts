@@ -6,7 +6,7 @@ import {
 	calculateIdleWarning,
 	buildEventGapEntry,
 	buildErrorNotificationContext,
-} from "../diagnostics.ts";
+} from "../config/diagnostics.ts";
 
 // ─── calculateIdleWarning ────────────────────────────────────────
 

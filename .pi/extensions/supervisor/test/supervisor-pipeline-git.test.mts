@@ -17,7 +17,7 @@ import { describe, it } from "node:test";
 
 describe("buildAgentTask — no gh issue comment in prompts (Phase 2)", () => {
 	it("architect task no longer contains gh issue comment", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"architect",
 			42,
@@ -34,7 +34,7 @@ describe("buildAgentTask — no gh issue comment in prompts (Phase 2)", () => {
 	});
 
 	it("test-designer task no longer contains gh issue comment", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"test-designer",
 			42,
@@ -54,7 +54,7 @@ describe("buildAgentTask — no gh issue comment in prompts (Phase 2)", () => {
 	});
 
 	it("researcher task no longer contains gh issue comment", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"researcher",
 			42,
@@ -71,7 +71,7 @@ describe("buildAgentTask — no gh issue comment in prompts (Phase 2)", () => {
 	});
 
 	it("developer task no longer contains git add/commit/push", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"developer",
 			42,
@@ -159,7 +159,7 @@ describe("extractStructuredAuditOutput", () => {
 
 describe("Pipeline marker resolution for structured auditor output", () => {
 	it("AUDIT_APPROVED marker resolves to Done", async () => {
-		const { resolveNextStatus } = await import("../workflow.ts");
+		const { resolveNextStatus } = await import("../config/workflow.ts");
 		const auditStep = {
 			status: "Audit",
 			markerMap: { AUDIT_APPROVED: "Done", AUDIT_REJECTED: "Implementation" },
@@ -169,7 +169,7 @@ describe("Pipeline marker resolution for structured auditor output", () => {
 	});
 
 	it("AUDIT_REJECTED marker resolves to Implementation", async () => {
-		const { resolveNextStatus } = await import("../workflow.ts");
+		const { resolveNextStatus } = await import("../config/workflow.ts");
 		const auditStep = {
 			status: "Audit",
 			markerMap: { AUDIT_APPROVED: "Done", AUDIT_REJECTED: "Implementation" },
@@ -183,7 +183,7 @@ describe("Pipeline marker resolution for structured auditor output", () => {
 // Issue 299: Retry-success post-processing (Phase 2 — mock-based)
 // ═══════════════════════════════════════════════════════════════════════
 
-import type { AgentRunResult } from "../types.ts";
+import type { AgentRunResult } from "../config/types.ts";
 
 /**
  * Duplicate of pipeline.ts post-processing block for unit testing.

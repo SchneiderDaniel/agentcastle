@@ -11,15 +11,15 @@ import type {
 	PipelineAgentResult,
 	ParsedAgent,
 	DebugLogger,
-} from "../types.ts";
-import { loadConfig, resolveTimeoutMs } from "../config.ts";
+} from "../config/types.ts";
+import { loadConfig, resolveTimeoutMs } from "../config/config.ts";
 import { findIssueItem, getItemStatusName, filterIssueData } from "../github/index.ts";
-import { buildAgentTask, generateBranchName, summarizeComments } from "../agent-task.ts";
-import { runAgent, runAgentSubprocess } from "../agent-runner.ts";
-import { WORKFLOW } from "../workflow.ts";
-import { runTscAndLspAudit } from "../pipeline-audit.ts";
-import { buildPipelineSummary, validateAgentResult } from "../pipeline-output.ts";
-import { handlePostPipelineMerge } from "../pipeline-merge.ts";
+import { buildAgentTask, generateBranchName, summarizeComments } from "../agent/task.ts";
+import { runAgent, runAgentSubprocess } from "../agent/runner.ts";
+import { WORKFLOW } from "../config/workflow.ts";
+import { runTscAndLspAudit } from "../pipeline/audit.ts";
+import { buildPipelineSummary, validateAgentResult } from "../pipeline/output.ts";
+import { handlePostPipelineMerge } from "../pipeline/merge.ts";
 import { createWorktree, installWorktreeDeps, cleanupWorktree } from "./worktree.ts";
 import { createPrOnApproval } from "./pr-creation.ts";
 import { sendPipelineSummary, sendAgentResultMessage, sendPipelineError } from "./notifications.ts";
@@ -54,7 +54,7 @@ import {
 	getDebugLogger,
 	setDebugLogger,
 	resetDebugLogger,
-} from "../debug.ts";
+} from "../config/debug.ts";
 
 /**
  * Main supervisor handler — processes a GitHub issue through the full Kanban pipeline.

@@ -7,7 +7,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { createMessageRenderer, createSummaryRenderer } from "./message-renderer";
+import { createMessageRenderer, createSummaryRenderer } from "./session/message-renderer";
 import { registerSupervisorCommand } from "./pipeline/index.ts";
 
 export default function supervisor(pi: ExtensionAPI) {

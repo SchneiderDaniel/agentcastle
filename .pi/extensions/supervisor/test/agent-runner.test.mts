@@ -8,10 +8,10 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { AgentRunState, AgentRunResult } from "../types.ts";
-import { createAgentRunState } from "../agent-runner.ts";
-import { runAgentSubprocess } from "../agent-runner.ts";
-import { runAgent } from "../agent-runner.ts";
+import type { AgentRunState, AgentRunResult } from "../config/types.ts";
+import { createAgentRunState } from "../agent/runner.ts";
+import { runAgentSubprocess } from "../agent/runner.ts";
+import { runAgent } from "../agent/runner.ts";
 
 // ─── Fixtures ─────────────────────────────────────────────────────
 

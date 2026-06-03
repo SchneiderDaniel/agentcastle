@@ -9,7 +9,7 @@ import type {
 	ParsedAgent,
 	ProjectField,
 	ProjectItem,
-} from "../types.ts";
+} from "../config/types.ts";
 import {
 	filterIssueData,
 	getProjectFields,
@@ -17,7 +17,7 @@ import {
 	getProjectId,
 	checkBlockedByDependencies,
 } from "../github/index.ts";
-import { parseAgentFile } from "../agent-loader.ts";
+import { parseAgentFile } from "../agent/loader.ts";
 
 // ─── Dependency Injection Interfaces ──────────────────────────────
 

@@ -5,15 +5,15 @@
 // Owns: filterStderr(), pushLog(), constants, getPhaseFromEvent().
 // Delegates: processJsonLine() → jsonLineToNormalizedEvent() + processNormalizedEvent().
 
-import type { AgentRunState, AgentPhase } from "./types.ts";
-import { formatTokens } from "./formatting.ts";
-import { jsonLineToNormalizedEvent, processNormalizedEvent } from "./event-adapter.ts";
-import { phasePriority } from "./event-types.ts";
-import { getDebugLogger } from "./debug.ts";
+import type { AgentRunState, AgentPhase } from "../config/types.ts";
+import { formatTokens } from "../config/formatting.ts";
+import { jsonLineToNormalizedEvent, processNormalizedEvent } from "../event/adapter.ts";
+import { phasePriority } from "../event/types.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Re-exports for backward compat ───────────────────────────────
 
-export { phasePriority } from "./event-types.ts";
+export { phasePriority } from "../event/types.ts";
 
 // ─── Constants ──────────────────────────────────────────────────────
 

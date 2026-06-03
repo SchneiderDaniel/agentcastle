@@ -12,7 +12,7 @@ import {
 	joinExtensionStatuses,
 	formatDuration,
 	formatTokens,
-} from "../formatting.ts";
+} from "../config/formatting.ts";
 
 // ---------------------------------------------------------------------------
 // Mock theme for testing color thresholds

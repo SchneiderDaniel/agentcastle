@@ -4,7 +4,7 @@
 // Pipeline parses JSON deterministically via parseAgentOutput() — no text
 // markers, no regex fallback. Agents never run gh/git commands themselves.
 
-import type { FilteredIssueData } from "./types.ts";
+import type { FilteredIssueData } from "../config/types.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────
 

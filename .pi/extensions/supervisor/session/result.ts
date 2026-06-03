@@ -2,8 +2,8 @@
 // Build AgentRunResult from session state and message history.
 // Extracted from agent-session-runner.ts to keep files modular.
 
-import type { AgentRunState, AgentRunResult } from "./types.ts";
-import { extractTextFromContent, extractSummaryLine } from "./formatting.ts";
+import type { AgentRunState, AgentRunResult } from "../config/types.ts";
+import { extractTextFromContent, extractSummaryLine } from "../config/formatting.ts";
 
 // ─── Truncation Constants ─────────────────────────────────────────
 

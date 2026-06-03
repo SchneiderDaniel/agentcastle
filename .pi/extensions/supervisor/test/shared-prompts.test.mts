@@ -8,7 +8,7 @@ import {
 	buildAgentSystemPrompt,
 	DEDUPLICATION_SCAN_INSTRUCTION,
 	README_CHECK_INSTRUCTION,
-} from "../shared-prompts.ts";
+} from "../config/shared-prompts.ts";
 
 // ─── Tests: TOOL_DISCIPLINE_SNIPPET ───────────────────────────────
 

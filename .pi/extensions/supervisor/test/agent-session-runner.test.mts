@@ -7,8 +7,8 @@
 import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildAgentRunResult } from "../session-result.ts";
-import type { AgentRunState, AgentRunResult } from "../types";
+import { buildAgentRunResult } from "../session/result.ts";
+import type { AgentRunState, AgentRunResult } from "../config/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

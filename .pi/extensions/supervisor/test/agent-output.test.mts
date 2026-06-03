@@ -3,8 +3,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseAgentOutput, stripAnsi } from "../agent-output.ts";
-import type { AgentOutput, FailedParse } from "../types.ts";
+import { parseAgentOutput, stripAnsi } from "../agent/output.ts";
+import type { AgentOutput, FailedParse } from "../config/types.ts";
 
 // ─── Helper ────────────────────────────────────────────────────────
 

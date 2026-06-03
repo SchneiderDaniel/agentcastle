@@ -172,7 +172,7 @@ describe("runAgentSubprocess — normal completion", () => {
 			exitSignal: null,
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();
@@ -216,7 +216,7 @@ describe("runAgentSubprocess — normal completion", () => {
 			exitSignal: null,
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();
@@ -250,7 +250,7 @@ describe("runAgentSubprocess — normal completion", () => {
 			exitSignal: null,
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();
@@ -276,7 +276,7 @@ describe("runAgentSubprocess — budget exceed", () => {
 			exitSignal: "SIGTERM",
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(
 			mockAgent as any,
 			"test task",
@@ -320,7 +320,7 @@ describe("runAgentSubprocess — budget exceed", () => {
 			exitSignal: "SIGTERM",
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(
 			mockAgent as any,
 			"test task",
@@ -355,7 +355,7 @@ describe("runAgentSubprocess — timeout handling", () => {
 			exitSignal: "SIGTERM",
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();
@@ -374,7 +374,7 @@ describe("runAgentSubprocess — timeout handling", () => {
 			exitSignal: "SIGTERM",
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();
@@ -402,7 +402,7 @@ describe("runAgentSubprocess — widget flush scheduling", () => {
 			exitSignal: null,
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();
@@ -435,7 +435,7 @@ describe("runAgentSubprocess — widget flush scheduling", () => {
 				exitSignal: null,
 			};
 
-			const { runAgentSubprocess } = await import("../agent-runner.ts");
+			const { runAgentSubprocess } = await import("../agent/runner.ts");
 			const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 			// Wait briefly for scheduleFlush (300ms debounce) to fire
@@ -463,7 +463,7 @@ describe("runAgentSubprocess — error path", () => {
 			exitSignal: null,
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		// Emit error on the child instead of close
@@ -501,7 +501,7 @@ describe("runAgentSubprocess — stderr handling", () => {
 			exitSignal: null,
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();
@@ -530,7 +530,7 @@ describe("runAgentSubprocess — result assembly", () => {
 			exitSignal: null,
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();
@@ -567,7 +567,7 @@ describe("runAgentSubprocess — result assembly", () => {
 			exitSignal: null,
 		};
 
-		const { runAgentSubprocess } = await import("../agent-runner.ts");
+		const { runAgentSubprocess } = await import("../agent/runner.ts");
 		const resultPromise = runAgentSubprocess(mockAgent as any, "test task", mockCtx, 5000);
 
 		emitMockEvents();

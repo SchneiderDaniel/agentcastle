@@ -2,8 +2,8 @@
 // Summary building, agent result validation, PR creation helpers.
 // Extracted from pipeline.ts to keep that file under 300 lines.
 
-import type { AgentRunResult, PipelineAgentResult, SupervisorConfig } from "./types.ts";
-import { formatDuration, formatTokens } from "./formatting.ts";
+import type { AgentRunResult, PipelineAgentResult, SupervisorConfig } from "../config/types.ts";
+import { formatDuration, formatTokens } from "../config/formatting.ts";
 
 // ─── validateAgentResult ────────────────────────────────────────────
 

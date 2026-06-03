@@ -13,7 +13,7 @@ import {
 	findStatusOption,
 	setItemStatus,
 } from "../../github/project.ts";
-import type { ProjectItem, ProjectField } from "../../types";
+import type { ProjectItem, ProjectField } from "../../config/types";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

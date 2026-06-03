@@ -3,12 +3,12 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import type { AgentRunState } from "../types";
+import type { AgentRunState } from "../config/types";
 import {
 	jsonLineToNormalizedEvent,
 	sessionEventToNormalizedEvent,
 	processNormalizedEvent,
-} from "../event-adapter.ts";
+} from "../event/adapter.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 

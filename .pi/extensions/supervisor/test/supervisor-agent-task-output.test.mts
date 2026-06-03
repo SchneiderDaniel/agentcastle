@@ -18,7 +18,7 @@ import { describe, it } from "node:test";
 
 describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 	it("no longer contains gh issue comment", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -38,7 +38,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 	});
 
 	it("no longer contains gh pr create", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -55,7 +55,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 	});
 
 	it("no longer contains shell heredoc (cat >)", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -72,7 +72,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 	});
 
 	it("no longer contains SUMMARY_FILE variable", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -89,7 +89,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 	});
 
 	it("contains JSON structured output with action markers", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -113,7 +113,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 	});
 
 	it("contains prTitle / prBody / commentBody JSON keys", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -132,7 +132,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 	});
 
 	it("no longer contains --body-file for submodule fallback", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const submodules = [{ path: "sub/a", repo: "owner/sub-a" }];
 		const task = buildAgentTask(
 			"auditor",
@@ -153,7 +153,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 	});
 
 	it("still includes code review instructions", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -179,7 +179,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 
 describe("buildAgentTask — auditor with submodules (Phase 3)", () => {
 	it("submodule section uses structured markers not shell commands", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const submodules = [{ path: "sub/a", repo: "owner/sub-a" }];
 		const task = buildAgentTask(
 			"auditor",
@@ -198,7 +198,7 @@ describe("buildAgentTask — auditor with submodules (Phase 3)", () => {
 	});
 
 	it("references submodule repos for structured output", async () => {
-		const { buildAgentTask } = await import("../agent-task.ts");
+		const { buildAgentTask } = await import("../agent/task.ts");
 		const submodules = [
 			{ path: "sub/a", repo: "owner/sub-a" },
 			{ path: "sub/b", repo: "owner/sub-b" },

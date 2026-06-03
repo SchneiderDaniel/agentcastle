@@ -4,7 +4,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { checkPackageAge, SAFETY_THRESHOLD_DAYS } from "../package-safety.ts";
+import { checkPackageAge, SAFETY_THRESHOLD_DAYS } from "../checks/package-safety.ts";
 
 // ─── Tests: constants ──────────────────────────────────────────────
 

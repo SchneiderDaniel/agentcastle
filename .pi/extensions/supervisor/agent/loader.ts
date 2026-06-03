@@ -2,9 +2,9 @@
 // Parse .pi/extensions/supervisor/agents/*.md files (YAML frontmatter + system prompt body).
 // Prepends shared tool discipline snippet to every agent's system prompt.
 
-import type { ParsedAgent, AgentFrontmatter } from "./types.ts";
+import type { ParsedAgent, AgentFrontmatter } from "../config/types.ts";
 import { readFileSync } from "node:fs";
-import { buildAgentSystemPrompt } from "./shared-prompts.ts";
+import { buildAgentSystemPrompt } from "../config/shared-prompts.ts";
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"];
 

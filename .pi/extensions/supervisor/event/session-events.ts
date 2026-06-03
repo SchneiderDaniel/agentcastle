@@ -5,14 +5,14 @@
 // Owns: SessionEvent type, getEventPhase() (backward compat).
 // Delegates: processSessionEvent() → sessionEventToNormalizedEvent() + processNormalizedEvent().
 
-import type { AgentRunState, AgentPhase } from "./types.ts";
-import { pushLog } from "./agent-stream.ts";
-import { sessionEventToNormalizedEvent, processNormalizedEvent } from "./event-adapter.ts";
-import { phasePriority } from "./event-types.ts";
+import type { AgentRunState, AgentPhase } from "../config/types.ts";
+import { pushLog } from "../agent/stream.ts";
+import { sessionEventToNormalizedEvent, processNormalizedEvent } from "./adapter.ts";
+import { phasePriority } from "./types.ts";
 
 // ─── Re-exports for backward compat ───────────────────────────────
 
-export { phasePriority } from "./event-types.ts";
+export { phasePriority } from "./types.ts";
 
 // ─── Session Event Types ───────────────────────────────────────────
 

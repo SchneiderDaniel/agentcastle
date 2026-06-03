@@ -11,7 +11,7 @@ import type {
 	PipelineAgentResult,
 	AgentRunResult,
 	FilteredIssueData,
-} from "../types.ts";
+} from "../config/types.ts";
 import {
 	resolveNextStatus,
 	resolveNextStatusFromAgentOutput,
@@ -19,7 +19,7 @@ import {
 	type AuditScore,
 	type WorkflowStep,
 	WORKFLOW,
-} from "../workflow.ts";
+} from "../config/workflow.ts";
 import { findStatusOption, setItemStatus } from "../github/project.ts";
 import {
 	postIssueComment,
@@ -27,9 +27,9 @@ import {
 	extractStructuredAuditOutput,
 	commitAndPush,
 } from "../github/index.ts";
-import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent-output.ts";
-import type { AgentOutput } from "../types.ts";
-import { hasResearchFindings } from "../workflow.ts";
+import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
+import type { AgentOutput } from "../config/types.ts";
+import { hasResearchFindings } from "../config/workflow.ts";
 
 // ─── Constants ────────────────────────────────────────────────────
 

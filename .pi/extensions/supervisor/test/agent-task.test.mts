@@ -9,8 +9,8 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { generateBranchName, buildAgentTask } from "../agent-task.ts";
-import type { FilteredIssueData } from "../types.ts";
+import { generateBranchName, buildAgentTask } from "../agent/task.ts";
+import type { FilteredIssueData } from "../config/types.ts";
 
 // ---------------------------------------------------------------------------
 // Phase 4: worktree path + branch name in auditor task (Bug: auditor checks

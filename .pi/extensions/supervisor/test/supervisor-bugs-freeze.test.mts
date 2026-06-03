@@ -18,7 +18,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { readFileSync } from "node:fs";
-import type { ParsedAgent, AgentRunResult } from "../types.ts";
+import type { ParsedAgent, AgentRunResult } from "../config/types.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Phase 1: Bug 2 — Missing `await` on subprocess fallback (agent-runner.ts:47)

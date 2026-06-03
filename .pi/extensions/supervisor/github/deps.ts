@@ -3,9 +3,9 @@
 // "blocked by" links for a given issue.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { DepsResult, GhTimelineResponse } from "../types.ts";
+import type { DepsResult, GhTimelineResponse } from "../config/types.ts";
 import { ghGraphQL } from "./gh-client.ts";
-import { getDebugLogger } from "../debug.ts";
+import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Parse Timeline Response ─────────────────────────────────────
 

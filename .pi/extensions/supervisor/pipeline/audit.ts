@@ -3,13 +3,13 @@
 // transition. Extracted from pipeline.ts to keep that file under 300 lines.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig, DebugLogger } from "./types.ts";
+import type { SupervisorConfig, DebugLogger } from "../config/types.ts";
 import { resolve as resolvePath } from "node:path";
-import { getDebugLogger } from "./debug.ts";
-import { generateBranchName } from "./agent-task.ts";
-import { determineTscCheckpointDecision, getRunTscCheckpoint } from "./tsc-decisions.ts";
-import { determineLspPreAuditDecision, getRunPreAudit } from "./lsp-decisions.ts";
-import { pollCiChecks } from "./ci-gating.ts";
+import { getDebugLogger } from "../config/debug.ts";
+import { generateBranchName } from "../agent/task.ts";
+import { determineTscCheckpointDecision, getRunTscCheckpoint } from "../checks/tsc-decisions.ts";
+import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-decisions.ts";
+import { pollCiChecks } from "../checks/ci-gating.ts";
 
 /**
  * Run TSC checkpoint and LSP pre-audit during Implementation → Audit transition.

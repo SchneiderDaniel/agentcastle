@@ -9,7 +9,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { resolveNextStatus, type WorkflowStep } from "../workflow.ts";
+import { resolveNextStatus, type WorkflowStep } from "../config/workflow.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Tests

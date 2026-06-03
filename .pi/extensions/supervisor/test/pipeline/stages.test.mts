@@ -9,7 +9,7 @@ import type {
 	ProjectField,
 	AgentRunResult,
 	FilteredIssueData,
-} from "../../types.ts";
+} from "../../config/types.ts";
 import {
 	resolveAgentName,
 	isDoneStatus,
