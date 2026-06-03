@@ -22,7 +22,7 @@ export async function commitChanges(pi: ExtensionAPI, cwd: string, message: stri
 	});
 }
 
-/** Push a branch to a remote. */
+/** Push a branch to a remote. Retries with --force on non-fast-forward rejection. */
 export async function pushBranch(
 	pi: ExtensionAPI,
 	cwd: string,
@@ -32,16 +32,41 @@ export async function pushBranch(
 	const log = getDebugLogger();
 	log.info("git", `git push ${remote} ${branch}`, { cwd });
 	const result = await pi.exec("git", ["push", remote, branch], { cwd });
-	if (result.code !== 0) {
-		log.warn("git", "git push failed", {
+	if (result.code === 0) {
+		log.info("git", `git push OK — ${remote}/${branch}`);
+		return;
+	}
+
+	const stderr = (result.stderr || "") + (result.stdout || "");
+	// Non-fast-forward: old branch exists remotely from previous pipeline run.
+	// Force-push since this branch is pipeline-owned (single-author, not shared).
+	if (stderr.includes("non-fast-forward") || stderr.includes("fetch first")) {
+		log.warn("git", "Non-fast-forward push — retrying with --force", {
 			cwd,
 			remote,
 			branch,
-			stderr: (result.stderr || "").slice(0, 500),
+			stderr: stderr.slice(0, 300),
 		});
-		throw new Error(`git push failed: ${result.stderr || result.stdout}`);
+		const forceResult = await pi.exec("git", ["push", "--force", remote, branch], { cwd });
+		if (forceResult.code === 0) {
+			log.info("git", `git push --force OK — ${remote}/${branch}`);
+			return;
+		}
+		const forceStderr = (forceResult.stderr || "") + (forceResult.stdout || "");
+		log.error("git", "git push --force also failed", {
+			cwd,
+			stderr: forceStderr.slice(0, 500),
+		});
+		throw new Error(`git push --force failed: ${forceStderr}`);
 	}
-	log.info("git", `git push OK — ${remote}/${branch}`);
+
+	log.warn("git", "git push failed", {
+		cwd,
+		remote,
+		branch,
+		stderr: stderr.slice(0, 500),
+	});
+	throw new Error(`git push failed: ${stderr}`);
 }
 
 /** Add all, commit, and push in sequence. */
