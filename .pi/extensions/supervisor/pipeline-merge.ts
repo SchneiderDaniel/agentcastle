@@ -11,6 +11,7 @@ import { checkPrConflicts } from "./github/pr.ts";
 import { parseAgentFile } from "./agent-loader.ts";
 import { runAgent } from "./agent-runner.ts";
 import { resolveTimeoutMs } from "./config.ts";
+import { getDebugLogger } from "./debug.ts";
 
 /**
  * Handle post-pipeline merge conflict detection and resolution.
@@ -24,7 +25,14 @@ export async function handlePostPipelineMerge(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 ): Promise<void> {
+	const log = getDebugLogger();
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+
+	log.info("pipeline-merge", `Post-pipeline merge check for #${issueNum}`, {
+		branch,
+		repo: config.repo,
+		loopStatus,
+	});
 
 	try {
 		ctx.ui.setStatus("supervisor", "Checking PR for merge conflicts...");
@@ -38,11 +46,18 @@ export async function handlePostPipelineMerge(
 		}
 
 		if (!conflictInfo) {
+			log.info("pipeline-merge", "No PR found for branch — skipping");
 			ctx.ui.notify("No PR found for this branch — skipping conflict check.", "info");
 			return;
 		}
 
 		if (conflictInfo.hasConflict) {
+			log.warn("pipeline-merge", `PR #${conflictInfo.number} has conflicts`, {
+				mergeable: conflictInfo.mergeable,
+				mergeStateStatus: conflictInfo.mergeStateStatus,
+				baseRef: conflictInfo.baseRefName,
+				headRef: conflictInfo.headRefName,
+			});
 			ctx.ui.notify(
 				`PR #${conflictInfo.number} has merge conflicts! (mergeable: ${conflictInfo.mergeable}, state: ${conflictInfo.mergeStateStatus})`,
 				"warning",
@@ -57,6 +72,7 @@ export async function handlePostPipelineMerge(
 				const wt = `${config.worktreeBase}${branch}`;
 
 				ctx.ui.setStatus("supervisor", "Attempting auto-merge...");
+				log.info("pipeline-merge", "Attempting auto-merge", { wt, branch });
 				const mergeResult = await tryAutoMerge(
 					wt,
 					branch,
@@ -64,9 +80,14 @@ export async function handlePostPipelineMerge(
 					config.remote!,
 					pi,
 				);
+				log.info("pipeline-merge", `Auto-merge result: success=${mergeResult.success}`, {
+					conflictFiles: mergeResult.conflictFiles,
+					message: mergeResult.message,
+				});
 
 				if (mergeResult.success) {
 					try {
+						log.info("pipeline-merge", "Pushing resolved merge");
 						const pushResult = await pi.exec("git", ["push", config.remote!, branch], {
 							cwd: wt,
 							timeout: 30_000,
@@ -74,6 +95,7 @@ export async function handlePostPipelineMerge(
 						if (pushResult.code !== 0) {
 							throw new Error(pushResult.stderr || pushResult.stdout || "git push failed");
 						}
+						log.info("pipeline-merge", "Merge resolved and pushed");
 						ctx.ui.notify("Merge conflicts resolved and pushed!", "info");
 						pi.sendMessage({
 							customType: "supervisor",
@@ -82,9 +104,11 @@ export async function handlePostPipelineMerge(
 						});
 					} catch (pushErr: unknown) {
 						const msg = pushErr instanceof Error ? pushErr.message : String(pushErr);
+						log.error("pipeline-merge", `Merge succeeded but push failed: ${msg}`);
 						ctx.ui.notify(`Merge succeeded but push failed: ${msg}`, "error");
 					}
 				} else {
+					log.info("pipeline-merge", "Auto-merge failed, dispatching developer");
 					ctx.ui.notify(
 						`Auto-merge failed: ${mergeResult.message}. Dispatching developer to resolve...`,
 						"warning",
@@ -114,8 +138,14 @@ export async function handlePostPipelineMerge(
 								`When done, output CONFLICTS_RESOLVED on its own line.`,
 							].join("\n");
 
+							log.info("pipeline-merge", "Dispatching developer for conflict resolution");
 							const devTimeoutMs = resolveTimeoutMs("developer", config.agentTimeoutsMin);
 							const devResult = await runAgent(devAgent, devTask, ctx, pi, devTimeoutMs);
+
+							log.info(
+								"pipeline-merge",
+								`Developer conflict resolution: success=${devResult.success}`,
+							);
 
 							pi.sendMessage({
 								customType: "supervisor",
@@ -138,8 +168,10 @@ export async function handlePostPipelineMerge(
 							});
 
 							if (devResult.success) {
+								log.info("pipeline-merge", "Developer resolved conflicts");
 								ctx.ui.notify("Developer resolved merge conflicts successfully!", "info");
 							} else {
+								log.warn("pipeline-merge", "Developer failed to resolve conflicts");
 								ctx.ui.notify(
 									"Developer failed to resolve conflicts. Manual intervention required.",
 									"error",
@@ -147,9 +179,11 @@ export async function handlePostPipelineMerge(
 							}
 						} catch (devErr: unknown) {
 							const msg = devErr instanceof Error ? devErr.message : String(devErr);
+							log.error("pipeline-merge", `Failed to dispatch developer: ${msg}`);
 							ctx.ui.notify(`Failed to dispatch developer: ${msg}`, "error");
 						}
 					} else {
+						log.warn("pipeline-merge", "Developer agent not found");
 						ctx.ui.notify(
 							"Developer agent not found. Cannot resolve conflicts automatically.",
 							"error",
@@ -158,6 +192,7 @@ export async function handlePostPipelineMerge(
 				}
 			}
 		} else {
+			log.info("pipeline-merge", `PR #${conflictInfo.number} has no conflicts`);
 			ctx.ui.notify(
 				`PR #${conflictInfo.number} has no merge conflicts (mergeable: ${conflictInfo.mergeable}).`,
 				"info",

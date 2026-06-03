@@ -10,6 +10,7 @@ import type {
 	SupervisorConfig,
 	PipelineAgentResult,
 	ParsedAgent,
+	DebugLogger,
 } from "../types.ts";
 import { loadConfig, resolveTimeoutMs } from "../config.ts";
 import { findIssueItem, getItemStatusName, filterIssueData } from "../github/index.ts";
@@ -47,18 +48,45 @@ import {
 	loadAgentFile as loadAgentFileHelper,
 } from "./helpers.ts";
 import type { ExecFn, NotifyFn } from "./helpers.ts";
+import {
+	parseSupervisorArgs,
+	enableDebugLogger,
+	getDebugLogger,
+	setDebugLogger,
+	resetDebugLogger,
+} from "../debug.ts";
 
 /**
  * Main supervisor handler — processes a GitHub issue through the full Kanban pipeline.
+ * Supports --debug flag for structured JSONL logging to /tmp/.
  */
 export async function handleSupervisorCommand(
 	args: string | undefined,
 	ctx: ExtensionCommandContext,
 	pi: ExtensionAPI,
 ): Promise<void> {
-	const issueNum = parseInt(args?.trim() || "", 10);
+	// Parse args: "--debug 103", "103 --debug", "103"
+	const parsed = parseSupervisorArgs(args);
+	const issueNum = parsed.issueNum;
+	const isDebug = parsed.isDebug;
+
+	// Setup debug logger if --debug flag present
+	if (isDebug) {
+		const logger = enableDebugLogger(ctx.cwd || process.cwd());
+		logger.info("handler", "Supervisor pipeline started with --debug", {
+			args,
+			parsedIssueNum: issueNum,
+			cwd: ctx.cwd,
+		});
+		ctx.ui.notify(`Debug logging enabled → ${logger.getLogPath()}`, "info");
+	}
+
 	if (!issueNum || issueNum < 1) {
-		ctx.ui.notify("Usage: /supervisor <issue-number>", "error");
+		ctx.ui.notify("Usage: /supervisor [--debug] <issue-number>", "error");
+		if (isDebug) {
+			getDebugLogger().error("handler", "Invalid issue number", { args, parsed });
+		}
+		resetDebugLogger();
 		return;
 	}
 
@@ -82,6 +110,11 @@ export async function handleSupervisorCommand(
 
 	try {
 		config = loadConfig();
+		getDebugLogger().info("handler", "Config loaded", {
+			repo: config.repo,
+			projectNumber: config.projectNumber,
+			submodules: config.submodules?.length,
+		});
 
 		// Fetch issue
 		ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
@@ -95,6 +128,12 @@ export async function handleSupervisorCommand(
 			display: true,
 		});
 
+		getDebugLogger().info("handler", "Issue fetched", {
+			issueNum,
+			title: issueTitle,
+			repo: config.repo,
+		});
+
 		const filteredData = filterIssueData(issueData, config.codeowners);
 
 		// Read project board
@@ -105,17 +144,35 @@ export async function handleSupervisorCommand(
 			config,
 			issueNum,
 		);
-		if (!fields || !statusField) return;
+		if (!fields || !statusField) {
+			getDebugLogger().error("handler", "Project board read failed", {
+				hasFields: !!fields,
+				hasStatusField: !!statusField,
+			});
+			return;
+		}
 		const loopItem = findIssueItem(items, issueNum);
 		if (!loopItem) {
 			ctx.ui.notify(`Issue #${issueNum} not on project board #${config.projectNumber}.`, "error");
+			getDebugLogger().error("handler", "Issue not on project board", {
+				issueNum,
+				projectNumber: config.projectNumber,
+			});
 			ctx.ui.setStatus("supervisor", undefined);
 			return;
 		}
 
+		getDebugLogger().info("handler", "Project board read OK", {
+			itemId: loopItem.id,
+			status: getItemStatusName(loopItem),
+		});
+
 		// Dependency gate
 		ctx.ui.setStatus("supervisor", "Checking dependencies...");
-		if (!(await checkDependencies(exec, notify, config, issueNum))) return;
+		if (!(await checkDependencies(exec, notify, config, issueNum))) {
+			getDebugLogger().warn("handler", "Dependency check blocked", { issueNum });
+			return;
+		}
 
 		// Pipeline main loop
 		const stageState = createStageState(getItemStatusName(loopItem));
@@ -123,6 +180,10 @@ export async function handleSupervisorCommand(
 
 		for (let i = 0; i < MAX_PIPELINE_LOOPS; i++) {
 			ctx.ui.notify(`Issue #${issueNum}: "${issueTitle}" — Status: ${loopStatus}`, "info");
+			getDebugLogger().info("handler", `Pipeline iteration ${i + 1}`, {
+				loopStatus,
+				iteration: i,
+			});
 
 			const step = WORKFLOW.find((s) => s.status.toLowerCase() === loopStatus.toLowerCase());
 			if (!step) {
@@ -131,6 +192,7 @@ export async function handleSupervisorCommand(
 					`No workflow step for status '${loopStatus}'. Available: ${WORKFLOW.map((s) => s.status).join(", ")}`,
 					"error",
 				);
+				getDebugLogger().error("handler", "No workflow step", { loopStatus });
 				break;
 			}
 
@@ -144,12 +206,14 @@ export async function handleSupervisorCommand(
 					projectId,
 				);
 				ctx.ui.notify(`Issue #${issueNum} moved: Backlog → Architecture`, "info");
+				getDebugLogger().info("handler", "Backlog → Architecture");
 				continue;
 			}
 
 			// Built-in: Done
 			if (step.builtIn === "done") {
 				ctx.ui.notify(`Issue #${issueNum} is Done. Pipeline complete.`, "info");
+				getDebugLogger().info("handler", "Pipeline complete — Done status");
 				break;
 			}
 
@@ -158,6 +222,7 @@ export async function handleSupervisorCommand(
 			if (!agentName) {
 				stopReason = `No agent for status '${loopStatus}'`;
 				ctx.ui.notify(`No agent for status '${loopStatus}'`, "error");
+				getDebugLogger().error("handler", "No agent for status", { loopStatus });
 				break;
 			}
 
@@ -171,6 +236,9 @@ export async function handleSupervisorCommand(
 					`Issue #${issueNum} rejected ${step.maxRejections} times. Human intervention required.`,
 					"error",
 				);
+				getDebugLogger().warn("handler", "Rejection limit reached", {
+					maxRejections: step.maxRejections,
+				});
 				break;
 			}
 
@@ -180,6 +248,7 @@ export async function handleSupervisorCommand(
 					`Issue #${issueNum} already has research findings — skipping researcher`,
 					"info",
 				);
+				getDebugLogger().info("handler", "Skipping researcher — findings exist");
 				// Find the next forward status for the researcher step
 				const nextStatus = inferForwardStatus(step);
 				if (nextStatus) {
@@ -195,6 +264,7 @@ export async function handleSupervisorCommand(
 						`Issue #${issueNum} moved: Research → ${nextStatus} (deduplication gate)`,
 						"info",
 					);
+					getDebugLogger().info("handler", `Research → ${nextStatus} (dedup gate)`);
 					continue;
 				}
 			}
@@ -203,6 +273,7 @@ export async function handleSupervisorCommand(
 			const agent = await loadAgentFileHelper(exec, notify, ctx.cwd, agentName);
 			if (!agent) {
 				stopReason = `Agent file not found: ${agentName}`;
+				getDebugLogger().error("handler", "Agent file not found", { agentName });
 				break;
 			}
 
@@ -212,6 +283,10 @@ export async function handleSupervisorCommand(
 			// Worktree creation (once per pipeline run)
 			if (isWorktreeAgent(agentName) && !worktreePath) {
 				worktreeBranch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+				getDebugLogger().info("handler", "Creating worktree", {
+					branch: worktreeBranch,
+					base: config.worktreeBase,
+				});
 				worktreePath = await createWorktree(
 					pi,
 					ctx.cwd,
@@ -220,6 +295,7 @@ export async function handleSupervisorCommand(
 					config.defaultBranch!,
 				);
 				await installWorktreeDeps(pi, worktreePath);
+				getDebugLogger().info("handler", "Worktree ready", { worktreePath });
 			}
 
 			// Build task
@@ -241,6 +317,13 @@ export async function handleSupervisorCommand(
 					: undefined,
 			);
 
+			getDebugLogger().info("handler", `Dispatching agent ${agentName}`, {
+				model: agent.config.model,
+				timeoutMs,
+				taskLen: task.length,
+				cwdOverride: isWorktreeAgent(agentName) ? worktreePath : undefined,
+			});
+
 			// Execute agent
 			const { result, usedRetry } = await executeAgent(
 				agent,
@@ -253,6 +336,16 @@ export async function handleSupervisorCommand(
 				config.agentTokenBudget,
 			);
 
+			getDebugLogger().info("handler", `Agent ${agentName} completed`, {
+				success: result.success,
+				usedRetry,
+				durationMs: result.durationMs,
+				toolCount: result.toolCount,
+				tokenCount: result.tokenCount,
+				budgetExceeded: result.budgetExceeded,
+				summary: result.summaryLine?.slice(0, 200),
+			});
+
 			agentResults.push(buildAgentResultEntry(result, usedRetry, agent.config.model));
 
 			// Track audit score
@@ -262,6 +355,11 @@ export async function handleSupervisorCommand(
 					`Audit #${auditInfo.cycleCount} score: ${auditInfo.score.passing}/${auditInfo.score.total}${auditInfo.trend ? ` (${auditInfo.trend})` : ""}`,
 					"info",
 				);
+				getDebugLogger().info("handler", "Audit score tracked", {
+					cycleCount: auditInfo.cycleCount,
+					score: auditInfo.score,
+					trend: auditInfo.trend,
+				});
 			}
 
 			// Send result to UI
@@ -299,6 +397,7 @@ export async function handleSupervisorCommand(
 				);
 				if (!continuePipeline) {
 					stopReason = `commitAndPush failed for ${agentName}`;
+					getDebugLogger().error("handler", "commitAndPush failed", { agentName });
 					break;
 				}
 			}
@@ -310,8 +409,14 @@ export async function handleSupervisorCommand(
 				result.textOnly,
 			);
 
+			getDebugLogger().info("handler", "Next status determined", {
+				nextStatus,
+				stopReason: nsStop,
+			});
+
 			// PR creation on audit approval
 			if (agentName === "auditor" && result.success && nextStatus === "Done") {
+				getDebugLogger().info("handler", "Creating PR on approval");
 				await createPrOnApproval(
 					pi,
 					ctx,
@@ -326,6 +431,11 @@ export async function handleSupervisorCommand(
 
 			if (result.budgetExceeded) {
 				stopReason = `Agent ${result.agentName} exceeded budget (${result.toolCount} tools, ${result.tokenCount} tokens)`;
+				getDebugLogger().warn("handler", "Budget exceeded", {
+					agentName: result.agentName,
+					toolCount: result.toolCount,
+					tokenCount: result.tokenCount,
+				});
 				break;
 			}
 
@@ -335,23 +445,35 @@ export async function handleSupervisorCommand(
 					`Agent ${agent.config.name} failed. Pipeline stops before ${nextStatus || "next stage"}.`,
 					"warning",
 				);
+				getDebugLogger().error("handler", "Agent failed, pipeline stopping", {
+					agentName: agent.config.name,
+					nextStatus,
+				});
 				break;
 			}
 
 			if (!nextStatus) {
 				stopReason = nsStop || `Agent ${agent.config.name} output unclear`;
 				ctx.ui.notify(stopReason, "warning");
+				getDebugLogger().warn("handler", "No next status from agent output", {
+					agentName: agent.config.name,
+					stopReason,
+				});
 				break;
 			}
 
 			if (step.canLoopBackTo?.includes(nextStatus)) {
 				ctx.ui.notify(`Feedback loop: ${loopStatus} → ${nextStatus}`, "info");
+				getDebugLogger().info("handler", "Feedback loop", { from: loopStatus, to: nextStatus });
 			}
 
 			// Pre-transition hooks
 			let effectiveNextStatus = nextStatus;
 			if (step.hooks?.some((h) => ["ci", "tsc", "lsp"].includes(h))) {
 				try {
+					getDebugLogger().info("handler", "Running pre-transition hooks", {
+						hooks: step.hooks,
+					});
 					const auditResult = await runTscAndLspAudit(
 						issueNum,
 						issueTitle,
@@ -363,11 +485,18 @@ export async function handleSupervisorCommand(
 						ctx,
 					);
 					effectiveNextStatus = auditResult.nextStatus;
+					getDebugLogger().info("handler", "Pre-transition hook result", {
+						effectiveNextStatus,
+						note: auditResult.note,
+					});
 				} catch (auditErr: unknown) {
 					ctx.ui.notify(
 						`Pre-audit error: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`,
 						"warning",
 					);
+					getDebugLogger().error("handler", "Pre-transition hook error", {
+						error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+					});
 				}
 			}
 
@@ -383,9 +512,16 @@ export async function handleSupervisorCommand(
 					effectiveNextStatus,
 				);
 				ctx.ui.notify(`Issue #${issueNum} moved: ${prev} → ${loopStatus}`, "info");
+				getDebugLogger().info("handler", "Status transition applied", {
+					from: prev,
+					to: loopStatus,
+				});
 			} catch (err: unknown) {
 				stopReason = `Failed to update status: ${err instanceof Error ? err.message : String(err)}`;
 				ctx.ui.notify(stopReason, "error");
+				getDebugLogger().error("handler", "Status transition failed", {
+					error: err instanceof Error ? err.message : String(err),
+				});
 				break;
 			}
 		}
@@ -422,23 +558,29 @@ export async function handleSupervisorCommand(
 				config,
 				stopReason,
 			);
+			getDebugLogger().info("handler", "Pipeline finished", {
+				overallStatus,
+				agentCount: agentResults.length,
+				stopReason,
+				totalDurationMs: agentResults.reduce((s, a) => s + a.durationMs, 0),
+			});
 		} else {
 			ctx.ui.setStatus("supervisor", undefined);
 		}
 	} catch (err: unknown) {
+		const errMsg = err instanceof Error ? err.message : String(err);
+		getDebugLogger().error("handler", "Pipeline threw unhandled error", { error: errMsg });
 		// Also cleanup on error
 		if (worktreePath && worktreeBranch) {
 			await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
 		}
-		sendPipelineError(
-			pi,
-			ctx,
-			agentResults,
-			issueNum,
-			issueTitle,
-			config,
-			err instanceof Error ? err.message : String(err),
-		);
+		sendPipelineError(pi, ctx, agentResults, issueNum, issueTitle, config, errMsg);
+	} finally {
+		if (isDebug) {
+			const logPath = getDebugLogger().getLogPath();
+			ctx.ui.notify(`Debug log: ${logPath}`, "info");
+			resetDebugLogger();
+		}
 	}
 }
 

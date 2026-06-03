@@ -3,8 +3,9 @@
 // transition. Extracted from pipeline.ts to keep that file under 300 lines.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig } from "./types.ts";
+import type { SupervisorConfig, DebugLogger } from "./types.ts";
 import { resolve as resolvePath } from "node:path";
+import { getDebugLogger } from "./debug.ts";
 import { generateBranchName } from "./agent-task.ts";
 import { determineTscCheckpointDecision, getRunTscCheckpoint } from "./tsc-decisions.ts";
 import { determineLspPreAuditDecision, getRunPreAudit } from "./lsp-decisions.ts";
@@ -30,6 +31,10 @@ export async function runTscAndLspAudit(
 		// Step 0: CI gating — poll check runs before running local hooks
 		if (config.ciGatingTimeoutSec && config.ciGatingTimeoutSec > 0) {
 			ctx.ui.setStatus("supervisor", "Polling CI checks...");
+			getDebugLogger().info("pipeline-audit", "Polling CI checks", {
+				branch,
+				timeoutSec: config.ciGatingTimeoutSec,
+			});
 			const ciResult = await pollCiChecks(
 				pi,
 				branch,
@@ -83,8 +88,14 @@ export async function runTscAndLspAudit(
 
 		if (runTscCheckpointFn) {
 			ctx.ui.setStatus("supervisor", "Running TSC checkpoint...");
+			getDebugLogger().info("pipeline-audit", "Running TSC checkpoint", { worktreePath });
 			const tscResult = await runTscCheckpointFn(pi, worktreePath);
 			const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
+
+			getDebugLogger().info("pipeline-audit", "TSC result", {
+				nextStatus: tscDecision.nextStatus,
+				note: tscDecision.note,
+			});
 
 			if (tscDecision.nextStatus !== "Audit") {
 				// TSC has errors — stay in Implementation, send followUp, skip LSP
@@ -102,7 +113,12 @@ export async function runTscAndLspAudit(
 		}
 
 		// Step 2: LSP pre-audit (Tier 3)
-		return runLspPreAudit(issueNum, issueTitle, config, pi, ctx, worktreePath);
+		const result = await runLspPreAudit(issueNum, issueTitle, config, pi, ctx, worktreePath);
+		getDebugLogger().info("pipeline-audit", "LSP pre-audit result", {
+			nextStatus: result.nextStatus,
+			note: result.note,
+		});
+		return result;
 	} finally {
 		ctx.ui.setStatus("supervisor", undefined);
 	}

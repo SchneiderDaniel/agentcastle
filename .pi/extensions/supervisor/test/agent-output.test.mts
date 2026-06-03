@@ -480,6 +480,43 @@ describe("parseAgentOutput — edge cases", () => {
 		assert.ok(agentOut.commentBody?.includes("structuredClone"));
 		assert.ok(agentOut.commentBody?.includes("```ts"));
 	});
+
+	it("extracts JSON with unescaped double-quotes in commentBody (agent-style)", () => {
+		// Agents commonly produce JSON with unescaped double-quotes inside
+		// string values like commentBody. The old extractLastJson used naive
+		// " toggling for string boundaries, which broke brace matching when
+		// commentBody contained markdown quotes (e.g. the file "index.ts").
+		// Smart quote detection (isStructuralQuote) fixes this.
+		// Template literal used to embed unescaped " inside the JSON.
+		const input = `{"action":"COMPLETE","agentName":"architect","commentBody":"## Architecture\\nWe use the file "index.ts" directly","summary":"Done"}`;
+		const result = parseAgentOutput(input);
+		assert.ok(isAgentOutput(result), "should parse JSON with unescaped quotes in commentBody");
+		const agentOut = result as AgentOutput;
+		assert.equal(agentOut.action, "COMPLETE");
+		assert.equal(agentOut.agentName, "architect");
+		assert.ok(agentOut.commentBody?.includes("Architecture"));
+		assert.equal(agentOut.summary, "Done");
+	});
+
+	it("extracts JSON with braces in commentBody alongside unescaped quotes", () => {
+		// When commentBody contains both unescaped quotes AND curly braces
+		// (e.g. markdown code blocks with function bodies), the old brace
+		// matching would break completely. Smart quote detection keeps the
+		// string boundary tracking correct even with both issues present.
+		const input =
+			'{"action":"COMPLETE","agentName":"architect","commentBody":"## Architecture\\nCode: function foo() { return bar; } uses \"utils.ts\"","summary":"Done"}';
+		const result = parseAgentOutput(input);
+		assert.ok(
+			isAgentOutput(result),
+			"should parse JSON with braces AND unescaped quotes in commentBody",
+		);
+		const agentOut = result as AgentOutput;
+		assert.equal(agentOut.action, "COMPLETE");
+		assert.equal(agentOut.agentName, "architect");
+		assert.ok(agentOut.commentBody?.includes("foo()"));
+		assert.ok(agentOut.commentBody?.includes("utils.ts"));
+		assert.equal(agentOut.summary, "Done");
+	});
 });
 
 // ─── Characterization: current resolveNextStatus + extractStructuredAuditOutput ──

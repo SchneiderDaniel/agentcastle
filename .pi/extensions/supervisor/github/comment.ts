@@ -9,6 +9,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FilteredIssueData, AgentOutput } from "../types.ts";
 import { gh } from "./gh-client.ts";
 import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent-output.ts";
+import { getDebugLogger } from "../debug.ts";
 
 // ─── Post Issue Comment ───────────────────────────────────────────
 
@@ -18,7 +19,26 @@ export async function postIssueComment(
 	repo: string,
 	body: string,
 ): Promise<void> {
-	await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", body]);
+	const log = getDebugLogger();
+	const preview = body.slice(0, 200).replace(/\n/g, " ");
+	log.info("comment", `Posting comment on #${issueNum} (${repo})`, {
+		issueNum,
+		repo,
+		bodyLen: body.length,
+		preview,
+	});
+	try {
+		await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", body]);
+		log.info("comment", `Comment posted on #${issueNum}`);
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		log.error("comment", `Failed to post comment on #${issueNum}`, {
+			error: msg,
+			issueNum,
+			repo,
+		});
+		throw err;
+	}
 }
 
 // ─── Structured Audit Output ──────────────────────────────────────

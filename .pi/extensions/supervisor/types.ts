@@ -63,6 +63,17 @@ export interface FilteredIssueData {
 	comments: Array<{ author: string; body: string }>;
 }
 
+/** Debug logger interface for structured JSONL logging */
+export interface DebugLogger {
+	debug(component: string, message: string, data?: Record<string, unknown>): void;
+	info(component: string, message: string, data?: Record<string, unknown>): void;
+	warn(component: string, message: string, data?: Record<string, unknown>): void;
+	error(component: string, message: string, data?: Record<string, unknown>): void;
+	child(name: string): DebugLogger;
+	getSessionId(): string;
+	getLogPath(): string;
+}
+
 /** Structured result returned by runAgent for rendering */
 export interface AgentRunResult {
 	output: string;

@@ -5,7 +5,13 @@
 // In-process runner lives in agent-session-runner.ts
 // Subprocess lifecycle lives in this file (parsing in agent-stream.ts).
 
-import type { AgentRunResult, AgentRunState, AgentPhase, ParsedAgent } from "./types.ts";
+import type {
+	AgentRunResult,
+	AgentRunState,
+	AgentPhase,
+	ParsedAgent,
+	DebugLogger,
+} from "./types.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { resolveTools, resolveExtensions, resolveSkillPaths } from "./extensions.ts";
@@ -24,6 +30,7 @@ import {
 import { buildWidgetLines, getWorkingMessage } from "./session-widget.ts";
 import { runAgentInProcess } from "./agent-session-runner.ts";
 import { buildErrorNotificationContext } from "./diagnostics.ts";
+import { getDebugLogger } from "./debug.ts";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
 export { DEFAULT_AGENT_TIMEOUT_MS } from "./config.ts";
@@ -70,6 +77,16 @@ export async function runAgent(
 	maxToolCalls?: number,
 	agentTokenBudget?: number,
 ): Promise<AgentRunResult> {
+	const log = getDebugLogger();
+	log.info("agent-runner", `runAgent: ${agent.config.name}`, {
+		model: agent.config.model,
+		timeoutMs,
+		cwd,
+		maxToolCalls,
+		agentTokenBudget,
+		taskLen: task.length,
+	});
+
 	// Primary: in-process via SDK
 	// Two failure modes:
 	//   1. Thrown error (unexpected exception) — caught by catch block
@@ -90,8 +107,9 @@ export async function runAgent(
 		// Check for non-thrown failures (e.g., watchdog stall, agent error result)
 		if (!result.success) {
 			const reason = result.summaryLine || result.errorOutput || "unknown error";
-			console.error(
-				`[supervisor] In-process runner failed (result.success=false), falling back to subprocess: ${reason}`,
+			log.warn(
+				"agent-runner",
+				`In-process runner failed (result.success=false), falling back to subprocess: ${reason}`,
 			);
 			try {
 				const ctx2 = buildErrorNotificationContext("in-process-runner", reason);
@@ -110,10 +128,18 @@ export async function runAgent(
 			);
 		}
 
+		log.info("agent-runner", `In-process succeeded for ${agent.config.name}`, {
+			success: result.success,
+			durationMs: result.durationMs,
+			toolCount: result.toolCount,
+			tokenCount: result.tokenCount,
+			summary: result.summaryLine?.slice(0, 200),
+		});
+
 		return result;
 	} catch (err: unknown) {
 		const errMsg = err instanceof Error ? err.message : String(err);
-		console.error(`[supervisor] In-process runner threw, falling back to subprocess: ${err}`);
+		log.warn("agent-runner", `In-process runner threw, falling back to subprocess: ${errMsg}`);
 		// Show notification with diagnostic context
 		try {
 			const ctx2 = buildErrorNotificationContext("in-process-runner", errMsg);
@@ -145,6 +171,7 @@ export async function runAgentSubprocess(
 	maxToolCalls?: number,
 	agentTokenBudget?: number,
 ): Promise<AgentRunResult> {
+	const log = getDebugLogger();
 	const effectiveCwd = cwd || ctx.cwd || process.cwd();
 	// Pass worktree path to worktree-sandbox extension for path confinement
 	const sandboxEnv = cwd ? { WORKTREE_SANDBOX_PATH: cwd } : {};
@@ -174,6 +201,14 @@ export async function runAgentSubprocess(
 		args.push("--thinking", agent.config.thinking.trim());
 	}
 
+	log.info("agent-runner", `runAgentSubprocess: ${agent.config.name}`, {
+		effectiveCwd,
+		model,
+		timeoutMs,
+		tools,
+		skillCount: skillPaths.length,
+	});
+
 	const widgetId = `agent-${agent.config.name}`;
 	const agentName = agent.config.name;
 	ctx.ui.notify(`Running agent: ${agentName}...`, "info");
@@ -183,6 +218,11 @@ export async function runAgentSubprocess(
 
 	const state = createAgentRunState(startedAt, maxToolCalls, agentTokenBudget);
 
+	log.info("agent-runner", `Subprocess spawn: ${agentName}`, {
+		pid: process.pid,
+		startedAt,
+	});
+
 	return new Promise((resolve) => {
 		const child = spawn("/usr/bin/pi", args, {
 			cwd: effectiveCwd,
@@ -190,6 +230,8 @@ export async function runAgentSubprocess(
 			stdio: ["ignore", "pipe", "pipe"],
 			timeout: timeoutMs,
 		});
+
+		log.info("agent-runner", `Subprocess spawned: ${agentName}`, { childPid: child.pid });
 
 		const MAX_RAW_STDOUT = 500_000;
 		let rawStdout = "";
@@ -209,7 +251,7 @@ export async function runAgentSubprocess(
 				ctx.ui.setStatus("supervisor", undefined);
 			} catch (renderErr: unknown) {
 				const msg = renderErr instanceof Error ? renderErr.message : String(renderErr);
-				console.error(`[supervisor] widget render error for ${agentName}: ${msg}`);
+				log.error("agent-runner", `Widget render error for ${agentName}: ${msg}`);
 			}
 		};
 
@@ -348,6 +390,8 @@ export async function runAgentSubprocess(
 		});
 
 		child.on("error", (err) => {
+			const spawnError = `Subprocess spawn error: ${err.message}`;
+			log.error("agent-runner", spawnError, { agentName: agent.config.name });
 			if (flushTimer) {
 				clearTimeout(flushTimer);
 				flushTimer = null;

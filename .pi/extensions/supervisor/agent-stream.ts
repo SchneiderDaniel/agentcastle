@@ -9,6 +9,7 @@ import type { AgentRunState, AgentPhase } from "./types.ts";
 import { formatTokens } from "./formatting.ts";
 import { jsonLineToNormalizedEvent, processNormalizedEvent } from "./event-adapter.ts";
 import { phasePriority } from "./event-types.ts";
+import { getDebugLogger } from "./debug.ts";
 
 // ─── Re-exports for backward compat ───────────────────────────────
 
@@ -108,13 +109,22 @@ export function processJsonLine(
 	try {
 		const normalized = jsonLineToNormalizedEvent(line);
 		if (!normalized) return { flush: false, workingChange: false };
-		return processNormalizedEvent(normalized, state);
+		const result = processNormalizedEvent(normalized, state);
+		if (result.workingChange) {
+			getDebugLogger().debug("agent-stream", `Phase: ${state.phase}`, {
+				toolCount: state.toolCount,
+				logLen: state.fullLog.length,
+				thinkingLen: state.liveThinking.length,
+				textLen: state.liveText.length,
+			});
+		}
+		return result;
 	} catch (parseErr: unknown) {
 		const preview = line.length > 200 ? line.slice(0, 200) + "…" : line;
+		const errMsg = String(parseErr).slice(0, 200);
+		getDebugLogger().warn("agent-stream", `JSON parse error: ${errMsg}`, { preview });
 		if (line.trim()) {
-			console.error(
-				`[supervisor] JSON parse error: ${String(parseErr).slice(0, 200)} | line: ${preview}`,
-			);
+			console.error(`[supervisor] JSON parse error: ${errMsg} | line: ${preview}`);
 		}
 		return { flush: false, workingChange: false };
 	}
