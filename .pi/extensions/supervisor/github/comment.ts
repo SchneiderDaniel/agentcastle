@@ -78,7 +78,37 @@ export function extractStructuredAuditOutput(output: string): StructuredAuditOut
 	const standaloneApproved = output.match(/\bAUDIT_APPROVED\b/g);
 	const standaloneRejected = output.match(/\bAUDIT_REJECTED\b/g);
 
-	if (!decisionMatch && !standaloneApproved && !standaloneRejected) return null;
+	if (!decisionMatch && !standaloneApproved && !standaloneRejected) {
+		// Fallback 2: section heading detection for ## Audit Approved / ## Audit Rejected
+		// When agent outputs structured markdown without JSON or text markers.
+		const approvedHeading = "## Audit Approved";
+		const rejectedHeading = "## Audit Rejected";
+		const approvedIdx = output.lastIndexOf(approvedHeading);
+		const rejectedIdx = output.lastIndexOf(rejectedHeading);
+
+		if (approvedIdx !== -1 || rejectedIdx !== -1) {
+			let decision: "APPROVED" | "REJECTED";
+			let heading: string;
+			let bodyStart: number;
+
+			if (approvedIdx > rejectedIdx) {
+				decision = "APPROVED";
+				heading = approvedHeading;
+				bodyStart = approvedIdx;
+			} else {
+				decision = "REJECTED";
+				heading = rejectedHeading;
+				bodyStart = rejectedIdx;
+			}
+
+			const slice = output.slice(bodyStart).trim();
+			if (slice.length > heading.length + 20) {
+				return { decision, commentBody: slice };
+			}
+		}
+
+		return null;
+	}
 
 	let decision: "APPROVED" | "REJECTED";
 	if (decisionMatch && decisionMatch.length > 0) {
