@@ -101,7 +101,32 @@ export function extractStructuredAuditOutput(output: string): StructuredAuditOut
 				bodyStart = rejectedIdx;
 			}
 
-			const slice = output.slice(bodyStart).trim();
+			let slice = output.slice(bodyStart).trim();
+			// Strip trailing JSON blocks, thinking text, and instrumentation
+			// that may follow the markdown heading (agent output often has
+			// the JSON block appended after the commentBody text).
+			const jsonEndRe = /\n\s*"(?:auditScore|findings|action)"\s*:/;
+			const thinkEndRe = /\n💭/;
+			const instrEndRe = /\n📊/;
+			let truncatePos = slice.length;
+			const jsonMatch = slice.match(jsonEndRe);
+			if (jsonMatch?.index && jsonMatch.index > heading.length + 20) {
+				truncatePos = Math.min(truncatePos, jsonMatch.index);
+			}
+			const thinkMatch = slice.match(thinkEndRe);
+			if (thinkMatch?.index && thinkMatch.index > heading.length + 20) {
+				truncatePos = Math.min(truncatePos, thinkMatch.index);
+			}
+			const instrMatch = slice.match(instrEndRe);
+			if (instrMatch?.index && instrMatch.index > heading.length + 20) {
+				truncatePos = Math.min(truncatePos, instrMatch.index);
+			}
+			if (truncatePos < slice.length) {
+				const trimmed = slice.slice(0, truncatePos).trim();
+				if (trimmed.length > heading.length + 20) {
+					slice = trimmed;
+				}
+			}
 			if (slice.length > heading.length + 20) {
 				return { decision, commentBody: slice };
 			}
@@ -205,7 +230,31 @@ export function extractAgentCommentBody(output: string): string | null {
 			}
 		}
 		if (bestIdx !== -1) {
-			const slice = output.slice(bestIdx).trim();
+			let slice = output.slice(bestIdx).trim();
+			// Strip trailing JSON blocks, thinking text, and instrumentation
+			// that may follow the markdown heading.
+			const jsonEndRe = /\n\s*"(?:auditScore|findings|action)"\s*:/;
+			const thinkEndRe = /\n💭/;
+			const instrEndRe = /\n📊/;
+			let truncatePos = slice.length;
+			const jsonMatch = slice.match(jsonEndRe);
+			if (jsonMatch?.index && jsonMatch.index > bestHeading.length + 20) {
+				truncatePos = Math.min(truncatePos, jsonMatch.index);
+			}
+			const thinkMatch = slice.match(thinkEndRe);
+			if (thinkMatch?.index && thinkMatch.index > bestHeading.length + 20) {
+				truncatePos = Math.min(truncatePos, thinkMatch.index);
+			}
+			const instrMatch = slice.match(instrEndRe);
+			if (instrMatch?.index && instrMatch.index > bestHeading.length + 20) {
+				truncatePos = Math.min(truncatePos, instrMatch.index);
+			}
+			if (truncatePos < slice.length) {
+				const trimmed = slice.slice(0, truncatePos).trim();
+				if (trimmed.length > bestHeading.length + 20) {
+					slice = trimmed;
+				}
+			}
 			// Only use extraction if it looks like substantive content (>100 chars, not just heading)
 			if (slice.length > bestHeading.length + 20) {
 				lastBody = slice;

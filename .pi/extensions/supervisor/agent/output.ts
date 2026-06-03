@@ -211,8 +211,28 @@ function extractLastJson(raw: string): string {
 		return fenceContents[fenceContents.length - 1];
 	}
 
-	// Step 2: No code fences — fall back to string-boundary-aware brace
-	// matching for bare JSON objects (or JSON inside unclosed/malformed fences).
+	// Step 2: No code fences — strip non-JSON metadata lines before brace matching.
+	// Lines starting with 🔧, ✓, ✗, 📋, 📊 are tool execution/debug markers pushed
+	// to fullLog by event handlers. Their content may contain unescaped "quotes",
+	// `{`, `}` from tool args/results, which corrupt isStructuralQuote-based string
+	// tracking and cause brace matching to miss the outer JSON block's opening `{`.
+	// These lines are never part of the agent's structured JSON output.
+	const metadataLineRe = /^[\u{1F527}\u{2713}\u{2717}\u{1F4CB}\u{1F4CA}]/u;
+	let braceCandidateRaw = raw;
+	if (metadataLineRe.test(raw)) {
+		const lines = raw.split("\n");
+		const filteredLines: string[] = [];
+		for (const line of lines) {
+			if (!metadataLineRe.test(line.trimStart())) {
+				filteredLines.push(line);
+			}
+		}
+		if (filteredLines.length > 0 && filteredLines.length < lines.length) {
+			braceCandidateRaw = filteredLines.join("\n");
+		}
+	}
+
+	// Step 3: String-boundary-aware brace matching on filtered text.
 	// Uses smart quote detection (isStructuralQuote) to handle unescaped
 	// double-quotes inside JSON string values that agents commonly produce
 	// in markdown-heavy commentBody fields.
@@ -220,8 +240,13 @@ function extractLastJson(raw: string): string {
 	let escaped = false;
 	const braceStack: number[] = [];
 	let lastCompleteStart = -1;
-	for (let i = 0; i < raw.length; i++) {
-		const ch = raw[i];
+
+	// Re-scan on filtered text if metadata lines were removed.
+	// Use braceCandidateRaw (may differ from raw if we filtered).
+	const scanTarget = braceCandidateRaw !== raw ? braceCandidateRaw : raw;
+
+	for (let i = 0; i < scanTarget.length; i++) {
+		const ch = scanTarget[i];
 
 		if (escaped) {
 			escaped = false;
@@ -234,7 +259,7 @@ function extractLastJson(raw: string): string {
 		}
 
 		if (ch === '"') {
-			if (inString && isStructuralQuote(raw, i)) {
+			if (inString && isStructuralQuote(scanTarget, i)) {
 				// Structural close — end of string value
 				inString = false;
 			} else if (!inString) {
@@ -265,8 +290,8 @@ function extractLastJson(raw: string): string {
 		let depth = 0;
 		let strOpen = false;
 		let esc = false;
-		for (let i = lastCompleteStart; i < raw.length; i++) {
-			const c = raw[i];
+		for (let i = lastCompleteStart; i < scanTarget.length; i++) {
+			const c = scanTarget[i];
 
 			if (esc) {
 				esc = false;
@@ -279,7 +304,7 @@ function extractLastJson(raw: string): string {
 			}
 
 			if (c === '"') {
-				if (strOpen && isStructuralQuote(raw, i)) {
+				if (strOpen && isStructuralQuote(scanTarget, i)) {
 					// Structural close — end of string value
 					strOpen = false;
 				} else if (!strOpen) {
@@ -295,7 +320,7 @@ function extractLastJson(raw: string): string {
 				else if (c === "}") {
 					depth--;
 					if (depth === 0) {
-						return raw.slice(lastCompleteStart, i + 1);
+						return scanTarget.slice(lastCompleteStart, i + 1);
 					}
 				}
 			}
