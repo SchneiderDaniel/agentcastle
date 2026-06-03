@@ -232,8 +232,9 @@ export function calculateNextStatus(
 /**
  * Infer the forward status from a workflow step's markerMap.
  * Returns the first marker value whose key is a forward marker
- * (doesn't start with AUDIT or FEEDBACK). Returns first value if
- * none match, or null if markerMap is empty.
+ * (doesn't start with AUDIT or FEEDBACK). Returns null if
+ * no forward marker exists (all markers are AUDIT/FEEDBACK)
+ * or markerMap is empty.
  */
 export function inferForwardStatus(step: WorkflowStep): string | null {
 	if (!step.markerMap) return null;
@@ -244,8 +245,8 @@ export function inferForwardStatus(step: WorkflowStep): string | null {
 			return val;
 		}
 	}
-	// Fall back to first entry (audit/feedback only) if no forward marker
-	return entries[0]?.[1] || null;
+	// All markers are AUDIT/FEEDBACK — none matched, can't infer forward direction
+	return null;
 }
 
 // ─── Audit Score Tracking ─────────────────────────────────────────

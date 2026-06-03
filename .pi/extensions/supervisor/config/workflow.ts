@@ -147,7 +147,27 @@ export function resolveNextStatusFromAgentOutput(
 		// If we still couldn't map, fall through to marker fallback
 	}
 
-	// Fallback: use old marker-based detection
+	// Fallback 2: section heading detection for ## Audit Approved / ## Audit Rejected
+	// Matches the pattern used by extractStructuredAuditOutput in github/comment.ts
+	// when agent outputs structured markdown without JSON or text markers.
+	const approvedHeadingIdx = agentOutputText.lastIndexOf("## Audit Approved");
+	const rejectedHeadingIdx = agentOutputText.lastIndexOf("## Audit Rejected");
+
+	if (approvedHeadingIdx !== -1 || rejectedHeadingIdx !== -1) {
+		if (approvedHeadingIdx > rejectedHeadingIdx) {
+			// Most recent heading is approval
+			if (step.markerMap["AUDIT_DECISION: APPROVED"])
+				return step.markerMap["AUDIT_DECISION: APPROVED"];
+			if (step.markerMap["AUDIT_APPROVED"]) return step.markerMap["AUDIT_APPROVED"];
+		} else {
+			// Most recent heading is rejection
+			if (step.markerMap["AUDIT_DECISION: REJECTED"])
+				return step.markerMap["AUDIT_DECISION: REJECTED"];
+			if (step.markerMap["AUDIT_REJECTED"]) return step.markerMap["AUDIT_REJECTED"];
+		}
+	}
+
+	// Fallback 3: use old marker-based detection
 	return resolveNextStatus(step, agentOutputText);
 }
 
