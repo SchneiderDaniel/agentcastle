@@ -109,22 +109,15 @@ describe("command.ts — handler with args='off'", () => {
 	});
 });
 
-describe("command.ts — handler with args='stop'", () => {
-	it("stop alias works same as off", async () => {
-		const { def, configStore, ctx, notifications } = setupTest("full");
-		await def.handler("stop", ctx);
-		assert.strictEqual(configStore.getLevel(), "off");
-		assert.strictEqual(notifications[0]!.msg, "Caveman off");
-	});
-});
-
-describe("command.ts — handler with args='quit'", () => {
-	it("quit alias works same as off", async () => {
-		const { def, configStore, ctx, notifications } = setupTest("full");
-		await def.handler("quit", ctx);
-		assert.strictEqual(configStore.getLevel(), "off");
-		assert.strictEqual(notifications[0]!.msg, "Caveman off");
-	});
+describe("command.ts — handler alias args", () => {
+	for (const alias of ["stop", "quit"] as const) {
+		it(`${alias} alias works same as off`, async () => {
+			const { def, configStore, ctx, notifications } = setupTest("full");
+			await def.handler(alias, ctx);
+			assert.strictEqual(configStore.getLevel(), "off");
+			assert.strictEqual(notifications[0]!.msg, "Caveman off");
+		});
+	}
 });
 
 describe("command.ts — handler with empty args toggles", () => {
