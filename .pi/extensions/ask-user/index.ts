@@ -242,7 +242,7 @@ export default function askUser(pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── ask_user_read error helper ─────────────────────────────────
+	// ── ask_user_read response helpers ─────────────────────────────
 	function readError(message: string): {
 		content: Array<{ type: "text"; text: string }>;
 		details: Record<string, unknown>;
@@ -255,6 +255,28 @@ export default function askUser(pi: ExtensionAPI): void {
 				},
 			],
 			details: { entries: [], count: 0, error: message },
+		};
+	}
+
+	function successResult<T extends { datetime: string; question: string; answer: string }>(
+		entries: T[],
+		count: number,
+	): {
+		content: Array<{ type: "text"; text: string }>;
+		details: Record<string, unknown>;
+	} {
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: JSON.stringify({
+						entries,
+						count,
+						...(entries.length === 0 ? { message: "No Q&A history yet" } : {}),
+					}),
+				},
+			],
+			details: { entries, count },
 		};
 	}
 
@@ -297,19 +319,7 @@ export default function askUser(pi: ExtensionAPI): void {
 			try {
 				if (action === "list") {
 					const entries = await listQnaEntries(projectDir, limit);
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: JSON.stringify({
-									entries,
-									count: entries.length,
-									...(entries.length === 0 ? { message: "No Q&A history yet" } : {}),
-								}),
-							},
-						],
-						details: { entries, count: entries.length },
-					};
+					return successResult(entries, entries.length);
 				}
 
 				if (action === "get") {
@@ -325,18 +335,7 @@ export default function askUser(pi: ExtensionAPI): void {
 						return readError(`Entry #${id} not found`);
 					}
 
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: JSON.stringify({
-									entries: [entry],
-									count: 1,
-								}),
-							},
-						],
-						details: { entries: [entry], count: 1 },
-					};
+					return successResult([entry], 1);
 				}
 
 				if (action === "query") {
@@ -345,19 +344,7 @@ export default function askUser(pi: ExtensionAPI): void {
 					}
 
 					const entries = await queryQnaEntries(projectDir, text);
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: JSON.stringify({
-									entries,
-									count: entries.length,
-									...(entries.length === 0 ? { message: "No Q&A history yet" } : {}),
-								}),
-							},
-						],
-						details: { entries, count: entries.length },
-					};
+					return successResult(entries, entries.length);
 				}
 
 				// Unknown action
