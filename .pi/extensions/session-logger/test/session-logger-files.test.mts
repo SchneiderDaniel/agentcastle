@@ -63,15 +63,16 @@ describe("createFileOps", () => {
 		assert.ok(target.includes("session-2.jsonl"));
 	});
 
-	it("ensureSymlink with missing sessionFile throws (no dangling symlink)", async () => {
+	it("ensureSymlink with missing sessionFile creates dangling symlink (non-blocking)", async () => {
 		const sessionsDir = path.join(tmpDir, ".pi", "sessions");
 		fs.mkdirSync(sessionsDir, { recursive: true });
 
-		// After fix: waitForFile prevents dangling symlinks — non-existent file throws
-		await assert.rejects(
-			() => files.ensureSymlink("/nonexistent/file.jsonl", sessionsDir),
-			/waitForFile.*not found/i,
-		);
+		// Non-blocking: creates dangling symlink, no throw
+		await files.ensureSymlink("/nonexistent/file.jsonl", sessionsDir);
+
+		const latestLink = path.join(sessionsDir, "latest.jsonl");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "dangling symlink created");
+		assert.ok(!fs.existsSync(latestLink), "symlink is dangling");
 	});
 
 	// ---------------------------------------------------------------------------
@@ -610,28 +611,55 @@ describe("createFileOps", () => {
 	});
 
 	// ---------------------------------------------------------------------------
-	// ensureLatestLink with non-existent dir throws
+	// ensureLatestLink creates dir if missing (non-blocking)
 	// ---------------------------------------------------------------------------
 
-	it("ensureSymlink with non-existent sessionsDir throws", async () => {
-		const badDir = path.join(tmpDir, "nonexistent");
-		const sessionFile = path.join(badDir, "session.jsonl");
-		await assert.rejects(() => files.ensureSymlink(sessionFile, badDir), /waitForFile.*not found/i);
+	it("ensureSymlink creates non-existent sessionsDir", async () => {
+		const targetDir = path.join(tmpDir, "target");
+		const linkDir = path.join(tmpDir, "nonexistent");
+		const sessionFile = path.join(targetDir, "session.jsonl");
+		fs.mkdirSync(targetDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "{}");
+
+		assert.ok(!fs.existsSync(linkDir), "dir should not exist before");
+		await files.ensureSymlink(sessionFile, linkDir);
+		assert.ok(fs.existsSync(linkDir), "dir should exist after");
+
+		const latestLink = path.join(linkDir, "latest.jsonl");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "symlink should exist");
+		assert.ok(fs.existsSync(latestLink), "target should be reachable");
 	});
 
-	it("ensureMdSymlink with non-existent sessionDir throws", async () => {
-		const badDir = path.join(tmpDir, "nonexistent");
-		const mdFile = path.join(badDir, "session.md");
-		await assert.rejects(() => files.ensureMdSymlink(badDir, mdFile), /waitForFile.*not found/i);
+	it("ensureMdSymlink creates non-existent sessionDir", async () => {
+		const targetDir = path.join(tmpDir, "target");
+		const linkDir = path.join(tmpDir, "nonexistent");
+		const mdFile = path.join(targetDir, "session.md");
+		fs.mkdirSync(targetDir, { recursive: true });
+		fs.writeFileSync(mdFile, "# test");
+
+		assert.ok(!fs.existsSync(linkDir), "dir should not exist before");
+		await files.ensureMdSymlink(linkDir, mdFile);
+		assert.ok(fs.existsSync(linkDir), "dir should exist after");
+
+		const latestLink = path.join(linkDir, "latest.md");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "symlink should exist");
+		assert.ok(fs.existsSync(latestLink), "target should be reachable");
 	});
 
-	it("ensureLatestMetadataSymlink with non-existent dir throws", async () => {
-		const badDir = path.join(tmpDir, "nonexistent");
-		const metaFile = path.join(badDir, "session.metadata.json");
-		await assert.rejects(
-			() => files.ensureLatestMetadataSymlink(badDir, metaFile),
-			/waitForFile.*not found/i,
-		);
+	it("ensureLatestMetadataSymlink creates non-existent dir", async () => {
+		const targetDir = path.join(tmpDir, "target");
+		const linkDir = path.join(tmpDir, "nonexistent");
+		const metaFile = path.join(targetDir, "session.metadata.json");
+		fs.mkdirSync(targetDir, { recursive: true });
+		fs.writeFileSync(metaFile, "{}");
+
+		assert.ok(!fs.existsSync(linkDir), "dir should not exist before");
+		await files.ensureLatestMetadataSymlink(linkDir, metaFile);
+		assert.ok(fs.existsSync(linkDir), "dir should exist after");
+
+		const latestLink = path.join(linkDir, "latest.metadata.json");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "symlink should exist");
+		assert.ok(fs.existsSync(latestLink), "target should be reachable");
 	});
 
 	// ---------------------------------------------------------------------------

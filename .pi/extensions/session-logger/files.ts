@@ -105,10 +105,8 @@ async function ensureLatestLink(
 	targetFile: string,
 	linkName: string,
 ): Promise<void> {
-	// Wait for the target file to exist before creating a symlink — prevents
-	// dangling symlinks when the file hasn't been written yet (race between
-	// session_start handler and the subprocess writing the JSONL).
-	await waitForFile(targetFile);
+	// Ensure symlink directory exists.
+	await fs.mkdir(linkDir, { recursive: true });
 
 	const latestLink = path.join(linkDir, linkName);
 	const linkTarget = path.relative(linkDir, targetFile);
@@ -116,6 +114,8 @@ async function ensureLatestLink(
 	const tmpLink = `${latestLink}.tmp.${rand}`;
 
 	// Create symlink at unique temp path — no collision possible.
+	// Target file may not exist yet (session_start fires before core writes
+	// JSONL). Symlink will be dangling briefly — background retry fixes it.
 	await fs.symlink(linkTarget, tmpLink);
 
 	// Atomic rename — replaces existing symlink atomically on same filesystem.
@@ -135,6 +135,51 @@ async function ensureLatestLink(
 			throw err;
 		}
 	}
+
+	// Non-blocking: if target doesn't exist yet, schedule background retry
+	// to fix dangling symlink when file appears.
+	try {
+		await fs.stat(targetFile);
+	} catch {
+		scheduleLinkRetry(linkDir, targetFile, linkName);
+	}
+}
+
+// Background retry constants
+const RETRY_INTERVAL = 200; // ms between retries
+const MAX_RETRIES = 25; // ~5 seconds total
+
+/**
+ * Fire-and-forget background retry. Polls for target file to appear,
+ * then re-creates symlink so it's no longer dangling.
+ */
+function scheduleLinkRetry(linkDir: string, targetFile: string, linkName: string): void {
+	let retries = 0;
+
+	function tick(): void {
+		if (retries >= MAX_RETRIES) return;
+		retries++;
+
+		fs.stat(targetFile)
+			.then(() => {
+				// File exists — re-create symlink (now valid)
+				const latestLink = path.join(linkDir, linkName);
+				const linkTarget = path.relative(linkDir, targetFile);
+				const rand = crypto.randomBytes(4).toString("hex");
+				const tmpLink = `${latestLink}.tmp.${rand}`;
+
+				fs.symlink(linkTarget, tmpLink)
+					.then(() =>
+						fs.rename(tmpLink, latestLink).catch(() => fs.unlink(tmpLink).catch(() => {})),
+					)
+					.catch(() => {});
+			})
+			.catch(() => {
+				setTimeout(tick, RETRY_INTERVAL);
+			});
+	}
+
+	setTimeout(tick, RETRY_INTERVAL);
 }
 
 export function createFileOps(): FileOps {

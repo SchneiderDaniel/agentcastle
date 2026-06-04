@@ -1,8 +1,8 @@
 /**
- * Tests for session-logger/files.ts — dangling symlink fix
+ * Tests for session-logger/files.ts — non-blocking symlink creation
  *
- * Phase 4: ensureLatestLink with waitForFile to prevent dangling symlinks
- * when target file doesn't exist yet.
+ * Phase 4: ensureLatestLink creates symlink immediately (may dangle),
+ * background retry fixes it when target appears.
  *
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/session-logger/test/session-logger-dangling.test.mts
@@ -16,10 +16,10 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import { createFileOps, type FileOps } from "../files.ts";
 
 // ---------------------------------------------------------------------------
-// Phase 4: waitForFile behavior in ensureLatestLink
+// Phase 4: non-blocking ensureLatestLink background retry
 // ---------------------------------------------------------------------------
 
-describe("ensureLatestLink with waitForFile (dangling symlink fix)", () => {
+describe("ensureLatestLink background retry (non-blocking)", () => {
 	let tmpDir: string;
 	let sessionsDir: string;
 	let files: FileOps;
@@ -46,84 +46,69 @@ describe("ensureLatestLink with waitForFile (dangling symlink fix)", () => {
 		assert.ok(fs.existsSync(latestLink), "target should be reachable");
 	});
 
-	it("ensureSymlink with target file created after delay: retries until file appears, then creates valid symlink", async () => {
+	it("ensureSymlink with target file created after delay: non-blocking, background retry resolves symlink", async () => {
 		const sessionFile = path.join(sessionsDir, "session-delayed.jsonl");
 
-		// Schedule file creation after 200ms
-		const writePromise = new Promise<void>((resolve) => {
-			setTimeout(() => {
-				fs.writeFileSync(sessionFile, "{}");
-				resolve();
-			}, 200);
-		});
+		// ensureSymlink returns immediately (non-blocking)
+		await files.ensureSymlink(sessionFile, sessionsDir);
 
-		// Call ensureSymlink — should wait for file (with retries)
-		const symlinkPromise = files.ensureSymlink(sessionFile, sessionsDir);
-
-		await Promise.all([writePromise, symlinkPromise]);
-
+		// Symlink exists but is dangling
 		const latestLink = path.join(sessionsDir, "latest.jsonl");
 		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "should be symlink");
-		assert.ok(fs.existsSync(latestLink), "target should be reachable after delay");
+		assert.ok(!fs.existsSync(latestLink), "symlink initially dangling");
+
+		// Create file — background retry will fix symlink
+		fs.writeFileSync(sessionFile, "{}");
+
+		// Wait for background retry (interval 200ms, retries every 200ms)
+		await new Promise<void>((resolve) => setTimeout(resolve, 500));
+
+		assert.ok(fs.existsSync(latestLink), "symlink resolved after background retry");
 	});
 
-	it("ensureSymlink with target file that never appears times out gracefully", async () => {
+	it("ensureSymlink with target file that never appears: creates dangling symlink, no throw", async () => {
 		const sessionFile = path.join(sessionsDir, "session-never-exists.jsonl");
 
-		// Should reject because file never appears
-		await assert.rejects(
-			async () => {
-				await files.ensureSymlink(sessionFile, sessionsDir);
-			},
-			(err: unknown) => {
-				const nodeErr = err as NodeJS.ErrnoException;
-				// Accept either ENOENT (timeout) or the error from the function
-				return true; // Accept any error — file never exists
-			},
-		);
+		// Returns immediately (non-blocking), no error
+		await files.ensureSymlink(sessionFile, sessionsDir);
+
+		const latestLink = path.join(sessionsDir, "latest.jsonl");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "dangling symlink created");
+		assert.ok(!fs.existsSync(latestLink), "symlink remains dangling");
 	});
 
-	it("ensureSymlink concurrent calls: first writer waits for file, second races — both succeed, final symlink resolves", async () => {
+	it("ensureSymlink concurrent calls: both return immediately, background retry resolves", async () => {
 		const sessionFile = path.join(sessionsDir, "session-concurrent.jsonl");
 
-		// Two concurrent ensureSymlink calls, file only appears after delay
-		const writePromise = new Promise<void>((resolve) => {
-			setTimeout(() => {
-				fs.writeFileSync(sessionFile, "{}");
-				resolve();
-			}, 300);
-		});
-
-		const [symlinkResult] = await Promise.allSettled([
+		// Both return immediately
+		await Promise.all([
 			files.ensureSymlink(sessionFile, sessionsDir),
 			files.ensureSymlink(sessionFile, sessionsDir),
-			writePromise,
 		]);
 
-		// At least one should succeed
 		const latestLink = path.join(sessionsDir, "latest.jsonl");
-		assert.ok(
-			fs.lstatSync(latestLink).isSymbolicLink(),
-			"symlink must exist after concurrent calls",
-		);
-		assert.ok(fs.existsSync(latestLink), "symlink target must be reachable");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "symlink exists after concurrent calls");
+
+		// Create file
+		fs.writeFileSync(sessionFile, "{}");
+
+		// Wait for background retry
+		await new Promise<void>((resolve) => setTimeout(resolve, 500));
+
+		assert.ok(fs.existsSync(latestLink), "symlink resolved after background retry");
 	});
 
-	it("ensureSymlink full lifecycle: session_start (wait) + session_shutdown (create) → latest.jsonl resolves", async () => {
+	it("ensureSymlink full lifecycle: session_start non-blocking + session_shutdown (file exists) creates valid symlink", async () => {
 		const sessionFile = path.join(sessionsDir, "session-lifecycle.jsonl");
 
-		// Simulate session_start: ensureSymlink called before file exists (subprocess still writing)
-		const startPromise = files.ensureSymlink(sessionFile, sessionsDir);
+		// Simulate session_start: ensureSymlink called before file exists
+		await files.ensureSymlink(sessionFile, sessionsDir);
 
-		// Simulate subprocess writing file after 150ms
-		const writePromise = new Promise<void>((resolve) => {
-			setTimeout(() => {
-				fs.writeFileSync(sessionFile, "{}");
-				resolve();
-			}, 150);
-		});
+		// Simulate subprocess writing file
+		fs.writeFileSync(sessionFile, "{}");
 
-		await Promise.all([startPromise, writePromise]);
+		// Wait for background retry
+		await new Promise<void>((resolve) => setTimeout(resolve, 500));
 
 		const latestLink = path.join(sessionsDir, "latest.jsonl");
 		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "latest.jsonl should be symlink");
@@ -139,66 +124,71 @@ describe("ensureLatestLink with waitForFile (dangling symlink fix)", () => {
 		assert.ok(fs.existsSync(latestMd), "latest.md target should resolve");
 	});
 
-	it("ensureMdSymlink with delayed md file creation", async () => {
+	it("ensureMdSymlink with delayed md file creation: non-blocking, background retry resolves", async () => {
 		const mdFile = path.join(sessionsDir, "session-delayed.md");
 
-		const writePromise = new Promise<void>((resolve) => {
-			setTimeout(() => {
-				fs.writeFileSync(mdFile, "# Delayed report");
-				resolve();
-			}, 100);
-		});
-
-		const symlinkPromise = files.ensureMdSymlink(sessionsDir, mdFile);
-
-		await Promise.all([writePromise, symlinkPromise]);
+		await files.ensureMdSymlink(sessionsDir, mdFile);
 
 		const latestLink = path.join(sessionsDir, "latest.md");
-		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "latest.md should be symlink");
-		assert.ok(fs.existsSync(latestLink), "latest.md target should resolve");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "symlink created");
+		assert.ok(!fs.existsSync(latestLink), "symlink initially dangling");
+
+		fs.writeFileSync(mdFile, "# Delayed report");
+
+		await new Promise<void>((resolve) => setTimeout(resolve, 500));
+
+		assert.ok(fs.existsSync(latestLink), "symlink resolved after retry");
 	});
 
-	it("ensureLatestMetadataSymlink with delayed metadata file creation", async () => {
+	it("ensureLatestMetadataSymlink with delayed metadata file: non-blocking, background retry resolves", async () => {
 		const metaFile = path.join(sessionsDir, "session-delayed.metadata.json");
 
-		const writePromise = new Promise<void>((resolve) => {
-			setTimeout(() => {
-				fs.writeFileSync(metaFile, "{}");
-				resolve();
-			}, 100);
-		});
-
-		const symlinkPromise = files.ensureLatestMetadataSymlink(sessionsDir, metaFile);
-
-		await Promise.all([writePromise, symlinkPromise]);
+		await files.ensureLatestMetadataSymlink(sessionsDir, metaFile);
 
 		const latestLink = path.join(sessionsDir, "latest.metadata.json");
-		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "latest.metadata.json should be symlink");
-		assert.ok(fs.existsSync(latestLink), "latest.metadata.json target should resolve");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "symlink created");
+		assert.ok(!fs.existsSync(latestLink), "symlink initially dangling");
+
+		fs.writeFileSync(metaFile, "{}");
+
+		await new Promise<void>((resolve) => setTimeout(resolve, 500));
+
+		assert.ok(fs.existsSync(latestLink), "symlink resolved after retry");
 	});
 
-	it("dangling symlink does NOT occur (regression test)", async () => {
-		// Before fix: ensureSymlink called before file exists creates dangling symlink.
-		// After fix: it waits for the file.
+	it("ensureSymlink creates sessions dir if missing", async () => {
+		const freshDir = path.join(tmpDir, "fresh", "sessions");
+		const sessionFile = path.join(freshDir, "session.jsonl");
 
-		const sessionFile = path.join(sessionsDir, "session-regression.jsonl");
+		// Dir doesn't exist yet — create dir, write file, then test ensureSymlink creates link dir
+		fs.mkdirSync(freshDir, { recursive: true });
+		fs.writeFileSync(sessionFile, "{}");
 
-		// Call ensureSymlink and create file almost simultaneously
-		const both = Promise.all([
-			files.ensureSymlink(sessionFile, sessionsDir),
-			new Promise<void>((resolve) => {
-				setTimeout(() => {
-					fs.writeFileSync(sessionFile, "{}");
-					resolve();
-				}, 50);
-			}),
-		]);
+		const otherDir = path.join(tmpDir, "other", "sessions");
+		assert.ok(!fs.existsSync(otherDir), "other dir should not exist before call");
+		await files.ensureSymlink(sessionFile, otherDir);
+		assert.ok(fs.existsSync(otherDir), "other dir should exist after call");
 
-		await both;
+		const latestLink = path.join(otherDir, "latest.jsonl");
+		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "symlink created");
+		assert.ok(fs.existsSync(latestLink), "target reachable");
+	});
+
+	it("background retry fixes symlink when file appears before first retry", async () => {
+		const sessionFile = path.join(sessionsDir, "session-early.jsonl");
+
+		await files.ensureSymlink(sessionFile, sessionsDir);
 
 		const latestLink = path.join(sessionsDir, "latest.jsonl");
-		assert.ok(fs.lstatSync(latestLink).isSymbolicLink(), "symlink exists");
-		// Symlink should NOT be dangling — target should exist
-		assert.ok(fs.existsSync(latestLink), "symlink target must NOT be dangling");
+		assert.ok(!fs.existsSync(latestLink), "dangling initially");
+
+		// Create file before retry fires (retry interval is 200ms)
+		await new Promise<void>((resolve) => setTimeout(resolve, 50));
+		fs.writeFileSync(sessionFile, "{}");
+
+		// Wait for retry to pick it up
+		await new Promise<void>((resolve) => setTimeout(resolve, 400));
+
+		assert.ok(fs.existsSync(latestLink), "symlink resolved");
 	});
 });
