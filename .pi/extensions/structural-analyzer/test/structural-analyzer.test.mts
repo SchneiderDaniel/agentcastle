@@ -511,6 +511,277 @@ describe("lazy binary detection", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// Tests — Signal propagation (AbortSignal passed to pi.exec)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("signal propagation", () => {
+	it("passes abort signal reference to pi.exec options", async () => {
+		const execCalls: Array<{ command: string; args: string[]; options: any }> = [];
+		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+		const mockPi = {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (command: string, args: string[], options?: any) => {
+				execCalls.push({ command, args, options });
+				if (command === "ast-grep" && args[0] === "--version") {
+					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+				}
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			},
+		};
+
+		structuralAnalyzer(mockPi as any);
+		assert.ok(capturedExecute !== undefined, "execute handler should be registered");
+
+		const controller = new AbortController();
+		await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			controller.signal,
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		// Find the scan exec call (not the --version check)
+		const scanCall = execCalls.find((c) => c.args[0] === "scan");
+		assert.ok(scanCall !== undefined, "should have a scan exec call");
+		assert.strictEqual(
+			scanCall!.options.signal,
+			controller.signal,
+			"pi.exec options.signal should be the same AbortSignal reference",
+		);
+	});
+
+	it("detects pre-aborted signal and rejects promptly", async () => {
+		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+		const mockPi = {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (_command: string, _args: string[], options?: any) => {
+				// If signal is already aborted, reject immediately
+				if (options?.signal?.aborted) {
+					const err = new Error("The operation was aborted");
+					(err as any).name = "AbortError";
+					throw err;
+				}
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			},
+		};
+
+		structuralAnalyzer(mockPi as any);
+		assert.ok(capturedExecute !== undefined);
+
+		const controller = new AbortController();
+		controller.abort(); // pre-abort
+
+		await assert.rejects(
+			async () => {
+				await capturedExecute!(
+					"id1",
+					{ pattern: "console.log($A)", language: "ts" },
+					controller.signal,
+					undefined,
+					{ cwd: "/tmp" } as any,
+				);
+			},
+			{ name: "AbortError" },
+			"should reject when signal is already aborted",
+		);
+	});
+
+	it("accepts undefined signal (backward-compatible no-op)", async () => {
+		let capturedOptions: any = undefined;
+		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+		const mockPi = {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (command: string, args: string[], options?: any) => {
+				if (command === "ast-grep" && args[0] === "--version") {
+					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+				}
+				if (args[0] === "scan") {
+					capturedOptions = options;
+				}
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			},
+		};
+
+		structuralAnalyzer(mockPi as any);
+		assert.ok(capturedExecute !== undefined);
+
+		await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined, // no cancellation signal
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		assert.ok(capturedOptions !== undefined, "should capture scan exec options");
+		assert.strictEqual(
+			capturedOptions!.signal,
+			undefined,
+			"signal should be undefined when no AbortSignal provided",
+		);
+		assert.strictEqual(capturedOptions!.cwd, "/tmp");
+		assert.strictEqual(capturedOptions!.timeout, 30_000);
+	});
+
+	it("aborts hanging pi.exec when signal is fired mid-execution", async () => {
+		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+		const mockPi = {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (command: string, args: string[], options?: any) => {
+				// Resolve --version check immediately (binary detection)
+				if (command === "ast-grep" && args[0] === "--version") {
+					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+				}
+				// For scan calls, simulate a hanging process that respects abort signal
+				return new Promise((_resolve, reject) => {
+					if (options?.signal?.aborted) {
+						const err = new Error("The operation was aborted");
+						(err as any).name = "AbortError";
+						reject(err);
+						return;
+					}
+					if (options?.signal) {
+						options.signal.addEventListener(
+							"abort",
+							() => {
+								const err = new Error("The operation was aborted");
+								(err as any).name = "AbortError";
+								reject(err);
+							},
+							{ once: true },
+						);
+					}
+					// Never resolve — hangs until aborted
+				});
+			},
+		};
+
+		structuralAnalyzer(mockPi as any);
+		assert.ok(capturedExecute !== undefined);
+
+		const controller = new AbortController();
+
+		const execPromise = capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			controller.signal,
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		// Give a tick for exec setup (binary detection runs first)
+		await new Promise((r) => setTimeout(r, 10));
+
+		controller.abort();
+
+		await assert.rejects(
+			async () => await execPromise,
+			{ name: "AbortError" },
+			"should reject when aborted mid-execution",
+		);
+	});
+
+	it("does not leak stale signal reference between executions", async () => {
+		const execCalls: Array<{ command: string; args: string[]; options: any }> = [];
+		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+		const mockPi = {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (command: string, args: string[], options?: any) => {
+				execCalls.push({ command, args, options });
+				if (command === "ast-grep" && args[0] === "--version") {
+					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+				}
+				if (args[0] === "scan") {
+					// Hang forever (or until aborted)
+					return new Promise((resolve, reject) => {
+						if (options?.signal?.aborted) {
+							const err = new Error("The operation was aborted");
+							(err as any).name = "AbortError";
+							reject(err);
+							return;
+						}
+						if (options?.signal) {
+							options.signal.addEventListener(
+								"abort",
+								() => {
+									const err = new Error("The operation was aborted");
+									(err as any).name = "AbortError";
+									reject(err);
+								},
+								{ once: true },
+							);
+						} else {
+							// No signal — resolve immediately
+							resolve({ stdout: "", stderr: "", code: 1, killed: false });
+						}
+					});
+				}
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			},
+		};
+
+		structuralAnalyzer(mockPi as any);
+		assert.ok(capturedExecute !== undefined);
+
+		// First execution with signal A — abort it
+		const controllerA = new AbortController();
+		const promiseA = capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			controllerA.signal,
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		await new Promise((r) => setTimeout(r, 10));
+		controllerA.abort();
+
+		await assert.rejects(
+			async () => await promiseA,
+			{ name: "AbortError" },
+			"first execution should abort with AbortError",
+		);
+
+		// Clear exec calls to focus on second execution
+		execCalls.length = 0;
+
+		// Second execution with no signal (should complete normally)
+		await capturedExecute!(
+			"id2",
+			{ pattern: "class $NAME", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" } as any,
+		);
+
+		// The scan call should have signal: undefined
+		const scanCall = execCalls.find((c) => c.args[0] === "scan");
+		assert.ok(scanCall !== undefined, "second execution should have scan call");
+		assert.strictEqual(
+			scanCall!.options.signal,
+			undefined,
+			"second execution should not retain first execution's signal",
+		);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // Integration test (requires ast-grep binary installed)
 // ═══════════════════════════════════════════════════════════════════════
 
