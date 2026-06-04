@@ -18,7 +18,7 @@
  *                     block/reject cd commands that escape worktree.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 import { existsSync, statSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
@@ -103,6 +103,56 @@ function findUnsafeWriteInBash(command: string, sandboxRoot: string): string | n
 	return null;
 }
 
+/**
+ * Shared path-rewriting logic for read/write/edit tool handlers.
+ *
+ * Previously duplicated across three handlers. Extracted to eliminate
+ * near-miss clone maintenance burden.
+ *
+ * @param toolName - The tool name ("read", "write", or "edit")
+ * @param event - The tool call event (mutated in place for relative paths)
+ * @param sandboxRoot - The resolved worktree sandbox root
+ * @param ctx - Extension context (for UI notifications)
+ * @param blockNoun - Noun phrase for block reason ("file operations", "writes", "edits")
+ * @returns Block result or undefined (pass-through)
+ */
+export function rewritePath(
+	toolName: "read" | "write" | "edit",
+	event: { input: { path: string } },
+	sandboxRoot: string,
+	ctx: {
+		hasUI: boolean;
+		ui: { notify: (message: string, type?: "info" | "warning" | "error") => void };
+	},
+	blockNoun: "file operations" | "writes" | "edits",
+): ToolCallEventResult | undefined {
+	const originalPath = event.input.path;
+	if (!originalPath) return undefined;
+
+	if (originalPath.startsWith("/")) {
+		if (!isPathWithinSandbox(originalPath, sandboxRoot)) {
+			if (ctx.hasUI) {
+				ctx.ui.notify(
+					`[sandbox] Blocked ${toolName} to outside worktree: ${originalPath}`,
+					"warning",
+				);
+			}
+			return {
+				block: true,
+				reason: `Path "${originalPath}" is outside the worktree. All ${blockNoun} must stay within the worktree.`,
+			};
+		}
+		return undefined;
+	}
+
+	const rewritten = resolvePath(sandboxRoot, originalPath);
+	if (!isPathWithinSandbox(rewritten, sandboxRoot)) {
+		return { block: true, reason: `Path "${originalPath}" resolves outside the worktree.` };
+	}
+	event.input.path = rewritten;
+	return undefined;
+}
+
 // ─── Export ─────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
@@ -112,85 +162,17 @@ export default function (pi: ExtensionAPI) {
 			return undefined;
 		}
 
-		// ── read tool ──────────────────────────────────────────────
+		// ── read / write / edit tools ──────────────────────────────
 		if (isToolCallEventType("read", event)) {
-			const originalPath = event.input.path as string;
-			if (!originalPath) return undefined;
-
-			if (originalPath.startsWith("/")) {
-				if (!isPathWithinSandbox(originalPath, sandboxRoot)) {
-					if (ctx.hasUI) {
-						ctx.ui.notify(`[sandbox] Blocked read to outside worktree: ${originalPath}`, "warning");
-					}
-					return {
-						block: true,
-						reason: `Path "${originalPath}" is outside the worktree. All file operations must stay within the worktree.`,
-					};
-				}
-				return undefined;
-			}
-
-			const rewritten = resolvePath(sandboxRoot, originalPath);
-			if (!isPathWithinSandbox(rewritten, sandboxRoot)) {
-				return { block: true, reason: `Path "${originalPath}" resolves outside the worktree.` };
-			}
-			event.input.path = rewritten;
-			return undefined;
+			return rewritePath("read", event, sandboxRoot, ctx, "file operations") ?? undefined;
 		}
 
-		// ── write tool ─────────────────────────────────────────────
 		if (isToolCallEventType("write", event)) {
-			const originalPath = event.input.path as string;
-			if (!originalPath) return undefined;
-
-			if (originalPath.startsWith("/")) {
-				if (!isPathWithinSandbox(originalPath, sandboxRoot)) {
-					if (ctx.hasUI) {
-						ctx.ui.notify(
-							`[sandbox] Blocked write to outside worktree: ${originalPath}`,
-							"warning",
-						);
-					}
-					return {
-						block: true,
-						reason: `Path "${originalPath}" is outside the worktree. All writes must stay within the worktree.`,
-					};
-				}
-				return undefined;
-			}
-
-			const rewritten = resolvePath(sandboxRoot, originalPath);
-			if (!isPathWithinSandbox(rewritten, sandboxRoot)) {
-				return { block: true, reason: `Path "${originalPath}" resolves outside the worktree.` };
-			}
-			event.input.path = rewritten;
-			return undefined;
+			return rewritePath("write", event, sandboxRoot, ctx, "writes") ?? undefined;
 		}
 
-		// ── edit tool ─────────────────────────────────────────────
 		if (isToolCallEventType("edit", event)) {
-			const originalPath = event.input.path as string;
-			if (!originalPath) return undefined;
-
-			if (originalPath.startsWith("/")) {
-				if (!isPathWithinSandbox(originalPath, sandboxRoot)) {
-					if (ctx.hasUI) {
-						ctx.ui.notify(`[sandbox] Blocked edit to outside worktree: ${originalPath}`, "warning");
-					}
-					return {
-						block: true,
-						reason: `Path "${originalPath}" is outside the worktree. Edits must stay within the worktree.`,
-					};
-				}
-				return undefined;
-			}
-
-			const rewritten = resolvePath(sandboxRoot, originalPath);
-			if (!isPathWithinSandbox(rewritten, sandboxRoot)) {
-				return { block: true, reason: `Path "${originalPath}" resolves outside the worktree.` };
-			}
-			event.input.path = rewritten;
-			return undefined;
+			return rewritePath("edit", event, sandboxRoot, ctx, "edits") ?? undefined;
 		}
 
 		// ── bash tool ──────────────────────────────────────────────
