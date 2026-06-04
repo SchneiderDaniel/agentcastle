@@ -184,19 +184,21 @@ export function installFooter(
 				}
 				const right2 = rightParts.join(" " + sep + " ");
 
-				// Skip row 2 when both sides are effectively empty after building
-				// Prevents blank rows when all extension statuses filter to empty string
-				if (left2 || right2) {
-					const lw = visibleWidth(left2);
-					const rw = visibleWidth(right2);
-					const gap = Math.max(0, width - lw - rw);
-					const row2 = right2
-						? left2 + " ".repeat(gap) + right2
-						: left2 + " ".repeat(Math.max(0, width - lw));
-					return [row1, truncateToWidth(row2, width)];
-				}
-
-				return [row1];
+				// Always return 2 lines to prevent TUI shrink artifacts.
+				// TUI tracks maxLinesRendered and does NOT clear stale rows
+				// when content shrinks (clearOnShrink defaults to off).
+				// Previously, switching between 1 and 2 lines left the
+				// second line visible as a stale/empty row.
+				const lw = visibleWidth(left2);
+				const rw = visibleWidth(right2);
+				const gap = Math.max(0, width - lw - rw);
+				const row2 =
+					left2 || right2
+						? right2
+							? left2 + " ".repeat(gap) + right2
+							: left2 + " ".repeat(Math.max(0, width - lw))
+						: ""; // Empty row2 → padded with spaces by truncateToWidth below
+				return [row1, truncateToWidth(row2, width)];
 			},
 		};
 	});
