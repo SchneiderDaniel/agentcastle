@@ -248,7 +248,6 @@ export async function runAgentSubprocess(
 			}
 			try {
 				ctx.ui.setWidget(widgetId, buildWidgetLines(state, agentName, model));
-				ctx.ui.setStatus("supervisor", undefined);
 			} catch (renderErr: unknown) {
 				const msg = renderErr instanceof Error ? renderErr.message : String(renderErr);
 				log.error("agent-runner", `Widget render error for ${agentName}: ${msg}`);

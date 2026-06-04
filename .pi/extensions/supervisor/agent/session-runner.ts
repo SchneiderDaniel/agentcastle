@@ -205,7 +205,6 @@ export async function runAgentInProcess(
 					widgetId,
 					buildWidgetLines(state, agentName, agent.config.model, idleWarning),
 				);
-				ctx.ui.setStatus("supervisor", undefined);
 			} catch (renderErr: unknown) {
 				const msg = renderErr instanceof Error ? renderErr.message : String(renderErr);
 				console.error(`[supervisor] widget render error for ${agentName}: ${msg}`);
