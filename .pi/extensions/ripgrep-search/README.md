@@ -1,15 +1,16 @@
 # @agentcastle/ripgrep-search
 
-**Fast code search tool for Pi — literal text and regex, natively respects `.gitignore`.** Replaces grep-based approaches with structured file:line:column:text output that the LLM can parse and act on.
+**Fast code search tool for Pi — literal text and regex, natively respects `.gitignore`.** Returns structured human-readable summaries with top-N results, file counts, and truncation info.
 
 ## Features
 
 - **`ripgrep_search` tool** — Search codebase by literal text or regex pattern
   - Default 10 matches per file, configurable via `max_count`
-  - Structured JSON output (`file`, `line`, `column`, `text` per match)
+  - Structured summary output showing top-N results with file counts and truncation indicator
   - Respects `.gitignore` natively when ripgrep is available
   - Falls back to `grep` if ripgrep not installed
-  - Auto-rejects structural patterns (`class `, `function `, `def `) — redirects to `structural_search`/`ranked_map`
+  - Auto-rejects structural patterns — redirects to `structural_search`/`ranked_map`
+- **Result cache** — Same query+directory returns cached result without re-running the CLI
 - **Configurable backend** — Set `searchBackend` to `"auto"` (default), `"ripgrep"`, or `"grep"` in `.pi/settings.json`
 - **Backend indicator** — Injects current search backend into system prompt so LLM knows which tool is active
 - **Temp file handling** — Large outputs saved to temp files, cleaned up at session shutdown
@@ -19,9 +20,11 @@
 
 1. The LLM calls `ripgrep_search` with a query and optional directory/max_count
 2. The extension validates the query (rejects structural patterns), resolves the directory, and selects the backend (ripgrep or grep)
-3. The backend runs — ripgrep with `--vimgrep` for structured output, or grep with `-rnH` as fallback
-4. Results are parsed into structured `RgMatch[]` objects and returned with `total_returned`, `results`, and truncation info
-5. Large outputs are saved to temp files with a path reference in the response
+3. **Cache check** — If the same query+directory was already searched, the cached result is returned without re-running the CLI
+4. The backend runs — ripgrep with `--vimgrep` for structured output, or grep with `-rnH` as fallback
+5. Results are parsed and cached in memory for the session duration
+6. A human-readable summary is returned showing top-N results (tunable via `max_count`), unique file count, and truncation status
+7. Large outputs are saved to temp files with a path reference in the response; temp files and cache are cleaned up at session shutdown
 
 ## Install
 

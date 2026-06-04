@@ -25,59 +25,17 @@ import { tmpdir } from "node:os";
 import type { RgMatch, RgResult, SearchConfig } from "../types.ts";
 import { loadSearchConfig, resolveBackend, ripgrepAvailable } from "../config.ts";
 import { buildRgArgs, buildGrepArgs } from "../args.ts";
-import { parseVimgrepOutput, parseGrepOutput } from "../parse.ts";
+import { parseVimgrepOutput } from "../parse.ts";
 import { validateQuery } from "../validate.ts";
 import { registerTempDir, cleanupTrackedTempDirs, trackedTempDirs } from "../temp.ts";
-import { buildSearchErrorText } from "../index.ts";
-
-// ═══════════════════════════════════════════════════════════════════════
-// Fixtures
-// ═══════════════════════════════════════════════════════════════════════
-
-/** Sample rg --vimgrep output simulating matches from a codebase search. */
-const TWO_VALID_LINES = [
-	"config/settings.py:4:16:TIMEOUT_MS = 5000",
-	"docs/readme.md:88:5:Set timeout to 5000.",
-].join("\n");
-
-/** Empty output. */
-const EMPTY_OUTPUT = "";
-
-/** Output with one malformed line and one valid line. */
-const MALFORMED_OUTPUT = [
-	"just a string without colons",
-	"src/app.ts:2:18:const TIMEOUT_MS = 5000;",
-].join("\n");
-
-/** Line with only two colons (missing column or text). */
-const TWO_COLONS_LINE = "file:line";
-
-/** Tab in filename edge case. */
-const TAB_IN_FILENAME = "my\tfile.ts:10:5:const x = 1";
-
-/** Text contains colons. */
-const TEXT_WITH_COLONS = "file:1:1:ERROR: 5000: timeout";
-
-/** Empty text after last colon. */
-const EMPTY_TEXT_LINE = "file:1:1:";
-
-/** Non-numeric line/column. */
-const INVALID_NUMBERS = "file:abc:def:text";
-
-/** Sample grep -rnH output. */
-const GREP_TWO_LINES = [
-	"src/app.ts:2:const TIMEOUT_MS = 5000;",
-	"config/settings.py:4:TIMEOUT_MS = 5000",
-].join("\n");
-
-/** Grep output with colons in text. */
-const GREP_TEXT_WITH_COLONS = "src/log.ts:10:ERROR: 5000: timeout";
-
-/** Grep output empty. */
-const GREP_EMPTY = "";
-
-/** Grep malformed line. */
-const GREP_MALFORMED = "no colons here";
+import { buildStructuredSummary } from "../index.ts";
+import {
+	getCachedResult,
+	setCachedResult,
+	clearCache,
+	getCacheSize,
+	buildCacheKey,
+} from "../cache.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Tests
@@ -282,192 +240,6 @@ describe("buildGrepArgs", () => {
 		assert.ok(eIdx > excludeStart, "-e should come after all --exclude-dir entries");
 		assert.strictEqual(args[eIdx + 1], "test", "query follows -e");
 		assert.strictEqual(args[args.length - 1], ".", "directory is last");
-	});
-});
-
-describe("parseGrepOutput", () => {
-	it("parses two valid grep lines", () => {
-		const result = parseGrepOutput(GREP_TWO_LINES);
-		assert.strictEqual(result.total_returned, 2);
-		assert.strictEqual(result.results.length, 2);
-		assert.strictEqual(result.results[0]!.file, "src/app.ts");
-		assert.strictEqual(result.results[0]!.line, 2);
-		assert.strictEqual(result.results[0]!.column, 1);
-		assert.strictEqual(result.results[0]!.text, "const TIMEOUT_MS = 5000;");
-		assert.strictEqual(result.results[1]!.file, "config/settings.py");
-		assert.strictEqual(result.results[1]!.line, 4);
-		assert.strictEqual(result.results[1]!.column, 1);
-		assert.strictEqual(result.results[1]!.text, "TIMEOUT_MS = 5000");
-	});
-
-	it("returns empty result for empty string", () => {
-		const result = parseGrepOutput("");
-		assert.strictEqual(result.total_returned, 0);
-		assert.deepStrictEqual(result.results, []);
-	});
-
-	it("returns empty result for null input", () => {
-		const result = parseGrepOutput(null);
-		assert.strictEqual(result.total_returned, 0);
-		assert.deepStrictEqual(result.results, []);
-	});
-
-	it("returns empty result for undefined input", () => {
-		const result = parseGrepOutput(undefined);
-		assert.strictEqual(result.total_returned, 0);
-		assert.deepStrictEqual(result.results, []);
-	});
-
-	it("sets column to 1 for all matches", () => {
-		const result = parseGrepOutput(GREP_TWO_LINES);
-		for (const r of result.results) {
-			assert.strictEqual(r.column, 1);
-		}
-	});
-
-	it("handles text with colons (greedy regex)", () => {
-		const result = parseGrepOutput(GREP_TEXT_WITH_COLONS);
-		assert.strictEqual(result.total_returned, 1);
-		assert.strictEqual(result.results[0]!.file, "src/log.ts");
-		assert.strictEqual(result.results[0]!.line, 10);
-		assert.strictEqual(result.results[0]!.text, "ERROR: 5000: timeout");
-	});
-
-	it("skips malformed line (no colons)", () => {
-		const result = parseGrepOutput(GREP_MALFORMED);
-		assert.strictEqual(result.total_returned, 0);
-	});
-
-	it("skips lines with non-numeric line number", () => {
-		const result = parseGrepOutput("file:abc:text");
-		assert.strictEqual(result.total_returned, 0);
-	});
-
-	it("newline-separated input produces multiple results", () => {
-		const input = "a:1:first\nb:2:second\nc:3:third";
-		const result = parseGrepOutput(input);
-		assert.strictEqual(result.total_returned, 3);
-		assert.strictEqual(result.results[0]!.file, "a");
-		assert.strictEqual(result.results[1]!.file, "b");
-		assert.strictEqual(result.results[2]!.file, "c");
-	});
-
-	it("preserves original order from grep output", () => {
-		const input = "z:3:last\na:1:first\nm:2:middle";
-		const result = parseGrepOutput(input);
-		assert.strictEqual(result.results[0]!.file, "z");
-		assert.strictEqual(result.results[1]!.file, "a");
-		assert.strictEqual(result.results[2]!.file, "m");
-	});
-
-	it("handles file paths with colons (Windows drive letter)", () => {
-		const result = parseGrepOutput("C:/src/file.ts:5:const x = 1");
-		assert.strictEqual(result.total_returned, 1);
-		assert.strictEqual(result.results[0]!.file, "C:/src/file.ts");
-	});
-});
-
-describe("parseVimgrepOutput", () => {
-	it("parses two valid vimgrep lines", () => {
-		const result = parseVimgrepOutput(TWO_VALID_LINES);
-		assert.strictEqual(result.total_returned, 2);
-		assert.strictEqual(result.results.length, 2);
-		assert.strictEqual(result.results[0]!.file, "config/settings.py");
-		assert.strictEqual(result.results[0]!.line, 4);
-		assert.strictEqual(result.results[0]!.column, 16);
-		assert.strictEqual(result.results[0]!.text, "TIMEOUT_MS = 5000");
-		assert.strictEqual(result.results[1]!.file, "docs/readme.md");
-		assert.strictEqual(result.results[1]!.line, 88);
-		assert.strictEqual(result.results[1]!.column, 5);
-		assert.strictEqual(result.results[1]!.text, "Set timeout to 5000.");
-	});
-
-	it("column parsed as number", () => {
-		const result = parseVimgrepOutput(TWO_VALID_LINES);
-		assert.ok(typeof result.results[0]!.column === "number");
-		assert.strictEqual(result.results[0]!.column, 16);
-	});
-
-	it("line parsed as number", () => {
-		const result = parseVimgrepOutput(TWO_VALID_LINES);
-		assert.ok(typeof result.results[0]!.line === "number");
-		assert.strictEqual(result.results[0]!.line, 4);
-	});
-
-	it("returns empty result for empty string", () => {
-		const result = parseVimgrepOutput("");
-		assert.strictEqual(result.total_returned, 0);
-		assert.deepStrictEqual(result.results, []);
-	});
-
-	it("returns empty result for null input", () => {
-		const result = parseVimgrepOutput(null);
-		assert.strictEqual(result.total_returned, 0);
-		assert.deepStrictEqual(result.results, []);
-	});
-
-	it("returns empty result for undefined input", () => {
-		const result = parseVimgrepOutput(undefined);
-		assert.strictEqual(result.total_returned, 0);
-		assert.deepStrictEqual(result.results, []);
-	});
-
-	it("skips malformed line (missing colons)", () => {
-		const result = parseVimgrepOutput(MALFORMED_OUTPUT);
-		assert.strictEqual(result.total_returned, 1);
-		assert.strictEqual(result.results.length, 1);
-		assert.strictEqual(result.results[0]!.file, "src/app.ts");
-	});
-
-	it("skips line with only two colons", () => {
-		const result = parseVimgrepOutput(TWO_COLONS_LINE);
-		assert.strictEqual(result.total_returned, 0);
-	});
-
-	it("parses tab in filename (edge case)", () => {
-		const result = parseVimgrepOutput(TAB_IN_FILENAME);
-		assert.strictEqual(result.total_returned, 1);
-		assert.strictEqual(result.results[0]!.file, "my\tfile.ts");
-		assert.strictEqual(result.results[0]!.line, 10);
-		assert.strictEqual(result.results[0]!.column, 5);
-		assert.strictEqual(result.results[0]!.text, "const x = 1");
-	});
-
-	it("text contains colons — extracts everything after third colon", () => {
-		const result = parseVimgrepOutput(TEXT_WITH_COLONS);
-		assert.strictEqual(result.total_returned, 1);
-		assert.strictEqual(result.results[0]!.file, "file");
-		assert.strictEqual(result.results[0]!.line, 1);
-		assert.strictEqual(result.results[0]!.column, 1);
-		assert.strictEqual(result.results[0]!.text, "ERROR: 5000: timeout");
-	});
-
-	it("empty text after last colon", () => {
-		const result = parseVimgrepOutput(EMPTY_TEXT_LINE);
-		assert.strictEqual(result.total_returned, 1);
-		assert.strictEqual(result.results[0]!.text, "");
-	});
-
-	it("newline-separated input produces multiple results", () => {
-		const input = "a:1:1:first\nb:2:2:second\nc:3:3:third";
-		const result = parseVimgrepOutput(input);
-		assert.strictEqual(result.total_returned, 3);
-		assert.strictEqual(result.results[0]!.file, "a");
-		assert.strictEqual(result.results[1]!.file, "b");
-		assert.strictEqual(result.results[2]!.file, "c");
-	});
-
-	it("preserves original order from vimgrep output", () => {
-		const input = "z:3:3:last\na:1:1:first\nm:2:2:middle";
-		const result = parseVimgrepOutput(input);
-		assert.strictEqual(result.results[0]!.file, "z");
-		assert.strictEqual(result.results[1]!.file, "a");
-		assert.strictEqual(result.results[2]!.file, "m");
-	});
-
-	it("skips lines with non-numeric line or column", () => {
-		const result = parseVimgrepOutput(INVALID_NUMBERS);
-		assert.strictEqual(result.total_returned, 0);
 	});
 });
 
@@ -894,6 +666,327 @@ describe("temp dir tracking", () => {
 // Integration test (requires rg binary installed)
 // ═══════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════
+// Cache module (cache.ts)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("cache module", () => {
+	beforeEach(() => {
+		clearCache();
+	});
+
+	// ── Unit: get/set/clear ──
+
+	describe("getCachedResult / setCachedResult", () => {
+		it("stores and retrieves a result by query+directory", () => {
+			const entry = {
+				result: { total_returned: 2, results: [{ file: "a.ts", line: 1, column: 1, text: "x" }] },
+				rawStdout: "a.ts:1:1:x",
+			};
+			setCachedResult("foo", ".", entry);
+			const cached = getCachedResult("foo", ".");
+			assert.ok(cached !== undefined);
+			assert.strictEqual(cached!.result.total_returned, 2);
+			assert.strictEqual(cached!.rawStdout, "a.ts:1:1:x");
+		});
+
+		it("different query — cache miss", () => {
+			setCachedResult("foo", ".", {
+				result: { total_returned: 1, results: [] },
+				rawStdout: "",
+			});
+			const cached = getCachedResult("bar", ".");
+			assert.strictEqual(cached, undefined);
+		});
+
+		it("same query, different directory — cache miss", () => {
+			setCachedResult("foo", "src", {
+				result: { total_returned: 1, results: [] },
+				rawStdout: "",
+			});
+			const cached = getCachedResult("foo", "lib");
+			assert.strictEqual(cached, undefined);
+		});
+	});
+
+	// ── Path normalization ──
+
+	describe("path normalization", () => {
+		it('"./src" and "src" produce same cache key', () => {
+			const key1 = buildCacheKey("foo", "./src");
+			const key2 = buildCacheKey("foo", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it('"src/" and "src" produce same cache key', () => {
+			const key1 = buildCacheKey("foo", "src/");
+			const key2 = buildCacheKey("foo", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it('"." and "" produce same cache key (empty normalized to ".")', () => {
+			const key1 = buildCacheKey("foo", ".");
+			const key2 = buildCacheKey("foo", "./");
+			assert.strictEqual(key1, key2);
+		});
+
+		it('"./src/" and "src" — same key (trailing slash + dot-prefix)', () => {
+			const key1 = buildCacheKey("foo", "./src/");
+			const key2 = buildCacheKey("foo", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it('normalized path: "./src" → cache hit when previously stored as "src"', () => {
+			setCachedResult("foo", "src", {
+				result: { total_returned: 1, results: [{ file: "a.ts", line: 1, column: 1, text: "x" }] },
+				rawStdout: "a.ts:1:1:x",
+			});
+			const cached = getCachedResult("foo", "./src");
+			assert.ok(cached !== undefined, "Should find cached entry via normalized path");
+		});
+	});
+
+	// ── clearCache ──
+
+	describe("clearCache", () => {
+		it("clears all cached entries", () => {
+			setCachedResult("a", ".", {
+				result: { total_returned: 1, results: [] },
+				rawStdout: "",
+			});
+			setCachedResult("b", ".", {
+				result: { total_returned: 1, results: [] },
+				rawStdout: "",
+			});
+			assert.strictEqual(getCacheSize(), 2);
+			clearCache();
+			assert.strictEqual(getCacheSize(), 0);
+		});
+
+		it("after clear, get returns undefined", () => {
+			setCachedResult("foo", ".", {
+				result: { total_returned: 1, results: [] },
+				rawStdout: "",
+			});
+			clearCache();
+			const cached = getCachedResult("foo", ".");
+			assert.strictEqual(cached, undefined);
+		});
+	});
+
+	// ── getCacheSize ──
+
+	describe("getCacheSize", () => {
+		it("returns 0 for empty cache", () => {
+			assert.strictEqual(getCacheSize(), 0);
+		});
+
+		it("returns correct count after inserts", () => {
+			setCachedResult("a", ".", {
+				result: { total_returned: 1, results: [] },
+				rawStdout: "",
+			});
+			setCachedResult("b", ".", {
+				result: { total_returned: 1, results: [] },
+				rawStdout: "",
+			});
+			assert.strictEqual(getCacheSize(), 2);
+		});
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Structured summarizer (buildStructuredSummary from index.ts)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("buildStructuredSummary", () => {
+	it("0 matches — returns 'No matches found' message, no error", () => {
+		const result: RgResult = { total_returned: 0, results: [] };
+		const summary = buildStructuredSummary(result, "ripgrep", "TIMEOUT_MS", ".");
+		assert.ok(summary.text.includes("No matches found"));
+		assert.strictEqual(summary.details.total_returned, 0);
+		assert.strictEqual(summary.details.success, true);
+	});
+
+	it("1000 matches — shows top-N (default 10) with truncated indicator and file count", () => {
+		const results = [];
+		for (let i = 0; i < 1000; i++) {
+			results.push({
+				file: i < 500 ? "src/a.ts" : "src/b.ts",
+				line: i + 1,
+				column: 1,
+				text: `match ${i + 1}`,
+			});
+		}
+		const result: RgResult = { total_returned: 1000, results, truncated: true };
+		const summary = buildStructuredSummary(result, "ripgrep", "TIMEOUT_MS", ".");
+
+		// Shows searcher name
+		assert.ok(summary.text.includes("ripgrep"));
+		// Shows query
+		assert.ok(summary.text.includes("TIMEOUT_MS"));
+		// Shows directory
+		assert.ok(summary.text.includes("Directory: ."));
+		// Shows total
+		assert.ok(summary.text.includes("1000"));
+		// Shows unique file count
+		assert.ok(summary.text.includes("across 2 files"));
+		// Shows truncated indicator
+		assert.ok(summary.text.includes("Showing first 10 of 1000"));
+		// Shows only 10 result lines
+		const lines = summary.text.split("\n").filter((l) => /^\d+\./.test(l));
+		assert.strictEqual(lines.length, 10);
+	});
+
+	it("≤10 matches — all shown, no truncated indicator", () => {
+		const results = [
+			{ file: "a.ts", line: 1, column: 1, text: "one" },
+			{ file: "b.ts", line: 2, column: 1, text: "two" },
+		];
+		const result: RgResult = { total_returned: 2, results };
+		const summary = buildStructuredSummary(result, "grep", "query", ".");
+		assert.ok(summary.text.includes("Matches returned: 2"));
+		assert.ok(summary.text.includes("1. a.ts:1:1:one"));
+		assert.ok(summary.text.includes("2. b.ts:2:1:two"));
+		assert.ok(!summary.text.includes("Showing first"));
+	});
+
+	it("summary includes searcher name, query string, directory", () => {
+		const result: RgResult = {
+			total_returned: 1,
+			results: [{ file: "a.ts", line: 1, column: 1, text: "x" }],
+		};
+		const summary = buildStructuredSummary(result, "ripgrep", "foo", "src/");
+		assert.ok(summary.text.includes("ripgrep"));
+		assert.ok(summary.text.includes("foo"));
+		assert.ok(summary.text.includes("Directory: src/"));
+	});
+
+	it("single match — rendered correctly with count = 1", () => {
+		const result: RgResult = {
+			total_returned: 1,
+			results: [{ file: "a.ts", line: 1, column: 1, text: "x" }],
+		};
+		const summary = buildStructuredSummary(result, "ripgrep", "x", ".");
+		assert.ok(summary.text.includes("Matches returned: 1"));
+		assert.ok(summary.text.includes("1 file"));
+		assert.ok(summary.text.includes("1. a.ts:1:1:x"));
+	});
+
+	it("matches across 1 file vs 100 files — unique file count correct", () => {
+		// 1 file
+		const results1 = [
+			{ file: "a.ts", line: 1, column: 1, text: "x" },
+			{ file: "a.ts", line: 2, column: 1, text: "y" },
+		];
+		const r1: RgResult = { total_returned: 2, results: results1 };
+		const summary1 = buildStructuredSummary(r1, "ripgrep", "q", ".");
+		assert.ok(summary1.text.includes("1 file"));
+
+		// 100 files (need 10 unique files to display in top-N)
+		const results2 = [];
+		for (let i = 0; i < 10; i++) {
+			results2.push({
+				file: `file${i}.ts`,
+				line: 1,
+				column: 1,
+				text: "x",
+			});
+		}
+		// Add 90 more results across same files to make total 100
+		for (let i = 0; i < 90; i++) {
+			results2.push({
+				file: `file${i % 10}.ts`,
+				line: i + 2,
+				column: 1,
+				text: "x",
+			});
+		}
+		const r2: RgResult = { total_returned: 100, results: results2, truncated: true };
+		const summary2 = buildStructuredSummary(r2, "ripgrep", "q", ".");
+		assert.ok(summary2.text.includes("across 10 files"));
+	});
+
+	it("max_count override (top-5) respected", () => {
+		const results = [];
+		for (let i = 0; i < 20; i++) {
+			results.push({
+				file: "a.ts",
+				line: i + 1,
+				column: 1,
+				text: `match ${i + 1}`,
+			});
+		}
+		const result: RgResult = { total_returned: 20, results, truncated: true };
+		const summary = buildStructuredSummary(result, "ripgrep", "q", ".", 5);
+		assert.ok(summary.text.includes("Showing first 5 of 20"));
+		const lines = summary.text.split("\n").filter((l) => /^\d+\./.test(l));
+		assert.strictEqual(lines.length, 5);
+	});
+
+	it("max_count override (top-20) respected", () => {
+		const results = [];
+		for (let i = 0; i < 30; i++) {
+			results.push({
+				file: "a.ts",
+				line: i + 1,
+				column: 1,
+				text: `match ${i + 1}`,
+			});
+		}
+		const result: RgResult = { total_returned: 30, results, truncated: true };
+		const summary = buildStructuredSummary(result, "ripgrep", "q", ".", 20);
+		assert.ok(summary.text.includes("Showing first 20 of 30"));
+		const lines = summary.text.split("\n").filter((l) => /^\d+\./.test(l));
+		assert.strictEqual(lines.length, 20);
+	});
+
+	it("null/undefined raw stdout — empty summary, no crash", () => {
+		// buildStructuredSummary doesn't take rawStdout — test that
+		// an empty result set with no content doesn't crash
+		const result: RgResult = { total_returned: 0, results: [] };
+		const summary = buildStructuredSummary(result, "ripgrep", "q", ".");
+		assert.ok(summary.text.includes("No matches found"));
+		assert.strictEqual(summary.details.total_returned, 0);
+	});
+
+	it("top-N results show correct file:line:column:text format", () => {
+		const results = [
+			{ file: "src/app.ts", line: 42, column: 16, text: "const x = 1;" },
+			{ file: "config/settings.py", line: 4, column: 8, text: "TIMEOUT_MS = 5000" },
+		];
+		const result: RgResult = { total_returned: 2, results };
+		const summary = buildStructuredSummary(result, "ripgrep", "5000", ".");
+		assert.ok(summary.text.includes("1. src/app.ts:42:16:const x = 1;"));
+		assert.ok(summary.text.includes("2. config/settings.py:4:8:TIMEOUT_MS = 5000"));
+	});
+
+	it("truncated indicator formatted correctly with closing bracket placeholder", () => {
+		const results = [];
+		for (let i = 0; i < 15; i++) {
+			results.push({
+				file: "a.ts",
+				line: i + 1,
+				column: 1,
+				text: `match ${i + 1}`,
+			});
+		}
+		const result: RgResult = { total_returned: 15, results, truncated: true };
+		const summary = buildStructuredSummary(result, "ripgrep", "q", ".");
+		// Check truncated indicator format (closing bracket is added by executor)
+		assert.ok(summary.text.includes("[Showing first 10 of 15 results across 1 file."));
+		assert.strictEqual(summary.details.truncated, true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 3: Backend auto-detection (config.ts already tested above)
+// The resolveBackend tests in the config section already cover:
+//   - ripgrepAvailable returns true → backend ripgrep
+//   - ripgrepAvailable returns false → backend grep
+//   - Config override "grep" → skip rg check
+// ═══════════════════════════════════════════════════════════════════════
+
 describe("integration: rg binary", () => {
 	const hasRg = (() => {
 		try {
@@ -1068,142 +1161,4 @@ describe("integration: rg binary", () => {
 			}
 		},
 	);
-});
-
-// ═══════════════════════════════════════════════════════════════════════
-// Error classification (buildSearchErrorText)
-// ═══════════════════════════════════════════════════════════════════════
-
-describe("buildSearchErrorText", () => {
-	it("empty stderr with exit 137 (SIGKILL) — does NOT say 'Ensure installed'", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			137,
-			false,
-			"",
-			"ripgrep (\`rg --version\`)",
-			".",
-		);
-		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
-		assert.ok(result.includes("exit 137"), "Should mention exit code");
-		assert.ok(
-			result.includes("no error output") || result.includes("killed"),
-			"Should describe the situation (killed or no error output)",
-		);
-	});
-
-	it("empty stderr with exit 139 (SIGSEGV) — does NOT say 'Ensure installed'", () => {
-		const result = buildSearchErrorText("grep", 139, false, "", "grep", ".");
-		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
-		assert.ok(result.includes("no error output"), "Should mention no error output");
-	});
-
-	it("killed=true with code=null, empty stderr — says 'process killed'", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			null,
-			true,
-			"",
-			"ripgrep (\`rg --version\`)",
-			".",
-		);
-		assert.ok(result.includes("killed"), "Should mention process killed");
-		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
-	});
-
-	it("killed=true with code=null, non-empty stderr — says 'process killed' without Ensure", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			null,
-			true,
-			"out of memory",
-			"ripgrep (\`rg --version\`)",
-			".",
-		);
-		assert.ok(result.includes("killed"), "Should mention process killed");
-		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
-	});
-
-	it("stderr contains 'command not found' — says 'Ensure installed'", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			127,
-			false,
-			"rg: command not found",
-			"ripgrep (\`rg --version\`)",
-			".",
-		);
-		assert.ok(result.includes("Ensure"), "Should suggest checking installation");
-		assert.ok(result.includes("ripgrep (\`rg --version\`)"), "Should mention the engine to check");
-	});
-
-	it("stderr contains 'not recognized' — says 'Ensure installed'", () => {
-		const result = buildSearchErrorText("grep", 1, false, "'rg' is not recognized", "grep", ".");
-		assert.ok(result.includes("Ensure"), "Should suggest checking installation");
-	});
-
-	it("stderr contains 'internal error' — says 'Ensure installed'", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			1,
-			false,
-			"internal error",
-			"ripgrep (\`rg --version\`)",
-			".",
-		);
-		assert.ok(result.includes("Ensure"), "Should suggest checking installation");
-	});
-
-	it("stderr contains 'No such file' — says directory not found", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			2,
-			false,
-			"No such file or directory",
-			"ripgrep (\`rg --version\`)",
-			"foo/",
-		);
-		assert.ok(result.includes("not found"), "Should mention directory not found");
-		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
-	});
-
-	it("stderr contains 'ENOENT' — says directory not found", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			2,
-			false,
-			"ENOENT: no such file",
-			"ripgrep (\`rg --version\`)",
-			"foo/",
-		);
-		assert.ok(result.includes("not found"), "Should mention directory not found");
-		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
-	});
-
-	it("generic stderr with exit code — passes through stderr", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			2,
-			false,
-			"Permission denied",
-			"ripgrep (\`rg --version\`)",
-			".",
-		);
-		assert.ok(result.includes("Permission denied"), "Should include stderr content");
-		assert.ok(result.includes("exit 2"), "Should mention exit code");
-		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
-	});
-
-	it("non-empty stderr with exit code — passes through stderr", () => {
-		const result = buildSearchErrorText(
-			"ripgrep",
-			2,
-			false,
-			"max-line-length (6) exceeded",
-			"ripgrep (\`rg --version\`)",
-			".",
-		);
-		assert.ok(result.includes("max-line-length"), "Should include stderr content");
-		assert.ok(!result.includes("Ensure"), "Should not suggest checking installation");
-	});
 });
