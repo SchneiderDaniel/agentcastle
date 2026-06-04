@@ -1,250 +1,158 @@
 /**
- * Tests for tsc-checkpoint (Tier 2)
+ * Tests for tsc-checkpoint incremental watch mode
  *
- * Pure function tests for parseTscOutput() and formatTscDiagnostics().
- * Local copies match source at .pi/extensions/tsc-checkpoint.ts exactly.
+ * Phases 1–4: DiagnosticsWatcher lifecycle, cache, file-path resolution, trends
+ * Phase 5: Integration — extension entry point (/check command)
+ *
+ * Imports from the source module for true integration testing.
+ * The real TypeScriptWatchAdapter is NOT used here — tests use MockAdapter
+ * to keep tests fast and deterministic.
  *
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/tsc-checkpoint/test/tsc-checkpoint.test.mts
  */
 
 import assert from "node:assert";
-import { describe, it } from "node:test";
-import { existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { describe, it, beforeEach } from "node:test";
 import { resolve } from "node:path";
-import type { ExecResult } from "@earendil-works/pi-coding-agent";
+
+import {
+	DiagnosticsWatcher,
+	resolveDiagnosticFilePath,
+	formatDiagnostics,
+	formatTrend,
+} from "../index.ts";
+
+import type { TscDiagnostic, TscWatchAdapter } from "../index.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
-// Types (match source at .pi/extensions/tsc-checkpoint.ts)
+// Mock Adapter for Testing
 // ═══════════════════════════════════════════════════════════════════════
 
-interface TscDiagnostic {
-	file: string;
-	line: number;
-	column: number;
-	severity: "Error";
-	message: string;
-	code?: string;
+class MockAdapter implements TscWatchAdapter {
+	startCalls = 0;
+	stopCalls = 0;
+	lastStartPath = "";
+	private _isRunning = false;
+	private _diagnostics: TscDiagnostic[] = [];
+	private _listeners: Array<(diagnostics: TscDiagnostic[]) => void> = [];
+	private _shouldFailStart = false;
+
+	setShouldFailStart(fail: boolean): void {
+		this._shouldFailStart = fail;
+	}
+
+	start(tsconfigPath: string): boolean {
+		this.startCalls++;
+		this.lastStartPath = tsconfigPath;
+		if (this._isRunning) return false;
+		if (this._shouldFailStart) {
+			throw new Error(`tsconfig not found: ${tsconfigPath}`);
+		}
+		this._isRunning = true;
+		return true;
+	}
+
+	stop(): void {
+		this.stopCalls++;
+		this._isRunning = false;
+	}
+
+	isRunning(): boolean {
+		return this._isRunning;
+	}
+
+	getDiagnostics(): TscDiagnostic[] {
+		return this._diagnostics;
+	}
+
+	onDiagnosticsChange(callback: (diagnostics: TscDiagnostic[]) => void): void {
+		this._listeners.push(callback);
+	}
+
+	/** Test helper: simulate a diagnostic event from the watch process */
+	emitDiagnostics(diagnostics: TscDiagnostic[]): void {
+		this._diagnostics = diagnostics;
+		for (const listener of this._listeners) {
+			listener(diagnostics);
+		}
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Pure functions under test (match source exactly)
+// Phase 1: DiagnosticsWatcher — Lifecycle
 // ═══════════════════════════════════════════════════════════════════════
 
-/**
- * Parse raw tsc --noEmit stderr output into TscDiagnostic[].
- *
- * tsc error format: file.ts(line,column): error TS<code>: message
- *
- * Handles:
- * - Multiple errors from multiple files
- * - Errors with and without TS error code
- * - Non-error lines are filtered out (info, file counts, etc.)
- * - ANSI color codes (--pretty is default) — stripped via regex
- */
-function parseTscOutput(raw: string): TscDiagnostic[] {
-	if (!raw || typeof raw !== "string") return [];
-
-	const lines = raw.split("\n");
-	const diagnostics: TscDiagnostic[] = [];
-
-	// Strip ANSI color codes first
-	const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
-
-	// Match: file(line,col): error TS<code>: message
-	const errorRegex = /^([^:(]+)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/;
-	// Match: file(line,col): error message (no TS code)
-	const errorRegexNoCode = /^([^:(]+)\((\d+),(\d+)\):\s+error\s+(.+)$/;
-
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
-
-		// Strip ANSI before matching
-		const clean = stripAnsi(trimmed);
-
-		// Try with TS code first
-		let match = clean.match(errorRegex);
-		if (match) {
-			diagnostics.push({
-				file: match[1]!,
-				line: parseInt(match[2]!, 10),
-				column: parseInt(match[3]!, 10),
-				severity: "Error",
-				message: match[5]!,
-				code: match[4]!,
-			});
-			continue;
-		}
-
-		// Try without TS code
-		match = clean.match(errorRegexNoCode);
-		if (match) {
-			diagnostics.push({
-				file: match[1]!,
-				line: parseInt(match[2]!, 10),
-				column: parseInt(match[3]!, 10),
-				severity: "Error",
-				message: match[4]!,
-			});
-		}
-	}
-
-	return diagnostics;
-}
-
-/**
- * Format TSC diagnostics into developer-readable message.
- * Same format as LSP auditor: file, Line N: [Error] message (code).
- */
-function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
-	if (!diagnostics || diagnostics.length === 0) return "";
-
-	// Group by file
-	const byFile = new Map<string, TscDiagnostic[]>();
-	for (const d of diagnostics) {
-		const list = byFile.get(d.file) || [];
-		list.push(d);
-		byFile.set(d.file, list);
-	}
-
-	const blocks: string[] = [];
-	const files = [...byFile.keys()].sort();
-	for (const file of files) {
-		const diags = byFile.get(file)!;
-		// Sort by line, then column
-		diags.sort((a, b) => (a.line !== b.line ? a.line - b.line : a.column - b.column));
-
-		const lines: string[] = [];
-		for (const d of diags) {
-			let msg = d.message;
-			if (msg.length > 500) msg = msg.slice(0, 497) + "...";
-			const codePart = d.code ? ` (${d.code})` : "";
-			lines.push(`${file}, Line ${d.line}: [${d.severity}] ${msg}${codePart}`);
-		}
-		if (blocks.length > 0) blocks.push("");
-		blocks.push(lines.join("\n"));
-	}
-
-	return blocks.join("\n");
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Tests
-// ═══════════════════════════════════════════════════════════════════════
-
-describe("parseTscOutput", () => {
-	it("parses standard tsc error with TS code", () => {
-		const raw = "src/app.ts(10,5): error TS2322: Type 'string' is not assignable to type 'number'.";
-		const result = parseTscOutput(raw);
-		assert.strictEqual(result.length, 1);
-		assert.strictEqual(result[0]!.file, "src/app.ts");
-		assert.strictEqual(result[0]!.line, 10);
-		assert.strictEqual(result[0]!.column, 5);
-		assert.strictEqual(result[0]!.code, "TS2322");
-		assert.strictEqual(result[0]!.message, "Type 'string' is not assignable to type 'number'.");
+describe("DiagnosticsWatcher (lifecycle)", () => {
+	it("stores tsconfigPath and sets watchOptions to defaults", () => {
+		const w = new DiagnosticsWatcher("/some/path/tsconfig.json");
+		assert.strictEqual(w.tsconfigPathValue, "/some/path/tsconfig.json");
+		assert.deepStrictEqual(w.watchOptionsValue, {});
 	});
 
-	it("parses error without TS code", () => {
-		const raw = "src/app.ts(1,1): error Cannot find module './nonexistent'.";
-		const result = parseTscOutput(raw);
-		assert.strictEqual(result.length, 1);
-		assert.strictEqual(result[0]!.code, undefined);
+	it("stores custom TscWatchOptions", () => {
+		const w = new DiagnosticsWatcher("/path/tsconfig.json", {
+			pollInterval: 5000,
+		});
+		assert.strictEqual(w.watchOptionsValue.pollInterval, 5000);
 	});
 
-	it("parses multiple errors from same file", () => {
-		const raw = [
-			"src/app.ts(10,5): error TS2322: Type error.",
-			"src/app.ts(20,3): error TS2304: Cannot find name 'x'.",
-		].join("\n");
-		const result = parseTscOutput(raw);
-		assert.strictEqual(result.length, 2);
+	it("start() with non-existent tsconfig throws", () => {
+		const w = new DiagnosticsWatcher("/nonexistent/tsconfig.json");
+		assert.throws(() => w.start(), {
+			message: /tsconfig not found/,
+		});
 	});
 
-	it("parses errors from multiple files", () => {
-		const raw = [
-			"src/app.ts(10,5): error TS2322: Type error.",
-			"src/lib.ts(3,1): error TS2304: Cannot find name 'y'.",
-		].join("\n");
-		const result = parseTscOutput(raw);
-		assert.strictEqual(result.length, 2);
-		assert.strictEqual(result[0]!.file, "src/app.ts");
-		assert.strictEqual(result[1]!.file, "src/lib.ts");
+	it("start() once returns true, isRunning() returns true", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		const result = w.start();
+		assert.strictEqual(result, true);
+		assert.strictEqual(w.isRunning(), true);
+		assert.strictEqual(adapter.startCalls, 1);
 	});
 
-	it("filters out non-error lines", () => {
-		const raw = [
-			"Files: 100",
-			"node_modules/@types/node/index.d.ts(1,1): info: some info",
-			"src/app.ts(10,5): error TS2322: Type error.",
-			"",
-			"Some random output",
-		].join("\n");
-		const result = parseTscOutput(raw);
-		assert.strictEqual(result.length, 1);
+	it("start() twice returns false, isRunning() stays true", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		w.start();
+		const result = w.start();
+		assert.strictEqual(result, false);
+		assert.strictEqual(w.isRunning(), true);
+		assert.strictEqual(adapter.startCalls, 1);
 	});
 
-	it("empty string → empty array", () => {
-		assert.deepStrictEqual(parseTscOutput(""), []);
+	it("stop() closes watch, isRunning() returns false", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		w.start();
+		assert.strictEqual(w.isRunning(), true);
+		w.stop();
+		assert.strictEqual(w.isRunning(), false);
+		assert.strictEqual(adapter.stopCalls, 1);
 	});
 
-	it("null/undefined → empty array", () => {
-		assert.deepStrictEqual(parseTscOutput(null as unknown as string), []);
-		assert.deepStrictEqual(parseTscOutput(undefined as unknown as string), []);
+	it("stop() when not running is no-op", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		w.stop(); // not started
+		assert.strictEqual(adapter.stopCalls, 0);
+		assert.strictEqual(w.isRunning(), false);
 	});
 
-	it("handles file paths with special chars (dots, slashes)", () => {
-		const raw = "./src/utils/helper.util.ts(5,10): error TS2304: Cannot find name 'foo'.";
-		const result = parseTscOutput(raw);
-		assert.strictEqual(result.length, 1);
-		assert.strictEqual(result[0]!.file, "./src/utils/helper.util.ts");
+	it("getDiagnostics() before any event returns []", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		assert.deepStrictEqual(w.getDiagnostics(), []);
 	});
 
-	it("handles Windows-style paths with backslashes", () => {
-		const raw = "src\\app.ts(10,5): error TS2322: Type error.";
-		const result = parseTscOutput(raw);
-		// Note: backslash might appear in file path
-		assert.strictEqual(result.length, 1);
-		assert.ok(result[0]!.file.includes("src"));
-	});
+	it("getDiagnostics() after watcher reports errors returns cached diagnostics", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		w.start();
 
-	it("handles ANSI color codes (tsc --pretty default)", () => {
-		// tsc --pretty outputs with ANSI color escape codes
-		const raw =
-			"\u001b[96msrc/app.ts\u001b[0m\u001b[93m(10,5)\u001b[0m: \u001b[91merror\u001b[0m\u001b[90m TS2322: \u001b[0m\u001b[97mType error.\u001b[0m";
-		const result = parseTscOutput(raw);
-		// ANSI stripping in source parses this correctly
-		assert.strictEqual(result.length, 1);
-		assert.strictEqual(result[0]!.file, "src/app.ts");
-		assert.strictEqual(result[0]!.line, 10);
-		assert.strictEqual(result[0]!.column, 5);
-		assert.strictEqual(result[0]!.code, "TS2322");
-		assert.strictEqual(result[0]!.message, "Type error.");
-	});
-
-	it("line and column parsed as numbers", () => {
-		const raw = "src/app.ts(42,7): error TS2551: Property 'x' does not exist on type 'Y'.";
-		const result = parseTscOutput(raw);
-		assert.strictEqual(result[0]!.line, 42);
-		assert.strictEqual(result[0]!.column, 7);
-	});
-
-	it("message with colon preserved fully", () => {
-		const raw =
-			"src/app.ts(5,2): error TS2345: Argument of type '\"a\"' is not assignable to parameter of type '\"b\"'.";
-		const result = parseTscOutput(raw);
-		assert.strictEqual(result.length, 1);
-		assert.ok(result[0]!.message.includes("not assignable"));
-	});
-});
-
-describe("formatTscDiagnostics", () => {
-	it("empty → empty string", () => {
-		assert.strictEqual(formatTscDiagnostics([]), "");
-	});
-
-	it("single error → formatted line with code", () => {
-		const result = formatTscDiagnostics([
+		const sampleDiags: TscDiagnostic[] = [
 			{
 				file: "src/app.ts",
 				line: 10,
@@ -252,313 +160,513 @@ describe("formatTscDiagnostics", () => {
 				severity: "Error",
 				message: "Type error",
 				code: "TS2322",
+				filePath: "/project/src/app.ts",
 			},
-		]);
-		assert.strictEqual(result, "src/app.ts, Line 10: [Error] Type error (TS2322)");
+		];
+		adapter.emitDiagnostics(sampleDiags);
+
+		const result = w.getDiagnostics();
+		assert.strictEqual(result.length, 1);
+		assert.strictEqual(result[0]!.code, "TS2322");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2: Incremental Re-check & Diagnostic Cache
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("DiagnosticsWatcher (incremental re-check & cache)", () => {
+	let adapter: MockAdapter;
+	let watcher: DiagnosticsWatcher;
+
+	beforeEach(() => {
+		adapter = new MockAdapter();
+		watcher = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		watcher.start();
 	});
 
-	it("single error without code → no code part", () => {
-		const result = formatTscDiagnostics([
-			{ file: "src/app.ts", line: 10, column: 5, severity: "Error", message: "Type error" },
-		]);
-		assert.strictEqual(result, "src/app.ts, Line 10: [Error] Type error");
+	it("file-change triggers watcher callback → onDiagnosticsChange fires with new diagnostics", () => {
+		let changeFired = false;
+		let receivedDiags: TscDiagnostic[] | undefined;
+
+		watcher.onDiagnosticsChange((diags) => {
+			changeFired = true;
+			receivedDiags = diags;
+		});
+
+		const newDiags: TscDiagnostic[] = [
+			{
+				file: "src/new.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "New error",
+				code: "TS2304",
+				filePath: "/project/src/new.ts",
+			},
+		];
+		adapter.emitDiagnostics(newDiags);
+
+		assert.strictEqual(changeFired, true);
+		assert.strictEqual(receivedDiags!.length, 1);
+		assert.strictEqual(receivedDiags![0]!.code, "TS2304");
 	});
 
-	it("multiple errors sorted by line", () => {
-		const result = formatTscDiagnostics([
-			{ file: "a.ts", line: 20, column: 1, severity: "Error", message: "err2", code: "TS2322" },
-			{ file: "a.ts", line: 5, column: 3, severity: "Error", message: "err1", code: "TS2304" },
-		]);
-		const lines = result.split("\n");
-		assert.strictEqual(lines[0], "a.ts, Line 5: [Error] err1 (TS2304)");
-		assert.strictEqual(lines[1], "a.ts, Line 20: [Error] err2 (TS2322)");
+	it("getDiagnostics() called twice with no file changes returns same array reference (cached)", () => {
+		const diags: TscDiagnostic[] = [
+			{
+				file: "src/app.ts",
+				line: 10,
+				column: 5,
+				severity: "Error",
+				message: "Type error",
+				code: "TS2322",
+				filePath: "/project/src/app.ts",
+			},
+		];
+		adapter.emitDiagnostics(diags);
+
+		const first = watcher.getDiagnostics();
+		const second = watcher.getDiagnostics();
+
+		// Should return the same cached array reference
+		assert.strictEqual(first, second);
+		assert.strictEqual(first.length, 1);
 	});
 
-	it("multiple files → alphabetically sorted, blank line separator", () => {
-		const result = formatTscDiagnostics([
-			{ file: "z.ts", line: 1, column: 1, severity: "Error", message: "z", code: "TS1" },
-			{ file: "a.ts", line: 1, column: 1, severity: "Error", message: "a", code: "TS2" },
-		]);
-		const blocks = result.split("\n\n");
-		assert.strictEqual(blocks.length, 2);
-		assert.ok(blocks[0]!.startsWith("a.ts"));
-		assert.ok(blocks[1]!.startsWith("z.ts"));
+	it("new file with error added → updated diagnostics", () => {
+		const initialDiags: TscDiagnostic[] = [
+			{
+				file: "src/a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "Error A",
+				code: "TS2322",
+				filePath: "/project/src/a.ts",
+			},
+		];
+		adapter.emitDiagnostics(initialDiags);
+		assert.strictEqual(watcher.getDiagnostics().length, 1);
+
+		const updatedDiags: TscDiagnostic[] = [
+			{
+				file: "src/a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "Error A",
+				code: "TS2322",
+				filePath: "/project/src/a.ts",
+			},
+			{
+				file: "src/b.ts",
+				line: 5,
+				column: 3,
+				severity: "Error",
+				message: "Error B",
+				code: "TS2304",
+				filePath: "/project/src/b.ts",
+			},
+		];
+		adapter.emitDiagnostics(updatedDiags);
+		assert.strictEqual(watcher.getDiagnostics().length, 2);
+		assert.strictEqual(watcher.getDiagnostics()[1]!.code, "TS2304");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 3: File-Path Resolution
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("resolveDiagnosticFilePath", () => {
+	it("resolves relative path to absolute against tsconfig dir", () => {
+		const result = resolveDiagnosticFilePath("src/app.ts", "/home/user/project");
+		assert.strictEqual(result, "/home/user/project/src/app.ts");
 	});
 
-	it("message >500 chars truncated", () => {
-		const longMsg = "x".repeat(1000);
-		const result = formatTscDiagnostics([
-			{ file: "a.ts", line: 1, column: 1, severity: "Error", message: longMsg, code: "TS2322" },
-		]);
-		assert.ok(result.length < 600);
-		// Message part truncated to 500 chars, result includes code suffix
-		assert.ok(result.includes("..."));
+	it("already absolute path returned as-is", () => {
+		const result = resolveDiagnosticFilePath("/home/user/project/src/app.ts", "/other/dir");
+		assert.strictEqual(result, "/home/user/project/src/app.ts");
 	});
 
-	it("unicode in message passed through", () => {
-		const result = formatTscDiagnostics([
+	it("Windows absolute path returned as-is", () => {
+		const result = resolveDiagnosticFilePath("C:\\Users\\me\\src\\app.ts", "/other/dir");
+		assert.strictEqual(result, "C:\\Users\\me\\src\\app.ts");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 4: Trend Tracking
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("DiagnosticsWatcher (trend tracking)", () => {
+	it("getTrend() returns undefined when fewer than 2 data points", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		w.start();
+		assert.strictEqual(w.getTrend(), undefined);
+
+		// One diagnostic emission
+		adapter.emitDiagnostics([
 			{
 				file: "a.ts",
 				line: 1,
 				column: 1,
 				severity: "Error",
-				message: "🚀 unicode 世界",
-				code: "TS2322",
+				message: "err",
+				filePath: "/a.ts",
 			},
 		]);
-		assert.ok(result.includes("🚀 unicode 世界"));
+		assert.strictEqual(w.getTrend(), undefined); // Still only 1
+	});
+
+	it("getTrend() shows regression when error count increases", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		w.start();
+
+		// First check: 1 error
+		adapter.emitDiagnostics([
+			{
+				file: "a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "err1",
+				filePath: "/a.ts",
+			},
+		]);
+
+		// Second check: 3 errors
+		adapter.emitDiagnostics([
+			{
+				file: "a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "err1",
+				filePath: "/a.ts",
+			},
+			{
+				file: "b.ts",
+				line: 2,
+				column: 2,
+				severity: "Error",
+				message: "err2",
+				filePath: "/b.ts",
+			},
+			{
+				file: "c.ts",
+				line: 3,
+				column: 3,
+				severity: "Error",
+				message: "err3",
+				filePath: "/c.ts",
+			},
+		]);
+
+		const trend = w.getTrend();
+		assert.ok(trend);
+		assert.strictEqual(trend!.current, 3);
+		assert.strictEqual(trend!.previous, 1);
+		assert.strictEqual(trend!.direction, "regressed");
+		assert.strictEqual(trend!.delta, 2);
+	});
+
+	it("getTrend() shows improvement when error count decreases", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		w.start();
+
+		adapter.emitDiagnostics([
+			{
+				file: "a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "err1",
+				filePath: "/a.ts",
+			},
+			{
+				file: "b.ts",
+				line: 2,
+				column: 2,
+				severity: "Error",
+				message: "err2",
+				filePath: "/b.ts",
+			},
+		]);
+
+		adapter.emitDiagnostics([
+			{
+				file: "a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "err1",
+				filePath: "/a.ts",
+			},
+		]);
+
+		const trend = w.getTrend();
+		assert.ok(trend);
+		assert.strictEqual(trend!.current, 1);
+		assert.strictEqual(trend!.previous, 2);
+		assert.strictEqual(trend!.direction, "improved");
+		assert.strictEqual(trend!.delta, 1);
+	});
+
+	it("getTrend() shows stable when error count unchanged", () => {
+		const adapter = new MockAdapter();
+		const w = new DiagnosticsWatcher(resolve(process.cwd(), "tsconfig.json"), undefined, adapter);
+		w.start();
+
+		adapter.emitDiagnostics([
+			{
+				file: "a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "err",
+				filePath: "/a.ts",
+			},
+		]);
+
+		adapter.emitDiagnostics([
+			{
+				file: "a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "err",
+				filePath: "/a.ts",
+			},
+		]);
+
+		const trend = w.getTrend();
+		assert.ok(trend);
+		assert.strictEqual(trend!.direction, "stable");
+		assert.strictEqual(trend!.delta, 0);
+	});
+});
+
+describe("formatTrend", () => {
+	it("formats regressed trend", () => {
+		const result = formatTrend({
+			current: 5,
+			previous: 2,
+			direction: "regressed",
+			delta: 3,
+		});
+		assert.ok(result.includes("5 errors"));
+		assert.ok(result.includes("↑"));
+		assert.ok(result.includes("3"));
+	});
+
+	it("formats improved trend", () => {
+		const result = formatTrend({
+			current: 1,
+			previous: 4,
+			direction: "improved",
+			delta: 3,
+		});
+		assert.ok(result.includes("1 errors"));
+		assert.ok(result.includes("↓"));
+	});
+
+	it("formats stable trend", () => {
+		const result = formatTrend({
+			current: 2,
+			previous: 2,
+			direction: "stable",
+			delta: 0,
+		});
+		assert.ok(result.includes("→"));
 	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Tests: runTscCheckpoint adapter (requires pi.exec mock)
+// Phase 5: Integration — Extension Entry Point
 // ═══════════════════════════════════════════════════════════════════════
 
-interface TscCheckpointResult {
-	diagnostics: TscDiagnostic[];
-	hasErrors: boolean;
+interface MockSendUserMessage {
+	content: string;
+	options?: { deliverAs?: string };
 }
 
 /**
- * Run `npx tsc --noEmit` using pi.exec.
- *
- * @param extensionsConfigPath - Optional explicit tsconfig path for extensions type-checking.
- *   When provided, checks that path instead of worktreePath/tsconfig.json.
- *   Silent-skip only applies when extensionsConfigPath is absent and worktree tsconfig missing.
+ * Simulates the extension entry point behavior for /check command.
+ * Uses the actual imported DiagnosticsWatcher with a mock adapter.
  */
-async function runTscCheckpoint(
-	pi: { exec: (cmd: string, args: string[], opts?: unknown) => Promise<ExecResult> },
-	worktreePath: string,
-	extensionsConfigPath?: string,
-): Promise<TscCheckpointResult> {
-	// Determine which tsconfig path to check
-	const configPath = extensionsConfigPath ?? resolve(worktreePath, "tsconfig.json");
+function createCheckHandler(adapter?: MockAdapter) {
+	const messages: MockSendUserMessage[] = [];
+	let watcherInstance: DiagnosticsWatcher | null = null;
 
-	// Check for tsconfig — silent skip only when extensionsConfigPath NOT provided
-	if (!existsSync(configPath)) {
-		return { diagnostics: [], hasErrors: false };
+	async function handleCheck(worktreePath: string): Promise<{
+		messages: MockSendUserMessage[];
+		diagnostics: TscDiagnostic[];
+	}> {
+		const { existsSync } = await import("node:fs");
+		const { resolve } = await import("node:path");
+		const tsconfigPath = resolve(worktreePath, "tsconfig.json");
+
+		if (!existsSync(tsconfigPath)) {
+			messages.push({
+				content:
+					"## TSC Checkpoint\n\nNo `tsconfig.json` found in worktree root. Skipping type-check.",
+				options: { deliverAs: "followUp" },
+			});
+			return { messages, diagnostics: [] };
+		}
+
+		// Create watcher lazily
+		if (!watcherInstance) {
+			const directAdapter = adapter ?? new MockAdapter();
+			watcherInstance = new DiagnosticsWatcher(tsconfigPath, undefined, directAdapter);
+		}
+
+		if (!watcherInstance.isRunning()) {
+			try {
+				watcherInstance.start();
+				messages.push({
+					content: "## TSC Checkpoint\n\nRunning `tsc` in incremental watch mode...",
+					options: { deliverAs: "followUp" },
+				});
+			} catch (err) {
+				messages.push({
+					content: `## TSC Checkpoint — Error\n\nFailed to start watcher: ${err}`,
+					options: { deliverAs: "followUp" },
+				});
+				return { messages, diagnostics: [] };
+			}
+		}
+
+		const diagnostics = watcherInstance.getDiagnostics();
+		const trend = watcherInstance.getTrend();
+
+		if (diagnostics.length > 0) {
+			const formatted = formatDiagnostics(diagnostics);
+			let msg = `## TSC Checkpoint — ${diagnostics.length} Type Error(s) Found`;
+			if (trend) {
+				msg += ` (${trend.direction === "regressed" ? "⚠️ regression" : trend.direction === "improved" ? "✓ improved" : "→ stable"})`;
+			}
+			msg += `\n\n${formatted}`;
+			messages.push({ content: msg, options: { deliverAs: "followUp" } });
+		} else {
+			let msg = "## TSC Checkpoint — ✓ No type errors detected";
+			if (trend && trend.current === 0 && trend.previous > 0) {
+				msg += " (✓ all errors resolved)";
+			}
+			messages.push({ content: msg, options: { deliverAs: "followUp" } });
+		}
+
+		return { messages, diagnostics };
 	}
 
-	const result = await pi.exec("npx", ["tsc", "--noEmit", "--project", configPath], {
-		cwd: worktreePath,
-		timeout: 60_000,
-	});
-
-	if (result.code === 0) {
-		return { diagnostics: [], hasErrors: false };
-	}
-
-	const output = result.stderr || result.stdout || "";
-	const diagnostics = parseTscOutput(output);
-	return {
-		diagnostics,
-		hasErrors: diagnostics.length > 0,
-	};
+	return { handleCheck };
 }
 
-describe("runTscCheckpoint (async, pi.exec)", () => {
-	it("returns no errors when pi.exec returns code 0", async () => {
-		const pi = {
-			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
-		};
-		// Use a dir without tsconfig.json so it returns early
-		const result = await runTscCheckpoint(pi as any, "/nonexistent");
-		// No tsconfig.json, should return early with no errors
-		assert.strictEqual(result.hasErrors, false);
-		assert.strictEqual(result.diagnostics.length, 0);
+describe("Extension entry point (/check command)", () => {
+	it("/check without tsconfig.json returns skip message", async () => {
+		const { handleCheck } = createCheckHandler();
+		const result = await handleCheck("/nonexistent-worktree");
+
+		assert.strictEqual(result.messages.length, 1);
+		assert.ok(result.messages[0]!.content.includes("No `tsconfig.json` found"));
 	});
 
-	it("returns parsed diagnostics when pi.exec returns non-zero", async () => {
-		const stderr = "src/app.ts(10,5): error TS2322: Type 'string' is not assignable.";
-		const pi = {
-			exec: async () => ({ stdout: "", stderr, code: 1, killed: false }),
-		};
-		// Create a temp tsconfig to bypass the early-exit check
-		const testDir = resolve(process.cwd(), "tmp-tsc-test");
-		try {
-			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
-			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
-			const result = await runTscCheckpoint(pi as any, testDir);
-			assert.strictEqual(result.hasErrors, true);
-			assert.strictEqual(result.diagnostics.length, 1);
-			assert.strictEqual(result.diagnostics[0]!.code, "TS2322");
-		} finally {
-			// Cleanup
-			try {
-				rmSync(testDir, { recursive: true });
-			} catch {}
-		}
+	it("/check creates watcher and returns cached diagnostics", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter);
+
+		const result = await handleCheck(process.cwd());
+
+		// Watcher was started
+		assert.strictEqual(adapter.startCalls, 1);
+		assert.strictEqual(adapter.lastStartPath, resolve(process.cwd(), "tsconfig.json"));
+
+		// No diagnostics yet, so "no errors" message
+		assert.ok(result.messages.some((m) => m.content.includes("No type errors detected")));
 	});
 
-	it("handles no tsconfig.json gracefully", async () => {
-		const pi = {
-			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
-		};
-		const result = await runTscCheckpoint(pi as any, "/tmp/no-tsconfig-dir");
-		assert.strictEqual(result.hasErrors, false);
-		assert.strictEqual(result.diagnostics.length, 0);
-	});
+	it("/check with diagnostics returns formatted errors", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter);
 
-	it("passes correct args to pi.exec when tsconfig exists", async () => {
-		let captured: { cmd: string; args: string[]; opts?: unknown } | undefined;
-		const pi = {
-			exec: async (cmd: string, args: string[], opts?: unknown) => {
-				captured = { cmd, args, opts };
-				return { stdout: "", stderr: "", code: 0, killed: false };
+		// First call creates the watcher and subscribes to adapter events
+		await handleCheck(process.cwd());
+
+		// Now emit diagnostics — the watcher is already listening
+		adapter.emitDiagnostics([
+			{
+				file: "src/app.ts",
+				line: 10,
+				column: 5,
+				severity: "Error",
+				message: "Type 'string' is not assignable",
+				code: "TS2322",
+				filePath: resolve(process.cwd(), "src/app.ts"),
 			},
-		};
-		const testDir = resolve(process.cwd(), "tmp-tsc-test2");
-		try {
-			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
-			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
-			await runTscCheckpoint(pi as any, testDir);
-			assert.ok(captured);
-			assert.strictEqual(captured!.cmd, "npx");
-			// Now includes --project flag since tsconfig always passed via --project
-			assert.deepStrictEqual(captured!.args, [
-				"tsc",
-				"--noEmit",
-				"--project",
-				resolve(testDir, "tsconfig.json"),
-			]);
-			assert.strictEqual((captured!.opts as any)?.cwd, testDir);
-			assert.strictEqual((captured!.opts as any)?.timeout, 60_000);
-		} finally {
-			try {
-				rmSync(testDir, { recursive: true });
-			} catch {}
-		}
+		]);
+
+		// Second call returns the cached diagnostics
+		const result = await handleCheck(process.cwd());
+
+		// Should include error count in message
+		const errorMsg = result.messages.find((m) => m.content.includes("Type Error(s) Found"));
+		assert.ok(errorMsg, "Should have error message");
+		assert.ok(errorMsg!.content.includes("TS2322"));
+		assert.ok(errorMsg!.content.includes("Type 'string' is not assignable"));
 	});
 
-	// ── New tests for extensionsConfigPath ───────────────────────────────
+	it("/check twice uses cached watcher (no second start)", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter);
 
-	it("extensionsConfigPath provided, path exists → pi.exec called with --project", async () => {
-		let capturedArgs: string[] | undefined;
-		const pi = {
-			exec: async (_cmd: string, args: string[]) => {
-				capturedArgs = args;
-				return { stdout: "", stderr: "", code: 0, killed: false };
+		await handleCheck(process.cwd());
+		assert.strictEqual(adapter.startCalls, 1);
+
+		await handleCheck(process.cwd());
+		// Still only 1 start call — second call reuses watcher
+		assert.strictEqual(adapter.startCalls, 1);
+	});
+
+	it("/check without diagnostics returns clean message", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter);
+
+		const result = await handleCheck(process.cwd());
+
+		const cleanMsg = result.messages.find((m) => m.content.includes("No type errors detected"));
+		assert.ok(cleanMsg);
+	});
+
+	it("diagnostics with relative paths have absolute filePath", () => {
+		const tsconfigDir = process.cwd();
+		const filePath = resolveDiagnosticFilePath("src/app.ts", tsconfigDir);
+		assert.strictEqual(filePath, resolve(tsconfigDir, "src/app.ts"));
+	});
+
+	it("formatDiagnostics produces clickable paths", () => {
+		const diags: TscDiagnostic[] = [
+			{
+				file: "src/app.ts",
+				line: 10,
+				column: 5,
+				severity: "Error",
+				message: "Type error",
+				code: "TS2322",
+				filePath: "/project/src/app.ts",
 			},
-		};
-		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test");
-		try {
-			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
-			const extConfigPath = resolve(testDir, ".pi/tsconfig.json");
-			mkdirSync(resolve(testDir, ".pi"), { recursive: true });
-			writeFileSync(extConfigPath, "{}");
-			await runTscCheckpoint(pi as any, testDir, extConfigPath);
-			assert.ok(capturedArgs);
-			assert.ok(capturedArgs!.includes("--project"));
-			assert.ok(capturedArgs!.includes(extConfigPath));
-		} finally {
-			try {
-				rmSync(testDir, { recursive: true });
-			} catch {}
-		}
+		];
+		const formatted = formatDiagnostics(diags);
+		assert.ok(formatted.includes("/project/src/app.ts"));
+		assert.ok(formatted.includes("Line 10"));
+		assert.ok(formatted.includes("(TS2322)"));
 	});
 
-	it("extensionsConfigPath provided, path missing → returns clean without pi.exec", async () => {
-		let execCalled = false;
-		const pi = {
-			exec: async () => {
-				execCalled = true;
-				return { stdout: "", stderr: "", code: 0, killed: false };
-			},
-		};
-		const result = await runTscCheckpoint(pi as any, "/tmp", "/nonexistent/.pi/tsconfig.json");
-		assert.strictEqual(result.hasErrors, false);
-		assert.strictEqual(result.diagnostics.length, 0);
-		assert.strictEqual(execCalled, false);
-	});
-
-	it("extensionsConfigPath provided, tsc exits 0 → returns clean result", async () => {
-		const pi = {
-			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
-		};
-		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test2");
-		try {
-			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
-			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
-			const result = await runTscCheckpoint(pi as any, testDir, resolve(testDir, "tsconfig.json"));
-			assert.strictEqual(result.hasErrors, false);
-			assert.strictEqual(result.diagnostics.length, 0);
-		} finally {
-			try {
-				rmSync(testDir, { recursive: true });
-			} catch {}
-		}
-	});
-
-	it("extensionsConfigPath provided, tsc exits non-zero → diagnostics parsed from stderr", async () => {
-		const stderr = "src/app.ts(10,5): error TS2322: Type error.";
-		const pi = {
-			exec: async () => ({ stdout: "", stderr, code: 1, killed: false }),
-		};
-		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test3");
-		try {
-			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
-			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
-			const result = await runTscCheckpoint(pi as any, testDir, resolve(testDir, "tsconfig.json"));
-			assert.strictEqual(result.hasErrors, true);
-			assert.strictEqual(result.diagnostics.length, 1);
-			assert.strictEqual(result.diagnostics[0]!.code, "TS2322");
-		} finally {
-			try {
-				rmSync(testDir, { recursive: true });
-			} catch {}
-		}
-	});
-
-	it("extensionsConfigPath provided, non-zero with multiple errors → all parsed", async () => {
-		const stderr = [
-			"a.ts(1,1): error TS2322: First error.",
-			"b.ts(2,3): error TS2304: Second error.",
-		].join("\n");
-		const pi = {
-			exec: async () => ({ stdout: "", stderr, code: 2, killed: false }),
-		};
-		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test4");
-		try {
-			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
-			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
-			const result = await runTscCheckpoint(pi as any, testDir, resolve(testDir, "tsconfig.json"));
-			assert.strictEqual(result.hasErrors, true);
-			assert.strictEqual(result.diagnostics.length, 2);
-		} finally {
-			try {
-				rmSync(testDir, { recursive: true });
-			} catch {}
-		}
-	});
-
-	it("extensionsConfigPath omitted → falls back to worktreePath/tsconfig.json (existing behavior)", async () => {
-		let capturedArgs: string[] | undefined;
-		const pi = {
-			exec: async (_cmd: string, args: string[]) => {
-				capturedArgs = args;
-				return { stdout: "", stderr: "", code: 0, killed: false };
-			},
-		};
-		const testDir = resolve(process.cwd(), "tmp-tsc-ext-test5");
-		try {
-			if (!existsSync(testDir)) mkdirSync(testDir, { recursive: true });
-			writeFileSync(resolve(testDir, "tsconfig.json"), "{}");
-			await runTscCheckpoint(pi as any, testDir);
-			assert.ok(capturedArgs);
-			assert.ok(capturedArgs!.includes(resolve(testDir, "tsconfig.json")));
-		} finally {
-			try {
-				rmSync(testDir, { recursive: true });
-			} catch {}
-		}
-	});
-
-	it("extensionsConfigPath omitted, no worktree tsconfig → returns clean (existing behavior)", async () => {
-		const pi = {
-			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
-		};
-		const result = await runTscCheckpoint(pi as any, "/nonexistent-dir-for-test");
-		assert.strictEqual(result.hasErrors, false);
-		assert.strictEqual(result.diagnostics.length, 0);
+	it("formatDiagnostics with empty array returns empty string", () => {
+		assert.strictEqual(formatDiagnostics([]), "");
 	});
 });
