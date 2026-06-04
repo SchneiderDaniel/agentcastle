@@ -30,7 +30,7 @@ export const MAX_FILE_SIZE_BYTES = 1_048_576;
  * Find the project root with a package.json, walking up from the given
  * directory. Used to locate the nearest node_modules for prettier.
  */
-function findProjectRoot(fromDir: string): string {
+export function findProjectRoot(fromDir: string): string {
 	let dir = resolve(fromDir);
 	while (true) {
 		if (existsSync(resolve(dir, "package.json"))) return dir;
@@ -53,7 +53,7 @@ export function buildPrettierArgs(
 ): { command: string; args: string[] } {
 	const projectRoot = findProjectRoot(cwd);
 	const localPrettier = resolve(projectRoot, "node_modules", ".bin", "prettier");
-	const configPath = resolve(cwd, ".prettierrc");
+	const configPath = resolve(projectRoot, ".prettierrc");
 
 	if (existsSync(localPrettier)) {
 		return { command: localPrettier, args: ["--config", configPath, "--write", filePath] };

@@ -17,7 +17,11 @@ import {
 	runEslintOnFile,
 	type ExecFn,
 } from "../eslint.mts";
-import { buildPrettierArgs } from "../formatting.mts";
+import { buildPrettierArgs, findProjectRoot } from "../formatting.mts";
+
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { formatFile } from "../formatter.mts";
 import type { EslintDiagnostic } from "../types.mts";
 
@@ -332,5 +336,163 @@ describe("runEslintOnFile (async, exec)", () => {
 		const exec = mockExec({ stdout: "", stderr: "", code: 127, killed: false });
 		const result = await runEslintOnFile(exec, "test.ts", "/tmp");
 		assert.strictEqual(result, "");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tests: findProjectRoot
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Create a temporary directory with an optional package.json.
+ * Returns { root, subdir, cleanup }.
+ */
+function createTempProject(): { root: string; subdir: string; cleanup: () => void } {
+	const root = mkdtempSync(join(tmpdir(), "format-on-save-root-test-"));
+	const subdir = join(root, "src", "components");
+	return { root, subdir, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+describe("findProjectRoot", () => {
+	it("finds project root from subdirectory when package.json exists at root", () => {
+		const { root, subdir, cleanup } = createTempProject();
+		try {
+			writeFileSync(join(root, "package.json"), "{}");
+			const result = findProjectRoot(subdir);
+			assert.strictEqual(result, root);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("returns input directory when no package.json exists in any parent", () => {
+		const { root, subdir, cleanup } = createTempProject();
+		try {
+			// No package.json created anywhere
+			const result = findProjectRoot(subdir);
+			assert.strictEqual(result, subdir);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("returns root of filesystem from / ", () => {
+		// The root of the filesystem is its own parent, so the loop breaks.
+		const result = findProjectRoot("/");
+		assert.strictEqual(result, "/");
+	});
+
+	it("finds project root when cwd is at project root", () => {
+		const { root, cleanup } = createTempProject();
+		try {
+			writeFileSync(join(root, "package.json"), "{}");
+			const result = findProjectRoot(root);
+			assert.strictEqual(result, root);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("finds project root from nested subdirectory (multi-level)", () => {
+		const { root, subdir, cleanup } = createTempProject();
+		try {
+			writeFileSync(join(root, "package.json"), "{}");
+			const deepDir = join(root, "packages", "lib", "src");
+			const result = findProjectRoot(deepDir);
+			assert.strictEqual(result, root);
+		} finally {
+			cleanup();
+		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tests: buildPrettierArgs config path resolution
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("buildPrettierArgs config path", () => {
+	it("resolves configPath against projectRoot (not cwd) from subdirectory", () => {
+		const { root, subdir, cleanup } = createTempProject();
+		try {
+			writeFileSync(join(root, "package.json"), "{}");
+			const result = buildPrettierArgs(subdir, "test.ts");
+			const configIndex = result.args.indexOf("--config");
+			assert.notStrictEqual(configIndex, -1, "args should contain --config");
+			const configPath = result.args[configIndex + 1];
+			assert.ok(configPath, "configPath should exist");
+			assert.strictEqual(configPath, join(root, ".prettierrc"));
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("resolves configPath against projectRoot when cwd is project root", () => {
+		const { root, cleanup } = createTempProject();
+		try {
+			writeFileSync(join(root, "package.json"), "{}");
+			const result = buildPrettierArgs(root, "test.ts");
+			const configIndex = result.args.indexOf("--config");
+			assert.notStrictEqual(configIndex, -1);
+			const configPath = result.args[configIndex + 1];
+			assert.strictEqual(configPath, join(root, ".prettierrc"));
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("resolves configPath against projectRoot from multi-level subdirectory", () => {
+		const { root, cleanup } = createTempProject();
+		try {
+			writeFileSync(join(root, "package.json"), "{}");
+			const deepDir = join(root, "packages", "lib", "src");
+			const result = buildPrettierArgs(deepDir, "test.ts");
+			const configIndex = result.args.indexOf("--config");
+			assert.notStrictEqual(configIndex, -1);
+			const configPath = result.args[configIndex + 1];
+			assert.strictEqual(configPath, join(root, ".prettierrc"));
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("falls back to cwd-based configPath when no project root found", () => {
+		const { root, subdir, cleanup } = createTempProject();
+		try {
+			// No package.json anywhere
+			const result = buildPrettierArgs(subdir, "test.ts");
+			const configIndex = result.args.indexOf("--config");
+			assert.notStrictEqual(configIndex, -1);
+			const configPath = result.args[configIndex + 1];
+			assert.strictEqual(configPath, join(subdir, ".prettierrc"));
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("configPath arg is the correct absolute path (not cwd-based)", () => {
+		const { root, subdir, cleanup } = createTempProject();
+		try {
+			writeFileSync(join(root, "package.json"), "{}");
+			const result = buildPrettierArgs(subdir, "test.ts");
+			const configIndex = result.args.indexOf("--config");
+			assert.notStrictEqual(configIndex, -1);
+			const configPath = result.args[configIndex + 1];
+			// configPath should NOT be cwd-based
+			assert.notStrictEqual(configPath, join(subdir, ".prettierrc"));
+			// configPath SHOULD be projectRoot-based
+			assert.strictEqual(configPath, join(root, ".prettierrc"));
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("existing test 'returns { command, args } with npx when no local prettier' still passes", () => {
+		// Characterization test: when no package.json in /tmp, behavior preserved
+		const result = buildPrettierArgs("/tmp", "/tmp/test.ts");
+		assert.strictEqual(result.command, "npx");
+		assert.ok(Array.isArray(result.args));
+		assert.ok(result.args.length >= 4);
+		assert.strictEqual(result.args[0], "prettier");
+		assert.ok(result.args.includes("--write"));
 	});
 });
