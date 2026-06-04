@@ -1,6 +1,7 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import { createPerTurnState, flushTurn } from "./per-turn.ts";
 import type { TurnStats, PerTurnState } from "./per-turn.ts";
+import { handleModelChanges } from "./session-utils.ts";
 
 export type { TurnStats } from "./per-turn.ts";
 
@@ -114,18 +115,14 @@ export function createSessionStats(): SessionStats {
 		},
 
 		seedStats(sm: { getEntries(): any[] }) {
-			for (const entry of sm.getEntries()) {
+			const entries = sm.getEntries();
+			handleModelChanges(entries, modelChanges, thinkingChanges);
+
+			for (const entry of entries) {
 				if (entry.type === "message") {
 					if (entry.message.role === "assistant") this.addUsage(entry.message.usage);
 				} else if (entry.type === "compaction") {
 					compactionCount++;
-				} else if (entry.type === "model_change") {
-					modelChanges.push({
-						time: entry.timestamp,
-						model: `${entry.provider}/${entry.modelId}`,
-					});
-				} else if (entry.type === "thinking_level_change") {
-					thinkingChanges.push({ time: entry.timestamp, level: entry.thinkingLevel });
 				}
 			}
 		},

@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { createPerTurnState, flushTurn } from "./per-turn.ts";
 import type { PerTurnState } from "./per-turn.ts";
+import { handleModelChanges } from "./session-utils.ts";
 
 const TRUNCATE_RESULT_LINES = 8;
 const THINKING_PREVIEW_CHARS = 120;
@@ -204,18 +205,10 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 	// Per-turn tracking — uses shared PerTurnState from per-turn.ts
 	const turnState: PerTurnState = createPerTurnState();
 
+	handleModelChanges(entries, modelChanges, thinkingChanges);
+
 	for (const entry of entries) {
-		if (entry.type === "model_change") {
-			modelChanges.push({
-				time: entry.timestamp,
-				model: `${entry.provider}/${entry.modelId}`,
-			});
-		} else if (entry.type === "thinking_level_change") {
-			thinkingChanges.push({
-				time: entry.timestamp,
-				level: entry.thinkingLevel,
-			});
-		} else if (entry.type === "compaction") {
+		if (entry.type === "compaction") {
 			compactions++;
 		} else if (entry.type === "message") {
 			const msg = entry.message ?? {};
