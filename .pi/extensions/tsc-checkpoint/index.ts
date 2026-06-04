@@ -1,14 +1,15 @@
 /**
- * tsc-checkpoint — TypeScript type-checking gate for commits and pipeline stages
+ * tsc-checkpoint — Incremental type-checking with watch mode
  *
- * Runs npx tsc --noEmit to catch type errors before code moves forward.
- * Trigger manually with /check or automatically during Implementation→Audit
- * pipeline transitions.
+ * Wraps TypeScript's watch compiler API to provide incremental re-checks,
+ * cached diagnostics, file-path resolution, and diagnostic trending.
+ * Trigger manually with /check.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
+import ts from "typescript";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -21,87 +22,288 @@ export interface TscDiagnostic {
 	severity: "Error";
 	message: string;
 	code?: string;
+	/** Absolute path to the file (resolved from tsconfig dir) */
+	filePath: string;
+}
+
+export interface TscWatchOptions {
+	/** Polling interval in ms (reserved for future polling mode) */
+	pollInterval?: number;
+}
+
+export interface DiagnosticTrend {
+	current: number;
+	previous: number;
+	direction: "improved" | "regressed" | "stable";
+	delta: number;
 }
 
 export interface TscCheckpointResult {
 	diagnostics: TscDiagnostic[];
 	hasErrors: boolean;
+	trend?: DiagnosticTrend;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Pure Functions (exported for unit testing)
+// Adapter Interface
 // ═══════════════════════════════════════════════════════════════════════
 
-/**
- * Parse raw tsc --noEmit stderr output into TscDiagnostic[].
- *
- * tsc error format: file.ts(line,column): error TS<code>: message
- *
- * Handles:
- * - Multiple errors from multiple files
- * - Errors with and without TS error code
- * - Non-error lines are filtered out (info, file counts, etc.)
- * - ANSI color codes (--pretty is default) — stripped via regex
- */
-export function parseTscOutput(raw: string): TscDiagnostic[] {
-	if (!raw || typeof raw !== "string") return [];
+export interface TscWatchAdapter {
+	/** Start watching a tsconfig. Returns true if started, false if already running. */
+	start(tsconfigPath: string): boolean;
+	/** Stop the watch process. */
+	stop(): void;
+	/** Whether the watcher is currently running. */
+	isRunning(): boolean;
+	/** Get the latest cached diagnostics. */
+	getDiagnostics(): TscDiagnostic[];
+	/** Register a callback for when diagnostics change. */
+	onDiagnosticsChange(callback: (diagnostics: TscDiagnostic[]) => void): void;
+}
 
-	const lines = raw.split("\n");
-	const diagnostics: TscDiagnostic[] = [];
+// ═══════════════════════════════════════════════════════════════════════
+// Real Adapter: TypeScript Watch Compiler API
+// ═══════════════════════════════════════════════════════════════════════
 
-	// Strip ANSI color codes first
-	const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
+export class TypeScriptWatchAdapter implements TscWatchAdapter {
+	private watchProgram: ts.WatchOfConfigFile<ts.BuilderProgram> | undefined;
+	private diagnostics: TscDiagnostic[] = [];
+	private running = false;
+	private listeners: Array<(diagnostics: TscDiagnostic[]) => void> = [];
+	private tsconfigDir = "";
 
-	// Match: file(line,col): error TS<code>: message
-	const errorRegex = /^([^:(]+)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$/;
-	// Match: file(line,col): error message (no TS code)
-	const errorRegexNoCode = /^([^:(]+)\((\d+),(\d+)\):\s+error\s+(.+)$/;
+	start(tsconfigPath: string): boolean {
+		if (this.running) return false;
+		this.tsconfigDir = dirname(tsconfigPath);
+		this.diagnostics = [];
 
-	for (const line of lines) {
-		const trimmed = line.trim();
-		if (!trimmed) continue;
+		const host = ts.createWatchCompilerHost(
+			tsconfigPath,
+			{ noEmit: true },
+			ts.sys,
+			ts.createEmitAndSemanticDiagnosticsBuilderProgram,
+			(diagnostic: ts.Diagnostic) => {
+				if (diagnostic.category !== ts.DiagnosticCategory.Error) return;
+				this.handleDiagnostic(diagnostic);
+			},
+			(
+				diagnostic: ts.Diagnostic,
+				newLine: string,
+				options: ts.CompilerOptions,
+				errorCount?: number,
+			) => {
+				if (errorCount === undefined) {
+					// New compilation cycle starting — clear previous diagnostics
+					this.diagnostics = [];
+				} else {
+					// Compilation complete — notify listeners
+					this.notifyListeners();
+				}
+			},
+		);
 
-		// Strip ANSI before matching
-		const clean = stripAnsi(trimmed);
+		this.watchProgram = ts.createWatchProgram(host);
+		this.running = true;
+		return true;
+	}
 
-		// Try with TS code first
-		let match = clean.match(errorRegex);
-		if (match) {
-			diagnostics.push({
-				file: match[1]!,
-				line: parseInt(match[2]!, 10),
-				column: parseInt(match[3]!, 10),
-				severity: "Error",
-				message: match[5]!,
-				code: match[4]!,
-			});
-			continue;
-		}
+	private handleDiagnostic(diagnostic: ts.Diagnostic): void {
+		const file = diagnostic.file;
+		if (!file) return;
 
-		// Try without TS code
-		match = clean.match(errorRegexNoCode);
-		if (match) {
-			diagnostics.push({
-				file: match[1]!,
-				line: parseInt(match[2]!, 10),
-				column: parseInt(match[3]!, 10),
-				severity: "Error",
-				message: match[4]!,
-			});
+		const start = diagnostic.start ?? 0;
+		const { line, character } = file.getLineAndCharacterOfPosition(start);
+		const message =
+			typeof diagnostic.messageText === "string"
+				? diagnostic.messageText
+				: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+
+		const diag: TscDiagnostic = {
+			file: file.fileName,
+			line: line + 1,
+			column: character + 1,
+			severity: "Error",
+			message,
+			code: `TS${diagnostic.code}`,
+			filePath: file.fileName,
+		};
+
+		this.diagnostics.push(diag);
+	}
+
+	private notifyListeners(): void {
+		const snapshot = [...this.diagnostics];
+		for (const listener of this.listeners) {
+			listener(snapshot);
 		}
 	}
 
-	return diagnostics;
+	stop(): void {
+		this.watchProgram?.close();
+		this.running = false;
+		this.watchProgram = undefined;
+	}
+
+	isRunning(): boolean {
+		return this.running;
+	}
+
+	getDiagnostics(): TscDiagnostic[] {
+		return [...this.diagnostics];
+	}
+
+	onDiagnosticsChange(callback: (diagnostics: TscDiagnostic[]) => void): void {
+		this.listeners.push(callback);
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Default Adapter Factory
+// ═══════════════════════════════════════════════════════════════════════
+
+export function createDefaultAdapter(): TscWatchAdapter {
+	return new TypeScriptWatchAdapter();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// DiagnosticsWatcher
+// ═══════════════════════════════════════════════════════════════════════
+
+export class DiagnosticsWatcher {
+	private adapter: TscWatchAdapter;
+	private cachedDiagnostics: TscDiagnostic[] = [];
+	private running = false;
+	private trendHistory: number[] = [];
+	private diagnosticListeners: Array<(d: TscDiagnostic[]) => void> = [];
+	private tsconfigPath: string;
+	private watchOptions: TscWatchOptions;
+
+	constructor(tsconfigPath: string, watchOptions?: TscWatchOptions, adapter?: TscWatchAdapter) {
+		this.tsconfigPath = tsconfigPath;
+		this.watchOptions = watchOptions ?? {};
+		this.adapter = adapter ?? createDefaultAdapter();
+
+		// Forward adapter diagnostic events
+		this.adapter.onDiagnosticsChange((diags: TscDiagnostic[]) => {
+			this.cachedDiagnostics = diags;
+			const errorCount = diags.filter((d) => d.severity === "Error").length;
+			this.trendHistory.push(errorCount);
+			for (const listener of this.diagnosticListeners) {
+				listener(diags);
+			}
+		});
+	}
+
+	get tsconfigPathValue(): string {
+		return this.tsconfigPath;
+	}
+
+	get watchOptionsValue(): TscWatchOptions {
+		return { ...this.watchOptions };
+	}
+
+	/**
+	 * Start the watcher. Returns true if started, false if already running.
+	 * Throws if tsconfig does not exist.
+	 */
+	start(): boolean {
+		if (this.running) return false;
+		if (!existsSync(this.tsconfigPath)) {
+			throw new Error(`tsconfig not found: ${this.tsconfigPath}`);
+		}
+		const started = this.adapter.start(this.tsconfigPath);
+		this.running = started;
+		return started;
+	}
+
+	/** Stop the watcher. No-op if not running. */
+	stop(): void {
+		if (!this.running) return;
+		this.adapter.stop();
+		this.running = false;
+	}
+
+	/** Whether the watcher is currently running. */
+	isRunning(): boolean {
+		return this.running;
+	}
+
+	/** Get the latest cached diagnostics. */
+	getDiagnostics(): TscDiagnostic[] {
+		return this.cachedDiagnostics;
+	}
+
+	/** Register a callback for when diagnostics change. */
+	onDiagnosticsChange(listener: (d: TscDiagnostic[]) => void): void {
+		this.diagnosticListeners.push(listener);
+	}
+
+	/**
+	 * Get the diagnostic trend between the last two checks.
+	 * Returns undefined if fewer than 2 data points exist.
+	 */
+	getTrend(): DiagnosticTrend | undefined {
+		if (this.trendHistory.length < 2) return undefined;
+		const current = this.trendHistory[this.trendHistory.length - 1]!;
+		const previous = this.trendHistory[this.trendHistory.length - 2]!;
+		const delta = current - previous;
+		return {
+			current,
+			previous,
+			direction: delta < 0 ? "improved" : delta > 0 ? "regressed" : "stable",
+			delta: Math.abs(delta),
+		};
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Resolve a diagnostic's file path to absolute.
+ * If already absolute, return as-is. Otherwise, resolve against tsconfigDir.
+ */
+export function resolveDiagnosticFilePath(file: string, tsconfigDir: string): string {
+	if (file.startsWith("/")) return file;
+	if (/^[A-Za-z]:[/\\]/.test(file)) return file; // Windows absolute
+	return resolve(tsconfigDir, file);
 }
 
 /**
- * Format TSC diagnostics into developer-readable message.
- * Same format as LSP auditor: file, Line N: [Error] message (code).
+ * Format a diagnostic trend for display.
+ */
+export function formatTrend(trend: DiagnosticTrend): string {
+	const arrow = trend.direction === "regressed" ? "↑" : trend.direction === "improved" ? "↓" : "→";
+	return `${trend.current} errors (${arrow} ${trend.delta}, was ${trend.previous})`;
+}
+
+/**
+ * Format diagnostics as clickable file paths with line numbers.
+ */
+export function formatDiagnostics(diagnostics: TscDiagnostic[]): string {
+	if (diagnostics.length === 0) return "";
+	return diagnostics
+		.map((d) => {
+			const codePart = d.code ? ` (${d.code})` : "";
+			return `${d.filePath}, Line ${d.line}: [${d.severity}] ${d.message}${codePart}`;
+		})
+		.join("\n");
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Backward-Compatible Exports
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * @deprecated Use `formatDiagnostics` instead.
+ * Kept for backward compatibility with supervisor pipeline.
+ * Uses the old format: grouped by file, sorted by line, with relative paths.
  */
 export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 	if (!diagnostics || diagnostics.length === 0) return "";
 
-	// Group by file
+	// Group by file (use `file` field for backward compat)
 	const byFile = new Map<string, TscDiagnostic[]>();
 	for (const d of diagnostics) {
 		const list = byFile.get(d.file) || [];
@@ -113,7 +315,6 @@ export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 	const files = [...byFile.keys()].sort();
 	for (const file of files) {
 		const diags = byFile.get(file)!;
-		// Sort by line, then column
 		diags.sort((a, b) => (a.line !== b.line ? a.line - b.line : a.column - b.column));
 
 		const lines: string[] = [];
@@ -121,7 +322,7 @@ export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 			let msg = d.message;
 			if (msg.length > 500) msg = msg.slice(0, 497) + "...";
 			const codePart = d.code ? ` (${d.code})` : "";
-			lines.push(`${file}, Line ${d.line}: [${d.severity}] ${msg}${codePart}`);
+			lines.push(`${d.file}, Line ${d.line}: [${d.severity}] ${msg}${codePart}`);
 		}
 		if (blocks.length > 0) blocks.push("");
 		blocks.push(lines.join("\n"));
@@ -130,42 +331,39 @@ export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 	return blocks.join("\n");
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Adapter: Run tsc --noEmit
-// ═══════════════════════════════════════════════════════════════════════
-
 /**
- * Run `npx tsc --noEmit` in the worktree directory via pi.exec.
- *
- * Returns structured result with parsed diagnostics and whether any
- * errors were found.
- *
- * If tsconfig.json doesn't exist, returns { hasErrors: false } silently.
- * If tsc binary not found, returns { hasErrors: false } silently.
+ * @deprecated Use `DiagnosticsWatcher` for incremental watch mode.
+ * Kept for backward compatibility with supervisor pipeline.
+ * Runs a one-shot tsc check using the TypeScript compiler API.
  */
 export async function runTscCheckpoint(
 	pi: ExtensionAPI,
 	worktreePath: string,
 ): Promise<TscCheckpointResult> {
-	// Check for tsconfig.json first
-	const tsconfigPath = resolve(worktreePath, "tsconfig.json");
-	if (!existsSync(tsconfigPath)) {
+	const configPath = resolve(worktreePath, "tsconfig.json");
+
+	if (!existsSync(configPath)) {
 		return { diagnostics: [], hasErrors: false };
 	}
 
-	const result = await pi.exec("npx", ["tsc", "--noEmit"], {
-		cwd: worktreePath,
-		timeout: 60_000, // 60s for cold start
+	// Use a one-shot adapter for backward compatibility
+	const adapter = createDefaultAdapter();
+
+	// Wait for initial diagnostics with a timeout
+	const diagnostics = await new Promise<TscDiagnostic[]>((resolvePromise) => {
+		adapter.onDiagnosticsChange((diags) => {
+			resolvePromise(diags);
+		});
+		adapter.start(configPath);
+
+		// Timeout after 30s if no diagnostics received
+		setTimeout(() => {
+			resolvePromise(adapter.getDiagnostics());
+		}, 30_000);
 	});
 
-	// tsc --noEmit exits 0 = success (no errors)
-	if (result.code === 0) {
-		return { diagnostics: [], hasErrors: false };
-	}
+	adapter.stop();
 
-	// Non-zero exit = type errors found. tsc outputs errors to stderr.
-	const output = result.stderr || result.stdout || "";
-	const diagnostics = parseTscOutput(output);
 	return {
 		diagnostics,
 		hasErrors: diagnostics.length > 0,
@@ -173,20 +371,26 @@ export async function runTscCheckpoint(
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Extension entry point
+// Extension Entry Point
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Register /check command for manual tsc type-check.
+ * Register /check command for incremental tsc type-check.
+ *
+ * The first /check call spawns a TypeScript watch compiler that
+ * incrementally re-checks on file changes. Subsequent /check calls
+ * return the cached diagnostics from the last compilation.
  */
 export default function tscCheckpoint(pi: ExtensionAPI): void {
+	let watcher: DiagnosticsWatcher | null = null;
+
 	pi.registerCommand?.("check", {
-		description: "Run tsc --noEmit type-check on the current worktree (Tier 2 diagnostics)",
+		description: "Run tsc --noEmit type-check on the current worktree (incremental watch mode)",
 		handler: async (_args, ctx) => {
 			const worktreePath = ctx.cwd;
+			const tsconfigPath = resolve(worktreePath, "tsconfig.json");
 
-			// Check if tsconfig.json exists
-			if (!existsSync(resolve(worktreePath, "tsconfig.json"))) {
+			if (!existsSync(tsconfigPath)) {
 				pi.sendUserMessage?.(
 					"## TSC Checkpoint\n\nNo `tsconfig.json` found in worktree root. Skipping type-check.",
 					{ deliverAs: "followUp" },
@@ -194,29 +398,51 @@ export default function tscCheckpoint(pi: ExtensionAPI): void {
 				return;
 			}
 
-			pi.sendUserMessage?.("## TSC Checkpoint\n\nRunning `tsc --noEmit`...", {
-				deliverAs: "followUp",
-			});
+			// Create watcher lazily on first /check
+			if (!watcher) {
+				watcher = new DiagnosticsWatcher(tsconfigPath);
+			}
 
-			const result = await runTscCheckpoint(pi, worktreePath);
+			if (!watcher.isRunning()) {
+				try {
+					watcher.start();
+					pi.sendUserMessage?.("## TSC Checkpoint\n\nRunning `tsc` in incremental watch mode...", {
+						deliverAs: "followUp",
+					});
+				} catch (err) {
+					const msg = err instanceof Error ? err.message : String(err);
+					pi.sendUserMessage?.(`## TSC Checkpoint — Error\n\nFailed to start watcher: ${msg}`, {
+						deliverAs: "followUp",
+					});
+					return;
+				}
+			}
 
-			if (result.hasErrors) {
-				const formatted = formatTscDiagnostics(result.diagnostics);
-				const errorCount = result.diagnostics.length;
-				pi.sendUserMessage?.(
-					[
-						`## TSC Checkpoint — ${errorCount} Type Error(s) Found`,
-						``,
-						`Please fix these errors before proceeding:`,
-						``,
-						formatted,
-					].join("\n"),
-					{ deliverAs: "followUp" },
-				);
+			const diagnostics = watcher.getDiagnostics();
+			const trend = watcher.getTrend();
+			const hasErrors = diagnostics.length > 0;
+
+			if (hasErrors) {
+				const formatted = formatDiagnostics(diagnostics);
+				const errorCount = diagnostics.length;
+				let msg = `## TSC Checkpoint — ${errorCount} Type Error(s) Found`;
+				if (trend) {
+					const directionLabel =
+						trend.direction === "regressed"
+							? "⚠️ regression"
+							: trend.direction === "improved"
+								? "✓ improved"
+								: "→ stable";
+					msg += ` (${directionLabel})`;
+				}
+				msg += `\n\n${formatted}`;
+				pi.sendUserMessage?.(msg, { deliverAs: "followUp" });
 			} else {
-				pi.sendUserMessage?.("## TSC Checkpoint — ✓ No type errors detected", {
-					deliverAs: "followUp",
-				});
+				let msg = "## TSC Checkpoint — ✓ No type errors detected";
+				if (trend && trend.current === 0 && trend.previous > 0) {
+					msg += " (✓ all errors resolved)";
+				}
+				pi.sendUserMessage?.(msg, { deliverAs: "followUp" });
 			}
 		},
 	});
