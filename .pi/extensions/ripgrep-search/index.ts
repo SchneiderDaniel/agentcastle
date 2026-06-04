@@ -4,13 +4,6 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import {
-	DEFAULT_MAX_BYTES,
-	DEFAULT_MAX_LINES,
-	formatSize,
-	truncateHead,
-	withFileMutationQueue,
-} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { mkdtemp, rm, stat, readdir, writeFile } from "node:fs/promises";
@@ -23,8 +16,10 @@ import { buildRgArgs, buildGrepArgs } from "./args.ts";
 import { parseVimgrepOutput, parseGrepOutput } from "./parse.ts";
 import { validateQuery } from "./validate.ts";
 import { registerTempDir, cleanupTrackedTempDirs } from "./temp.ts";
+import { getCachedResult, setCachedResult, clearCache } from "./cache.ts";
 
 const MAX_TOTAL_RESULTS = 500;
+const DEFAULT_DISPLAY_RESULTS = 10;
 
 function errResponse(text: string, extra: Record<string, unknown> = {}) {
 	return {
@@ -100,58 +95,70 @@ async function verifyDirectory(
 	}
 }
 
-async function buildResultResponse(
+/**
+ * Build a structured human-readable summary of search results.
+ * Replaces the old JSON output format with a concise summary
+ * showing top-N results, truncated indicator, and file counts.
+ */
+export function buildStructuredSummary(
 	searchResult: RgResult,
 	searcherName: string,
 	query: string,
 	directory: string,
-	rawStdout: string | undefined,
-): Promise<{ content: { type: "text"; text: string }[]; details: Record<string, unknown> }> {
+	maxDisplay: number = DEFAULT_DISPLAY_RESULTS,
+): { text: string; details: Record<string, unknown> } {
 	const totalReturned = searchResult.total_returned;
-	const resultsTruncated = searchResult.truncated ?? false;
-	const json = JSON.stringify(searchResult, null, 2);
-	const truncation = truncateHead(json, {
-		maxBytes: DEFAULT_MAX_BYTES,
-		maxLines: DEFAULT_MAX_LINES,
-	});
 
-	let fullOutputPath: string | undefined;
-	if (resultsTruncated || truncation.truncated) {
-		const tempDir = await mkdtemp(join(tmpdir(), "pi-ripgrep-"));
-		registerTempDir(tempDir);
-		const fop = join(tempDir, "full-output.txt");
-		fullOutputPath = fop;
-		await withFileMutationQueue(fop, async () => {
-			await writeFile(fop, rawStdout ?? "", "utf8");
-		});
+	if (totalReturned === 0) {
+		return {
+			text: `No matches found for query "${query}" in "${directory}" (${searcherName}).`,
+			details: { success: true, total_returned: 0, searcher: searcherName },
+		};
 	}
 
-	let text = `${searcherName} search results for query: ${query}\nDirectory: ${directory}\nMatches returned: ${totalReturned}\n\n`;
-	if (truncation.truncated) {
-		text += truncation.content;
-		const tl = truncation.totalLines,
-			ol = truncation.outputLines;
-		const tb = truncation.totalBytes,
-			ob = truncation.outputBytes;
-		text += `\n\n[Output truncated: showing ${ol} of ${tl} lines (${formatSize(ob)} of ${formatSize(tb)}).`;
-		text += ` ${tl - ol} lines (${formatSize(tb - ob)}) omitted.`;
-		text += fullOutputPath ? ` Full output saved to: ${fullOutputPath}]` : "]";
-	} else if (resultsTruncated) {
-		text += json;
-		text += `\n\n[Showing first ${MAX_TOTAL_RESULTS} of ${totalReturned} results. Full output saved to: ${fullOutputPath}]`;
-	} else {
-		text += "```json\n" + json + "\n```";
+	// Count unique files
+	const uniqueFiles = new Set(searchResult.results.map((r) => r.file));
+
+	let text = `${searcherName} search results for query: ${query}\n`;
+	text += `Directory: ${directory}\n`;
+	text += `Matches returned: ${totalReturned}`;
+	text += ` across ${uniqueFiles.size} file${uniqueFiles.size !== 1 ? "s" : ""}\n\n`;
+
+	// Show top-N results
+	const displayResults = searchResult.results.slice(0, maxDisplay);
+	for (let i = 0; i < displayResults.length; i++) {
+		const r = displayResults[i]!;
+		text += `${i + 1}. ${r.file}:${r.line}:${r.column}:${r.text}\n`;
 	}
+
+	const resultsTruncated = totalReturned > maxDisplay;
+	let truncatedIndicator = "";
+	if (resultsTruncated) {
+		truncatedIndicator = `\n[Showing first ${maxDisplay} of ${totalReturned} results across ${uniqueFiles.size} file${uniqueFiles.size !== 1 ? "s" : ""}.`;
+		text += truncatedIndicator;
+	}
+
 	const details: Record<string, unknown> = {
 		success: true,
 		searcher: searcherName,
 		total_returned: totalReturned,
+		unique_files: uniqueFiles.size,
+		truncated: resultsTruncated,
 	};
-	if (resultsTruncated || truncation.truncated) {
-		details.truncated = true;
-		if (fullOutputPath) details.fullOutputPath = fullOutputPath;
-	}
-	return { content: [{ type: "text" as const, text }], details };
+
+	return { text, details };
+}
+
+/**
+ * Save oversized raw output to a temp file and return the path.
+ */
+async function saveOversizedOutput(rawStdout: string | undefined): Promise<string | undefined> {
+	if (!rawStdout) return undefined;
+	const tempDir = await mkdtemp(join(tmpdir(), "pi-ripgrep-"));
+	registerTempDir(tempDir);
+	const fop = join(tempDir, "full-output.txt");
+	await writeFile(fop, rawStdout, "utf8");
+	return fop;
 }
 
 export default function ripgrepSearch(pi: ExtensionAPI): void {
@@ -167,6 +174,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 
 	pi.on("session_shutdown", async () => {
 		await cleanupTrackedTempDirs(rm);
+		clearCache();
 	});
 
 	pi.on("before_agent_start", async (event, _ctx) => {
@@ -187,12 +195,11 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 		label: "Ripgrep Search",
 		description:
 			"Search codebase for literal text or regex using ripgrep. " +
-			"Output: { total_returned, results: [{ file, line, column, text }] }. " +
-			"Respects .gitignore natively. Requires ripgrep installed.",
+			"Output: structured summary with top-N results, file counts, and truncation. " +
+			"Respects .gitignore natively.",
 		promptSnippet: "Search codebase for literal text or regex using ripgrep",
 		promptGuidelines: [
 			"Use ripgrep_search for literal text searches — magic numbers, hardcoded strings, error messages, TODOs, configuration values.",
-			"Do NOT use ripgrep_search for class/def/function definitions or structural patterns. Use ranked_map or structural_search instead.",
 			"ripgrep_search respects .gitignore natively. Default max_count=10 (per file). Default directory='.'.",
 		],
 		parameters: Type.Object({
@@ -223,6 +230,23 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 
 			const useRipgrep = resolved.backend === "ripgrep";
 			const searcherName = useRipgrep ? "ripgrep" : "grep";
+
+			// Check cache first
+			const cached = getCachedResult(query, directory);
+			if (cached) {
+				const summary = buildStructuredSummary(
+					cached.result,
+					searcherName,
+					query,
+					directory,
+					maxCount,
+				);
+				return {
+					content: [{ type: "text" as const, text: summary.text }],
+					details: summary.details as Record<string, unknown>,
+				};
+			}
+
 			const { command, args } = useRipgrep
 				? buildRgArgs(query, directory, maxCount, config.maxLineLength)
 				: buildGrepArgs(query, directory, maxCount);
@@ -265,7 +289,43 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			const searchResult = useRipgrep
 				? parseVimgrepOutput(result.stdout, MAX_TOTAL_RESULTS)
 				: parseGrepOutput(result.stdout, MAX_TOTAL_RESULTS);
-			return buildResultResponse(searchResult, searcherName, query, directory, result.stdout);
+
+			// Cache the result
+			setCachedResult(query, directory, {
+				result: searchResult,
+				rawStdout: result.stdout ?? "",
+			});
+
+			const summary = buildStructuredSummary(
+				searchResult,
+				searcherName,
+				query,
+				directory,
+				maxCount,
+			);
+
+			// Save oversized output to temp file if truncated
+			let fullOutputPath: string | undefined;
+			if (searchResult.truncated) {
+				fullOutputPath = await saveOversizedOutput(result.stdout);
+			}
+
+			let text = summary.text;
+			const details: Record<string, unknown> = {
+				...summary.details,
+			};
+			if (fullOutputPath) {
+				text += ` Full output saved to: ${fullOutputPath}]`;
+				details.truncated = true;
+				details.fullOutputPath = fullOutputPath;
+			} else if (searchResult.truncated) {
+				text += " Full output not available]";
+			}
+
+			return {
+				content: [{ type: "text" as const, text }],
+				details,
+			};
 		},
 		renderCall(args, theme, _context) {
 			let text = theme.fg("toolTitle", theme.bold("rg "));
