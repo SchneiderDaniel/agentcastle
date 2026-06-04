@@ -7,12 +7,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import {
-	buildSubagentStatusLine,
-	joinExtensionStatuses,
-	formatDuration,
-	formatTokens,
-} from "../config/formatting.ts";
+import { buildSubagentStatusLine, formatDuration, formatTokens } from "../config/formatting.ts";
 
 // ---------------------------------------------------------------------------
 // Mock theme for testing color thresholds
@@ -23,51 +18,6 @@ class MockTheme {
 		return `<${color}>${text}</${color}>`;
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Tests — Pipe separator join (R1)
-// ---------------------------------------------------------------------------
-
-describe("R1: Pipe separator between extension statuses", () => {
-	it("AC1: joins multiple statuses with ' | '", () => {
-		const result = joinExtensionStatuses(["caveman: LITE", "subagent: developer"]);
-		assert.strictEqual(result, "caveman: LITE | subagent: developer");
-	});
-
-	it("AC2a: single status has no pipe", () => {
-		const result = joinExtensionStatuses(["caveman: LITE"]);
-		assert.strictEqual(result, "caveman: LITE");
-	});
-
-	it("AC2b: empty array returns empty string (no leading/trailing pipe)", () => {
-		const result = joinExtensionStatuses([]);
-		assert.strictEqual(result, "");
-	});
-
-	it("AC2c: no leading or trailing pipe with 2+ entries", () => {
-		const result = joinExtensionStatuses(["a", "b", "c"]);
-		assert.strictEqual(result, "a | b | c");
-		assert.ok(!result.startsWith(" | "));
-		assert.ok(!result.endsWith(" | "));
-	});
-
-	it("AC3: inner status formatting preserved (no stripping of internal spaces)", () => {
-		const result = joinExtensionStatuses(["caveman: LITE", "subagent: dev"]);
-		assert.ok(result.includes("caveman: LITE"));
-		assert.ok(result.includes("subagent: dev"));
-		assert.strictEqual(result, "caveman: LITE | subagent: dev");
-	});
-
-	it("three statuses all separated by pipe", () => {
-		const result = joinExtensionStatuses(["a", "b", "c"]);
-		assert.strictEqual(result, "a | b | c");
-	});
-
-	it("only pipe separator changed — no other formatting changes", () => {
-		const result = joinExtensionStatuses(["caveman: LITE"]);
-		assert.strictEqual(result, "caveman: LITE");
-	});
-});
 
 // ---------------------------------------------------------------------------
 // Tests — Subagent label and token color (R2)
@@ -292,7 +242,7 @@ describe("R2: Token count coloring by context window %", () => {
 		assert.ok(!result.includes("<warning>"));
 	});
 
-it("AC4: status prefix still 'subagent:' when context info available", () => {
+	it("AC4: status prefix still 'subagent:' when context info available", () => {
 		const result = buildSubagentStatusLine(
 			"developer",
 			startedAt,
@@ -305,56 +255,6 @@ it("AC4: status prefix still 'subagent:' when context info available", () => {
 			mockTheme,
 		);
 		assert.ok(result.startsWith("subagent: developer"));
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Tests — Integration scenario (combined behavior)
-// ---------------------------------------------------------------------------
-
-describe("Integration: combined footer line construction", () => {
-	const now = 100_000;
-	const startedAt = 50_000;
-	const mockTheme = new MockTheme();
-
-	it("caveman + subagent statuses joined with pipe", () => {
-		const cavemanStatus = "caveman: LITE";
-		const subagentStatus = buildSubagentStatusLine(
-			"developer",
-			startedAt,
-			50_000,
-			5,
-			true,
-			100_000,
-			now,
-			undefined,
-			mockTheme,
-		);
-		const footerLine = joinExtensionStatuses([cavemanStatus, subagentStatus]);
-		assert.strictEqual(footerLine, `${cavemanStatus} | ${subagentStatus}`);
-	});
-
-	it("only subagent status (no caveman) → no leading pipe", () => {
-		const status = buildSubagentStatusLine(
-			"developer",
-			startedAt,
-			5000,
-			3,
-			false,
-			undefined,
-			now,
-			undefined,
-			mockTheme,
-		);
-		const footerLine = joinExtensionStatuses([status]);
-		assert.strictEqual(footerLine, status);
-		assert.ok(!footerLine.startsWith(" | "));
-		assert.ok(!footerLine.endsWith(" | "));
-	});
-
-	it("three extensions all separated by pipe", () => {
-		const result = joinExtensionStatuses(["a", "b", "c"]);
-		assert.strictEqual(result, "a | b | c");
 	});
 });
 
