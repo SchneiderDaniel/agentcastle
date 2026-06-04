@@ -8,12 +8,8 @@ import type { ASTFinding } from "./ast-scanner.ts";
 import type { MigrationSnippet } from "./migration-generator.ts";
 import type { ImpactScore } from "./impact-scorer.ts";
 
-/** Exec function signature matching pi.exec */
-export type ExecFn = (
-	command: string,
-	args: string[],
-	options?: { cwd?: string; timeout?: number },
-) => Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
+import { type ExecFn } from "./types.ts";
+export type { ExecFn };
 
 /**
  * Build issue title following spec:
