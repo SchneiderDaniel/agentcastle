@@ -42,12 +42,8 @@ export interface ASTScanningResult {
 	skipCount: number;
 }
 
-/** Exec function matching pi.exec injection pattern */
-export type ExecFn = (
-	command: string,
-	args: string[],
-	options?: { cwd?: string; timeout?: number },
-) => Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
+import { type ExecFn } from "./types.ts";
+export type { ExecFn };
 
 /**
  * Mapping from normalized API names to their ast-grep search patterns.
