@@ -10,17 +10,23 @@
   - `$$$MULTI` for zero-or-more AST nodes (e.g., `try { $$$BODY } catch (e) { $A }`)
   - Structured JSON output: `{ matches, results: [{ file, lines, snippet }] }`
 - **Pattern validation** — Rejects single-word text patterns that belong on ripgrep (collision rule)
+- **Language auto-detect** — Language parameter is optional; auto-detects from project config files (tsconfig.json → typescript, pyproject.toml → python, go.mod → go, Cargo.toml → rust, sgconfig.yml → languageGlobs). Defaults to `ts`.
+- **Result cache** — Results cached by (pattern, language, cwd). Repeated calls return instantly without re-executing ast-grep.
+- **Streaming support** — Large result sets (>100 matches) return a truncated summary with total count. Refine the pattern to narrow results.
 - **Snippet truncation** — Results capped at 120 characters per match
 - **Prompt integration** — Injects `promptSnippet` and `promptGuidelines` so LLM knows when to use structural vs text search
-- **Binary auto-detection** — Detects `ast-grep` vs `sg` binary name
+- **Binary auto-detection** — Detects `ast-grep` vs `sg` binary name, cached across calls
 
 ## How it works
 
-1. The LLM calls `structural_search` with a pattern and language
-2. The extension validates the pattern — rejects text-only patterns (redirects to `ripgrep_search`)
-3. Runs `ast-grep scan --pattern <pattern> --json=stream --lang <language>`
-4. Parses NDJSON output into structured `SgMatch[]` results
-5. Returns results with file paths, line ranges, and truncated snippets
+1. The LLM calls `structural_search` with a pattern (language is optional)
+2. If language omitted, the extension auto-detects from project config files in scope (tsconfig.json → typescript, pyproject.toml → python, go.mod → go, Cargo.toml → rust, sgconfig.yml → languageGlobs). Defaults to `ts`.
+3. The extension validates the pattern — rejects text-only patterns (redirects to `ripgrep_search`)
+4. Checks the result cache — if the same (pattern, language, cwd) was searched before, returns cached result immediately
+5. Runs `ast-grep scan --pattern <pattern> --json=stream --lang <language>`
+6. Parses NDJSON output into structured `SgMatch[]` results
+7. If >100 matches, returns truncated summary with total count; otherwise returns full results
+8. Caches the result for subsequent calls
 
 ## Install
 
@@ -32,10 +38,11 @@ Then run `/reload` or restart pi.
 
 ## Usage
 
-The LLM uses `structural_search` automatically. Example invocations:
+The LLM uses `structural_search` automatically. Language parameter is optional — when omitted, auto-detected from project files:
 
 ```
-structural_search(pattern="console.log($A)", language="ts")
+structural_search(pattern="console.log($A)")           # auto-detect language
+structural_search(pattern="console.log($A)", language="ts")  # explicit language
 structural_search(pattern="try { $$$BODY } catch (e) { $A }", language="js")
 structural_search(pattern="function($A, $B)", language="go")
 structural_search(pattern="class $A extends $B", language="py")

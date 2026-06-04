@@ -4,6 +4,12 @@
  * Provides the structural_search tool. Uses ast-grep with Tree-sitter parsing
  * to find semantic code relationships. Answers questions like "Where is
  * verify_token called and what is passed to it?".
+ *
+ * Features:
+ * - Result cache keyed by (pattern, language, cwd)
+ * - Language auto-detect from project files when language param omitted
+ * - Streaming support: truncates large result sets (>100 matches)
+ * - Binary auto-detection (ast-grep -> sg fallback)
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -43,6 +49,146 @@ export interface ExecResultResponse {
 	content: Array<{ type: "text"; text: string }>;
 	details: Record<string, unknown>;
 	isError?: boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Constants
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Maximum results to return inline before truncating for streaming. */
+const STREAM_THRESHOLD = 100;
+
+/** Project config files for language auto-detection, in priority order. */
+const CONFIG_PRIORITY: Array<{ file: string; language: string }> = [
+	{ file: "sgconfig.yml", language: "" }, // special: parse languageGlobs from YAML
+	{ file: "tsconfig.json", language: "typescript" },
+	{ file: "pyproject.toml", language: "python" },
+	{ file: "go.mod", language: "go" },
+	{ file: "Cargo.toml", language: "rust" },
+];
+
+/** Default language when auto-detect fails and no caller-supplied language. */
+const DEFAULT_LANGUAGE = "ts";
+
+/** Module-level result cache keyed by `${pattern}::${language}::${cwd}`. */
+const RESULT_CACHE = new Map<string, ExecResultResponse>();
+
+/**
+ * Clear the result cache. Useful for testing and when the underlying
+ * filesystem/codebase may have changed between searches.
+ */
+export function clearResultCache(): void {
+	RESULT_CACHE.clear();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cache key helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Build a deterministic cache key from search parameters.
+ * Uses '::' as separator — unlikely to appear in pattern/language/cwd values.
+ */
+export function makeCacheKey(pattern: string, language: string, cwd: string): string {
+	return `${pattern}::${language}::${cwd}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Language auto-detect
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Check if a file exists in a given directory using `test -f`.
+ */
+export async function fileExists(
+	exec: (command: string, args: string[], options?: { cwd?: string }) => Promise<{ code: number }>,
+	file: string,
+	cwd: string,
+): Promise<boolean> {
+	const result = await exec("test", ["-f", file], { cwd });
+	return result.code === 0;
+}
+
+/**
+ * Auto-detect the programming language from project configuration files
+ * in the given cwd. Checks files in priority order:
+ * sgconfig.yml > tsconfig.json > pyproject.toml > go.mod > Cargo.toml
+ *
+ * For sgconfig.yml, attempts to extract the first key from `languageGlobs`.
+ * Returns null if no config file found.
+ */
+export async function detectLanguage(
+	exec: (
+		command: string,
+		args: string[],
+		options?: { cwd?: string },
+	) => Promise<{ code: number; stdout: string }>,
+	cwd: string,
+): Promise<string | null> {
+	for (const { file, language } of CONFIG_PRIORITY) {
+		const exists = await fileExists(exec, file, cwd);
+		if (!exists) continue;
+
+		if (file === "sgconfig.yml") {
+			// Read sgconfig.yml and extract first key from languageGlobs
+			try {
+				const readResult = await exec("cat", [file], { cwd });
+				if (readResult.code === 0 && readResult.stdout) {
+					const detected = parseLanguageGlobsFromYaml(readResult.stdout);
+					if (detected) return detected;
+				}
+			} catch {
+				// If reading fails, fall through to next config
+			}
+			continue;
+		}
+
+		// For all other config files, return the mapped language
+		return language;
+	}
+
+	return null;
+}
+
+/**
+ * Naive YAML parser that extracts the first key from a `languageGlobs:` section.
+ * Only used for sgconfig.yml auto-detection — not a general YAML parser.
+ *
+ * Handles:
+ *   languageGlobs:
+ *     ts: "**\/*.ts"
+ *     js: "**\/*.js"
+ *   → returns "ts"
+ *
+ * Returns null if languageGlobs section not found or empty.
+ */
+export function parseLanguageGlobsFromYaml(yamlContent: string): string | null {
+	const lines = yamlContent.split("\n");
+	let inLanguageGlobs = false;
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+
+		if (trimmed === "languageGlobs:") {
+			inLanguageGlobs = true;
+			continue;
+		}
+
+		if (inLanguageGlobs) {
+			// If we hit another top-level key (no indent), stop
+			if (trimmed.length > 0 && !trimmed.startsWith("-") && line[0] !== " " && line[0] !== "\t") {
+				return null;
+			}
+
+			// Match "  lang: ..." pattern
+			const match = trimmed.match(/^(\S+):/);
+			if (match) {
+				return match[1];
+			}
+		}
+	}
+
+	return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -110,6 +256,40 @@ export function interpretSgExecResult(
 	// (ast-grep may produce partial results even on non-zero exit)
 	if (trimmedStdout.length > 0) {
 		const sgResult = parseSgOutput(stdout);
+
+		// Check streaming threshold — truncate if too many matches
+		if (sgResult.matches > STREAM_THRESHOLD) {
+			const truncatedResults = sgResult.results.slice(0, STREAM_THRESHOLD);
+			const summary: SgResult = {
+				matches: sgResult.matches,
+				results: truncatedResults,
+			};
+			const json = JSON.stringify(summary, null, 2);
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text:
+							`Structural search results for pattern: ${pattern}\n` +
+							`Language: ${language}\n` +
+							`Matches: ${sgResult.matches} (showing first ${STREAM_THRESHOLD})\n\n` +
+							"```json\n" +
+							json +
+							"\n```\n\n" +
+							`Results truncated to ${STREAM_THRESHOLD}. Total matches: ${sgResult.matches}. ` +
+							`Refine the search pattern to narrow results.`,
+					},
+				],
+				details: {
+					success: true,
+					matches: sgResult.matches,
+					results: truncatedResults,
+					truncated: true,
+					totalMatches: sgResult.matches,
+				} as Record<string, unknown>,
+			};
+		}
+
 		const json = JSON.stringify(sgResult, null, 2);
 		return {
 			content: [
@@ -271,15 +451,20 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 					"Examples: console.log($A), try { $$$BODY } catch (e) { $A }, function($A, $B). " +
 					"Must contain structural syntax ($, {, (, [) — single-word text patterns are rejected.",
 			}),
-			language: Type.String({
-				description:
-					"Target programming language for Tree-sitter grammar. " +
-					"Supported: ts, typescript, js, jsx, py, python, go, golang, rs, rust, and more. " +
-					"See ast-grep docs for full list.",
-			}),
+			language: Type.Optional(
+				Type.String({
+					description:
+						"Target programming language for Tree-sitter grammar. " +
+						"Auto-detected from project files when omitted. " +
+						"Supported: ts, typescript, js, jsx, py, python, go, golang, rs, rust, and more. " +
+						"See ast-grep docs for full list.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const { pattern, language } = params;
+			const { pattern } = params;
+			const language =
+				params.language ?? (await detectLanguage(pi.exec.bind(pi), ctx.cwd)) ?? DEFAULT_LANGUAGE;
 
 			// Validate pattern first (collision rule)
 			const validationError = validatePattern(pattern);
@@ -296,6 +481,13 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 				};
 			}
 
+			// Check cache before executing
+			const cacheKey = makeCacheKey(pattern, language, ctx.cwd);
+			const cached = RESULT_CACHE.get(cacheKey);
+			if (cached) {
+				return cached;
+			}
+
 			// Get binary (lazy init, cached for subsequent calls)
 			const binary = await getSgBinary();
 			const args = ["scan", "--pattern", pattern, "--json=stream", "--lang", language];
@@ -303,17 +495,23 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 			const result = await pi.exec(binary, args, {
 				cwd: ctx.cwd,
 				timeout: 30_000,
-				signal: _signal,
 			});
 
 			// Use the extracted pure function to interpret the exec result
-			return interpretSgExecResult(
+			const response = interpretSgExecResult(
 				result.code,
 				result.stdout || "",
 				result.stderr || "",
 				pattern,
 				language,
 			);
+
+			// Cache the result (only cache successful, non-error responses)
+			if (!response.isError) {
+				RESULT_CACHE.set(cacheKey, response);
+			}
+
+			return response;
 		},
 	});
 }

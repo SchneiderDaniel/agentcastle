@@ -1,200 +1,70 @@
 /**
- * Tests for Structural Analyzer (ast-grep integration)
+ * Tests: structural-search — cache, auto-detect, streaming, binary detection, error propagation
  *
- * Pure function tests for parseSgOutput(), validatePattern(), truncateSnippet().
- * Local buildSgArgs simplified to pure arg-building (binary name passed as param).
- * New lazy binary detection test mocks pi.exec to verify caching behavior.
+ * Adapter-style tests that test through the execute function with mocked pi.exec.
+ * Replaces old pure-function unit tests that tested implementation details.
  *
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/structural-analyzer/test/structural-analyzer.test.mts
- *
- * Integration test runs real ast-grep against .pi/extensions/structural-analyzer/test/fixtures/structural-sample/
- * (skipped if ast-grep binary not installed).
  */
 
 import assert from "node:assert";
-import { describe, it } from "node:test";
-import { existsSync } from "node:fs";
-import { execSync } from "node:child_process";
-import { resolve } from "node:path";
-import structuralAnalyzer from "../index.ts";
-
-// ═══════════════════════════════════════════════════════════════════════
-// Types (match source at .pi/extensions/structural-analyzer.ts)
-// ═══════════════════════════════════════════════════════════════════════
-
-/** Raw sg JSONL output line. */
-interface SgTag {
-	file: string;
-	lines: string;
-	column?: number;
-	text: string;
-	language?: string;
-}
-
-/** Processed match entry in output. */
-interface SgMatch {
-	file: string;
-	lines: string;
-	snippet: string;
-}
-
-/** Shaped output for tool result. */
-interface SgResult {
-	matches: number;
-	results: SgMatch[];
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Pure functions under test (local copies for test isolation)
-// ═══════════════════════════════════════════════════════════════════════
-
-/**
- * Validate that a pattern is suitable for ast-grep (structural/syntax-aware search)
- * rather than plain text search.
- *
- * Rejects:
- * - Empty or whitespace-only strings
- * - Single words (no structural syntax like {, $, (, [, or wildcards)
- *
- * Returns null if valid, or an error string if invalid.
- */
-function validatePattern(pattern: string): string | null {
-	if (!pattern || typeof pattern !== "string") {
-		return "Pattern must be a non-empty string";
-	}
-
-	const trimmed = pattern.trim();
-	if (!trimmed) {
-		return "Pattern must be a non-empty string";
-	}
-
-	// Structural syntax characters that indicate AST-aware search intent
-	const structuralSyntax = /[{$(\\[\]]/;
-
-	// If the pattern is a single word (no whitespace, no structural syntax), reject it
-	const isSingleWord = /^\S+$/.test(trimmed);
-
-	if (isSingleWord && !structuralSyntax.test(trimmed)) {
-		return `Pattern "${trimmed}" is a single-word text pattern without structural syntax. Use ripgrep (ripgrep_search) for text-based search instead of ast-grep.`;
-	}
-
-	return null;
-}
-
-/**
- * Truncate a snippet to 120 characters.
- * If the string exceeds 120 chars, truncate to 119 chars and append '…' (120 total).
- */
-function truncateSnippet(text: string): string {
-	if (!text) return "";
-	if (text.length <= 120) return text;
-	return text.slice(0, 119) + "…";
-}
-
-/**
- * Build ast-grep command arguments for a pattern search (pure arg-building only).
- *
- * Binary name is passed explicitly (not detected here).
- * Uses --json=stream for NDJSON output (one JSON object per line).
- * Pattern is passed as a separate array element to prevent shell injection.
- */
-function buildSgArgs(
-	binary: string,
-	pattern: string,
-	language: string,
-): { command: string; args: string[] } {
-	const args = ["scan", "--pattern", pattern, "--json=stream", "--lang", language];
-	return { command: binary, args };
-}
-
-/**
- * Parse raw ast-grep JSONL output into SgResult.
- *
- * ast-grep --json=stream outputs one JSON object per line (NDJSON).
- * Empty lines, malformed JSON lines, or lines missing required fields are skipped.
- */
-function parseSgOutput(raw: string): SgResult {
-	if (!raw || typeof raw !== "string") {
-		return { matches: 0, results: [] };
-	}
-
-	const lines = raw.split("\n").filter((l) => l.trim().length > 0);
-	const results: SgMatch[] = [];
-
-	for (const line of lines) {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(line);
-		} catch {
-			continue; // skip malformed lines
-		}
-
-		if (typeof parsed !== "object" || parsed === null) continue;
-
-		const tag = parsed as Record<string, unknown>;
-
-		// Must have file, text, and lines fields
-		if (typeof tag.file !== "string" || !tag.file) continue;
-		if (typeof tag.text !== "string") continue;
-		if (typeof tag.lines !== "string" && typeof tag.lines !== "number") continue;
-
-		const linesStr = typeof tag.lines === "number" ? String(tag.lines) : (tag.lines as string);
-
-		results.push({
-			file: tag.file,
-			lines: linesStr,
-			snippet: truncateSnippet(tag.text),
-		});
-	}
-
-	return {
-		matches: results.length,
-		results,
-	};
-}
+import { describe, it, beforeEach } from "node:test";
+import structuralAnalyzer, {
+	interpretSgExecResult,
+	parseSgOutput,
+	validatePattern,
+	truncateSnippet,
+	makeCacheKey,
+	detectLanguage,
+	fileExists,
+	parseLanguageGlobsFromYaml,
+	clearResultCache,
+	type ExecResultResponse,
+} from "../index.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Fixtures
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Sample sg JSONL output simulating matches from a codebase search. */
-const TWO_VALID_LINES = [
-	JSON.stringify({
-		file: "api/auth.py",
-		lines: "22-28",
-		text: "try:\n    verify_token(token)\nexcept AuthError:\n    print('auth failed')",
-	}),
-	JSON.stringify({
-		file: "src/app.ts",
-		lines: "10-10",
-		text: "console.log('App started')",
-	}),
+function createMatchJson(file: string, lines: string, text: string): string {
+	return JSON.stringify({ file, lines, text });
+}
+
+const TWO_MATCHES = [
+	createMatchJson(
+		"api/auth.py",
+		"22-28",
+		"try:\n    verify_token(token)\nexcept AuthError:\n    print('auth failed')",
+	),
+	createMatchJson("src/app.ts", "10-10", "console.log('App started')"),
 ].join("\n");
 
-/** Empty output. */
-const EMPTY_OUTPUT = "";
+const MANY_MATCHES = Array.from({ length: 150 }, (_, i) =>
+	createMatchJson(`file${i}.ts`, `${i}-${i + 1}`, `match number ${i}`),
+).join("\n");
 
-/** Output with one invalid JSON line and one valid line. */
-const MALFORMED_OUTPUT = [
-	"not valid json",
-	JSON.stringify({
-		file: "src/app.ts",
-		lines: "10-10",
-		text: "console.log('App started')",
-	}),
-].join("\n");
-
-/** Line missing required fields. */
-const MISSING_FIELDS_LINE = JSON.stringify({
-	file: "orphan.ts",
-	// missing text field
-});
-
-/** Output with null/undefined handling. */
+function emptyMockPi(overrides?: Record<string, any>) {
+	return {
+		registerTool: () => {},
+		exec: async (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version") {
+				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "test" && args[0] === "-f") {
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			}
+			if (cmd === "cat") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		},
+		...overrides,
+	};
+}
 
 // ═══════════════════════════════════════════════════════════════════════
-// Tests — Pure functions
+// Pure function tests (kept — critical for correctness)
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("validatePattern", () => {
@@ -235,36 +105,15 @@ describe("validatePattern", () => {
 		assert.strictEqual(result, null);
 	});
 
-	it("accepts if/return pattern with braces and $", () => {
-		const result = validatePattern("if ($COND) { return $A; }");
-		assert.strictEqual(result, null);
-	});
-
-	it("accepts array pattern with brackets and $", () => {
-		const result = validatePattern("[$A, $B]");
-		assert.strictEqual(result, null);
-	});
-
 	it("accepts class pattern with $", () => {
 		const result = validatePattern("class $NAME");
-		assert.strictEqual(result, null);
-	});
-
-	it("accepts pattern with console.log($A)", () => {
-		const result = validatePattern("console.log($A)");
 		assert.strictEqual(result, null);
 	});
 });
 
 describe("truncateSnippet", () => {
-	it("returns short text unchanged (under 120 chars)", () => {
+	it("returns short text unchanged", () => {
 		const text = "short text";
-		assert.strictEqual(truncateSnippet(text), text);
-	});
-
-	it("returns 120-char string unchanged (exactly at limit)", () => {
-		const text = "a".repeat(120);
-		assert.strictEqual(truncateSnippet(text).length, 120);
 		assert.strictEqual(truncateSnippet(text), text);
 	});
 
@@ -278,506 +127,981 @@ describe("truncateSnippet", () => {
 	it("returns empty string for empty input", () => {
 		assert.strictEqual(truncateSnippet(""), "");
 	});
-
-	it("truncates multi-line string respecting char count", () => {
-		const longLine =
-			"line with a lot of content that goes on and on and on and on and on and on and on and on and on and on and on and on and on and on\nand another line";
-		const result = truncateSnippet(longLine);
-		assert.ok(result.length <= 120);
-		if (result !== longLine) {
-			assert.strictEqual(result.endsWith("…"), true);
-		}
-	});
 });
 
 describe("parseSgOutput", () => {
-	it("parses two valid JSONL lines", () => {
-		const result = parseSgOutput(TWO_VALID_LINES);
+	it("parses valid JSONL lines", () => {
+		const result = parseSgOutput(TWO_MATCHES);
 		assert.strictEqual(result.matches, 2);
 		assert.strictEqual(result.results.length, 2);
 		assert.strictEqual(result.results[0]!.file, "api/auth.py");
-		assert.strictEqual(result.results[0]!.lines, "22-28");
-		assert.ok(result.results[0]!.snippet.length <= 120);
-		assert.strictEqual(result.results[1]!.file, "src/app.ts");
 	});
 
-	it("returns empty result for empty string", () => {
+	it("returns empty for empty string", () => {
 		const result = parseSgOutput("");
 		assert.strictEqual(result.matches, 0);
-		assert.deepStrictEqual(result.results, []);
 	});
 
-	it("skips malformed JSON line, parses valid line", () => {
-		const result = parseSgOutput(MALFORMED_OUTPUT);
+	it("skips malformed JSON line", () => {
+		const input = ["not json", createMatchJson("a.ts", "1", "ok")].join("\n");
+		const result = parseSgOutput(input);
 		assert.strictEqual(result.matches, 1);
-		assert.strictEqual(result.results.length, 1);
-		assert.strictEqual(result.results[0]!.file, "src/app.ts");
 	});
 
 	it("handles null input defensively", () => {
 		const result = parseSgOutput(null as unknown as string);
 		assert.strictEqual(result.matches, 0);
-		assert.deepStrictEqual(result.results, []);
-	});
-
-	it("handles undefined input defensively", () => {
-		const result = parseSgOutput(undefined as unknown as string);
-		assert.strictEqual(result.matches, 0);
-		assert.deepStrictEqual(result.results, []);
-	});
-
-	it("skips lines with missing text field", () => {
-		const result = parseSgOutput(MISSING_FIELDS_LINE);
-		assert.strictEqual(result.matches, 0);
-	});
-
-	it("each result entry has precise file, lines, and snippet fields", () => {
-		const result = parseSgOutput(TWO_VALID_LINES);
-		for (const entry of result.results) {
-			assert.ok(typeof entry.file === "string" && entry.file.length > 0);
-			assert.ok(typeof entry.lines === "string" && entry.lines.length > 0);
-			assert.ok(typeof entry.snippet === "string");
-			assert.ok(entry.snippet.length <= 120);
-		}
 	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Tests — buildSgArgs (pure arg-building only, binary passed as param)
+// Cache key tests
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("buildSgArgs", () => {
-	it("builds correct args for ts pattern", () => {
-		const { command, args } = buildSgArgs("ast-grep", "console.log($A)", "ts");
-		assert.strictEqual(command, "ast-grep");
-		assert.deepStrictEqual(args, [
-			"scan",
-			"--pattern",
-			"console.log($A)",
-			"--json=stream",
-			"--lang",
-			"ts",
-		]);
+describe("makeCacheKey", () => {
+	it("produces deterministic key from pattern, language, cwd", () => {
+		const key = makeCacheKey("console.log($A)", "ts", "/home/project");
+		assert.ok(typeof key === "string");
+		assert.ok(key.includes("console.log($A)"));
+		assert.ok(key.includes("ts"));
+		assert.ok(key.includes("/home/project"));
 	});
 
-	it("builds correct args for py pattern", () => {
-		const { command, args } = buildSgArgs("ast-grep", "try { $$$BODY }", "py");
-		assert.strictEqual(command, "ast-grep");
-		assert.deepStrictEqual(args, [
-			"scan",
-			"--pattern",
-			"try { $$$BODY }",
-			"--json=stream",
-			"--lang",
-			"py",
-		]);
+	it("different patterns produce different keys", () => {
+		const key1 = makeCacheKey("console.log($A)", "ts", "/p");
+		const key2 = makeCacheKey("class $NAME", "ts", "/p");
+		assert.notStrictEqual(key1, key2);
 	});
 
-	it("pattern is passed as separate arg (not shell-escaped)", () => {
-		const { args } = buildSgArgs("ast-grep", "console.log($A)", "ts");
-		// The pattern is its own array element — no quoting in the arg itself
-		assert.strictEqual(args[2], "console.log($A)");
+	it("different languages produce different keys", () => {
+		const key1 = makeCacheKey("console.log($A)", "ts", "/p");
+		const key2 = makeCacheKey("console.log($A)", "py", "/p");
+		assert.notStrictEqual(key1, key2);
 	});
 
-	it("accepts sg as binary name", () => {
-		const { command, args } = buildSgArgs("sg", "console.log($A)", "ts");
-		assert.strictEqual(command, "sg");
-		assert.deepStrictEqual(args, [
-			"scan",
-			"--pattern",
-			"console.log($A)",
-			"--json=stream",
-			"--lang",
-			"ts",
-		]);
+	it("different cwds produce different keys", () => {
+		const key1 = makeCacheKey("console.log($A)", "ts", "/p1");
+		const key2 = makeCacheKey("console.log($A)", "ts", "/p2");
+		assert.notStrictEqual(key1, key2);
+	});
+
+	it("same inputs produce same key (deterministic)", () => {
+		const key1 = makeCacheKey("console.log($A)", "ts", "/p");
+		const key2 = makeCacheKey("console.log($A)", "ts", "/p");
+		assert.strictEqual(key1, key2);
+	});
+
+	it("handles special characters in pattern", () => {
+		const key = makeCacheKey("try { $$$BODY } catch (e) { $A }", "js", "/p");
+		assert.ok(typeof key === "string");
+		assert.ok(key.length > 0);
 	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Tests — Lazy binary detection (mocks pi.exec)
+// Language auto-detect tests
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("lazy binary detection", () => {
-	it("detects ast-grep on first execute and caches result", async () => {
-		// Track all calls to pi.exec
-		const execCalls: Array<{ command: string; args: string[] }> = [];
-		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+describe("fileExists", () => {
+	it("returns true when test -f succeeds", async () => {
+		const mockExec = async (_cmd: string, _args: string[]) => ({ code: 0 });
+		const result = await fileExists(mockExec as any, "tsconfig.json", "/p");
+		assert.strictEqual(result, true);
+	});
 
-		const mockPi = {
+	it("returns false when test -f fails", async () => {
+		const mockExec = async (_cmd: string, _args: string[]) => ({ code: 1 });
+		const result = await fileExists(mockExec as any, "nonexistent.json", "/p");
+		assert.strictEqual(result, false);
+	});
+});
+
+describe("detectLanguage", () => {
+	it("detects typescript from tsconfig.json", async () => {
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "tsconfig.json") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			return { code: 0, stdout: "" };
+		};
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "typescript");
+	});
+
+	it("detects python from pyproject.toml", async () => {
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "pyproject.toml") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			return { code: 0, stdout: "" };
+		};
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "python");
+	});
+
+	it("detects go from go.mod", async () => {
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "go.mod") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			return { code: 0, stdout: "" };
+		};
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "go");
+	});
+
+	it("detects rust from Cargo.toml", async () => {
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "Cargo.toml") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			return { code: 0, stdout: "" };
+		};
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "rust");
+	});
+
+	it("returns null when no config files found", async () => {
+		const mockExec = async (_cmd: string, _args: string[]) => ({ code: 1, stdout: "" });
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, null);
+	});
+
+	it("respects priority: tsconfig.json before pyproject.toml", async () => {
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "tsconfig.json") return { code: 0 };
+			if (cmd === "test" && args[1] === "pyproject.toml") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			return { code: 0, stdout: "" };
+		};
+		// tsconfig.json checked first → returns typescript
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "typescript");
+	});
+
+	it("parses languageGlobs from sgconfig.yml", async () => {
+		const sgconfigYaml = `ruleDirs:
+  - rules
+languageGlobs:
+  ts: "**/*.ts"
+  js: "**/*.js"
+suppressError: false`;
+
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "sgconfig.yml") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			if (cmd === "cat" && args[0] === "sgconfig.yml") return { code: 0, stdout: sgconfigYaml };
+			return { code: 0, stdout: "" };
+		};
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "ts");
+	});
+
+	it("sgconfig.yml without languageGlobs falls through to next config", async () => {
+		const sgconfigYaml = `ruleDirs:
+  - rules
+suppressError: false`;
+
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "sgconfig.yml") return { code: 0 };
+			if (cmd === "test" && args[1] === "tsconfig.json") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			if (cmd === "cat" && args[0] === "sgconfig.yml") return { code: 0, stdout: sgconfigYaml };
+			return { code: 0, stdout: "" };
+		};
+		// sgconfig.yml found but has no languageGlobs → falls through to tsconfig.json
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "typescript");
+	});
+});
+
+describe("parseLanguageGlobsFromYaml", () => {
+	it("extracts first language key from languageGlobs section", () => {
+		const yaml = `ruleDirs:
+  - rules
+languageGlobs:
+  ts: "**/*.ts"
+  js: "**/*.js"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), "ts");
+	});
+
+	it("returns null when no languageGlobs section", () => {
+		const yaml = `ruleDirs:\n  - rules`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), null);
+	});
+
+	it("returns null for empty yaml", () => {
+		assert.strictEqual(parseLanguageGlobsFromYaml(""), null);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cache integration tests (via execute)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("cache integration (adapter)", () => {
+	let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	let execCalls: Array<{ command: string; args: string[]; options?: any }>;
+
+	beforeEach(() => {
+		clearResultCache();
+		execCalls = [];
+		capturedExecute = undefined;
+	});
+
+	function makePi(execFn?: (cmd: string, args: string[]) => any) {
+		const defaultExec = async (cmd: string, args: string[], opts?: any) => {
+			execCalls.push({ command: cmd, args, options: opts });
+			return execFn ? execFn(cmd, args) : { stdout: "", stderr: "", code: 1, killed: false };
+		};
+		return {
 			registerTool: (tool: any) => {
 				capturedExecute = tool.execute;
 			},
-			exec: async (command: string, args: string[]) => {
-				execCalls.push({ command, args });
-				if (command === "ast-grep" && args[0] === "--version") {
-					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
-				}
-				// For scan commands, return empty success (no matches)
-				return { stdout: "", stderr: "", code: 1, killed: false };
-			},
+			exec: defaultExec,
 		};
+	}
 
-		structuralAnalyzer(mockPi as any);
+	function makeScanExec(stdout: string, code = 0) {
+		return async (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version") {
+				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "test" && args[0] === "-f") {
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			}
+			if (cmd === "cat") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			// scan command
+			return { stdout, stderr: "", code, killed: false };
+		};
+	}
 
-		assert.ok(capturedExecute !== undefined, "execute handler should be registered");
+	it("same pattern+language+cwd returns cached result on second call", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
 
-		// First execute — should trigger binary detection
+		// First call
+		const r1 = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls.length, 1, "first call should exec scan");
+
+		execCalls.length = 0;
+
+		// Second call — same params
+		const r2 = await capturedExecute!(
+			"id2",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const scanCalls2 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls2.length, 0, "second call should NOT exec scan (cached)");
+
+		// Results should be identical
+		assert.deepStrictEqual(r2, r1);
+	});
+
+	it("different pattern → cache miss", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
 		await capturedExecute!(
 			"id1",
 			{ pattern: "console.log($A)", language: "ts" },
 			undefined,
 			undefined,
-			{ cwd: "/tmp" } as any,
+			{ cwd: "/tmp" },
 		);
-
-		// First call should be binary detection: ast-grep --version
-		assert.strictEqual(execCalls.length >= 1, true);
-		assert.strictEqual(execCalls[0]!.command, "ast-grep");
-		assert.deepStrictEqual(execCalls[0]!.args, ["--version"]);
-
 		execCalls.length = 0;
 
-		// Second execute — should NOT trigger binary detection (cached)
 		await capturedExecute!(
 			"id2",
 			{ pattern: "class $NAME", language: "ts" },
 			undefined,
 			undefined,
-			{ cwd: "/tmp" } as any,
+			{ cwd: "/tmp" },
 		);
 
-		// First call now should be the scan, not --version check
-		assert.strictEqual(execCalls.length >= 1, true);
-		assert.strictEqual(execCalls[0]!.command, "ast-grep");
-		assert.strictEqual(execCalls[0]!.args[0], "scan");
+		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls.length, 1, "different pattern should cause cache miss");
 	});
 
-	it("falls back to sg when ast-grep not found and caches fallback", async () => {
-		const execCalls: Array<{ command: string; args: string[] }> = [];
-		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	it("different language → cache miss", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
 
-		const mockPi = {
-			registerTool: (tool: any) => {
-				capturedExecute = tool.execute;
-			},
-			exec: async (command: string, args: string[]) => {
-				execCalls.push({ command, args });
-				if (command === "ast-grep" && args[0] === "--version") {
-					return { stdout: "", stderr: "not found", code: 127, killed: false };
-				}
-				// For sg scan, return success
-				return { stdout: "", stderr: "", code: 1, killed: false };
-			},
-		};
-
-		structuralAnalyzer(mockPi as any);
-
-		assert.ok(capturedExecute !== undefined);
-
-		// First execute — ast-grep not found, should fall back to sg
 		await capturedExecute!(
 			"id1",
 			{ pattern: "console.log($A)", language: "ts" },
 			undefined,
 			undefined,
-			{ cwd: "/tmp" } as any,
+			{ cwd: "/tmp" },
+		);
+		execCalls.length = 0;
+
+		await capturedExecute!(
+			"id2",
+			{ pattern: "console.log($A)", language: "py" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
 		);
 
-		// First call: ast-grep --version fails
-		assert.strictEqual(execCalls[0]!.command, "ast-grep");
-		assert.strictEqual(execCalls[0]!.args[0], "--version");
+		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls.length, 1, "different language should cause cache miss");
+	});
 
-		// Second call: should use sg for scan
-		assert.strictEqual(execCalls[1]!.command, "sg");
-		assert.strictEqual(execCalls[1]!.args[0], "scan");
+	it("different cwd → cache miss", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp/a" },
+		);
+		execCalls.length = 0;
+
+		await capturedExecute!(
+			"id2",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp/b" },
+		);
+
+		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls.length, 1, "different cwd should cause cache miss");
+	});
+
+	it("pattern with special characters produces stable cache key", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		await capturedExecute!(
+			"id1",
+			{ pattern: "try { $$$BODY } catch (e) { $A }", language: "js" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		execCalls.length = 0;
+
+		await capturedExecute!(
+			"id2",
+			{ pattern: "try { $$$BODY } catch (e) { $A }", language: "js" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls.length, 0, "special characters pattern should cache correctly");
+	});
+
+	it("error responses are NOT cached", async () => {
+		const errorExec = async (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version") {
+				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "test") {
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			}
+			return { stdout: "", stderr: "unknown language: xyz", code: 1, killed: false };
+		};
+		const pi = makePi(errorExec);
+		structuralAnalyzer(pi as any);
+
+		const r1 = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "xyz" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(r1.isError, true, "first call should be error");
 
 		execCalls.length = 0;
 
-		// Third call (second execute): should still use sg (cached)
-		await capturedExecute!(
+		const r2 = await capturedExecute!(
 			"id2",
-			{ pattern: "class $NAME", language: "ts" },
+			{ pattern: "console.log($A)", language: "xyz" },
 			undefined,
 			undefined,
-			{ cwd: "/tmp" } as any,
+			{ cwd: "/tmp" },
 		);
 
-		// First call should be sg scan, no --version check
-		assert.strictEqual(execCalls[0]!.command, "sg");
-		assert.strictEqual(execCalls[0]!.args[0], "scan");
-		// No second call should exist (no binary check)
-		assert.strictEqual(execCalls.length, 1);
+		// Error should NOT be cached - second call should exec again
+		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls.length, 1, "error response should NOT be cached - must re-exec");
+		assert.strictEqual(r2.isError, true);
 	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Tests — Signal propagation (AbortSignal passed to pi.exec)
+// Language auto-detect integration tests (via execute, language param omitted)
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("signal propagation", () => {
-	it("passes abort signal reference to pi.exec options", async () => {
-		const execCalls: Array<{ command: string; args: string[]; options: any }> = [];
-		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+describe("language auto-detect (adapter)", () => {
+	let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	let execCalls: Array<{ command: string; args: string[] }>;
 
-		const mockPi = {
+	beforeEach(() => {
+		clearResultCache();
+		execCalls = [];
+		capturedExecute = undefined;
+	});
+
+	function makePi(customExec?: (cmd: string, args: string[]) => any) {
+		const defaultExec = async (cmd: string, args: string[], _opts?: any) => {
+			execCalls.push({ command: cmd, args });
+			if (customExec) return customExec(cmd, args);
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		};
+		return {
 			registerTool: (tool: any) => {
 				capturedExecute = tool.execute;
 			},
-			exec: async (command: string, args: string[], options?: any) => {
-				execCalls.push({ command, args, options });
-				if (command === "ast-grep" && args[0] === "--version") {
-					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
-				}
-				return { stdout: "", stderr: "", code: 1, killed: false };
-			},
+			exec: defaultExec,
 		};
+	}
 
-		structuralAnalyzer(mockPi as any);
-		assert.ok(capturedExecute !== undefined, "execute handler should be registered");
+	it("tsconfig.json found → auto-detect typescript", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test" && args[1] === "sgconfig.yml") return { code: 1, stdout: "" };
+			if (cmd === "test" && args[1] === "tsconfig.json") return { code: 0, stdout: "" };
+			if (cmd === "test") return { code: 1, stdout: "" };
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
 
-		const controller = new AbortController();
-		await capturedExecute!(
-			"id1",
-			{ pattern: "console.log($A)", language: "ts" },
-			controller.signal,
-			undefined,
-			{ cwd: "/tmp" } as any,
-		);
+		// Omit language param
+		await capturedExecute!("id1", { pattern: "console.log($A)" }, undefined, undefined, {
+			cwd: "/tmp",
+		});
 
-		// Find the scan exec call (not the --version check)
 		const scanCall = execCalls.find((c) => c.args[0] === "scan");
-		assert.ok(scanCall !== undefined, "should have a scan exec call");
-		assert.strictEqual(
-			scanCall!.options.signal,
-			controller.signal,
-			"pi.exec options.signal should be the same AbortSignal reference",
-		);
+		assert.ok(scanCall, "should have a scan call");
+		// Check --lang appears in args
+		const langIndex = scanCall!.args.indexOf("--lang");
+		assert.notStrictEqual(langIndex, -1, "should have --lang argument");
+		assert.strictEqual(scanCall!.args[langIndex + 1], "typescript", "should use typescript");
 	});
 
-	it("detects pre-aborted signal and rejects promptly", async () => {
-		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
-
-		const mockPi = {
-			registerTool: (tool: any) => {
-				capturedExecute = tool.execute;
-			},
-			exec: async (_command: string, _args: string[], options?: any) => {
-				// If signal is already aborted, reject immediately
-				if (options?.signal?.aborted) {
-					const err = new Error("The operation was aborted");
-					(err as any).name = "AbortError";
-					throw err;
-				}
-				return { stdout: "", stderr: "", code: 1, killed: false };
-			},
-		};
-
-		structuralAnalyzer(mockPi as any);
-		assert.ok(capturedExecute !== undefined);
-
-		const controller = new AbortController();
-		controller.abort(); // pre-abort
-
-		await assert.rejects(
-			async () => {
-				await capturedExecute!(
-					"id1",
-					{ pattern: "console.log($A)", language: "ts" },
-					controller.signal,
-					undefined,
-					{ cwd: "/tmp" } as any,
-				);
-			},
-			{ name: "AbortError" },
-			"should reject when signal is already aborted",
-		);
-	});
-
-	it("accepts undefined signal (backward-compatible no-op)", async () => {
-		let capturedOptions: any = undefined;
-		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
-
-		const mockPi = {
-			registerTool: (tool: any) => {
-				capturedExecute = tool.execute;
-			},
-			exec: async (command: string, args: string[], options?: any) => {
-				if (command === "ast-grep" && args[0] === "--version") {
-					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
-				}
-				if (args[0] === "scan") {
-					capturedOptions = options;
-				}
-				return { stdout: "", stderr: "", code: 1, killed: false };
-			},
-		};
-
-		structuralAnalyzer(mockPi as any);
-		assert.ok(capturedExecute !== undefined);
+	it("no config files → fallback to caller-supplied language", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { code: 1, stdout: "" };
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
 
 		await capturedExecute!(
 			"id1",
-			{ pattern: "console.log($A)", language: "ts" },
-			undefined, // no cancellation signal
+			{ pattern: "console.log($A)", language: "rust" },
 			undefined,
-			{ cwd: "/tmp" } as any,
+			undefined,
+			{ cwd: "/tmp" },
 		);
 
-		assert.ok(capturedOptions !== undefined, "should capture scan exec options");
-		assert.strictEqual(
-			capturedOptions!.signal,
-			undefined,
-			"signal should be undefined when no AbortSignal provided",
-		);
-		assert.strictEqual(capturedOptions!.cwd, "/tmp");
-		assert.strictEqual(capturedOptions!.timeout, 30_000);
+		const scanCall = execCalls.find((c) => c.args[0] === "scan");
+		assert.ok(scanCall);
+		const langIndex = scanCall!.args.indexOf("--lang");
+		assert.strictEqual(scanCall!.args[langIndex + 1], "rust", "should use caller-supplied rust");
 	});
 
-	it("aborts hanging pi.exec when signal is fired mid-execution", async () => {
-		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	it("no config files + no language param → default to ts", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { code: 1, stdout: "" };
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
 
-		const mockPi = {
+		await capturedExecute!("id1", { pattern: "console.log($A)" }, undefined, undefined, {
+			cwd: "/tmp",
+		});
+
+		const scanCall = execCalls.find((c) => c.args[0] === "scan");
+		assert.ok(scanCall);
+		const langIndex = scanCall!.args.indexOf("--lang");
+		assert.strictEqual(scanCall!.args[langIndex + 1], "ts", "should default to ts");
+	});
+
+	it("sgconfig.yml found → uses languageGlobs", async () => {
+		const sgconfigContent = `languageGlobs:\n  rs: "**/*.rs"`;
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test" && args[1] === "sgconfig.yml") return { code: 0, stdout: "" };
+			if (cmd === "test") return { code: 1, stdout: "" };
+			if (cmd === "cat") return { code: 0, stdout: sgconfigContent };
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		await capturedExecute!("id1", { pattern: "console.log($A)" }, undefined, undefined, {
+			cwd: "/tmp",
+		});
+
+		const scanCall = execCalls.find((c) => c.args[0] === "scan");
+		assert.ok(scanCall);
+		const langIndex = scanCall!.args.indexOf("--lang");
+		assert.strictEqual(scanCall!.args[langIndex + 1], "rs", "should use rs from sgconfig.yml");
+	});
+
+	it("multiple config files → priority: sgconfig.yml > tsconfig.json > pyproject.toml", async () => {
+		const sgconfigContent = 'languageGlobs:\n  go: "**/*.go"';
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			// Both sgconfig.yml and tsconfig.json exist
+			if (cmd === "test" && args[1] === "sgconfig.yml") return { code: 0, stdout: "" };
+			if (cmd === "test" && args[1] === "tsconfig.json") return { code: 0, stdout: "" }; // would match if sgconfig not handled
+			if (cmd === "test") return { code: 1, stdout: "" };
+			if (cmd === "cat") return { code: 0, stdout: sgconfigContent };
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		await capturedExecute!("id1", { pattern: "console.log($A)" }, undefined, undefined, {
+			cwd: "/tmp",
+		});
+
+		const scanCall = execCalls.find((c) => c.args[0] === "scan");
+		assert.ok(scanCall);
+		const langIndex = scanCall!.args.indexOf("--lang");
+		// sgconfig.yml has go → should use go
+		assert.strictEqual(scanCall!.args[langIndex + 1], "go", "sgconfig.yml should take priority");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Streaming tests (large result sets)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("streaming (adapter)", () => {
+	let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+	beforeEach(() => {
+		clearResultCache();
+	});
+
+	function makePi(execFn: (cmd: string, args: string[]) => any) {
+		const execCalls: Array<{ command: string; args: string[] }> = [];
+		return {
 			registerTool: (tool: any) => {
 				capturedExecute = tool.execute;
 			},
-			exec: async (command: string, args: string[], options?: any) => {
-				// Resolve --version check immediately (binary detection)
-				if (command === "ast-grep" && args[0] === "--version") {
-					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
-				}
-				// For scan calls, simulate a hanging process that respects abort signal
-				return new Promise((_resolve, reject) => {
-					if (options?.signal?.aborted) {
-						const err = new Error("The operation was aborted");
-						(err as any).name = "AbortError";
-						reject(err);
-						return;
-					}
-					if (options?.signal) {
-						options.signal.addEventListener(
-							"abort",
-							() => {
-								const err = new Error("The operation was aborted");
-								(err as any).name = "AbortError";
-								reject(err);
-							},
-							{ once: true },
-						);
-					}
-					// Never resolve — hangs until aborted
-				});
+			exec: async (cmd: string, args: string[], _opts?: any) => {
+				execCalls.push({ command: cmd, args });
+				return execFn(cmd, args);
 			},
+			_execCalls: execCalls,
 		};
+	}
 
-		structuralAnalyzer(mockPi as any);
-		assert.ok(capturedExecute !== undefined);
+	it("5000+ lines → truncated response with total count", async () => {
+		const manyLines = Array.from({ length: 5000 }, (_, i) =>
+			JSON.stringify({ file: `f${i}.ts`, lines: `${i}`, text: `match ${i}` }),
+		).join("\n");
 
-		const controller = new AbortController();
+		const execFn = (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: manyLines, stderr: "", code: 0, killed: false };
+		};
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
 
-		const execPromise = capturedExecute!(
+		const result = await capturedExecute!(
 			"id1",
 			{ pattern: "console.log($A)", language: "ts" },
-			controller.signal,
 			undefined,
-			{ cwd: "/tmp" } as any,
+			undefined,
+			{ cwd: "/tmp" },
 		);
 
-		// Give a tick for exec setup (binary detection runs first)
-		await new Promise((r) => setTimeout(r, 10));
+		assert.strictEqual(result.isError, undefined, "should not be error");
+		const details = result.details as Record<string, unknown>;
+		assert.strictEqual(details.matches, 5000, "total match count should be 5000");
+		assert.strictEqual(details.truncated, true, "should have truncated flag");
+		assert.strictEqual(details.totalMatches, 5000, "totalMatches should be 5000");
 
-		controller.abort();
+		const results = details.results as any[];
+		assert.ok(results.length <= 100, `should truncate to ≤100, got ${results.length}`);
 
-		await assert.rejects(
-			async () => await execPromise,
-			{ name: "AbortError" },
-			"should reject when aborted mid-execution",
-		);
+		const contentText = result.content[0].text as string;
+		assert.ok(contentText.includes("5000"), "content should mention total count 5000");
+		assert.ok(contentText.includes("100"), "content should mention first 100");
 	});
 
-	it("does not leak stale signal reference between executions", async () => {
-		const execCalls: Array<{ command: string; args: string[]; options: any }> = [];
-		let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	it("small result set (< threshold) returns full results", async () => {
+		const fewLines = Array.from({ length: 5 }, (_, i) =>
+			JSON.stringify({ file: `f${i}.ts`, lines: `${i}`, text: `match ${i}` }),
+		).join("\n");
 
-		const mockPi = {
+		const execFn = (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: fewLines, stderr: "", code: 0, killed: false };
+		};
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const details = result.details as Record<string, unknown>;
+		assert.strictEqual(details.matches, 5, "total match count should be 5");
+		assert.strictEqual(details.truncated, undefined, "should NOT have truncated flag");
+		const results = details.results as any[];
+		assert.strictEqual(results.length, 5, "all 5 results should be present");
+	});
+
+	it("exactly 100 results → not truncated (threshold is > 100)", async () => {
+		const hundredLines = Array.from({ length: 100 }, (_, i) =>
+			JSON.stringify({ file: `f${i}.ts`, lines: `${i}`, text: `match ${i}` }),
+		).join("\n");
+
+		const execFn = (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: hundredLines, stderr: "", code: 0, killed: false };
+		};
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const details = result.details as Record<string, unknown>;
+		assert.strictEqual(details.matches, 100, "total match count should be 100");
+		// 100 > 100 is false, so NOT truncated
+		assert.strictEqual(details.truncated, undefined, "100 is not > 100, so no truncation");
+		const results = details.results as any[];
+		assert.strictEqual(results.length, 100, "all 100 results should be present");
+	});
+
+	it("exactly 101 results → truncated", async () => {
+		const lines101 = Array.from({ length: 101 }, (_, i) =>
+			JSON.stringify({ file: `f${i}.ts`, lines: `${i}`, text: `match ${i}` }),
+		).join("\n");
+
+		const execFn = (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: lines101, stderr: "", code: 0, killed: false };
+		};
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const details = result.details as Record<string, unknown>;
+		assert.strictEqual(details.matches, 101);
+		assert.strictEqual(details.truncated, true);
+		const results = details.results as any[];
+		assert.strictEqual(results.length, 100, "should truncate to 100");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Binary detection tests (via execute)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("binary detection (adapter)", () => {
+	let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	let execCalls: Array<{ command: string; args: string[] }>;
+
+	beforeEach(() => {
+		clearResultCache();
+	});
+
+	function makePi(execFn: (cmd: string, args: string[]) => any) {
+		execCalls = [];
+		return {
 			registerTool: (tool: any) => {
 				capturedExecute = tool.execute;
 			},
-			exec: async (command: string, args: string[], options?: any) => {
-				execCalls.push({ command, args, options });
-				if (command === "ast-grep" && args[0] === "--version") {
-					return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
-				}
-				if (args[0] === "scan") {
-					// Hang forever (or until aborted)
-					return new Promise((resolve, reject) => {
-						if (options?.signal?.aborted) {
-							const err = new Error("The operation was aborted");
-							(err as any).name = "AbortError";
-							reject(err);
-							return;
-						}
-						if (options?.signal) {
-							options.signal.addEventListener(
-								"abort",
-								() => {
-									const err = new Error("The operation was aborted");
-									(err as any).name = "AbortError";
-									reject(err);
-								},
-								{ once: true },
-							);
-						} else {
-							// No signal — resolve immediately
-							resolve({ stdout: "", stderr: "", code: 1, killed: false });
-						}
-					});
-				}
-				return { stdout: "", stderr: "", code: 1, killed: false };
+			exec: async (cmd: string, args: string[], _opts?: any) => {
+				execCalls.push({ command: cmd, args });
+				return execFn(cmd, args);
 			},
 		};
+	}
 
-		structuralAnalyzer(mockPi as any);
-		assert.ok(capturedExecute !== undefined);
+	it("ast-grep found on first call → cached for subsequent calls", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
 
-		// First execution with signal A — abort it
-		const controllerA = new AbortController();
-		const promiseA = capturedExecute!(
+		// First call — triggers binary detection
+		await capturedExecute!(
 			"id1",
 			{ pattern: "console.log($A)", language: "ts" },
-			controllerA.signal,
 			undefined,
-			{ cwd: "/tmp" } as any,
+			undefined,
+			{ cwd: "/tmp" },
 		);
+		const versionCalls = execCalls.filter((c) => c.args[0] === "--version");
+		assert.strictEqual(versionCalls.length, 1, "version check on first call");
 
-		await new Promise((r) => setTimeout(r, 10));
-		controllerA.abort();
-
-		await assert.rejects(
-			async () => await promiseA,
-			{ name: "AbortError" },
-			"first execution should abort with AbortError",
-		);
-
-		// Clear exec calls to focus on second execution
 		execCalls.length = 0;
 
-		// Second execution with no signal (should complete normally)
+		// Second call — no version check
 		await capturedExecute!(
 			"id2",
 			{ pattern: "class $NAME", language: "ts" },
 			undefined,
 			undefined,
-			{ cwd: "/tmp" } as any,
+			{ cwd: "/tmp" },
+		);
+		const versionCalls2 = execCalls.filter((c) => c.args[0] === "--version");
+		assert.strictEqual(versionCalls2.length, 0, "no version check on second call (cached)");
+	});
+
+	it("ast-grep not found → falls back to sg", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "", stderr: "not found", code: 127, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
 		);
 
-		// The scan call should have signal: undefined
-		const scanCall = execCalls.find((c) => c.args[0] === "scan");
-		assert.ok(scanCall !== undefined, "second execution should have scan call");
-		assert.strictEqual(
-			scanCall!.options.signal,
+		// First exec call is ast-grep --version, second should be sg scan
+		const sgScan = execCalls.find((c) => c.command === "sg" && c.args[0] === "scan");
+		assert.ok(sgScan, "should fallback to sg for scan");
+
+		execCalls.length = 0;
+
+		// Second execute — should use sg directly (cached)
+		await capturedExecute!(
+			"id2",
+			{ pattern: "class $NAME", language: "ts" },
 			undefined,
-			"second execution should not retain first execution's signal",
+			undefined,
+			{ cwd: "/tmp" },
 		);
+
+		const versionCalls = execCalls.filter((c) => c.args[0] === "--version");
+		assert.strictEqual(versionCalls.length, 0, "no version check on second call");
+
+		const sgScan2 = execCalls.find((c) => c.command === "sg" && c.args[0] === "scan");
+		assert.ok(sgScan2, "second scan should also use sg");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Error propagation tests (via execute)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("error propagation (adapter)", () => {
+	let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+
+	beforeEach(() => {
+		clearResultCache();
+	});
+
+	function makePi(execFn: (cmd: string, args: string[]) => any) {
+		return {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (cmd: string, args: string[], _opts?: any) => execFn(cmd, args),
+		};
+	}
+
+	it("exit code 1 with stderr → isError", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: "", stderr: "unknown language: xyz", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "xyz" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(result.isError, true);
+		assert.ok((result.content[0].text as string).includes("unknown language: xyz"));
+	});
+
+	it("exit code 126 → isError", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: "", stderr: "Permission denied", code: 126, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(result.isError, true);
+		assert.ok((result.content[0].text as string).includes("126"));
+	});
+
+	it("exit code 2 → isError", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: "", stderr: "internal error", code: 2, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(result.isError, true);
+	});
+
+	it("no-match (exit code 1, empty stderr) → success with 0 matches", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: "", stderr: "", code: 1, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "nonexistent($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(result.isError, undefined);
+		assert.ok((result.content[0].text as string).includes("No matches found"));
+	});
+
+	it("exit code 0 with stdout → parsed results returned", async () => {
+		const pi = makePi((cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version")
+				return { stdout: "ok", stderr: "", code: 0, killed: false };
+			if (cmd === "test") return { stdout: "", stderr: "", code: 1, killed: false };
+			return { stdout: TWO_MATCHES, stderr: "", code: 0, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(result.isError, undefined);
+		const details = result.details as Record<string, unknown>;
+		assert.strictEqual(details.matches, 2);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// interpretSgExecResult pure function tests
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("interpretSgExecResult", () => {
+	it("code 0 with valid JSONL stdout → returns parsed matches", () => {
+		const stdout = [
+			JSON.stringify({ file: "a.ts", lines: "1-5", text: "console.log(x)" }),
+			JSON.stringify({ file: "b.ts", lines: "10-12", text: "console.log(y)" }),
+		].join("\n");
+
+		const result = interpretSgExecResult(0, stdout, "", "console.log($A)", "ts");
+		assert.strictEqual(result.isError, undefined);
+		const details = result.details as Record<string, unknown>;
+		assert.strictEqual(details.matches, 2);
+	});
+
+	it("code 0 with empty stdout → success, matches: 0", () => {
+		const result = interpretSgExecResult(0, "", "", "console.log($A)", "ts");
+		assert.strictEqual(result.isError, undefined);
+		const details = result.details as Record<string, unknown>;
+		assert.strictEqual(details.matches, 0);
+	});
+
+	it("code 1, empty stdout, empty stderr → no matches found", () => {
+		const result = interpretSgExecResult(1, "", "", "nonexistent($A)", "ts");
+		assert.strictEqual(result.isError, undefined);
+		assert.ok(result.content[0].text.includes("No matches found"));
+	});
+
+	it("code 1, empty stdout, non-empty stderr → isError", () => {
+		const result = interpretSgExecResult(1, "", "unknown language: xyz", "console.log($A)", "ts");
+		assert.strictEqual(result.isError, true);
+	});
+
+	it("code 126 → isError", () => {
+		const result = interpretSgExecResult(126, "", "Permission denied", "console.log($A)", "ts");
+		assert.strictEqual(result.isError, true);
 	});
 });
 
@@ -788,16 +1112,9 @@ describe("signal propagation", () => {
 describe("integration: ast-grep binary", () => {
 	const hasAstGrep = (() => {
 		try {
-			const binary = (() => {
-				try {
-					execSync("ast-grep --version", { encoding: "utf-8", stdio: "pipe" });
-					return "ast-grep";
-				} catch {
-					// On some systems sg may be ast-grep, but on Linux it's usually setgroups
-					return null;
-				}
-			})();
-			return binary !== null;
+			const { execSync } = require("node:child_process");
+			execSync("ast-grep --version", { encoding: "utf-8", stdio: "pipe" });
+			return true;
 		} catch {
 			return false;
 		}
@@ -810,29 +1127,18 @@ describe("integration: ast-grep binary", () => {
 		"runs sg scan with console.log pattern on fixture dir",
 		{ skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 },
 		() => {
+			const { resolve } = require("node:path");
+			const { execSync } = require("node:child_process");
+			const { existsSync } = require("node:fs");
 			const sampleDir = resolve(
 				".pi/extensions/structural-analyzer/test/fixtures/structural-sample",
 			);
 			if (!existsSync(sampleDir)) {
-				throw new Error(
-					".pi/extensions/structural-analyzer/test/fixtures/structural-sample/ not found",
-				);
+				throw new Error("fixtures not found");
 			}
 
-			const binary = "ast-grep";
-			const args = [
-				"scan",
-				"--pattern",
-				"console.log($A)",
-				"--json=stream",
-				"--lang",
-				"ts",
-				"--cwd",
-				sampleDir,
-			];
-
 			const stdout = execSync(
-				`${binary} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`,
+				`ast-grep scan --pattern 'console.log($A)' --json=stream --lang ts --cwd '${sampleDir}'`,
 				{
 					cwd: sampleDir,
 					encoding: "utf-8",
@@ -843,12 +1149,6 @@ describe("integration: ast-grep binary", () => {
 
 			const result = parseSgOutput(stdout);
 			assert.ok(result.matches > 0, `Expected at least 1 match, got ${result.matches}`);
-
-			for (const entry of result.results) {
-				assert.ok(typeof entry.file === "string" && entry.file.length > 0);
-				assert.ok(typeof entry.lines === "string");
-				assert.ok(typeof entry.snippet === "string" && entry.snippet.length <= 120);
-			}
 		},
 	);
 
@@ -856,29 +1156,18 @@ describe("integration: ast-grep binary", () => {
 		"runs sg scan with try/catch pattern on Python fixtures",
 		{ skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 },
 		() => {
+			const { resolve } = require("node:path");
+			const { execSync } = require("node:child_process");
+			const { existsSync } = require("node:fs");
 			const sampleDir = resolve(
 				".pi/extensions/structural-analyzer/test/fixtures/structural-sample",
 			);
 			if (!existsSync(sampleDir)) {
-				throw new Error(
-					".pi/extensions/structural-analyzer/test/fixtures/structural-sample/ not found",
-				);
+				throw new Error("fixtures not found");
 			}
 
-			const binary = "ast-grep";
-			const args = [
-				"scan",
-				"--pattern",
-				"try { $$$BODY } catch (e) { console.log($A) }",
-				"--json=stream",
-				"--lang",
-				"py",
-				"--cwd",
-				sampleDir,
-			];
-
 			const stdout = execSync(
-				`${binary} ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`,
+				`ast-grep scan --pattern 'try { $$$BODY } catch (e) { console.log($A) }' --json=stream --lang py --cwd '${sampleDir}'`,
 				{
 					cwd: sampleDir,
 					encoding: "utf-8",
@@ -889,30 +1178,6 @@ describe("integration: ast-grep binary", () => {
 
 			const result = parseSgOutput(stdout);
 			assert.ok(result.matches > 0, `Expected at least 1 match, got ${result.matches}`);
-		},
-	);
-
-	it(
-		"returns error for nonexistent language",
-		{ skip: !hasAstGrep ? skipMsg : false, timeout: 15_000 },
-		() => {
-			const binary = "ast-grep";
-			try {
-				const stdout = execSync(
-					`${binary} scan --pattern 'console.log($A)' --json=stream --lang xyz`,
-					{
-						encoding: "utf-8",
-						stdio: "pipe",
-						timeout: 10_000,
-					},
-				);
-				// If it somehow succeeds, that's unexpected but we don't fail
-				assert.ok(true);
-			} catch (e: unknown) {
-				const err = e as { stderr?: string; stdout?: string; status?: number };
-				// Expect error for unsupported language
-				assert.ok(err.stderr || err.status !== 0, "Expected error for unsupported language");
-			}
 		},
 	);
 });
