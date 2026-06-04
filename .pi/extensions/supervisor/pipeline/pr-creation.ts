@@ -14,7 +14,10 @@ import { getDebugLogger } from "../config/debug.ts";
 
 /**
  * Create a pull request after auditor approves and transitions to Done.
- * Checks ahead commits first, pushes branch, builds body, creates PR.
+ * Pushes branch, builds body, creates PR. Does NOT check ahead commits —
+ * that gate caused silent PR-skipping bugs (issue #501). Instead, always
+ * attempts PR creation and lets gh produce a clear error if the branch
+ * has no commits.
  */
 export async function createPrOnApproval(
 	pi: ExtensionAPI,
@@ -29,35 +32,6 @@ export async function createPrOnApproval(
 	const log = getDebugLogger();
 	const headBranch =
 		worktreeBranch ?? generateBranchName(issueNum, issueTitle, config.branchPrefix!);
-
-	log.info("pr-creation", `Checking ahead commits for ${headBranch}`, {
-		worktreePath,
-		defaultBranch: config.defaultBranch,
-	});
-
-	// Check branch has commits ahead of base before creating PR
-	let aheadCommits = 0;
-	try {
-		const aheadResult = await pi.exec(
-			"git",
-			["rev-list", "--count", `${config.defaultBranch!}..${headBranch}`],
-			{ cwd: ctx.cwd, timeout: 5000 },
-		);
-		const ahead = (aheadResult.stdout || "").trim();
-		aheadCommits = parseInt(ahead, 10) || 0;
-		log.debug("pr-creation", `Ahead by ${aheadCommits} commits`);
-	} catch {
-		log.warn("pr-creation", `git rev-list failed — branch ${headBranch} may not exist locally`);
-	}
-
-	if (aheadCommits === 0) {
-		log.info("pr-creation", `No new commits — skipping PR creation for ${headBranch}`);
-		ctx.ui.notify(
-			`No new commits on ${headBranch} — skipping PR creation (already up to date with ${config.defaultBranch!})`,
-			"info",
-		);
-		return;
-	}
 
 	const prBody = buildPipelineSummary(agentResults, "success", issueNum, issueTitle, config);
 	const tempFile = joinPath(tmpdir(), `pr-body-${issueNum}.md`);
@@ -81,6 +55,10 @@ export async function createPrOnApproval(
 			} catch (pushErr: unknown) {
 				const pushMsg = pushErr instanceof Error ? pushErr.message : String(pushErr);
 				log.warn("pr-creation", `Push failed: ${pushMsg}`);
+				ctx.ui.notify(
+					`Branch push failed: ${pushMsg} — PR may still be created from existing remote ref`,
+					"warning",
+				);
 			}
 		}
 
@@ -118,7 +96,7 @@ export async function createPrOnApproval(
 	} catch (prErr: unknown) {
 		const prMsg = prErr instanceof Error ? prErr.message : String(prErr);
 		log.error("pr-creation", `Failed to create/update PR: ${prMsg}`);
-		ctx.ui.notify(`Failed to create/update PR: ${prMsg}`, "warning");
+		ctx.ui.notify(`Failed to create/update PR: ${prMsg}`, "error");
 		console.warn(`[supervisor] createPullRequest failed: ${prMsg}`);
 	}
 }

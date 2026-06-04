@@ -62,7 +62,8 @@ export function createMessageRenderer(pi: ExtensionAPI) {
 			c.addChild(new Text(fit(theme.fg("dim", "── Thinking ──")), 1, 0));
 			const thinkingLines = details.thinkingOutput.split("\n");
 			for (const line of thinkingLines) {
-				const styled = theme.fg("dim", line || " ");
+				if (!line.trim()) continue; // Skip empty lines — avoid ANSI-colored space rows
+				const styled = theme.fg("dim", line);
 				for (const wrapped of wrapTextWithAnsi(styled, w)) {
 					c.addChild(new Text(wrapped, 1, 0));
 				}
@@ -74,6 +75,7 @@ export function createMessageRenderer(pi: ExtensionAPI) {
 			c.addChild(new Spacer(1));
 			const outputLines = details.textOutput.split("\n");
 			for (const line of outputLines) {
+				if (!line.trim()) continue; // Skip empty lines
 				let styledLine: string;
 				if (line.startsWith("🔧 ")) {
 					styledLine = theme.fg("toolTitle", line);
@@ -88,7 +90,7 @@ export function createMessageRenderer(pi: ExtensionAPI) {
 				} else {
 					styledLine = line;
 				}
-				for (const wrapped of wrapTextWithAnsi(styledLine || " ", w)) {
+				for (const wrapped of wrapTextWithAnsi(styledLine, w)) {
 					c.addChild(new Text(wrapped, 1, 0));
 				}
 			}
@@ -104,7 +106,8 @@ export function createMessageRenderer(pi: ExtensionAPI) {
 					? details.rawOutput.slice(0, 500) + "..."
 					: details.rawOutput;
 			for (const line of preview.split("\n")) {
-				const styled = theme.fg("dim", line || " ");
+				if (!line.trim()) continue; // Skip empty lines
+				const styled = theme.fg("dim", line);
 				for (const wrapped of wrapTextWithAnsi(styled, w)) {
 					c.addChild(new Text(wrapped, 1, 0));
 				}
@@ -136,6 +139,7 @@ export function createSummaryRenderer(pi: ExtensionAPI) {
 
 		const lines = content.split("\n");
 		for (const line of lines) {
+			if (!line.trim()) continue; // Skip empty lines
 			let styledLine: string;
 			// Color the header line
 			if (line.startsWith("## ")) {
@@ -149,7 +153,7 @@ export function createSummaryRenderer(pi: ExtensionAPI) {
 			} else {
 				styledLine = line;
 			}
-			for (const wrapped of wrapTextWithAnsi(styledLine || " ", w)) {
+			for (const wrapped of wrapTextWithAnsi(styledLine, w)) {
 				c.addChild(new Text(wrapped, 1, 0));
 			}
 		}
