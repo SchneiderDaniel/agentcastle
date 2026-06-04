@@ -10,20 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-interface ExecResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-interface ExecFn {
-	(
-		cmd: string,
-		args: string[],
-		opts?: { timeout?: number; signal?: AbortSignal },
-	): Promise<ExecResult>;
-}
+import type { ExecResult, ExecFn } from "./types.ts";
 
 /**
  * Escape a string for use as a single-quoted bash argument.

@@ -6,6 +6,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
+import type { ExecResult, ExecFn } from "../types.ts";
 import {
 	CrawlBackendRegistry,
 	DirectFetchBackend,
@@ -15,17 +16,7 @@ import {
 
 // ── Helpers ──
 
-interface ExecResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-type ExecHandler = (
-	cmd: string,
-	args: string[],
-	opts?: { timeout?: number; signal?: AbortSignal },
-) => Promise<ExecResult>;
+type ExecHandler = ExecFn;
 
 function makeMockExec(): ReturnType<typeof mock.fn<ExecHandler>> {
 	return mock.fn<ExecHandler>();

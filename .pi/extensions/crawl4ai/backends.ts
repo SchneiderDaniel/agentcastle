@@ -11,7 +11,7 @@
 import { runCrawl4aiScript } from "./executor.ts";
 import { CRAWL4AI_SCRIPT } from "./python-script.ts";
 import { ensurePythonVenv, ensureChromiumDeps } from "./venv-setup.ts";
-import type { OnUpdateCallback } from "./types.ts";
+import type { ExecResult, ExecFn, OnUpdateCallback } from "./types.ts";
 import type { VenvCache } from "./venv-setup.ts";
 import { apifyCrawl } from "./apify-crawl.ts";
 import { directFetchCrawl } from "./direct-fetch.ts";
@@ -38,22 +38,6 @@ export interface CrawlBackend {
 		signal?: AbortSignal,
 		onUpdate?: OnUpdateCallback,
 	): Promise<string | null>;
-}
-
-// ── ExecFn type (matches executor.ts and venv-setup.ts) ──
-
-interface ExecResult {
-	code: number;
-	stdout: string;
-	stderr: string;
-}
-
-interface ExecFn {
-	(
-		cmd: string,
-		args: string[],
-		opts?: { timeout?: number; signal?: AbortSignal },
-	): Promise<ExecResult>;
 }
 
 // ── Local crawl4ai backend ──
