@@ -105,7 +105,6 @@ export async function handleSupervisorCommand(
 	const notify: NotifyFn = {
 		info: (msg) => ctx.ui.notify(msg, "info"),
 		error: (msg) => ctx.ui.notify(msg, "error"),
-		setStatus: (status) => ctx.ui.setStatus("supervisor", status),
 	};
 
 	try {

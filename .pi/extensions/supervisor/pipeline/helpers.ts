@@ -37,7 +37,6 @@ export type ExecFn = (
 export interface NotifyFn {
 	info: (msg: string) => void;
 	error: (msg: string) => void;
-	setStatus?: (status: string) => void;
 }
 
 // ─── Internal: wrap exec as ExtensionAPI for github module functions ──

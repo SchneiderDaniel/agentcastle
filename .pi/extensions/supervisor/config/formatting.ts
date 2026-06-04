@@ -116,10 +116,3 @@ export function buildSubagentStatusLine(
 
 	return `subagent: ${agentName}  ${parts.join(" \u00b7 ")}`;
 }
-
-// ─── Footer extension statuses joiner ──────────────────────────────
-// Joins extension statuses with pipe separator for visual distinction.
-
-export function joinExtensionStatuses(statuses: string[]): string {
-	return statuses.join(" | ");
-}
