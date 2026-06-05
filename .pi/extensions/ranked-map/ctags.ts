@@ -64,23 +64,56 @@ export function parseCtagsOutput(raw: string): CtagsTag[] {
 /**
  * Build ctags command arguments.
  *
- * Default excludes: node_modules, .git (common sources of noise).
+ * Default excludes: node_modules, .git (common sources of noise),
+ * plus Q&A data files (*.jsonl), docs (*.md), and large irrelevant dirs.
+ * Extra patterns from .piignore can be passed via extraExcludes.
  * max_depth: 0 = unlimited (ctags default).
  */
 export function buildCtagsArgs(
 	targetDir: string,
 	maxDepth: number,
+	extraExcludes?: string[],
 ): { command: string; args: string[] } {
-	const args = [
-		"-R",
-		"--output-format=json",
-		"--exclude=node_modules",
-		"--exclude=.git",
-		"--exclude=*.json",
-		"--exclude=*.min.js",
-		"--exclude=*.css",
-		"--exclude=static",
+	const excludes = [
+		// Standard noise
+		"node_modules",
+		".git",
+		"*.json",
+		"*.min.js",
+		"*.css",
+		"static",
+		// Q&A data files — zero code symbols
+		"*.jsonl",
+		// Docs — no code symbols
+		"*.md",
+		// Pi agent internals — massive, irrelevant
+		".pi/context",
+		".pi/sessions",
+		".pi/npm",
+		".pi/chromium-deps",
+		".pi/crawl4ai-venv",
+		// Unrelated submodules
+		"flask_blogs",
+		// Benchmarks — not source
+		"benchmarks",
 	];
+
+	// Deduplicate: merge extra excludes from piignore, avoid duplicates
+	const seen = new Set(excludes);
+	if (extraExcludes) {
+		for (const ex of extraExcludes) {
+			if (!seen.has(ex)) {
+				excludes.push(ex);
+				seen.add(ex);
+			}
+		}
+	}
+
+	const args: string[] = ["-R", "--output-format=json"];
+
+	for (const ex of excludes) {
+		args.push(`--exclude=${ex}`);
+	}
 
 	if (maxDepth > 0) {
 		args.push(`--maxdepth=${maxDepth}`);
@@ -111,6 +144,7 @@ export function buildSymbolIndex(
 			type: tag.kind,
 			name: tag.name,
 			line: tag.line ?? 0,
+			pattern: tag.pattern || undefined,
 		});
 	}
 

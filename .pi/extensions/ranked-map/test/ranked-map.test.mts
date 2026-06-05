@@ -268,7 +268,7 @@ describe("loadRankedMapConfig", () => {
 		const dir = mkdtempSync(join(tmpdir(), "ranked-nopi-"));
 		try {
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.tokenBudget, 2048);
+			assert.strictEqual(result.tokenBudget, 4096);
 			assert.strictEqual(result.recencyWindowDays, 30);
 			assert.strictEqual(result.cacheTtlHours, 24);
 			assert.strictEqual(result.weights.keyword, 0.5);
@@ -283,7 +283,7 @@ describe("loadRankedMapConfig", () => {
 		try {
 			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ theme: "dark" }));
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.tokenBudget, 2048);
+			assert.strictEqual(result.tokenBudget, 4096);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -332,7 +332,7 @@ describe("loadRankedMapConfig", () => {
 		}
 	});
 
-	it("rejects negative tokenBudget, falls back to default (2048)", () => {
+	it("rejects negative tokenBudget, falls back to default (4096)", () => {
 		const dir = setupTmpDir();
 		try {
 			writeFileSync(
@@ -340,7 +340,7 @@ describe("loadRankedMapConfig", () => {
 				JSON.stringify({ rankedMap: { tokenBudget: -100 } }),
 			);
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.tokenBudget, 2048);
+			assert.strictEqual(result.tokenBudget, 4096);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -354,7 +354,7 @@ describe("loadRankedMapConfig", () => {
 				JSON.stringify({ rankedMap: { tokenBudget: "abc" } }),
 			);
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.tokenBudget, 2048);
+			assert.strictEqual(result.tokenBudget, 4096);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -368,7 +368,7 @@ describe("loadRankedMapConfig", () => {
 				JSON.stringify({ rankedMap: { tokenBudget: 0 } }),
 			);
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.tokenBudget, 2048);
+			assert.strictEqual(result.tokenBudget, 4096);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -424,7 +424,7 @@ describe("loadRankedMapConfig", () => {
 		try {
 			writeFileSync(join(dir, ".pi", "settings.json"), "not json at all");
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.tokenBudget, 2048);
+			assert.strictEqual(result.tokenBudget, 4096);
 			assert.strictEqual(result.recencyWindowDays, 30);
 		} finally {
 			cleanupDir(dir);
@@ -523,7 +523,7 @@ describe("loadRankedMapConfig", () => {
 
 describe("DEFAULT_CONFIG", () => {
 	it("exports a constant with correct shape", () => {
-		assert.strictEqual(DEFAULT_CONFIG.tokenBudget, 2048);
+		assert.strictEqual(DEFAULT_CONFIG.tokenBudget, 4096);
 		assert.strictEqual(DEFAULT_CONFIG.recencyWindowDays, 30);
 		assert.strictEqual(DEFAULT_CONFIG.cacheTtlHours, 24);
 		assert.strictEqual(DEFAULT_CONFIG.autoThreshold, 20000);
