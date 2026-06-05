@@ -270,7 +270,7 @@ function detectIdenticalArgs(data: SessionData): WasteSignal[] {
 		}
 
 		const matching = windowEntries.filter((w) => w.key === key);
-		if (matching.length >= 3 && matching[0] === c) {
+		if (matching.length >= 3) {
 			// Report on first occurrence of the loop
 			const waste = sumTokenCost(matching.slice(1).map((m) => m.entry));
 			const cost = sumDollarCost(matching.slice(1).map((m) => m.entry));
