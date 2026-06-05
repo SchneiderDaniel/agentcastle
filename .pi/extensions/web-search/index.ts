@@ -10,10 +10,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { SEARCH_SCRIPT } from "./python-script.ts";
 import { runSearchScript, parseSearchResults } from "./executor.ts";
-import type { SearchCacheEntry } from "./types.ts";
+import { ensureWebSearchVenv } from "./venv-setup.ts";
+import type { SearchCacheEntry, VenvCache } from "./types.ts";
 
 /** In-session cache for search results to avoid redundant lookups */
 const searchCache = new Map<string, SearchCacheEntry>();
+
+/** Cache for venv ready state (shared across calls in same session) */
+const venvReady: VenvCache = new Map();
 
 /** TTL for cache entries in milliseconds (5 minutes) */
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -66,9 +70,23 @@ export default function webSearch(pi: ExtensionAPI): void {
 			});
 
 			const cwd = _ctx.cwd;
-			const python = "python3";
 
-			// Try system python3 first
+			// Resolve venv python (auto-creates venv + installs ddgs on first call)
+			const python = await ensureWebSearchVenv(pi.exec, cwd, onUpdate, venvReady);
+			if (!python) {
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								"Web search failed: could not set up Python virtual environment. " +
+								"Ensure python3 is installed and try again.",
+						},
+					],
+					details: {} as Record<string, unknown>,
+				};
+			}
+
 			const result = await runSearchScript(
 				python,
 				SEARCH_SCRIPT,

@@ -40,3 +40,12 @@ export interface SearchCacheEntry {
 	results: SearchResult[];
 	timestamp: number;
 }
+
+/** Cache entry for venv ready state with retry metadata */
+export interface VenvCacheEntry {
+	ready: boolean;
+	timestamp: number;
+	retries: number;
+}
+
+export type VenvCache = Map<string, VenvCacheEntry>;
