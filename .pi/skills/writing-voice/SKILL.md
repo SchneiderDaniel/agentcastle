@@ -1,11 +1,11 @@
 ---
 name: writing-voice
-description: "Formal academic writing style guide for project documentation. Specifies tone (declarative, formal), word choice (Latinate, high noun-verb ratio), sentence structure (right-branching, fronted adverbials), and conventions (no contractions, first-person plural, present tense). Apply before writing summaries, docs, READMEs, guides, or any user-facing text."
+description: "Writing style guide for project documentation. Apply before any writing summaries, docs, READMEs, guides, or any user-facing text."
 ---
 
 # Writing Voice Skill
 
-Apply stored writing voice rules when generating text for users. Reads `voice-{lang}.md` files from `voice/` folder in this skill directory.
+Apply stored writing voice rules when generating text for users. Reads `voice-{lang}.md` files from `references/` folder in this skill directory.
 
 ## When to Trigger — MANDATORY
 
@@ -23,10 +23,10 @@ You MUST trigger this skill when the task involves writing **any user-facing tex
 
 **Rule:** If user asks you to write, describe, explain, or summarize in prose → load this skill first. No exceptions.
 
-## Voice File Location
+## Reference File Location
 
 ```
-.pi/skills/writing-voice/voice/
+.pi/skills/writing-voice/references/
 └── voice-{lang}.md    (e.g. voice-en.md, voice-de.md)
 ```
 
@@ -45,10 +45,16 @@ Determine language from:
 Check if voice file exists for detected language:
 
 ```bash
-ls /home/miria/git/main/.pi/skills/writing-voice/voice/voice-{lang}.md
+ls references/voice-{lang}.md
 ```
 
-If found: `read` the file and extract rules.
+If found, read the file relative to this skill directory:
+
+```
+read references/voice-{lang}.md
+```
+
+Extract rules and apply them.
 If not found: write in neutral/default style. Optionally suggest creating voice file via `@.pi/prompts/misc/misc:writing-voice`.
 
 ### Step 3 — Apply Rules When Writing
@@ -74,7 +80,7 @@ Use `@.pi/prompts/misc/misc:writing-voice` to analyze writing samples and genera
 The prompt:
 1. Collects sample text (paste, URL, or file)
 2. Analyzes 7 style dimensions
-3. Writes `voice-{lang}.md` to the `voice/` folder
+3. Writes `voice-{lang}.md` to the `references/` folder
 
 ## Example
 
@@ -82,7 +88,7 @@ The prompt:
 Task: Write German documentation for new feature
 Agent action:
   1. Detect lang=de
-  2. Read /home/miria/git/main/.pi/skills/writing-voice/voice/voice-de.md
+  2. Read `references/voice-de.md` (resolve relative to skill dir)
   3. Apply voice rules: formal academic register, passive constructions with "werden",
      first-person plural "wir", fronted prepositional phrases, Verb-Endstellung
   4. Write documentation matching voice profile
@@ -93,7 +99,7 @@ Agent action:
 List available voice files:
 
 ```bash
-ls /home/miria/git/main/.pi/skills/writing-voice/voice/
+ls references/
 ```
 
 ## Rules
