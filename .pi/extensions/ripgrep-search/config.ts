@@ -6,8 +6,8 @@
  */
 
 import type { SearchConfig } from "./types.ts";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { accessSync, constants, readFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
 
 const DEFAULT_CONFIG: SearchConfig = {
 	searchBackend: "auto",
@@ -81,7 +81,16 @@ export function resolveBackend(
 	return { backend: rgAvailable ? "ripgrep" : "grep" };
 }
 
-/** Detect if ripgrep is available on PATH. */
+/**
+ * Detect if ripgrep is available via PATH check (primary) or spawn fallback.
+ *
+ * Primary: check process.env.PATH directly for rg executable.
+ *   - Zero overhead, no subprocess spawn, no timeout risk
+ *   - Uses same PATH as the Node.js process
+ *
+ * Fallback: spawn "rg --version" via exec (handles environments where
+ *   subprocess PATH differs from process.env.PATH).
+ */
 export async function ripgrepAvailable(
 	exec: (
 		command: string,
@@ -93,10 +102,33 @@ export async function ripgrepAvailable(
 		stderr: string;
 	}>,
 ): Promise<boolean> {
+	// Primary: PATH directory check (no spawn, instant, reliable)
+	const pathDirs = (process.env.PATH ?? "").split(delimiter);
+	for (const dir of pathDirs) {
+		try {
+			accessSync(join(dir, "rg"), constants.X_OK);
+			return true;
+		} catch {
+			// Not in this directory, continue
+		}
+	}
+
+	// Fallback: spawn-based detection for exotic environments
 	try {
 		const result = await exec("rg", ["--version"], { timeout: 3_000 });
-		return result.code === 0;
-	} catch {
+		if (result.code === 0) return true;
+		// rg on PATH but spawn failed — likely transient (timeout, resource)
+		console.warn(
+			"[ripgrep-search] `rg --version` failed (exit=" +
+				result.code +
+				"), falling back to grep. Install/check rg on PATH for faster search.",
+		);
+		return false;
+	} catch (err) {
+		console.warn(
+			"[ripgrep-search] ripgrep not found on PATH. Falling back to grep. " +
+				"Install ripgrep (https://github.com/BurntSushi/ripgrep) for faster search.",
+		);
 		return false;
 	}
 }

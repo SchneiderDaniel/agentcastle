@@ -20,6 +20,7 @@ import { getCachedResult, setCachedResult, clearCache } from "./cache.ts";
 
 const MAX_TOTAL_RESULTS = 500;
 const DEFAULT_DISPLAY_RESULTS = 10;
+const MAX_LINE_LENGTH = 500; // truncate individual match lines to prevent context-window blowup
 
 function errResponse(text: string, extra: Record<string, unknown> = {}) {
 	return {
@@ -124,11 +125,15 @@ export function buildStructuredSummary(
 	text += `Matches returned: ${totalReturned}`;
 	text += ` across ${uniqueFiles.size} file${uniqueFiles.size !== 1 ? "s" : ""}\n\n`;
 
-	// Show top-N results
+	// Show top-N results (each line truncated to MAX_LINE_LENGTH for safety)
 	const displayResults = searchResult.results.slice(0, maxDisplay);
 	for (let i = 0; i < displayResults.length; i++) {
 		const r = displayResults[i]!;
-		text += `${i + 1}. ${r.file}:${r.line}:${r.column}:${r.text}\n`;
+		const truncatedText =
+			r.text.length > MAX_LINE_LENGTH
+				? r.text.slice(0, MAX_LINE_LENGTH) + "... [truncated]"
+				: r.text;
+		text += `${i + 1}. ${r.file}:${r.line}:${r.column}:${truncatedText}\n`;
 	}
 
 	const resultsTruncated = totalReturned > maxDisplay;

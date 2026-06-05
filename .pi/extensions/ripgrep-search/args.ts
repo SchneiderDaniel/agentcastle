@@ -41,6 +41,9 @@ export function buildRgArgs(
  * Build grep command arguments as fallback when ripgrep unavailable.
  * Emulates --vimgrep output (file:line:column:text) as closely as possible.
  * Column is set to 1 since standard grep doesn't output column.
+ *
+ * Excludes cache/ and .cache/ dirs to prevent context-window blowup from
+ * large single-line cache files (e.g. ranked-map-index.json at 21MB).
  */
 export function buildGrepArgs(
 	query: string,
@@ -56,6 +59,8 @@ export function buildGrepArgs(
 		"--exclude-dir=.pytest_cache",
 		"--exclude-dir=dist",
 		"--exclude-dir=build",
+		"--exclude-dir=cache",
+		"--exclude-dir=.cache",
 	];
 	const args = [
 		"-rnH", // recursive, line-number, with-filename
