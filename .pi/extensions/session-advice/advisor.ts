@@ -9,7 +9,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { BashCommand } from "../../lib/bash-command.ts";
+import { BashCommand } from "../../agent-harness/lib/bash-command.ts";
 
 // ── Types ──
 

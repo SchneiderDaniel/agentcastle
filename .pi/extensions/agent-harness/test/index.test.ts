@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 import { AgentHarness, getBashSubKey } from "../index.ts";
 import type { ToolCallResult } from "../index.ts";
 import agentHarness from "../index.ts";
-import { CASCADE_THRESHOLD, CACHE_TTL_TURNS } from "../../../lib/harness-rules.ts";
+import { CASCADE_THRESHOLD, CACHE_TTL_TURNS } from "../lib/harness-rules.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ── Helpers ──
