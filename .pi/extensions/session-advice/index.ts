@@ -61,7 +61,14 @@ import { analyzeSession, parseJsonlFile } from "./advisor.ts";
 
 const pipeline = new AdvicePipeline();
 
-export { generateAdviceReport, writeAdvice, backfillMissingAdvice, handleShutdown, createGhIssue };
+export {
+	generateAdviceReport,
+	writeAdvice,
+	backfillMissingAdvice,
+	handleShutdown,
+	createGhIssue,
+	createSignalIssues,
+};
 
 export default function (pi: ExtensionAPI): void {
 	let enabled = true;
