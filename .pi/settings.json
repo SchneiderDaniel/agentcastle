@@ -19,6 +19,7 @@
 		"memory": "4G",
 		"cpus": "2.0"
 	},
+	"skills": [".pi/skills"],
 	"prompts": [
 		"prompts",
 		"prompts/operations",
