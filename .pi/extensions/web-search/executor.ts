@@ -2,7 +2,7 @@
  * executor.ts — Run ddgs Python script via temp files + env execution
  *
  * Isolates shell quoting and temp file management.
- * Writes Python script + config to .pi/web-search/ temp files and executes
+ * Writes Python script + config to ignore/web-search/ temp files and executes
  * via bash -c with properly quoted paths.
  */
 
@@ -39,7 +39,7 @@ export async function runSearchScript(
 	signal?: AbortSignal,
 	execFn?: ExecFn,
 ): Promise<ExecResult> {
-	const runDir = path.join(process.cwd(), ".pi", "web-search");
+	const runDir = path.join(process.cwd(), "ignore", "web-search");
 	fs.mkdirSync(runDir, { recursive: true });
 
 	const scriptPath = path.join(runDir, "search.py");

@@ -19,7 +19,7 @@
 1. The LLM calls `web_search` with a query and optional maxResults
 2. The extension validates the query (rejects empty queries)
 3. **Cache check** — If the same query+maxResults was already searched within 5 minutes, the cached result is returned without re-running the subprocess
-4. The extension writes the Python script and config to `.pi/web-search/` temp files
+4. The extension writes the Python script and config to `ignore/web-search/` temp files
 5. The script is executed via `bash -c` using `pi.exec`
 6. The Python script uses `ddgs.DDGS().text(query, max_results=N, backend="auto")` to perform the search
 7. Results are parsed from the `SEARCH_OK`/`SEARCH_DONE` delimited output
