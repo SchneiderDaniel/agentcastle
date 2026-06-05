@@ -87,6 +87,35 @@ export function formatSymbols(symbols: SymbolEntry[], path: string): string {
 }
 
 /**
+ * Get a structural overview of the repository — one representative file
+ * per top-level directory. Used in recency-only mode to ensure the agent
+ * sees at least one file from each top-level directory.
+ *
+ * Returns entries with score: 0.1 (low but non-zero, so they appear at
+ * the bottom of ranked results) and empty preview.
+ */
+export function getStructuralOverview(filePaths: string[]): { path: string; score: number }[] {
+	const seen = new Set<string>();
+	const overview: { path: string; score: number }[] = [];
+
+	for (const filePath of filePaths) {
+		// Normalize: strip leading ./ if present
+		const normalized = filePath.startsWith("./") ? filePath.slice(2) : filePath;
+
+		// Get top-level directory
+		const slashIdx = normalized.indexOf("/");
+		const topDir = slashIdx === -1 ? normalized : normalized.slice(0, slashIdx);
+
+		if (!seen.has(topDir)) {
+			seen.add(topDir);
+			overview.push({ path: filePath, score: 0.1 });
+		}
+	}
+
+	return overview;
+}
+
+/**
  * Format ranked results into output shape.
  *
  * Scores are rounded to 2 decimal places.

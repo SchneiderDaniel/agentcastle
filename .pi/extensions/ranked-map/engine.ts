@@ -16,13 +16,14 @@ import {
 	type RankedMapResult,
 } from "./types.ts";
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { buildCtagsArgs, buildSymbolIndex } from "./ctags.ts";
 import { loadCachedIndex } from "./cache.ts";
 import { selectMode, dumpAllFiles, formatOutput } from "./format.ts";
 import { computeKeywordScores, computeRecencyScores, rankFiles } from "./scoring.ts";
 import { runKeywordSearch } from "./search.ts";
 import { runGitRecency, getGitHead } from "./git.ts";
+import { buildPiignoreExcludes } from "./piignore.ts";
 
 /** Result shape for the rank method — extends dumpAllFiles/rankFiles result with mode. */
 export interface RankResult {
@@ -43,11 +44,15 @@ export interface RankResult {
  *   const output = engine.format(withPreviews, budget, ranked.truncated, ranked.mode);
  */
 export class RankedMapEngine {
-	constructor(
-		private config: RankedMapConfig,
-		private exec: ExecFn,
-		private cwd: string,
-	) {}
+	private config: RankedMapConfig;
+	private exec: ExecFn;
+	private cwd: string;
+
+	constructor(config: RankedMapConfig, exec: ExecFn, cwd: string) {
+		this.config = config;
+		this.exec = exec;
+		this.cwd = cwd;
+	}
 
 	/**
 	 * Build or load the symbol index.
@@ -81,7 +86,11 @@ export class RankedMapEngine {
 			// non-critical — cache dir may already exist
 		}
 
-		const { command, args } = buildCtagsArgs(targetDir, 0);
+		// Incorporate .piignore patterns as additional ctags excludes
+		const piignorePath = join(this.cwd, ".piignore");
+		const piignoreExcludes = buildPiignoreExcludes(piignorePath);
+
+		const { command, args } = buildCtagsArgs(targetDir, 0, piignoreExcludes);
 		const result = await this.exec(command, args, {
 			cwd: this.cwd,
 			timeout: 30_000,
@@ -129,7 +138,8 @@ export class RankedMapEngine {
 
 		// Ranked mode: compute keyword scores (if query) and recency scores
 		let keywordScores: Record<string, number> = {};
-		if (query.trim()) {
+		const hasQuery = query.trim().length > 0;
+		if (hasQuery) {
 			const { fileMatches, terms } = await runKeywordSearch(
 				this.exec,
 				query,
@@ -160,19 +170,49 @@ export class RankedMapEngine {
 	}
 
 	/**
-	 * Add file previews (first 5 lines) for ranked mode results.
+	 * Strip ctag pattern delimiters to extract the actual code line.
+	 * Pattern format is typically /^code line$/ or ?^code line$?
+	 */
+	private stripPattern(pattern: string): string {
+		// Pattern format: /^...$/  or ?^...$?
+		const match = pattern.match(/^[\/?]\^?(.+?)\$?[\/?]$/);
+		if (match?.[1]) {
+			return match[1];
+		}
+		// Fallback: just return the pattern as-is
+		return pattern;
+	}
+
+	/**
+	 * Add file previews for ranked mode results.
+	 *
+	 * When an index is provided, tries to show the first ctag pattern line
+	 * (the definition line) instead of reading the first 5 file lines.
+	 * Falls back to reading first 5 lines when no pattern is available.
 	 * Full_dump mode files are returned unchanged.
 	 */
 	addPreviews(
 		files: RankedFileScore[],
 		targetDir: string,
 		mode: "ranked" | "full_dump",
+		index?: CachedIndex,
 	): RankedFileScore[] {
 		if (mode === "full_dump") return files;
 
 		return files.map((f) => {
 			if (f.preview) return f; // already has preview
 			let preview = "";
+
+			// Try pattern-based preview from index
+			if (index?.symbols[f.path] && index.symbols[f.path]!.length > 0) {
+				const firstSymbol = index.symbols[f.path]![0];
+				if (firstSymbol.pattern) {
+					preview = this.stripPattern(firstSymbol.pattern);
+					return { ...f, preview };
+				}
+			}
+
+			// Fallback: read first 5 lines from disk
 			try {
 				const fullPath = resolve(this.cwd, targetDir, f.path);
 				if (existsSync(fullPath)) {

@@ -68,8 +68,46 @@ export function computeRecencyScores(
 }
 
 /**
+ * Apply test-file penalty to a set of ranked file scores.
+ *
+ * Files matching test patterns (.test., .spec., /test/) get their score
+ * multiplied by TEST_PENALTY (0.5x). This reduces, but doesn't eliminate,
+ * their ranking position — source files rank higher than tests.
+ */
+const TEST_FILE_PENALTY = 0.5;
+
+/**
+ * Pattern for detecting test files:
+ * - Contains .test. (e.g. foo.test.ts, foo.test.mts)
+ * - Contains .spec. (e.g. foo.spec.ts)
+ * - Contains /test/ directory segment (e.g. src/test/foo.ts)
+ */
+const TEST_FILE_RE = /(\.test\.|\.spec\.|\/test\/)/;
+
+/**
+ * Check if a file path matches test-file patterns.
+ */
+export function isTestFile(path: string): boolean {
+	return TEST_FILE_RE.test(path);
+}
+
+/**
+ * Apply penalty to scores of test files in-place.
+ */
+export function applyTestFilePenalty(files: { path: string; score: number }[]): void {
+	for (const f of files) {
+		if (isTestFile(f.path)) {
+			f.score = Math.round(f.score * TEST_FILE_PENALTY * 100) / 100;
+		}
+	}
+}
+
+/**
  * Rank files by combined score (weighted sum of keyword + recency),
  * sort descending, and fill within token budget (greedy).
+ *
+ * Test files (.test., .spec., /test/) receive a 0.5x score penalty
+ * so source files rank higher than their corresponding tests.
  */
 export function rankFiles(
 	keywordScores: Record<string, number>,
@@ -94,6 +132,9 @@ export function rankFiles(
 		const score = kw * weights.keyword + rec * weights.recency;
 		scored.push({ path: file, score: Math.round(score * 100) / 100, symbols: syms });
 	}
+
+	// Apply test-file penalty before sorting
+	applyTestFilePenalty(scored);
 
 	// Sort descending by score, tie-break by path alphabetically
 	scored.sort((a, b) => {
