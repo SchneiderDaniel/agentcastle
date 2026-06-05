@@ -2,7 +2,7 @@
 // PR creation logic: decoupled from handler, triggered on auditor approval.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig, PipelineAgentResult } from "../config/types.ts";
+import type { SupervisorConfig, PipelineAgentResult, PrConflictInfo } from "../config/types.ts";
 import { writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 import { tmpdir } from "node:os";
@@ -64,7 +64,19 @@ export async function createPrOnApproval(
 
 		// Check if PR already exists for this branch (from a previous pipeline run).
 		// If so, update the existing PR body instead of creating a duplicate.
-		const existingPr = await checkPrConflicts(pi, headBranch, config.repo);
+		// If the check fails (network error, gh not authenticated), log a warning
+		// and continue with PR creation — don't let a failed check block the pipeline.
+		let existingPr: PrConflictInfo | null = null;
+		try {
+			existingPr = await checkPrConflicts(pi, headBranch, config.repo);
+		} catch (checkErr: unknown) {
+			const checkMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+			log.warn("pr-creation", `PR conflict check failed: ${checkMsg}`);
+			ctx.ui.notify(
+				`PR conflict check failed: ${checkMsg} — attempting PR creation anyway`,
+				"warning",
+			);
+		}
 
 		if (existingPr) {
 			log.info("pr-creation", `PR #${existingPr.number} already exists — updating body`);
