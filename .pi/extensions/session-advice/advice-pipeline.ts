@@ -17,7 +17,14 @@ import {
 } from "./advisor.ts";
 import type { SessionAnalysis, WasteSignal, SessionData } from "./advisor.ts";
 import { generateAdvice, generateReportAdvice } from "./llm-advisor.ts";
-import type { AdviceResult, AdviceAction, SignalReview } from "./llm-advisor.ts";
+import type {
+	AdviceResult,
+	AdviceAction,
+	SignalReview,
+	ModelLike as ModelRef,
+	ModelRegistryLike as ModelRegistryRef,
+} from "./llm-advisor.ts";
+export type { ModelRef, ModelRegistryRef };
 import { FIXES, DEFAULT_FIX } from "./fixes.ts";
 import { SymlinkManager } from "./symlink-manager.ts";
 
@@ -341,11 +348,7 @@ export class AdvicePipeline {
 		// Try LLM advice + signal review if model available
 		if (model && modelRegistry && analyses.length > 0) {
 			try {
-				const { reportMd, review } = await generateReportAdvice(
-					analyses,
-					model as any,
-					modelRegistry as any,
-				);
+				const { reportMd, review } = await generateReportAdvice(analyses, model, modelRegistry);
 				report.adviceMd = reportMd;
 				report.review = review;
 			} catch (err) {
@@ -358,24 +361,6 @@ export class AdvicePipeline {
 		const reportPath = this.write(sessionsDir, markdown);
 		return { markdown, reportPath, report };
 	}
-}
-
-// ── Minimal interfaces to avoid pi dep in this file ──
-
-/** Minimal Model interface for LLM calls. */
-export interface ModelRef {
-	id: string;
-	api: string;
-	provider: string;
-	baseUrl: string;
-	headers?: Record<string, string>;
-}
-
-/** Minimal ModelRegistry interface. */
-export interface ModelRegistryRef {
-	getApiKeyAndHeaders(
-		model: ModelRef,
-	): Promise<{ ok: boolean; apiKey?: string; headers?: Record<string, string>; error?: string }>;
 }
 
 // ── Standalone functions (backward compatible exports) ──
@@ -432,9 +417,7 @@ export async function writeAdvice(
 		// Try LLM advice
 		if (model && modelRegistry) {
 			try {
-				const mod = model as any;
-				const reg = modelRegistry as any;
-				llmAdvice = await generateAdvice(analysis, mod, reg);
+				llmAdvice = await generateAdvice(analysis, model, modelRegistry);
 			} catch (err) {
 				// LLM failed — proceed without
 				const msg = (err as Error).message;
