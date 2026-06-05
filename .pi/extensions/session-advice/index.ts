@@ -57,7 +57,6 @@ import {
 	generateAdviceReport,
 	writeAdvice,
 } from "./advice-pipeline.ts";
-import { buildSessionAnalysis, renderWasteSummary } from "./advisor.ts";
 import { analyzeSession, parseJsonlFile } from "./advisor.ts";
 
 const pipeline = new AdvicePipeline();

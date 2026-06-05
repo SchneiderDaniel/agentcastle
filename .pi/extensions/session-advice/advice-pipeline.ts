@@ -9,12 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
-import {
-	parseJsonlFile,
-	analyzeSession,
-	buildSessionAnalysis,
-	renderWasteSummary,
-} from "./advisor.ts";
+import { parseJsonlFile, analyzeSession, buildSessionAnalysis } from "./advisor.ts";
 import type { SessionAnalysis, WasteSignal, SessionData } from "./advisor.ts";
 import { generateAdvice, generateReportAdvice } from "./llm-advisor.ts";
 import type {
