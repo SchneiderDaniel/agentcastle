@@ -1,61 +1,80 @@
 /**
- * advice-pipeline.ts — Cross-session advice report pipeline
+ * advice-pipeline.ts — Waste-based cross-session advice pipeline
  *
- * Phases: parse → analyze → aggregate → render → write
+ * Phases: parse → detect → (optionally) LLM-advise → render → write
  *
- * Pure logic, no pi dependency. Used by the session-advice extension
- * (/session-advice report command) and potentially by headless scripts.
+ * Pure detection (no pi dep). LLM advice requires model + modelRegistry.
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execSync } from "node:child_process";
-import { parseJsonlFile, analyzeSession, renderAdviceToMarkdown } from "./advisor.ts";
-import type { AdviceEntry, AdviceResult, SessionData } from "./advisor.ts";
+import {
+	parseJsonlFile,
+	analyzeSession,
+	buildSessionAnalysis,
+	renderWasteSummary,
+} from "./advisor.ts";
+import type { SessionAnalysis, WasteSignal, SessionData } from "./advisor.ts";
+import { generateAdvice, generateReportAdvice } from "./llm-advisor.ts";
+import type { AdviceResult, AdviceAction, SignalReview } from "./llm-advisor.ts";
 import { FIXES, DEFAULT_FIX } from "./fixes.ts";
-import type { FixSuggestion } from "./fixes.ts";
 import { SymlinkManager } from "./symlink-manager.ts";
 
 // ── Types ──
 
-export interface CategoryGroup {
-	category: string;
-	issues: Array<{ session: string; detail: string; severity: string }>;
+export interface AggregatedSignal {
+	signal: string;
+	label: string;
+	wastedTokens: number;
+	wastedCost: number;
+	occurrences: number;
+	sessionsAffected: number;
+	sessionIds: string[];
+	details: string[];
 }
 
-export interface CategorySummary {
-	category: string;
-	priority: string;
-	severity: string;
-	sessionsAffected: number;
-	issues: number;
-	sessionIds: string[];
-	example: string;
-	sampleDetails: string[];
-	fixIdea: string;
-	effort: string;
+export interface WasteReport {
+	totalSessions: number;
+	totalTokens: number;
+	totalWasteTokens: number;
+	totalWasteCost: number;
+	wasteFraction: number;
+	signals: AggregatedSignal[];
+	perSession: SessionAnalysis[];
+	adviceMd?: string; // LLM-generated cross-session advice
+	review?: SignalReview; // LLM signal quality review (if enabled)
 }
 
 // ── AdvicePipeline ──
 
 export class AdvicePipeline {
-	private symlinkManager: SymlinkManager;
+	private _symlinkManager: SymlinkManager;
 
 	constructor() {
-		this.symlinkManager = new SymlinkManager();
+		this._symlinkManager = new SymlinkManager();
+	}
+
+	/** Expose symlink manager for standalone function access. */
+	getSymlinkManager(): SymlinkManager {
+		return this._symlinkManager;
 	}
 
 	/**
-	 * Phase 1: Parse — read all JSONL files from sessionsDir,
-	 * parse them into SessionData objects.
+	 * Phase 1: Parse + Detect — read all JSONL files, run detectors.
 	 */
-	parse(sessionsDir: string): { files: string[]; sessions: Map<string, SessionData> } {
+	detect(sessionsDir: string): {
+		files: string[];
+		sessions: Map<string, SessionData>;
+		analyses: SessionAnalysis[];
+	} {
 		const jsonlFiles = fs
 			.readdirSync(sessionsDir)
 			.filter((f) => f.endsWith(".jsonl") && !f.includes("latest"))
 			.sort();
 
 		const sessions = new Map<string, SessionData>();
+		const analyses: SessionAnalysis[] = [];
 
 		for (const file of jsonlFiles) {
 			const jsonlPath = path.join(sessionsDir, file);
@@ -63,252 +82,230 @@ export class AdvicePipeline {
 				const data = parseJsonlFile(jsonlPath);
 				if (data) {
 					sessions.set(file, data);
+					const signals = analyzeSession(data);
+					const meta = loadMetadata(sessionsDir, file);
+					const analysis = buildSessionAnalysis(data, signals, meta);
+					analyses.push(analysis);
 				}
 			} catch {
-				// skip unparseable files
+				// skip unparseable
 			}
 		}
 
-		return { files: jsonlFiles, sessions };
+		return { files: [...sessions.keys()], sessions, analyses };
 	}
 
 	/**
-	 * Phase 2: Analyze — run analyzeSession on each parsed session.
+	 * Phase 2: Aggregate — collect all signals across sessions.
 	 */
-	analyze(
-		sessions: Map<string, SessionData>,
-	): Map<string, { sessionId: string; result: AdviceResult }> {
-		const results = new Map<string, { sessionId: string; result: AdviceResult }>();
+	aggregate(analyses: SessionAnalysis[]): WasteReport {
+		const totalTokens = analyses.reduce((s, a) => s + a.totalTokens, 0);
+		const totalWasteTokens = analyses.reduce((s, a) => s + a.totalWasteTokens, 0);
+		const totalWasteCost = analyses.reduce((s, a) => s + a.totalWasteCost, 0);
 
-		for (const [file, data] of sessions) {
-			const result = analyzeSession(data);
-			results.set(file, { sessionId: data.sessionId, result });
+		// Aggregate by signal key
+		const bySignal = new Map<
+			string,
+			{
+				signal: string;
+				label: string;
+				wastedTokens: number;
+				wastedCost: number;
+				occurrences: number;
+				sessionIds: Set<string>;
+				details: string[];
+			}
+		>();
+
+		for (const a of analyses) {
+			for (const s of a.wasteBySignal) {
+				if (!bySignal.has(s.signal)) {
+					bySignal.set(s.signal, {
+						signal: s.signal,
+						label: s.label,
+						wastedTokens: 0,
+						wastedCost: 0,
+						occurrences: 0,
+						sessionIds: new Set(),
+						details: [],
+					});
+				}
+				const agg = bySignal.get(s.signal)!;
+				agg.wastedTokens += s.wastedTokens;
+				agg.wastedCost += s.wastedCost;
+				agg.occurrences += s.occurrences;
+				agg.sessionIds.add(a.sessionId);
+				agg.details.push(...s.details);
+			}
 		}
 
-		return results;
+		const signals: AggregatedSignal[] = [...bySignal.values()]
+			.map((s) => ({
+				...s,
+				sessionsAffected: s.sessionIds.size,
+				sessionIds: [...s.sessionIds],
+				details: [...new Set(s.details)].slice(0, 5), // top 5 unique details
+			}))
+			.sort((a, b) => b.wastedTokens - a.wastedTokens);
+
+		return {
+			totalSessions: analyses.length,
+			totalTokens,
+			totalWasteTokens,
+			totalWasteCost,
+			wasteFraction: totalTokens > 0 ? totalWasteTokens / totalTokens : 0,
+			signals,
+			perSession: analyses,
+		};
 	}
 
 	/**
-	 * Phase 3: Aggregate — collect all issues across sessions,
-	 * group by category, build recency map, compute priority,
-	 * and map to fix suggestions.
+	 * Phase 3: Render — build markdown report.
 	 */
-	aggregate(
-		files: string[],
-		sessions: Map<string, SessionData>,
-		analysisResults: Map<string, { sessionId: string; result: AdviceResult }>,
-	): {
-		allIssues: Array<{ session: string; entry: AdviceEntry }>;
-		categories: CategorySummary[];
-		sessionRecency: Map<string, number>;
-	} {
-		const allIssues: Array<{ session: string; entry: AdviceEntry }> = [];
-
-		for (const [, { sessionId, result }] of analysisResults) {
-			if (result.entries.length === 0) continue;
-
-			for (const entry of result.entries) {
-				allIssues.push({
-					session: sessionId,
-					entry,
-				});
-			}
-		}
-
-		// Group by category
-		const byCategory = new Map<string, CategoryGroup>();
-		for (const { session, entry } of allIssues) {
-			if (!byCategory.has(entry.category)) {
-				byCategory.set(entry.category, { category: entry.category, issues: [] });
-			}
-			byCategory.get(entry.category)!.issues.push({
-				session,
-				detail: entry.detail,
-				severity: entry.severity,
-			});
-		}
-
-		// Session recency map: keyed by header.id, value 0 (oldest) to 1 (newest)
-		const sessionRecency = new Map<string, number>();
-		files.forEach((f, i) => {
-			const sessionData = sessions.get(f);
-			if (sessionData) {
-				sessionRecency.set(sessionData.sessionId, i / Math.max(files.length - 1, 1));
-			} else {
-				// Fallback: key by filename for unparseable headers
-				sessionRecency.set(f.replace(/\.jsonl$/, ""), i / Math.max(files.length - 1, 1));
-			}
-		});
-
-		// Build category summaries
-		const categories: CategorySummary[] = [];
-		for (const g of byCategory.values()) {
-			const maxSev = g.issues.reduce(
-				(acc, i) => {
-					const w = i.severity === "error" ? 2 : i.severity === "warning" ? 1 : 0;
-					return w > acc.w ? { sev: i.severity, w } : acc;
-				},
-				{ sev: "info" as string, w: 0 },
-			).sev;
-
-			const sessions = [...new Set(g.issues.map((i) => i.session))];
-
-			// Recency-weighted reach
-			const recencyWeightedIssues = g.issues.reduce((sum, i) => {
-				const recencyFactor = sessionRecency.get(i.session) ?? 0.5;
-				return sum + (0.5 + recencyFactor * 0.5);
-			}, 0);
-			const reach = sessions.length * recencyWeightedIssues;
-			const priority = reach >= 50 ? "High" : reach >= 10 ? "Medium" : "Low";
-			const fix = FIXES[g.category] ?? DEFAULT_FIX;
-
-			const sampleDetails = [...new Set(g.issues.map((i) => i.detail))].slice(0, 3);
-			const firstDetail = g.issues.find((i) => i.detail);
-			const example = firstDetail?.detail?.replace(/\s*\(turn.*\)$/, "") ?? "—";
-
-			categories.push({
-				category: g.category,
-				priority,
-				severity: maxSev,
-				sessionsAffected: sessions.length,
-				issues: g.issues.length,
-				sessionIds: sessions,
-				example,
-				sampleDetails,
-				fixIdea: fix.idea,
-				effort: fix.effort,
-			});
-		}
-
-		// Sort by priority
-		categories.sort((a, b) => {
-			const p: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
-			return (p[b.priority] ?? 0) - (p[a.priority] ?? 0);
-		});
-
-		return { allIssues, categories, sessionRecency };
-	}
-
-	/**
-	 * Phase 4: Render — build markdown report string from aggregated data.
-	 */
-	render(
-		files: string[],
-		allIssues: Array<{ session: string; entry: AdviceEntry }>,
-		categories: CategorySummary[],
-	): string {
+	render(report: WasteReport): string {
 		const sections: string[] = [];
 
-		// Count unique sessions with issues
-		const sessionSet = new Set<string>();
-		for (const { session } of allIssues) {
-			sessionSet.add(session);
-		}
-		const totalSessions = files.length;
+		const pct = report.totalTokens > 0 ? (report.wasteFraction * 100).toFixed(1) : "0";
+		const costDisplay =
+			report.totalWasteCost > 0.001 ? `$${report.totalWasteCost.toFixed(4)}` : "< $0.001";
 
-		sections.push(`# Session Advice Report`);
+		sections.push(`# Session Waste Report`);
 		sections.push(``);
 		sections.push(`Generated: ${new Date().toISOString()}`);
 		sections.push(``);
 		sections.push(`| Metric | Value |`);
 		sections.push(`|--------|-------|`);
-		sections.push(`| Sessions analyzed | ${totalSessions} |`);
-		sections.push(`| Sessions with issues | ${sessionSet.size} |`);
-		sections.push(`| Clean sessions | ${totalSessions - sessionSet.size} |`);
-		sections.push(`| Total findings | ${allIssues.length} |`);
-		sections.push(`| Unique categories | ${categories.length} |`);
+		sections.push(`| Sessions analyzed | ${report.totalSessions} |`);
+		sections.push(`| Total tokens | ${report.totalTokens.toLocaleString()} |`);
+		sections.push(`| Total waste | ${report.totalWasteTokens.toLocaleString()} tokens (${pct}%) |`);
+		sections.push(`| Waste cost | ${costDisplay} |`);
 		sections.push(``);
 
-		// Summary table
-		sections.push(`## Summary`);
-		sections.push(``);
-		sections.push(`| Pri | Sev | Category | Sessions | Findings | Example | Effort |`);
-		sections.push(`|-----|-----|----------|----------|----------|---------|--------|`);
+		// LLM advice section (if generated)
+		if (report.adviceMd) {
+			sections.push(`## AI-Generated Advice`);
+			sections.push(``);
+			sections.push(report.adviceMd);
+			sections.push(``);
+			sections.push(`---`);
+			sections.push(``);
+		}
 
-		for (const c of categories) {
-			const pIcon = c.priority === "High" ? "🔴" : c.priority === "Medium" ? "🟡" : "🟢";
-			const sIcon = c.severity === "error" ? "❌" : c.severity === "warning" ? "⚠️" : "ℹ️";
+		// Waste signals summary
+		sections.push(`## Waste by Signal`);
+		sections.push(``);
+		sections.push(`| Signal | Waste (tokens) | % of Waste | Sessions | Occ |`);
+		sections.push(`|--------|----------------|------------|----------|-----|`);
+
+		for (const s of report.signals) {
+			const pctOfWaste =
+				report.totalWasteTokens > 0
+					? ((s.wastedTokens / report.totalWasteTokens) * 100).toFixed(1)
+					: "0";
 			sections.push(
-				`| ${pIcon} ${c.priority[0]} | ${sIcon} ${c.severity} | \`${c.category}\` | ${c.sessionsAffected} | ${c.issues} | \`${short(c.example, 65)}\` | ${c.effort} |`,
+				`| \`${s.signal}\` | ${s.wastedTokens.toLocaleString()} | ${pctOfWaste}% | ${s.sessionsAffected}/${report.totalSessions} | ${s.occurrences} |`,
 			);
 		}
 		sections.push(``);
 
-		// Detail sections by priority
-		const byPriority: Record<string, CategorySummary[]> = {
-			High: [],
-			Medium: [],
-			Low: [],
-		};
-		for (const c of categories) {
-			byPriority[c.priority]?.push(c);
-		}
-
-		for (const [priority, label] of [
-			["High", "High Priority"],
-			["Medium", "Medium Priority"],
-			["Low", "Low Priority"],
-		] as const) {
-			const group = byPriority[priority];
-			if (!group?.length) continue;
-
-			sections.push(`## ${label}`);
+		// Detail per signal
+		sections.push(`## Signal Details`);
+		sections.push(``);
+		for (const s of report.signals) {
+			sections.push(`### ${s.label} (\`${s.signal}\`)`);
 			sections.push(``);
-
-			for (const c of group) {
-				sections.push(`### ${c.category}`);
-				sections.push(``);
-				sections.push(`**Sessions affected:** ${c.sessionsAffected}`);
-				sections.push(`**Findings count:** ${c.issues}`);
-				sections.push(`**Severity:** ${c.severity} (→ ${c.priority} priority)`);
-				sections.push(`**Effort estimate:** ${c.effort}`);
-				sections.push(``);
-
-				if (c.sessionIds && c.sessionIds.length > 0) {
-					const links = c.sessionIds.map((id: string) => `\`${id.slice(0, 8)}\``).join(", ");
-					sections.push(`**Session files:** ${links}`);
-					sections.push(`*See matching \`.advice.md\` in \`.pi/sessions/\`*`);
-					sections.push(``);
+			sections.push(
+				`**Wasted:** ${s.wastedTokens.toLocaleString()} tokens across ${s.sessionsAffected} sessions (${s.occurrences} occurrences)`,
+			);
+			sections.push(``);
+			if (s.details.length > 0) {
+				sections.push(`**Examples:**`);
+				for (const d of s.details) {
+					sections.push(`- ${d}`);
 				}
-
-				if (c.sampleDetails.length > 0) {
-					sections.push(`**Sample findings:**`);
-					for (const d of c.sampleDetails) {
-						sections.push(`- ${d}`);
-					}
-					sections.push(``);
-				}
-
-				sections.push(`**Fix idea:**`);
-				sections.push(``);
-				sections.push(c.fixIdea);
-				sections.push(``);
-				sections.push(`---`);
 				sections.push(``);
 			}
+
+			// Look up fix from fixes.ts
+			const fix = FIXES[s.signal] ?? DEFAULT_FIX;
+			sections.push(`**Fix idea:** ${fix.idea}`);
+			sections.push(`**Effort:** ${fix.effort}`);
+			sections.push(``);
+			sections.push(`---`);
+			sections.push(``);
 		}
 
-		// Findings per Session
-		sections.push(`## Findings per Session`);
+		// Per-session table
+		sections.push(`## Per-Session Breakdown`);
 		sections.push(``);
-		sections.push(`| Session | Count | Top Categories |`);
-		sections.push(`|---------|-------|----------------|`);
+		sections.push(`| Session | Tokens | Waste % | Top Signal | LLM Advice |`);
+		sections.push(`|---------|--------|---------|------------|------------|`);
 
-		const perSession: Record<string, { count: number; cats: Record<string, number> }> = {};
-		for (const { session, entry } of allIssues) {
-			if (!perSession[session]) perSession[session] = { count: 0, cats: {} };
-			perSession[session].count++;
-			perSession[session].cats[entry.category] =
-				(perSession[session].cats[entry.category] ?? 0) + 1;
+		for (const sa of report.perSession) {
+			const topSignal = sa.wasteBySignal[0];
+			const topName = topSignal ? topSignal.signal : "—";
+			const wastePct = (sa.wasteFraction * 100).toFixed(0);
+			sections.push(
+				`| \`${sa.sessionId.slice(0, 8)}\` | ${sa.totalTokens.toLocaleString()} | ${wastePct}% | ${topName} | — |`,
+			);
+		}
+		sections.push(``);
+
+		// Signal Review section (if LLM review ran)
+		if (report.review) {
+			sections.push(`## Signal Quality Review`);
+			sections.push(``);
+			sections.push(report.review.summary);
+			sections.push(``);
+
+			const toRemove = report.review.verdicts.filter((v) => v.verdict === "remove");
+			const toRefine = report.review.verdicts.filter((v) => v.verdict === "refine");
+			const newDetectors = report.review.newSignals;
+
+			if (toRemove.length > 0) {
+				sections.push(`### Detectors to Remove`);
+				sections.push(``);
+				for (const v of toRemove) {
+					sections.push(
+						`- **\`${v.signal}\`** — ${v.reason} (false-positive risk: ${v.falsePositiveRisk})`,
+					);
+				}
+				sections.push(``);
+			}
+
+			if (toRefine.length > 0) {
+				sections.push(`### Detectors to Refine`);
+				sections.push(``);
+				for (const v of toRefine) {
+					sections.push(`- **\`${v.signal}\`** — ${v.reason}`);
+					if (v.refinementSuggestion) sections.push(`  → ${v.refinementSuggestion}`);
+				}
+				sections.push(``);
+			}
+
+			if (newDetectors.length > 0) {
+				sections.push(`### Proposed New Detectors`);
+				sections.push(``);
+				for (const n of newDetectors) {
+					sections.push(`- **\`${n.signal}\`** — ${n.description}`);
+					sections.push(`  Why: ${n.reason}`);
+					sections.push(`  How: ${n.detectionApproach}`);
+				}
+				sections.push(``);
+			}
+
+			sections.push(`---`);
+			sections.push(``);
 		}
 
-		for (const [sess, info] of Object.entries(perSession).sort((a, b) => b[1].count - a[1].count)) {
-			const topCats = Object.entries(info.cats)
-				.sort((a, b) => b[1] - a[1])
-				.slice(0, 3)
-				.map(([k]) => k)
-				.join(", ");
-			sections.push(`| \`${sess.slice(0, 8)}\` | ${info.count} | ${topCats} |`);
+		// Fix reference
+		sections.push(`## Fix Reference`);
+		sections.push(``);
+		sections.push(`| Signal | Effort | Fix Idea |`);
+		sections.push(`|--------|--------|----------|`);
+		for (const s of report.signals) {
+			const fix = FIXES[s.signal] ?? DEFAULT_FIX;
+			sections.push(`| \`${s.signal}\` | ${fix.effort} | ${fix.idea} |`);
 		}
 		sections.push(``);
 
@@ -321,7 +318,7 @@ export class AdvicePipeline {
 	}
 
 	/**
-	 * Phase 5: Write — write report markdown to file.
+	 * Write report to file.
 	 */
 	write(sessionsDir: string, markdown: string): string {
 		const reportPath = path.join(sessionsDir, "advice-report.md");
@@ -330,69 +327,126 @@ export class AdvicePipeline {
 	}
 
 	/**
-	 * Full report pipeline: parse → analyze → aggregate → render → write.
-	 * Returns the generated markdown and the report path.
+	 * Full report pipeline: detect → aggregate → (optional LLM advice + review) → render → write.
+	 * Returns report data including signal review for GitHub issue creation.
 	 */
-	generateReport(sessionsDir: string): { markdown: string; reportPath: string } {
-		const { files, sessions } = this.parse(sessionsDir);
-		const analysisResults = this.analyze(sessions);
-		const { allIssues, categories } = this.aggregate(files, sessions, analysisResults);
-		const markdown = this.render(files, allIssues, categories);
+	async generateReport(
+		sessionsDir: string,
+		model?: ModelRef,
+		modelRegistry?: ModelRegistryRef,
+	): Promise<{ markdown: string; reportPath: string; report: WasteReport }> {
+		const { analyses } = this.detect(sessionsDir);
+		const report = this.aggregate(analyses);
+
+		// Try LLM advice + signal review if model available
+		if (model && modelRegistry && analyses.length > 0) {
+			try {
+				const { reportMd, review } = await generateReportAdvice(
+					analyses,
+					model as any,
+					modelRegistry as any,
+				);
+				report.adviceMd = reportMd;
+				report.review = review;
+			} catch (err) {
+				const msg = (err as Error).message;
+				report.adviceMd = `*LLM advice generation failed: ${msg.slice(0, 200)}*`;
+			}
+		}
+
+		const markdown = this.render(report);
 		const reportPath = this.write(sessionsDir, markdown);
-		return { markdown, reportPath };
+		return { markdown, reportPath, report };
 	}
 }
 
-// ── Standalone generateAdviceReport (backward compatible) ──
+// ── Minimal interfaces to avoid pi dep in this file ──
+
+/** Minimal Model interface for LLM calls. */
+export interface ModelRef {
+	id: string;
+	api: string;
+	provider: string;
+	baseUrl: string;
+	headers?: Record<string, string>;
+}
+
+/** Minimal ModelRegistry interface. */
+export interface ModelRegistryRef {
+	getApiKeyAndHeaders(
+		model: ModelRef,
+	): Promise<{ ok: boolean; apiKey?: string; headers?: Record<string, string>; error?: string }>;
+}
+
+// ── Standalone functions (backward compatible exports) ──
 
 const defaultPipeline = new AdvicePipeline();
 
 /**
- * Generate cross-session advice report.
- * Parses all JSONL files in sessionsDir, aggregates findings,
- * maps categories to fix ideas + effort estimates.
- *
- * Pure function — no side effects besides reading files. Exported for headless use.
- * Delegates to AdvicePipeline internally.
+ * Generate cross-session waste report (detection only, no LLM).
  */
 export function generateAdviceReport(sessionsDir: string): string {
-	return defaultPipeline.generateReport(sessionsDir).markdown;
-}
-
-// ── Symlink helper (delegates to SymlinkManager) ──
-
-const defaultSymlinkManager = new SymlinkManager();
-
-/**
- * Atomically update latest.advice.md symlink.
- * Uses tmp + rename pattern.
- */
-function updateLatestAdviceSymlink(symlinkDir: string, targetFile: string): void {
-	defaultSymlinkManager.updateLatestAdviceSymlink(symlinkDir, targetFile);
+	const { analyses } = defaultPipeline.detect(sessionsDir);
+	const report = defaultPipeline.aggregate(analyses);
+	return defaultPipeline.render(report);
 }
 
 // ── Session advice writing ──
 
 /**
- * Generate .advice.md for a session .jsonl file.
+ * Generate .advice.md for a single session .jsonl file.
+ * If model + modelRegistry provided, includes LLM-generated actions.
  */
-export function writeAdvice(
+export async function writeAdvice(
 	jsonlPath: string,
 	advicePath: string,
 	symlinkDir: string,
+	model?: ModelRef,
+	modelRegistry?: ModelRegistryRef,
 	updateSymlink: boolean = true,
-): void {
+): Promise<void> {
 	try {
 		const data = parseJsonlFile(jsonlPath);
 		if (!data) return;
 
-		const result = analyzeSession(data);
-		const md = renderAdviceToMarkdown(result);
+		const signals = analyzeSession(data);
+		// Try to load metadata for accurate token counts
+		const sessionDir = path.dirname(jsonlPath);
+		const baseName = path.basename(jsonlPath, ".jsonl");
+		const metaPath = path.join(sessionDir, `${baseName}.metadata.json`);
+		let meta: { totalTokens?: number; totalCost?: number } | undefined;
+		try {
+			const raw = fs.readFileSync(metaPath, "utf-8");
+			const m = JSON.parse(raw);
+			meta = {
+				totalTokens: m.tokens?.total ?? m.totalTokens,
+				totalCost: m.cost ?? m.totalCost,
+			};
+		} catch {
+			/* metadata optional */
+		}
 
+		const analysis = buildSessionAnalysis(data, signals, meta);
+		let llmAdvice: AdviceResult | null = null;
+
+		// Try LLM advice
+		if (model && modelRegistry) {
+			try {
+				const mod = model as any;
+				const reg = modelRegistry as any;
+				llmAdvice = await generateAdvice(analysis, mod, reg);
+			} catch (err) {
+				// LLM failed — proceed without
+				const msg = (err as Error).message;
+				console.error(`[session-advice] LLM advice failed: ${msg}`);
+			}
+		}
+
+		const md = renderSessionAdvice(analysis, llmAdvice);
 		fs.writeFileSync(advicePath, md, "utf-8");
 
 		if (updateSymlink) {
-			updateLatestAdviceSymlink(symlinkDir, advicePath);
+			defaultPipeline.getSymlinkManager().updateLatestAdviceSymlink(symlinkDir, advicePath);
 		}
 	} catch (err) {
 		console.error(`[session-advice] Failed for ${jsonlPath}: ${(err as Error).message}`);
@@ -400,14 +454,85 @@ export function writeAdvice(
 }
 
 /**
- * Backfill .advice.md for past session .jsonl files that lack one.
- * Does NOT update latest.advice.md — that is reserved for session_shutdown.
- * Skips the current in-progress session (file may be incomplete).
+ * Render per-session advice markdown.
  */
-export function backfillMissingAdvice(
+function renderSessionAdvice(analysis: SessionAnalysis, llmAdvice: AdviceResult | null): string {
+	const sections: string[] = [];
+
+	sections.push(`# Advice: ${analysis.sessionId}`);
+	sections.push(``);
+	sections.push(`**Generated:** ${new Date().toISOString()}`);
+	sections.push(``);
+	sections.push(`| Metric | Value |`);
+	sections.push(`|--------|-------|`);
+	sections.push(`| Total tokens | ${analysis.totalTokens.toLocaleString()} |`);
+	sections.push(
+		`| Total wasted | ${analysis.totalWasteTokens.toLocaleString()} (${(analysis.wasteFraction * 100).toFixed(1)}%) |`,
+	);
+	sections.push(`| Total cost | $${analysis.totalCost.toFixed(6)} |`);
+	sections.push(``);
+
+	if (llmAdvice) {
+		sections.push(`## AI Advice`);
+		sections.push(``);
+		sections.push(llmAdvice.summary);
+		sections.push(``);
+
+		if (llmAdvice.actions.length > 0) {
+			sections.push(`### Recommended Actions`);
+			sections.push(``);
+			for (const a of llmAdvice.actions) {
+				const icon = a.effort === "Low" ? "🟢" : a.effort === "Medium" ? "🟡" : "🔴";
+				sections.push(`- ${icon} **${a.action}** — ${a.expectedSavingsLabel}`);
+				if (a.code) sections.push(`  \`\`\`\n  ${a.code}\n  \`\`\``);
+			}
+			sections.push(``);
+		}
+	}
+
+	if (analysis.wasteBySignal.length > 0) {
+		sections.push(`### Waste Signals`);
+		sections.push(``);
+		sections.push(`| Signal | Wasted Tokens | % of Waste | Occurrences |`);
+		sections.push(`|--------|---------------|------------|-------------|`);
+		for (const s of analysis.wasteBySignal) {
+			const pct =
+				analysis.totalWasteTokens > 0
+					? ((s.wastedTokens / analysis.totalWasteTokens) * 100).toFixed(1)
+					: "0";
+			sections.push(
+				`| \`${s.signal}\` | ${s.wastedTokens.toLocaleString()} | ${pct}% | ${s.occurrences} |`,
+			);
+		}
+		sections.push(``);
+
+		sections.push(`### Details`);
+		sections.push(``);
+		for (const s of analysis.wasteBySignal) {
+			if (s.details.length === 0) continue;
+			sections.push(`**${s.label}:**`);
+			for (const d of s.details) {
+				sections.push(`- ${d}`);
+			}
+			sections.push(``);
+		}
+	} else {
+		sections.push(`*No waste signals detected. Clean session.*`);
+		sections.push(``);
+	}
+
+	return sections.join("\n");
+}
+
+/**
+ * Backfill .advice.md for past session .jsonl files that lack one.
+ */
+export async function backfillMissingAdvice(
 	sessionsDir: string,
 	currentSessionFile?: string | null,
-): void {
+	model?: ModelRef,
+	modelRegistry?: ModelRegistryRef,
+): Promise<void> {
 	let files: string[] = [];
 	try {
 		files = fs
@@ -419,25 +544,24 @@ export function backfillMissingAdvice(
 
 	for (const file of files) {
 		const jsonlPath = path.join(sessionsDir, file);
-
-		// Skip if this is the current in-progress session
 		if (currentSessionFile && jsonlPath === currentSessionFile) continue;
 
 		const prefix = file.replace(/\.jsonl$/, "");
 		const advicePath = path.join(sessionsDir, `${prefix}.advice.md`);
-
 		if (fs.existsSync(advicePath)) continue;
 
-		writeAdvice(jsonlPath, advicePath, sessionsDir, false);
+		await writeAdvice(jsonlPath, advicePath, sessionsDir, model, modelRegistry, false);
 	}
 }
 
 /**
- * Handle session shutdown: write .advice.md for the closing session
- * and update latest.advice.md symlink.
- * No-op if sessionFile is null/undefined or .advice.md already exists.
+ * Handle session shutdown: write .advice.md for the closing session.
  */
-export function handleShutdown(sessionFile: string | null | undefined): void {
+export async function handleShutdown(
+	sessionFile: string | null | undefined,
+	model?: ModelRef,
+	modelRegistry?: ModelRegistryRef,
+): Promise<void> {
 	if (!sessionFile) return;
 
 	const sessionDir = path.dirname(sessionFile);
@@ -445,12 +569,11 @@ export function handleShutdown(sessionFile: string | null | undefined): void {
 
 	if (fs.existsSync(advicePath)) return;
 
-	writeAdvice(sessionFile, advicePath, sessionDir);
+	await writeAdvice(sessionFile, advicePath, sessionDir, model, modelRegistry);
 }
 
 /**
  * Create a GitHub issue using gh CLI.
- * Writes body to a temp file, runs `gh issue create`, and cleans up in finally.
  */
 export function createGhIssue(
 	repo: string,
@@ -474,24 +597,130 @@ export function createGhIssue(
 				encoding: "utf-8",
 			},
 		);
-		const result = (typeof raw === "string" ? raw : raw.toString("utf-8")).trim();
-
-		return result;
+		return (typeof raw === "string" ? raw : raw.toString("utf-8")).trim();
 	} finally {
-		// Clean up temp file — delete even if execFn throws
 		try {
-			if (fs.existsSync(bodyFile)) {
-				fs.unlinkSync(bodyFile);
-			}
+			if (fs.existsSync(bodyFile)) fs.unlinkSync(bodyFile);
 		} catch {
-			/* ok — best-effort cleanup */
+			/* best-effort */
 		}
 	}
 }
 
+/**
+ * Create GitHub issues from signal review verdicts.
+ * For detectors marked "remove" → issue to remove bad detector.
+ * For proposed new detectors → issue to add good detector.
+ * Returns array of created issue URLs.
+ */
+export function createSignalIssues(
+	repo: string,
+	review: SignalReview,
+	analysesCount: number,
+	sessionsDir: string,
+): string[] {
+	const results: string[] = [];
+	const date = new Date().toISOString().slice(0, 10);
+
+	// Issues for detectors to remove
+	for (const v of review.verdicts) {
+		if (v.verdict !== "remove") continue;
+
+		const title = `[session-advice] Remove detector \`${v.signal}\` — ${v.label}`;
+		const body = [
+			`## Detector Removal Request: \`${v.signal}\``,
+			``,
+			`**Reviewed:** ${date}`,
+			`**Based on:** ${analysesCount} sessions`,
+			``,
+			`### Reason for Removal`,
+			v.reason,
+			``,
+			`### False-Positive Risk`,
+			v.falsePositiveRisk,
+			``,
+			`### What to Do`,
+			`1. Remove \`${v.signal}\` detector from \`.pi/extensions/session-advice/advisor.ts\``,
+			`2. Remove corresponding fix entry from \`.pi/extensions/session-advice/fixes.ts\``,
+			`3. Run tests to verify no regressions`,
+			``,
+			`---`,
+			`*Auto-generated by session-advice signal review.*`,
+		].join("\n");
+
+		try {
+			const url = createGhIssue(repo, title, body, sessionsDir);
+			results.push(url);
+		} catch (err) {
+			console.error(
+				`[session-advice] Failed to create issue for \`${v.signal}\`: ${(err as Error).message}`,
+			);
+		}
+	}
+
+	// Issues for proposed new detectors
+	for (const n of review.newSignals) {
+		const title = `[session-advice] Add detector \`${n.signal}\` — ${n.label}`;
+		const body = [
+			`## New Detector Proposal: \`${n.signal}\``,
+			``,
+			`**Proposed:** ${date}`,
+			`**Based on:** ${analysesCount} sessions`,
+			``,
+			`### Description`,
+			n.description,
+			``,
+			`### Value`,
+			n.reason,
+			``,
+			`### Estimated Impact`,
+			n.estimatedValue,
+			``,
+			`### Implementation Approach`,
+			n.detectionApproach,
+			``,
+			`### What to Do`,
+			`1. Implement \`${n.signal}\` detector in \`.pi/extensions/session-advice/advisor.ts\``,
+			`2. Add test cases in \`.pi/extensions/session-advice/test/\``,
+			`3. Add fix entry in \`.pi/extensions/session-advice/fixes.ts\``,
+			``,
+			`---`,
+			`*Auto-generated by session-advice signal review.*`,
+		].join("\n");
+
+		try {
+			const url = createGhIssue(repo, title, body, sessionsDir);
+			results.push(url);
+		} catch (err) {
+			console.error(
+				`[session-advice] Failed to create issue for \`${n.signal}\`: ${(err as Error).message}`,
+			);
+		}
+	}
+
+	return results;
+}
+
 // ── Helpers ──
 
-function short(s: string, n: number): string {
-	if (s.length <= n) return s;
-	return s.slice(0, n - 3) + "...";
+/**
+ * Load metadata.json for a session file to get actual token counts.
+ */
+function loadMetadata(
+	sessionsDir: string,
+	jsonlFile: string,
+): { totalTokens?: number; totalCost?: number } | undefined {
+	try {
+		const prefix = jsonlFile.replace(/\.jsonl$/, "");
+		const metaPath = path.join(sessionsDir, `${prefix}.metadata.json`);
+		if (!fs.existsSync(metaPath)) return undefined;
+		const raw = fs.readFileSync(metaPath, "utf-8");
+		const m = JSON.parse(raw);
+		return {
+			totalTokens: m.tokens?.total ?? m.totalTokens,
+			totalCost: m.cost ?? m.totalCost,
+		};
+	} catch {
+		return undefined;
+	}
 }

@@ -1,12 +1,11 @@
 /**
- * advisor.ts — Session advice detection rules
+ * advisor.ts — Pure waste-signal detectors for session analysis
  *
- * Pure functions, no pi dependencies. Scans parsed session data
- * for patterns that indicate poor tool usage, loops, or inefficiency.
+ * Each detector reads parsed session entries and returns WasteSignal[]
+ * with exact token waste (from JSONL usage field or char-length estimate).
  *
- * Used by both:
- *  - session-advice pi extension (real-time at shutdown)
- *  - scripts/session-advice.sh (post-hoc batch analysis)
+ * Zero pi dependencies — domain layer only.
+ * No LLM calls. Pure functions.
  */
 
 import { readFileSync } from "node:fs";
@@ -15,21 +14,31 @@ import { isCodeFilePath, SEARCH_TOOLS } from "../../lib/harness-rules.ts";
 
 // ── Types ──
 
-export interface AdviceEntry {
-	severity: "error" | "warning" | "info";
-	category: string;
-	detail: string;
-	recommendation: string;
-	turns?: number[];
+export interface WasteSignal {
+	signal: string;
+	label: string;
+	wastedTokens: number;
+	wastedCost: number;
+	occurrences: number;
+	details: string[];
+	context: {
+		turnRange?: [number, number];
+		files?: string[];
+		toolName?: string;
+	};
 }
 
-export interface AdviceResult {
+export interface SessionAnalysis {
 	sessionId: string;
-	score: number; // 0.0 (clean) — 1.0 (needs improvement)
-	entries: AdviceEntry[];
+	timestamp: string;
+	totalTokens: number;
+	totalCost: number;
+	totalWasteTokens: number;
+	totalWasteCost: number;
+	wasteFraction: number;
+	wasteBySignal: WasteSignal[];
 }
 
-/** Parsed entry consumed by detection rules. Augmented with turn index. */
 export interface SessionEntry {
 	type: string;
 	toolName?: string;
@@ -37,18 +46,25 @@ export interface SessionEntry {
 	args?: Record<string, unknown>;
 	text?: string;
 	turnIndex: number;
+	/** Actual assistant token cost for the call that produced this entry (0 if toolResult) */
+	assistantCost?: number;
+	/** Assistant usage object from the message that produced this entry */
+	usage?: { input: number; output: number; totalTokens: number; cost?: number };
+	/** Tool result text length (chars) */
+	outputSize?: number;
 }
 
 export interface SessionData {
 	sessionId: string;
+	timestamp: string;
 	entries: SessionEntry[];
 }
 
 // ── JSONL parser ──
 
 /**
- * Parse a .jsonl session file into SessionData.
- * Computes turn indices by walking entries (user message = new turn).
+ * Parse a .jsonl session file into SessionData with token cost data.
+ * Extracts usage from assistant messages and output size from toolResults.
  */
 export function parseJsonlFile(filepath: string): SessionData | null {
 	const raw = readFileSync(filepath, "utf-8").trim();
@@ -62,31 +78,35 @@ export function parseJsonlFile(filepath: string): SessionData | null {
 
 	const header = lines[0];
 	const sessionId: string = header.id ?? "unknown";
+	const timestamp: string = header.timestamp ?? "";
 
 	const entries: SessionEntry[] = [];
 	let turnIndex = -1;
+	let pendingAssistantCost = 0;
+	let pendingUsage: SessionEntry["usage"] = undefined;
 
 	for (const rawEntry of lines) {
 		const type = rawEntry.type;
+		if (type === "session") continue;
 
-		if (type === "session") continue; // skip header
-
-		// Turn boundaries: user messages start a new turn
-		if (type === "message" && rawEntry.message?.role === "user") {
-			turnIndex++;
-			continue;
-		}
-
+		// Track assistant messages with usage before their tool calls
 		if (type === "message" && rawEntry.message?.role === "assistant") {
-			// Ensure we have a turn started (assistant can appear before any user in branched sessions)
 			if (turnIndex < 0) turnIndex = 0;
+			const usage = rawEntry.message?.usage;
+			if (usage) {
+				pendingAssistantCost = usage.totalTokens ?? 0;
+				pendingUsage = {
+					input: usage.input ?? 0,
+					output: usage.output ?? 0,
+					totalTokens: usage.totalTokens ?? 0,
+					cost: usage.cost?.total ?? 0,
+				};
+			}
 
-			// Extract tool calls from assistant message content
 			const content = rawEntry.message?.content ?? [];
 			for (const c of content) {
 				if (c.type === "toolCall") {
 					const args = c.arguments ?? {};
-					// Check for bash search signals
 					const cmd = (args.command ?? "") as string;
 					entries.push({
 						type: "tool_use",
@@ -94,19 +114,32 @@ export function parseJsonlFile(filepath: string): SessionData | null {
 						args,
 						text: cmd,
 						turnIndex,
+						assistantCost: pendingAssistantCost || undefined,
+						usage: pendingUsage,
 					});
+					// Reset so we don't double-count if multiple tool calls in one assistant msg
+					pendingAssistantCost = 0;
+					pendingUsage = undefined;
 				}
 			}
+			continue;
+		}
+
+		// User message = new turn
+		if (type === "message" && rawEntry.message?.role === "user") {
+			turnIndex++;
+			continue;
 		}
 
 		if (type === "message" && rawEntry.message?.role === "toolResult") {
 			if (turnIndex < 0) turnIndex = 0;
 
-			const text = rawEntry.message?.content
-				?.filter((c: any) => c.type === "text")
-				.map((c: any) => c.text)
-				.join("\n");
-
+			const content = rawEntry.message?.content ?? [];
+			const textParts: string[] = [];
+			for (const c of content) {
+				if (c.type === "text") textParts.push(c.text ?? "");
+			}
+			const text = textParts.join("\n");
 			const toolName = rawEntry.message?.toolName ?? "?";
 			const isError = rawEntry.message?.isError ?? false;
 
@@ -116,37 +149,275 @@ export function parseJsonlFile(filepath: string): SessionData | null {
 				isError,
 				text,
 				turnIndex,
+				outputSize: text.length,
 			});
-
-			// Also emit tool usage from toolResult if not already captured
-			// (some JSONLs may have toolResult without preceding assistant toolCall)
-			const alreadyEmitted = entries.some(
-				(e) => e.type === "tool_use" && e.toolName === toolName && e.turnIndex === turnIndex,
-			);
-			if (!alreadyEmitted) {
-				entries.push({
-					type: "tool_use",
-					toolName,
-					text,
-					turnIndex,
-				});
-			}
 		}
 	}
 
-	return { sessionId, entries };
+	return { sessionId, timestamp, entries };
 }
 
-// ── Constants (imported from harness-rules.ts shared module) ──
+// ── Token estimation helpers ──
 
-// ── Detection rules ──
+/** Rough tokens from text length (chars/4). */
+function charsToTokens(s: string): number {
+	return Math.ceil((s ?? "").length / 4);
+}
+
+/** Get total assist cost for a list of entries (sum of assistantCost or chars/4). */
+function sumTokenCost(entries: SessionEntry[]): number {
+	return entries.reduce((sum, e) => {
+		if (e.assistantCost) return sum + e.assistantCost;
+		if (e.text) return sum + charsToTokens(e.text);
+		return sum + 100; // default overhead
+	}, 0);
+}
+
+/** Get total dollar cost for a list of entries. */
+function sumDollarCost(entries: SessionEntry[]): number {
+	return entries.reduce((sum, e) => {
+		if (e.usage?.cost) return sum + e.usage.cost;
+		return sum;
+	}, 0);
+}
+
+// ── Helpers ──
+
+function shortPath(p: string): string {
+	const idx = p.lastIndexOf("/");
+	return idx >= 0 ? p.slice(idx + 1) : p;
+}
+
+/** Check if a bash command has piped grep/rg/find patterns. */
+function isPipedGrep(cmd: string): boolean {
+	const low = cmd.toLowerCase();
+	return low.includes("| grep") || low.includes("| rg") || low.includes("| find");
+}
+
+function getEntryPath(e: SessionEntry): string {
+	return ((e.args?.path as string) ?? e.text ?? "") as string;
+}
+
+// ── Detectors ──
 
 /**
- * Rule 1: Same-tool cascade
- * 3+ consecutive same tool calls.
+ * D1: Redundant reads — same file path read within 2 turns.
  */
-function detectSameToolCascade(data: SessionData): AdviceEntry[] {
-	const results: AdviceEntry[] = [];
+function detectRedundantReads(data: SessionData): WasteSignal[] {
+	const results: WasteSignal[] = [];
+	const reads: Array<{ path: string; turnIndex: number; entry: SessionEntry }> = [];
+
+	for (const e of data.entries) {
+		if (e.toolName !== "read") continue;
+		const p = getEntryPath(e);
+		if (!p) continue;
+
+		const redundant = reads.filter(
+			(r) =>
+				r.path === p && Math.abs(r.turnIndex - e.turnIndex) <= 2 && r.turnIndex !== e.turnIndex,
+		);
+		if (redundant.length > 0) {
+			const allEntries = [...redundant.map((r) => r.entry), e];
+			const redundantEntries = allEntries.slice(1);
+			const waste = sumTokenCost(redundantEntries);
+			const file = shortPath(p);
+			const firstTurn = redundant[0].turnIndex;
+			const lastTurn = e.turnIndex;
+			const totalCalls = redundant.length + 1;
+			results.push({
+				signal: "redundant-read",
+				label: "Redundant file reads",
+				wastedTokens: waste,
+				wastedCost: sumDollarCost(redundantEntries),
+				occurrences: redundant.length,
+				details: [
+					`${file} read ${totalCalls}x in ${totalCalls} calls (turns ${firstTurn}-${lastTurn})`,
+				],
+				context: { files: [p], turnRange: [firstTurn, lastTurn] },
+			});
+		}
+
+		reads.push({ path: p, turnIndex: e.turnIndex, entry: e });
+	}
+
+	return results;
+}
+
+/**
+ * D2: Identical args — same tool + same args 3+ times in last 12 calls.
+ */
+function detectIdenticalArgs(data: SessionData): WasteSignal[] {
+	const results: WasteSignal[] = [];
+	const calls = data.entries
+		.filter((e) => e.toolName && e.args)
+		.map((e) => ({
+			key: `${e.toolName}|${JSON.stringify(e.args)}`,
+			toolName: e.toolName!,
+			turnIndex: e.turnIndex,
+			entry: e,
+		}));
+
+	const window: string[] = [];
+	const windowEntries: typeof calls = [];
+	for (let i = 0; i < calls.length; i++) {
+		const c = calls[i];
+		const key = c.key;
+		window.push(key);
+		windowEntries.push(c);
+		if (window.length > 12) {
+			window.shift();
+			windowEntries.shift();
+		}
+
+		const matching = windowEntries.filter((w) => w.key === key);
+		if (matching.length >= 3 && matching[0] === c) {
+			// Report on first occurrence of the loop
+			const waste = sumTokenCost(matching.slice(1).map((m) => m.entry));
+			const cost = sumDollarCost(matching.slice(1).map((m) => m.entry));
+			results.push({
+				signal: "identical-args",
+				label: "Identical call loops",
+				wastedTokens: waste,
+				wastedCost: cost,
+				occurrences: matching.length - 1,
+				details: [
+					`\`${c.toolName}\` identical args ${matching.length}x in last ${window.length} calls (turn ${c.turnIndex})`,
+				],
+				context: {
+					toolName: c.toolName,
+					turnRange: [matching[0].turnIndex, matching[matching.length - 1].turnIndex],
+				},
+			});
+			// Clear window to avoid re-reporting
+			window.length = 0;
+			windowEntries.length = 0;
+		}
+	}
+
+	return results;
+}
+
+/**
+ * D3: Bash grep/rg/find — bash used where ripgrep_search exists.
+ */
+function detectBashGrep(data: SessionData): WasteSignal[] {
+	const results: WasteSignal[] = [];
+	const bashGrepCalls: SessionEntry[] = [];
+
+	for (const e of data.entries) {
+		if (e.toolName !== "bash") continue;
+		const cmd = e.text ?? "";
+		if (new BashCommand(cmd).isSearch() || isPipedGrep(cmd)) {
+			bashGrepCalls.push(e);
+		}
+	}
+
+	if (bashGrepCalls.length > 0) {
+		const waste = sumTokenCost(bashGrepCalls);
+		// Subtract estimated ripgrep_search cost (~50 tokens per call)
+		const estimatedSearchCost = bashGrepCalls.length * 50;
+		const actualWaste = Math.max(0, waste - estimatedSearchCost);
+		const details = bashGrepCalls.map(
+			(e) =>
+				`bash | grep instead of ripgrep_search (turn ${e.turnIndex}): ${(e.text ?? "").slice(0, 80)}`,
+		);
+		results.push({
+			signal: "bash-grep",
+			label: "bash | grep instead of ripgrep_search",
+			wastedTokens: actualWaste,
+			wastedCost: sumDollarCost(bashGrepCalls),
+			occurrences: bashGrepCalls.length,
+			details,
+			context: { toolName: "bash" },
+		});
+	}
+
+	return results;
+}
+
+/**
+ * D4: Bash cat/head/tail — bash used where read tool exists.
+ */
+function detectBashCat(data: SessionData): WasteSignal[] {
+	const results: WasteSignal[] = [];
+	const bashReadCalls: SessionEntry[] = [];
+
+	for (const e of data.entries) {
+		if (e.toolName !== "bash") continue;
+		const cmd = e.text ?? "";
+		if (new BashCommand(cmd).isFileRead()) {
+			bashReadCalls.push(e);
+		}
+	}
+
+	if (bashReadCalls.length > 0) {
+		const waste = sumTokenCost(bashReadCalls);
+		const estimatedReadCost = bashReadCalls.length * 30;
+		const actualWaste = Math.max(0, waste - estimatedReadCost);
+		const details = bashReadCalls.map(
+			(e) =>
+				`bash cat/head/tail instead of read (turn ${e.turnIndex}): ${(e.text ?? "").slice(0, 80)}`,
+		);
+		results.push({
+			signal: "bash-cat",
+			label: "bash cat/head/tail instead of read",
+			wastedTokens: actualWaste,
+			wastedCost: sumDollarCost(bashReadCalls),
+			occurrences: bashReadCalls.length,
+			details,
+			context: { toolName: "bash" },
+		});
+	}
+
+	return results;
+}
+
+/**
+ * D5: Error loop — tool error followed by retrying same tool (no strategy change).
+ */
+function detectErrorLoop(data: SessionData): WasteSignal[] {
+	const results: WasteSignal[] = [];
+	const errors = data.entries.filter((e) => e.isError);
+
+	for (const err of errors) {
+		const errIdx = data.entries.indexOf(err);
+		if (errIdx < 0) continue;
+
+		const window = data.entries.slice(errIdx + 1, errIdx + 9);
+		const sameToolRetries = window.filter((e) => e.toolName === err.toolName);
+
+		if (sameToolRetries.length >= 2) {
+			const all = [err, ...sameToolRetries];
+			const waste = sumTokenCost(sameToolRetries);
+			const details = [
+				`\`${err.toolName}\` errored turn ${err.turnIndex}, retried ${sameToolRetries.length}x without changing approach`,
+			];
+			results.push({
+				signal: "error-loop",
+				label: "Error retry loop",
+				wastedTokens: waste,
+				wastedCost: sumDollarCost(sameToolRetries),
+				occurrences: sameToolRetries.length,
+				details,
+				context: {
+					toolName: err.toolName,
+					turnRange: [
+						err.turnIndex,
+						sameToolRetries[sameToolRetries.length - 1]?.turnIndex ?? err.turnIndex,
+					],
+				},
+			});
+		}
+	}
+
+	return results;
+}
+
+/**
+ * D6: No batching — 3+ consecutive same-tool calls in different turns.
+ */
+function detectNoBatch(data: SessionData): WasteSignal[] {
+	const results: WasteSignal[] = [];
 	const tools = data.entries.filter((e) => e.toolName);
 
 	let runStart = 0;
@@ -157,20 +428,26 @@ function detectSameToolCascade(data: SessionData): AdviceEntry[] {
 
 		const runLen = i - runStart;
 		if (runLen >= 3 && b) {
-			const startTurn = tools[runStart]?.turnIndex ?? 0;
-			const endTurn = tools[i - 1]?.turnIndex ?? 0;
-			if (startTurn === endTurn) continue; // same-turn batching is not a cascade
+			const runTools = tools.slice(runStart, i);
+			const startTurn = runTools[0]?.turnIndex ?? 0;
+			const endTurn = runTools[runTools.length - 1]?.turnIndex ?? 0;
+
+			if (startTurn === endTurn) continue; // same turn = already batched
+
+			// Turn overhead: ~600 tokens per extra turn
+			const extraTurns = endTurn - startTurn;
+			const overhead = extraTurns * 600;
+			const details = [
+				`\`${b}\` called ${runLen}x consecutively across ${extraTurns + 1} turns (turns ${startTurn}-${endTurn}) — could batch into fewer turns`,
+			];
 			results.push({
-				severity: "warning",
-				category: "same-tool-cascade",
-				detail: `\`${b}\` called ${runLen}x consecutively (turns ${startTurn}–${endTurn})`,
-				recommendation:
-					b === "bash"
-						? "Combine bash calls with `&&` or script files. Use `ripgrep_search` for search, `read` for file inspection."
-						: b === "read"
-							? "Batch reads — read larger portions in one call. Use `offset`/`limit` instead of separate calls."
-							: `Batch ${b} calls to reduce turns and token overhead.`,
-				turns: [startTurn, endTurn],
+				signal: "no-batch",
+				label: "Unbatched consecutive calls",
+				wastedTokens: overhead,
+				wastedCost: 0, // hard to measure dollar cost of turn overhead
+				occurrences: extraTurns,
+				details,
+				context: { toolName: b, turnRange: [startTurn, endTurn] },
 			});
 		}
 		runStart = i;
@@ -180,370 +457,162 @@ function detectSameToolCascade(data: SessionData): AdviceEntry[] {
 }
 
 /**
- * Rule 2: Tool mismatch — bash used where search/read tools exist.
+ * D7: Turn inefficiency — turns with 0 file changes but many tool calls.
  */
-function detectToolMismatch(data: SessionData): AdviceEntry[] {
-	const results: AdviceEntry[] = [];
+function detectTurnInefficiency(data: SessionData): WasteSignal[] {
+	const results: WasteSignal[] = [];
+	const turns = new Map<number, SessionEntry[]>();
 
-	for (const entry of data.entries) {
-		if (entry.toolName !== "bash") continue;
+	for (const e of data.entries) {
+		if (!turns.has(e.turnIndex)) turns.set(e.turnIndex, []);
+		turns.get(e.turnIndex)!.push(e);
+	}
 
-		const rawCmd = entry.text ?? "";
-
-		// Check for grep/rg/find in bash — use BashCommand
-		if (new BashCommand(rawCmd).isSearch()) {
-			results.push({
-				severity: "error",
-				category: "tool-mismatch",
-				detail: `\`bash\` used with grep/rg — use \`ripgrep_search\` tool (turn ${entry.turnIndex}): \`${rawCmd.slice(0, 100)}\``,
-				recommendation:
-					"Replace `bash | grep/rg` with `ripgrep_search`. Use dedicated search tool for structured JSON results.",
-				turns: [entry.turnIndex],
-			});
-		}
-
-		// Check for file reads in bash — use BashCommand
-		if (new BashCommand(rawCmd).isFileRead()) {
-			results.push({
-				severity: "error",
-				category: "tool-mismatch",
-				detail: `\`bash\` used with cat/head/tail — use \`read\` tool (turn ${entry.turnIndex}): \`${rawCmd.slice(0, 100)}\``,
-				recommendation:
-					"Replace `bash cat/head/tail` with `read` tool. Use `read(path, offset, limit)` for file inspection.",
-				turns: [entry.turnIndex],
-			});
-		}
-
-		// Check for ls — use BashCommand
-		if (new BashCommand(rawCmd).isLs()) {
-			results.push({
-				severity: "info",
-				category: "tool-mismatch",
-				detail: `\`bash\` used with \`ls\` (turn ${entry.turnIndex}): \`${rawCmd.slice(0, 100)}\``,
-				recommendation:
-					"Use `bash ls` only for directory listing. For file contents, use `read`. For finding files, use `ripgrep_search`.",
-				turns: [entry.turnIndex],
-			});
+	// Build set of turns that changed files
+	const fileChangeTurns = new Set<number>();
+	for (const e of data.entries) {
+		if (
+			e.toolName === "edit" ||
+			e.toolName === "write" ||
+			e.toolName === "writeIfEmpty" ||
+			e.toolName === "editExisting"
+		) {
+			fileChangeTurns.add(e.turnIndex);
 		}
 	}
 
-	return results;
-}
-
-/**
- * Rule 3: Redundant reads — same file path read within 2 turns.
- */
-function detectRedundantReads(data: SessionData): AdviceEntry[] {
-	const results: AdviceEntry[] = [];
-	const reads: Array<{ path: string; turnIndex: number }> = [];
-
-	for (const entry of data.entries) {
-		if (entry.toolName !== "read") continue;
-
-		const p = (entry.args?.path ?? entry.text ?? "") as string;
-		if (!p) continue;
-		const ti = entry.turnIndex;
-
-		const recent = reads.filter(
-			(r) => r.path === p && Math.abs(r.turnIndex - ti) <= 2 && r.turnIndex !== ti,
-		);
-		if (recent.length > 0) {
-			results.push({
-				severity: "warning",
-				category: "redundant-read",
-				detail: `\`${shortPath(p)}\` read ${reads.filter((r) => r.path === p).length + 1}x (last at turn ${ti})`,
-				recommendation: `For \`${shortPath(p)}\`, use \`read(path, offset, limit)\` to page. Read once, cache results.`,
-				turns: [Math.min(...recent.map((r) => r.turnIndex), ti), ti],
-			});
-		}
-
-		reads.push({ path: p, turnIndex: ti });
-	}
-
-	return results;
-}
-
-/**
- * Rule 4: Error not actioned — tool error followed by same tool retry.
- */
-function detectErrorNotActioned(data: SessionData): AdviceEntry[] {
-	const results: AdviceEntry[] = [];
-	const errors = data.entries.filter((e) => e.isError);
-
-	for (const err of errors) {
-		const errIdx = data.entries.indexOf(err);
-		if (errIdx < 0) continue;
-
-		// Look for same tool in next 8 entries
-		const window = data.entries.slice(errIdx + 1, errIdx + 9);
-		const sameToolRetries = window.filter((e) => e.toolName === err.toolName);
-
-		if (sameToolRetries.length >= 2) {
-			results.push({
-				severity: "error",
-				category: "error-not-actioned",
-				detail: `\`${err.toolName}\` errored turn ${err.turnIndex}, retried ${sameToolRetries.length}x same tool`,
-				recommendation:
-					"After tool error, change approach — different args, different tool, or ask user. Same-tool retry wastes tokens and often fails same way.",
-				turns: [err.turnIndex, ...sameToolRetries.map((e) => e.turnIndex)],
-			});
+	// Also track which files were read (to know if it was a "discovery" turn)
+	const uniqueReadFiles = new Map<number, Set<string>>();
+	for (const e of data.entries) {
+		if (e.toolName === "read") {
+			const p = getEntryPath(e);
+			if (!uniqueReadFiles.has(e.turnIndex)) uniqueReadFiles.set(e.turnIndex, new Set());
+			if (p) uniqueReadFiles.get(e.turnIndex)!.add(p);
 		}
 	}
 
-	return results;
-}
+	// Also track which files were already read before (redundant reads already caught by D1)
+	const allReadFiles = new Set<string>();
+	for (const e of data.entries) {
+		if (e.toolName === "read") {
+			allReadFiles.add(getEntryPath(e));
+		}
+	}
 
-/**
- * Rule 5: Tool coverage gap — code files present but structural_search never used.
- */
-function detectToolCoverageGap(data: SessionData): AdviceEntry[] {
-	const toolsUsed = new Set(data.entries.filter((e) => e.toolName).map((e) => e.toolName));
-	const hasStructural = [...SEARCH_TOOLS].some((t) => toolsUsed.has(t));
+	for (const [turnIndex, entries] of turns) {
+		if (turnIndex < 0) continue;
+		if (fileChangeTurns.has(turnIndex)) continue;
 
-	// Check if any tool call touched code files (read/edit/write) — use harness-rules
-	const touchedCode = data.entries.some((e) => {
-		const p = (e.args?.path ?? "") as string;
-		return isCodeFilePath(p);
-	});
+		const toolEntries = entries.filter((e) => e.toolName);
+		if (toolEntries.length < 4) continue; // minimum threshold
 
-	const hasBashSearch = data.entries.some(
-		(e) => e.toolName === "bash" && new BashCommand(e.text ?? "").isSearch(),
-	);
+		// Check if this turn discovered new files
+		const filesThisTurn = uniqueReadFiles.get(turnIndex);
+		const novelFiles = filesThisTurn
+			? [...filesThisTurn].filter((f) => !allReadFiles.has(f) || turnIndex === 0).length
+			: 0;
 
-	if (!touchedCode) return [];
-	if (hasStructural) return [];
+		if (novelFiles > 1) continue; // discovery turns are OK
 
-	return [
-		{
-			severity: hasBashSearch ? "warning" : "info",
-			category: "tool-coverage-gap",
-			detail: hasBashSearch
-				? "Code files exist, `structural_search` unused — used `bash | grep` instead"
-				: "Code files exist but `structural_search` never used",
-			recommendation:
-				"Use `structural_search` for AST-aware code queries (function defs, class declarations, method calls, try/catch blocks). More precise than text grep.",
-		},
-	];
-}
-
-/**
- * Rule 5b: Structural-search underuse — ≥3 code files read/edited, structural_search never called.
- * Separate from tool-coverage-gap (which fires with any code file + bash grep).
- * Higher threshold (≥3 files) for dedicated flag.
- */
-function detectStructuralSearchUnderuse(data: SessionData): AdviceEntry[] {
-	const toolsUsed = new Set(data.entries.filter((e) => e.toolName).map((e) => e.toolName));
-	const hasStructural = [...SEARCH_TOOLS].some((t) => toolsUsed.has(t));
-	if (hasStructural) return [];
-
-	// Count unique code files touched by read/edit/write — use harness-rules
-	const codeFiles = new Set(
-		data.entries
-			.filter((e) => e.toolName === "read" || e.toolName === "edit" || e.toolName === "write")
-			.map((e) => (e.args?.path ?? "") as string)
-			.filter((p) => isCodeFilePath(p)),
-	);
-
-	if (codeFiles.size >= 3) {
-		return [
-			{
-				severity: "warning",
-				category: "structural-search-underuse",
-				detail: `${codeFiles.size} code files read/edited, \`structural_search\` never used`,
-				recommendation:
-					"Use `structural_search` for AST-aware code queries (function defs, class declarations, method calls, try/catch blocks). More precise than text grep.",
-			},
+		const waste = sumTokenCost(toolEntries);
+		const details = [
+			`Turn ${turnIndex}: ${toolEntries.length} tool calls, 0 file changes, ${novelFiles} new files read`,
 		];
-	}
-
-	return [];
-}
-
-/**
- * Rule 6: Excessive turns + high error rate.
- */
-function detectExcessiveTurns(data: SessionData): AdviceEntry[] {
-	const toolCalls = data.entries.filter((e) => e.type === "tool_use" && e.toolName);
-	const errors = data.entries.filter((e) => e.isError);
-	const uniqueTools = new Set(toolCalls.map((e) => e.toolName));
-	const editedFiles = new Set(
-		data.entries
-			.filter((e) => e.toolName === "edit" || e.toolName === "write")
-			.map((e) => (e.args?.path ?? "") as string),
-	).size;
-
-	if (toolCalls.length < 6) return [];
-
-	const errorRate = errors.length / toolCalls.length;
-
-	const issues: AdviceEntry[] = [];
-
-	if (errorRate > 0.25 && errors.length >= 2) {
-		const highErrorTools = [...new Set(errors.map((e) => e.toolName))].join(", ");
-		issues.push({
-			severity: "error",
-			category: "high-error-rate",
-			detail: `${errors.length}/${toolCalls.length} tool calls errored (${Math.round(errorRate * 100)}%). Error-prone tools: ${highErrorTools}.`,
-			recommendation:
-				"High error rate suggests wrong tool choices or invalid assumptions. Verify file paths, env state, and tool capabilities before calling.",
+		results.push({
+			signal: "turn-inefficiency",
+			label: "Inefficient turns",
+			wastedTokens: waste,
+			wastedCost: sumDollarCost(toolEntries),
+			occurrences: 1,
+			details,
+			context: { turnRange: [turnIndex, turnIndex] },
 		});
-	}
-
-	if (toolCalls.length > 15 && editedFiles <= 1 && uniqueTools.size <= 2) {
-		issues.push({
-			severity: "warning",
-			category: "excessive-turns",
-			detail: `${toolCalls.length} tool calls, only ${editedFiles} file(s) changed, only ${uniqueTools.size} tool(s) used`,
-			recommendation:
-				"Too many calls for too little output. Batch work, use scripts, or rethink approach. Consider if you're re-reading same data.",
-		});
-	}
-
-	return issues;
-}
-
-/**
- * Rule 7: Identical call loop — same tool+same args 3+ times in last 10 calls.
- */
-function detectIdenticalCallLoop(data: SessionData): AdviceEntry[] {
-	const results: AdviceEntry[] = [];
-	const calls = data.entries
-		.filter((e) => e.toolName && e.args)
-		.map((e) => ({
-			key: `${e.toolName}|${JSON.stringify(e.args)}`,
-			toolName: e.toolName!,
-			turnIndex: e.turnIndex,
-		}));
-
-	const window: string[] = [];
-	for (let i = 0; i < calls.length; i++) {
-		const key = calls[i].key;
-		window.push(key);
-		if (window.length > 12) window.shift();
-
-		const count = window.filter((k) => k === key).length;
-		if (count >= 3) {
-			results.push({
-				severity: "error",
-				category: "identical-call-loop",
-				detail: `\`${calls[i].toolName}\` identical args ${count}x in last ${window.length} calls — loop (turn ${calls[i].turnIndex})`,
-				recommendation:
-					"Identical calls in a loop waste tokens. Cache results, batch work, or restructure logic to avoid re-querying same data.",
-				turns: [calls[Math.max(0, i - window.length)]?.turnIndex ?? 0, calls[i].turnIndex],
-			});
-			window.length = 0; // avoid re-reporting same loop
-		}
 	}
 
 	return results;
-}
-
-// ── Helpers ──
-
-function shortPath(p: string): string {
-	const idx = p.lastIndexOf("/");
-	return idx >= 0 ? p.slice(idx + 1) : p;
 }
 
 // ── Main analysis ──
 
-export function analyzeSession(data: SessionData): AdviceResult {
-	const allEntries: AdviceEntry[] = [
-		...detectSameToolCascade(data),
-		...detectToolMismatch(data),
+/**
+ * Run all detectors on a parsed session.
+ * Returns WasteSignal[] sorted by wastedTokens desc (largest waste first).
+ */
+export function analyzeSession(data: SessionData): WasteSignal[] {
+	const allSignals: WasteSignal[] = [
 		...detectRedundantReads(data),
-		...detectErrorNotActioned(data),
-		...detectToolCoverageGap(data),
-		...detectStructuralSearchUnderuse(data),
-		...detectExcessiveTurns(data),
-		...detectIdenticalCallLoop(data),
+		...detectIdenticalArgs(data),
+		...detectBashGrep(data),
+		...detectBashCat(data),
+		...detectErrorLoop(data),
+		...detectNoBatch(data),
+		...detectTurnInefficiency(data),
 	];
 
-	// Dedup by category+detail
-	const seen = new Set<string>();
-	const entries = allEntries.filter((e) => {
-		const key = `${e.category}:${JSON.stringify(e.detail)}`;
-		if (seen.has(key)) return false;
-		seen.add(key);
-		return true;
-	});
-
-	// Score: weighted by category severity
-	// Weights updated per architecture (#171): tool-mismatch 0.35→0.40, added new categories
-	const weights: Record<string, number> = {
-		"tool-mismatch": 0.4,
-		"error-not-actioned": 0.35,
-		"identical-call-loop": 0.35,
-		"same-tool-cascade": 0.2,
-		"redundant-read": 0.15,
-		"high-error-rate": 0.3,
-		"excessive-turns": 0.15,
-		"tool-coverage-gap": 0.1,
-		"structural-search-underuse": 0.25,
-	};
-
-	const severityMultiplier: Record<string, number> = {
-		error: 1.0,
-		warning: 0.6,
-		info: 0.3,
-	};
-
-	let weightedSum = 0;
-	let maxWeight = 0;
-
-	for (const e of entries) {
-		const w = weights[e.category] ?? 0.1;
-		const s = severityMultiplier[e.severity] ?? 0.5;
-		weightedSum += w * s;
-	}
-
-	// Cap at realistic max (all categories as errors)
-	maxWeight = Object.keys(weights).length * 0.4 * 1.0;
-	const rawScore = maxWeight > 0 ? Math.min(1, weightedSum / maxWeight) : 0;
-	const score = Math.round(rawScore * 100) / 100;
-
-	return { sessionId: data.sessionId, score, entries };
-}
-
-/** Format advice result as markdown. */
-export function renderAdviceToMarkdown(result: AdviceResult): string {
-	if (result.entries.length === 0) {
-		return `# Advice: ${result.sessionId}\n\n*No issues detected. Score: 0.00*\n`;
-	}
-
-	const sections: string[] = [];
-	sections.push(`# Advice: ${result.sessionId}`);
-	sections.push(``);
-	sections.push(`**Improvement score: ${result.score.toFixed(2)}** (0 = clean, 1 = needs work)`);
-	sections.push(`**Issues found: ${result.entries.length}**`);
-	sections.push(``);
-
-	const bySeverity: Record<string, AdviceEntry[]> = { error: [], warning: [], info: [] };
-	for (const e of result.entries) {
-		(bySeverity[e.severity] ?? bySeverity.info).push(e);
-	}
-
-	for (const [severity, label] of [
-		["error", "Errors"],
-		["warning", "Warnings"],
-		["info", "Info"],
-	] as const) {
-		const group = bySeverity[severity] ?? [];
-		if (group.length === 0) continue;
-
-		sections.push(`## ${label}`);
-		sections.push(``);
-		for (const e of group) {
-			const icon = severity === "error" ? "⚠️" : severity === "warning" ? "⚡" : "ℹ️";
-			sections.push(`### ${icon} ${e.category}`);
-			sections.push(`- **Detail:** ${e.detail}`);
-			sections.push(`- **Fix:** ${e.recommendation}`);
-			if (e.turns?.length) {
-				sections.push(`- **Turns:** ${[...new Set(e.turns)].sort((a, b) => a - b).join(", ")}`);
+	// Dedup by signal+context (same key = same underlying issue, merge)
+	const merged = new Map<string, WasteSignal>();
+	for (const s of allSignals) {
+		const key = `${s.signal}|${s.context.toolName ?? ""}|${(s.context.files ?? []).join(",")}`;
+		if (merged.has(key)) {
+			const existing = merged.get(key)!;
+			existing.wastedTokens += s.wastedTokens;
+			existing.wastedCost += s.wastedCost;
+			existing.occurrences += s.occurrences;
+			existing.details.push(...s.details);
+			if (s.context.turnRange) {
+				if (!existing.context.turnRange) existing.context.turnRange = s.context.turnRange;
+				else {
+					existing.context.turnRange = [
+						Math.min(existing.context.turnRange[0], s.context.turnRange[0]),
+						Math.max(existing.context.turnRange[1], s.context.turnRange[1]),
+					];
+				}
 			}
-			sections.push(``);
+		} else {
+			merged.set(key, { ...s, details: [...s.details] });
 		}
 	}
 
-	return sections.join("\n");
+	return [...merged.values()].sort((a, b) => b.wastedTokens - a.wastedTokens);
+}
+
+/**
+ * Build SessionAnalysis from parsed session data + waste signals.
+ */
+export function buildSessionAnalysis(
+	data: SessionData,
+	signals: WasteSignal[],
+	metadata?: { totalTokens?: number; totalCost?: number },
+): SessionAnalysis {
+	const totalWasteTokens = signals.reduce((s, w) => s + w.wastedTokens, 0);
+	const totalWasteCost = signals.reduce((s, w) => s + w.wastedCost, 0);
+	const totalTokens = metadata?.totalTokens ?? totalWasteTokens * 3; // fallback heuristic
+	const totalCost = metadata?.totalCost ?? totalWasteCost * 3;
+
+	return {
+		sessionId: data.sessionId,
+		timestamp: data.timestamp,
+		totalTokens,
+		totalCost,
+		totalWasteTokens,
+		totalWasteCost,
+		wasteFraction: totalTokens > 0 ? totalWasteTokens / totalTokens : 0,
+		wasteBySignal: signals,
+	};
+}
+
+/**
+ * Render a brief waste summary line for embedding in prompts.
+ */
+export function renderWasteSummary(analysis: SessionAnalysis): string {
+	const lines: string[] = [];
+	lines.push(
+		`Session ${analysis.sessionId.slice(0, 8)}: ${analysis.totalTokens.toLocaleString()} total tokens, ${analysis.totalWasteTokens.toLocaleString()} wasted (${(analysis.wasteFraction * 100).toFixed(0)}%)`,
+	);
+	for (const s of analysis.wasteBySignal) {
+		lines.push(
+			`  ${s.signal}: ${s.wastedTokens.toLocaleString()} tokens, ${s.occurrences}x — ${s.details[0] ?? ""}`,
+		);
+	}
+	return lines.join("\n");
 }

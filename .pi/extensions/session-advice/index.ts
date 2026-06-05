@@ -2,10 +2,11 @@
  * session-advice — Session advice extension
  *
  * Generates .advice.md alongside .jsonl session files.
- * Analyzes session for inefficient patterns and produces
- * actionable recommendations for the agent.
+ * Detects waste signals from session data, uses LLM to generate
+ * actionable advice. Injects past lessons into agent system prompt.
  *
- * Analysis logic in advisor.ts — shared with post-hoc script.
+ * Detection logic in advisor.ts (pure).
+ * LLM advice generation + signal review in llm-advisor.ts.
  * Report pipeline in advice-pipeline.ts.
  * Symlink management in symlink-manager.ts.
  * Fix constants in fixes.ts.
@@ -15,7 +16,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { dirname } from "node:path";
 
-// ── Shared extension state writer (file-based to avoid dual-module hazard) ──
+// ── Shared extension state writer ──
 
 function writeExtState(value: boolean): void {
 	try {
@@ -31,7 +32,7 @@ function writeExtState(value: boolean): void {
 		data.advice = value;
 		fs.writeFileSync(statePath, JSON.stringify(data, null, 2) + "\n", "utf-8");
 	} catch {
-		// Best-effort, don't crash extension
+		// Best-effort
 	}
 }
 
@@ -42,26 +43,26 @@ export function getSessionAdviceState(): boolean {
 		const data = JSON.parse(raw) as Record<string, boolean | null>;
 		return data.advice ?? true;
 	} catch {
-		// File missing or corrupt — assume enabled (default)
 		return true;
 	}
 }
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AdvicePipeline } from "./advice-pipeline.ts";
-import { backfillMissingAdvice, handleShutdown, createGhIssue } from "./advice-pipeline.ts";
-
-// ── Re-exports for backward compatibility (tests import these) ──
-
-export {
-	generateAdviceReport,
-	writeAdvice,
+import {
 	backfillMissingAdvice,
 	handleShutdown,
 	createGhIssue,
+	createSignalIssues,
+	generateAdviceReport,
+	writeAdvice,
 } from "./advice-pipeline.ts";
+import { buildSessionAnalysis, renderWasteSummary } from "./advisor.ts";
+import { analyzeSession, parseJsonlFile } from "./advisor.ts";
 
 const pipeline = new AdvicePipeline();
+
+export { generateAdviceReport, writeAdvice, backfillMissingAdvice, handleShutdown, createGhIssue };
 
 export default function (pi: ExtensionAPI): void {
 	let enabled = true;
@@ -90,49 +91,84 @@ export default function (pi: ExtensionAPI): void {
 					return;
 				}
 
-				ctx.ui.notify("Generating session advice report...", "info");
+				ctx.ui.notify("Generating session waste report...", "info");
 
-				const { markdown, reportPath } = pipeline.generateReport(sessionsDir);
+				const model = ctx.model;
+				const modelRegistry = ctx.modelRegistry;
+				const { markdown, reportPath, report } = await pipeline.generateReport(
+					sessionsDir,
+					model,
+					modelRegistry,
+				);
 
 				ctx.ui.notify(`Report written: ${reportPath}`, "info");
 
-				// Ask about GitHub issue (before cleanup — user may want issue from the data)
-				const createIssue = await ctx.ui.confirm(
-					"Create GitHub issue?",
-					"Create a GitHub issue from the report in the project repo (.pi/settings.json → supervisor.repo)?",
-				);
-
-				if (createIssue) {
+				// Helper to resolve repo from settings
+				function getRepo(): string | null {
 					const settingsPath = path.resolve(cwd, ".pi", "settings.json");
-					let repo = "";
 					try {
 						const raw = fs.readFileSync(settingsPath, "utf-8");
 						const settings = JSON.parse(raw);
-						repo = settings?.supervisor?.repo ?? "";
+						return settings?.supervisor?.repo ?? null;
 					} catch {
-						ctx.ui.notify("Cannot read supervisor.repo from .pi/settings.json", "error");
-						return;
+						return null;
 					}
+				}
 
+				// Ask about report GitHub issue
+				const createReportIssue = await ctx.ui.confirm(
+					"Create GitHub issue from report?",
+					"Create a GitHub issue from the waste report in the project repo (.pi/settings.json → supervisor.repo)?",
+				);
+
+				if (createReportIssue) {
+					const repo = getRepo();
 					if (!repo) {
 						ctx.ui.notify("No repo found in .pi/settings.json (supervisor.repo)", "error");
-						return;
+					} else {
+						ctx.ui.notify(`Creating issue in ${repo}...`, "info");
+						try {
+							const wasteMatch = markdown.match(/\| Total waste \|.*?\(([\d.]+)%\)/);
+							const wastePct = wasteMatch ? wasteMatch[1] : "?";
+							const date = new Date().toISOString().slice(0, 10);
+							const title = `Session Waste Report — ${date} (${wastePct}% waste)`;
+							const result = createGhIssue(repo, title, markdown, sessionsDir);
+							ctx.ui.notify(`Issue created: ${result}`, "info");
+						} catch (err) {
+							ctx.ui.notify(`Failed to create issue: ${(err as Error).message}`, "error");
+						}
 					}
+				}
 
-					ctx.ui.notify(`Creating GitHub issue in ${repo}...`, "info");
+				// Ask about signal review issues (if review ran)
+				if (report.review) {
+					const hasRemovals = report.review.verdicts.some((v) => v.verdict === "remove");
+					const hasAdditions = report.review.newSignals.length > 0;
 
-					try {
-						// Count findings for title
-						const findingMatch = markdown.match(/\*\*Total findings:\*\* (\d+)/);
-						const findingCount = findingMatch ? findingMatch[1] : "?";
-						const date = new Date().toISOString().slice(0, 10);
-						const title = `Session Advice Report — ${date} (${findingCount} findings)`;
+					if (hasRemovals || hasAdditions) {
+						const createSignalIssuesConfirm = await ctx.ui.confirm(
+							"Create signal review issues?",
+							`${hasRemovals ? "Detector removals proposed. " : ""}${hasAdditions ? "New detector proposals. " : ""}Create GitHub issues for detector changes?`,
+						);
 
-						const result = createGhIssue(repo, title, markdown, sessionsDir);
-
-						ctx.ui.notify(`Issue created: ${result}`, "info");
-					} catch (err) {
-						ctx.ui.notify(`Failed to create issue: ${(err as Error).message}`, "error");
+						if (createSignalIssuesConfirm) {
+							const repo = getRepo();
+							if (!repo) {
+								ctx.ui.notify("No repo found in .pi/settings.json (supervisor.repo)", "error");
+							} else {
+								const urls = createSignalIssues(
+									repo,
+									report.review,
+									report.totalSessions,
+									sessionsDir,
+								);
+								if (urls.length > 0) {
+									ctx.ui.notify(`Signal issues created: ${urls.join(", ")}`, "info");
+								} else {
+									ctx.ui.notify("No signal issues were created.", "info");
+								}
+							}
+						}
 					}
 				}
 
@@ -172,7 +208,7 @@ export default function (pi: ExtensionAPI): void {
 				return;
 			}
 
-			// Fall through to toggle
+			// Toggle
 			if (cmd === "on") enabled = true;
 			else if (cmd === "off") enabled = false;
 			else enabled = !enabled;
@@ -194,7 +230,7 @@ export default function (pi: ExtensionAPI): void {
 		const sessionsDir = path.resolve(cwd, ".pi", "sessions");
 		if (!fs.existsSync(sessionsDir)) return;
 
-		backfillMissingAdvice(sessionsDir, sm.getSessionFile());
+		await backfillMissingAdvice(sessionsDir, sm.getSessionFile(), ctx.model, ctx.modelRegistry);
 	});
 
 	// ── Generate advice for current closing session ──
@@ -202,51 +238,68 @@ export default function (pi: ExtensionAPI): void {
 	pi.on("session_shutdown", async (_event, ctx) => {
 		if (!enabled) return;
 
-		handleShutdown(ctx.sessionManager.getSessionFile());
+		await handleShutdown(ctx.sessionManager.getSessionFile(), ctx.model, ctx.modelRegistry);
 	});
 
-	// ── before_agent_start: inject past session lessons into system prompt ──
+	// ── before_agent_start: inject past session waste lessons into system prompt ──
 
 	pi.on("before_agent_start", async (event, _ctx) => {
 		if (!enabled) return;
 
-		// Read latest.advice.md for past lessons
 		const cwd = process.cwd();
 		const latestAdvicePath = path.resolve(cwd, ".pi", "sessions", "latest.advice.md");
 		if (!fs.existsSync(latestAdvicePath)) return;
 
 		try {
 			const adviceContent = fs.readFileSync(latestAdvicePath, "utf-8");
-			if (!adviceContent || adviceContent.includes("No issues")) return;
+			if (!adviceContent || adviceContent.includes("Clean session")) return;
 
-			// Extract top 3 findings by scanning for ### entries with severity icons
-			const findings: string[] = [];
+			const actions: string[] = [];
 			const lines = adviceContent.split("\n");
-			let currentCategory = "";
+			let inActions = false;
+			let actionCount = 0;
 
 			for (const line of lines) {
-				if (/^### [⚠️⚡ℹ️]/.test(line)) {
-					currentCategory = line.replace(/^### [⚠️⚡ℹ️] /, "").trim();
-				} else if (currentCategory && line.startsWith("- **Detail:**")) {
-					const detail = line.replace("- **Detail:** ", "").trim().slice(0, 200);
-					findings.push(`- [${currentCategory}] ${detail}`);
-					currentCategory = "";
+				if (line.includes("### Recommended Actions")) {
+					inActions = true;
+					continue;
+				}
+				if (line.includes("### Waste Signals")) {
+					inActions = false;
+					continue;
+				}
+				if (inActions && line.startsWith("-")) {
+					const actionText = line.replace(/^- [🔴🟡🟢]\s*\*\*(.*?)\*\*.*$/, "$1").trim();
+					if (actionText && actionText.length > 10 && actionCount < 3) {
+						actions.push(actionText);
+						actionCount++;
+					}
 				}
 			}
 
-			if (findings.length === 0) return;
+			if (actions.length === 0) {
+				for (const line of lines) {
+					if (line.startsWith("- `") && actionCount < 3) {
+						const detail = line.slice(0, 200);
+						actions.push(detail);
+						actionCount++;
+					}
+				}
+			}
 
-			const top3 = findings
+			if (actions.length === 0) return;
+
+			const top3 = actions
 				.slice(0, 3)
-				.map((f) => `  ${f}`)
+				.map((a) => `  - ${a}`)
 				.join("\n");
-			const lessonsBlock = `\n\n⚠️ Past Session Lessons\n${top3}\n`;
+			const lessonsBlock = `\n\n⚠️ Past Session Lessons (from session advisor)\n${top3}\n`;
 
 			return {
 				systemPrompt: event.systemPrompt + lessonsBlock,
 			};
 		} catch {
-			// Silently fail — do not block agent start
+			// Silently fail
 		}
 	});
 }

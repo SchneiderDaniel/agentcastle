@@ -514,7 +514,7 @@ describe("Phase 4: writeAdvice updateSymlink parameter", () => {
 		const advicePath = path.join(dir, "session.advice.md");
 		const symlinkPath = path.join(dir, "latest.advice.md");
 
-		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, false);
+		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, undefined, undefined, false);
 
 		assert.ok(fs.existsSync(advicePath), "advice file should be created");
 		assert.ok(!fs.existsSync(symlinkPath), "symlink should NOT be created");
@@ -529,7 +529,7 @@ describe("Phase 4: writeAdvice updateSymlink parameter", () => {
 		writeJsonl(dir, "session.jsonl", "uuid-test", makeSessionBody());
 		const advicePath = path.join(dir, "session.advice.md");
 
-		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, false);
+		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, undefined, undefined, false);
 
 		const symlinkTarget = fs.readlinkSync(path.join(dir, "latest.advice.md"));
 		assert.equal(symlinkTarget, "prior.advice.md", "symlink should still point to prior.advice.md");
@@ -555,7 +555,7 @@ describe("Phase 4: writeAdvice updateSymlink parameter", () => {
 		writeJsonl(dir, "session.jsonl", "uuid-test", makeSessionBody());
 		const advicePath = path.join(dir, "session.advice.md");
 
-		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, true);
+		writeAdvice(path.join(dir, "session.jsonl"), advicePath, dir, undefined, undefined, true);
 
 		const symlinkTarget = fs.readlinkSync(path.join(dir, "latest.advice.md"));
 		assert.equal(
@@ -573,7 +573,7 @@ describe("Phase 4: writeAdvice updateSymlink parameter", () => {
 		const symlinkPath = path.join(dir, "latest.advice.md");
 
 		// Should not throw
-		writeAdvice(jsonlPath, advicePath, dir, false);
+		writeAdvice(jsonlPath, advicePath, dir, undefined, undefined, false);
 
 		assert.ok(!fs.existsSync(advicePath), "advice file should NOT be created for corrupt jsonl");
 		assert.ok(!fs.existsSync(symlinkPath), "symlink should NOT exist");
@@ -606,7 +606,14 @@ describe("Phase 5: Backfill preserves symlink", () => {
 		// Existing session with advice + symlink
 		writeJsonl(dir, "existing.jsonl", "uuid-existing", makeSessionBody());
 		const existingAdvicePath = path.join(dir, "existing.advice.md");
-		writeAdvice(path.join(dir, "existing.jsonl"), existingAdvicePath, dir, true);
+		writeAdvice(
+			path.join(dir, "existing.jsonl"),
+			existingAdvicePath,
+			dir,
+			undefined,
+			undefined,
+			true,
+		);
 		const symlinkTargetBefore = fs.readlinkSync(path.join(dir, "latest.advice.md"));
 
 		// 3 past sessions without .advice.md
