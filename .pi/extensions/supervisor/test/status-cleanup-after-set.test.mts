@@ -86,8 +86,8 @@ function checkStatusCleanup(filePath: string): string[] {
 // ---------------------------------------------------------------------------
 
 const FILES_TO_CHECK = [
-	"pipeline-audit.ts",
-	"pipeline-merge.ts",
+	"pipeline/audit.ts",
+	"pipeline/merge.ts",
 	"pipeline/notifications.ts",
 	"pipeline/handler.ts",
 ];

@@ -37,6 +37,11 @@ export function installFooter(
 	const showTimer = config.showTimer;
 
 	ctx.ui.setFooter((tui, theme, footerData) => {
+		// Enable clear-on-shrink so stale rows don't persist when footer
+		// content shrinks (e.g., supervisor status cleared, footer goes
+		// from 2 rows to 1 row). Without this, TUI leaves blank/stale rows.
+		tui.setClearOnShrink(true);
+
 		const unsubBranch = footerData.onBranchChange(() => tui.requestRender());
 
 		return {
