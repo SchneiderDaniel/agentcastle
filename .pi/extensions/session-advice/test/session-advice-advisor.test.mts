@@ -173,6 +173,176 @@ describe("detectTurnInefficiency", () => {
 	});
 });
 
+// ── Helper for identical-args tests ──
+
+function identicalBashEntry(cmd: string, turnIndex: number): SessionEntry {
+	return { type: "tool_use", toolName: "bash", args: { command: cmd }, text: cmd, turnIndex };
+}
+
+function identicalStructuralSearchEntry(turnIndex: number): SessionEntry {
+	return {
+		type: "tool_use",
+		toolName: "structural_search",
+		args: { pattern: "test" },
+		text: "",
+		turnIndex,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// detectIdenticalArgs tests
+// ---------------------------------------------------------------------------
+
+describe("detectIdenticalArgs", () => {
+	it("3 identical calls within window → identical-args signal with occurrences >= 2", () => {
+		const data = makeSession([
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+		]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		assert.strictEqual(identical.length, 1, "should produce one identical-args signal");
+		assert.ok(identical[0].occurrences >= 2, "occurrences should be >= 2");
+		assert.strictEqual(identical[0].context.toolName, "bash");
+	});
+
+	it("2 identical calls → no identical-args signal (below threshold)", () => {
+		const data = makeSession([identicalBashEntry("ls", 0), identicalBashEntry("ls", 0)]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		assert.strictEqual(identical.length, 0, "2 identical calls should not trigger");
+	});
+
+	it("5 identical calls → single signal, not duplicated per-call", () => {
+		const data = makeSession([
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+		]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		assert.strictEqual(identical.length, 1, "5 identical calls should produce exactly 1 signal");
+	});
+
+	it("identical calls span >12 entries (window slides) → only 3+ in current window trigger", () => {
+		// 3 identical calls at start, then 10 different calls, then 2 more identical = only first 3 trigger
+		const entries: SessionEntry[] = [
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+		];
+		// Add 10 unique calls to push first 3 out of 12-call window
+		for (let i = 3; i < 13; i++) {
+			entries.push(identicalBashEntry(`unique-${i}`, 0));
+		}
+		// Now add 2 more identical 'ls' calls — window has only 2, so no new signal
+		entries.push(identicalBashEntry("ls", 0));
+		entries.push(identicalBashEntry("ls", 0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		// The first 3 were detected before window slid, so 1 signal expected
+		assert.strictEqual(identical.length, 1, "only the first batch of 3 should trigger a signal");
+	});
+
+	it("3 identical calls interleaved with other tools → still detected (key match)", () => {
+		const data = makeSession([
+			identicalBashEntry("ls", 0),
+			identicalStructuralSearchEntry(0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+		]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		assert.strictEqual(identical.length, 1, "interleaved identical calls should be detected");
+	});
+
+	it("same tool but different args → no signal (key mismatch)", () => {
+		const data = makeSession([
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls -la", 0),
+			identicalBashEntry("ls", 0),
+		]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		assert.strictEqual(identical.length, 0, "different args should not match");
+	});
+
+	it("different tool but same args structure → no signal (key includes toolName)", () => {
+		const data = makeSession([
+			{ type: "tool_use", toolName: "bash", args: { command: "ls" }, text: "ls", turnIndex: 0 },
+			{ type: "tool_use", toolName: "read", args: { command: "ls" }, text: "", turnIndex: 0 },
+			{ type: "tool_use", toolName: "bash", args: { command: "ls" }, text: "ls", turnIndex: 0 },
+		]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		assert.strictEqual(
+			identical.length,
+			0,
+			"different tools should not match even with same args shape",
+		);
+	});
+
+	it("6 identical calls → first and second batch both detected, merged by dedup", () => {
+		const data = makeSession([
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+			identicalBashEntry("ls", 0),
+		]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		// Both batches detected but merged by analyzeSession dedup (same toolName, no files)
+		// Each batch has 2 wasted occurrences → total >= 4
+		assert.strictEqual(identical.length, 1, "6 identical calls should produce 1 merged signal");
+		assert.ok(
+			identical[0].occurrences >= 4,
+			"merged occurrences should account for both batches (>= 4)",
+		);
+	});
+
+	it("empty session → no crash, empty results", () => {
+		const data = makeSession([]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		assert.strictEqual(
+			identical.length,
+			0,
+			"empty session should produce no identical-args signal",
+		);
+	});
+
+	it("single call → no signal", () => {
+		const data = makeSession([identicalBashEntry("ls", 0)]);
+		const signals = analyzeSession(data);
+		const identical = signals.filter((s) => s.signal === "identical-args");
+		assert.strictEqual(identical.length, 0, "single call should not trigger");
+	});
+
+	it("entries with undefined/null toolName or args → filtered out, no crash", () => {
+		const data = makeSession([
+			{
+				type: "tool_use",
+				toolName: undefined,
+				args: { command: "ls" },
+				text: "",
+				turnIndex: 0,
+			} as any,
+			{ type: "tool_use", toolName: "bash", args: undefined, text: "", turnIndex: 0 } as any,
+			{ type: "tool_use", toolName: undefined, args: undefined, text: "", turnIndex: 0 } as any,
+		]);
+		const signals = analyzeSession(data);
+		// Should not crash
+		assert.ok(Array.isArray(signals), "should return array without crashing");
+	});
+});
+
 describe("return type is WasteSignal[]", () => {
 	it("analyzeSession returns an array of WasteSignal objects", () => {
 		const data = makeSession([bashEntry("cat file | grep foo", 0)]);
