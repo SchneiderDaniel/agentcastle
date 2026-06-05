@@ -16,6 +16,7 @@ import {
 	backfillMissingAdvice,
 	handleShutdown,
 	createGhIssue,
+	createSignalIssues,
 } from "../index.ts";
 
 // ── Helpers ──
@@ -893,5 +894,344 @@ describe("Phase 7: Temp file cleanup on gh issue create failure", () => {
 		} catch {
 			/* ok */
 		}
+	});
+});
+
+// ── Phase 8: createSignalIssues characterization (capture pre-refactoring behavior) ──
+
+describe("Phase 8: createSignalIssues characterization", () => {
+	const tmpDirs8: string[] = [];
+
+	after(() => {
+		for (const d of tmpDirs8) {
+			try {
+				fs.rmSync(d, { recursive: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	function makeDir(): string {
+		const dir = fs.mkdtempSync("/tmp/session-advice-test-");
+		tmpDirs8.push(dir);
+		return dir;
+	}
+
+	// Simple execFn that returns a predictable URL for each issue
+	let issueCounter = 0;
+	function makeExecFn() {
+		issueCounter = 0;
+		return (_cmd: string) => {
+			issueCounter++;
+			return `https://github.com/owner/repo/issues/${issueCounter}`;
+		};
+	}
+
+	it("2 verdicts to remove, 0 newSignals → returns 2 issue URLs", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [
+				{
+					signal: "signal-a",
+					label: "Signal A",
+					verdict: "remove" as const,
+					reason: "Bad A",
+					falsePositiveRisk: "high" as const,
+				},
+				{
+					signal: "signal-b",
+					label: "Signal B",
+					verdict: "remove" as const,
+					reason: "Bad B",
+					falsePositiveRisk: "medium" as const,
+				},
+			],
+			newSignals: [],
+			summary: "Remove two bad signals",
+		};
+
+		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
+
+		assert.equal(results.length, 2, "should return 2 URLs");
+		assert.ok(results[0].includes("issues/1"), "first URL should be issues/1");
+		assert.ok(results[1].includes("issues/2"), "second URL should be issues/2");
+	});
+
+	it("0 verdicts to remove, 2 newSignals → returns 2 issue URLs", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [],
+			newSignals: [
+				{
+					signal: "signal-new",
+					label: "New Signal",
+					description: "Detects X",
+					reason: "Valuable",
+					estimatedValue: "High",
+					detectionApproach: "Check Y",
+				},
+				{
+					signal: "signal-new2",
+					label: "New Signal 2",
+					description: "Detects Z",
+					reason: "Useful",
+					estimatedValue: "Medium",
+					detectionApproach: "Check W",
+				},
+			],
+			summary: "Add new signals",
+		};
+
+		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
+
+		assert.equal(results.length, 2, "should return 2 URLs");
+		assert.ok(results[0].includes("issues/1"), "first URL should be issues/1");
+		assert.ok(results[1].includes("issues/2"), "second URL should be issues/2");
+	});
+
+	it("1 verdict to remove + 1 newSignal → 2 URLs in document order (remove first, then add)", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [
+				{
+					signal: "bad-signal",
+					label: "Bad Signal",
+					verdict: "remove" as const,
+					reason: "Bad",
+					falsePositiveRisk: "high" as const,
+				},
+			],
+			newSignals: [
+				{
+					signal: "good-signal",
+					label: "Good Signal",
+					description: "Detects",
+					reason: "Useful",
+					estimatedValue: "High",
+					detectionApproach: "Check",
+				},
+			],
+			summary: "Mixed",
+		};
+
+		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
+
+		assert.equal(results.length, 2, "should return 2 URLs");
+		assert.ok(results[0].includes("issues/1"), "remove issue should come first (issues/1)");
+		assert.ok(results[1].includes("issues/2"), "add issue should come second (issues/2)");
+	});
+
+	it("0 verdicts, 0 newSignals → returns empty array", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [],
+			newSignals: [],
+			summary: "Empty",
+		};
+
+		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
+
+		assert.equal(results.length, 0, "should return empty array");
+	});
+
+	it("1 verdict='refine' → skipped, empty results", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [
+				{
+					signal: "refine-signal",
+					label: "Refine Signal",
+					verdict: "refine" as const,
+					reason: "Needs work",
+					falsePositiveRisk: "low" as const,
+					refinementSuggestion: "Tune threshold",
+				},
+			],
+			newSignals: [],
+			summary: "Only refine",
+		};
+
+		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
+
+		assert.equal(results.length, 0, "refine verdicts should not create issues");
+	});
+
+	it("execFn throws on first → caught, error logged, results empty", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [
+				{
+					signal: "failing-signal",
+					label: "Failing",
+					verdict: "remove" as const,
+					reason: "Bad",
+					falsePositiveRisk: "high" as const,
+				},
+			],
+			newSignals: [],
+			summary: "Failing",
+		};
+
+		// Spy on console.error
+		const originalError = console.error;
+		const capturedErrors: unknown[] = [];
+		console.error = (...args: unknown[]) => {
+			capturedErrors.push(args);
+		};
+
+		try {
+			const execFn = () => {
+				throw new Error("gh not installed");
+			};
+			const results = createSignalIssues("owner/repo", review, 10, dir, execFn);
+
+			assert.equal(results.length, 0, "should return empty array on failure");
+			assert.equal(capturedErrors.length, 1, "should have logged one error");
+			assert.ok(
+				(capturedErrors[0] as unknown[]).some((arg) =>
+					String(arg).includes("Failed to create issue for `failing-signal`"),
+				),
+				"error message should contain signal name",
+			);
+		} finally {
+			console.error = originalError;
+		}
+	});
+
+	it("first succeeds, second throws → returns 1 URL", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [
+				{
+					signal: "good-signal",
+					label: "Good",
+					verdict: "remove" as const,
+					reason: "Bad",
+					falsePositiveRisk: "high" as const,
+				},
+			],
+			newSignals: [
+				{
+					signal: "bad-signal",
+					label: "Bad",
+					description: "Desc",
+					reason: "Reason",
+					estimatedValue: "High",
+					detectionApproach: "Check",
+				},
+			],
+			summary: "Mixed",
+		};
+
+		let callCount = 0;
+		const execFn = () => {
+			callCount++;
+			if (callCount === 2) {
+				throw new Error("second call fails");
+			}
+			return "https://github.com/owner/repo/issues/1";
+		};
+
+		const originalError = console.error;
+		const capturedErrors: unknown[] = [];
+		console.error = (...args: unknown[]) => {
+			capturedErrors.push(args);
+		};
+
+		try {
+			const results = createSignalIssues("owner/repo", review, 10, dir, execFn);
+
+			assert.equal(results.length, 1, "should return 1 URL");
+			assert.equal(capturedErrors.length, 1, "should have logged one error");
+		} finally {
+			console.error = originalError;
+		}
+	});
+
+	it("remove issue body format matches expected markdown structure", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [
+				{
+					signal: "test-signal",
+					label: "Test Label",
+					verdict: "remove" as const,
+					reason: "Too many false positives",
+					falsePositiveRisk: "high" as const,
+				},
+			],
+			newSignals: [],
+			summary: "Test",
+		};
+
+		// Capture what would be written to the temp body file
+		let capturedBody = "";
+		const execFn = (_cmd: string, _opts: unknown, ..._rest: unknown[]) => {
+			// Read the body file that was written
+			const bodyFile = path.join(dir, ".gh-issue-body.tmp");
+			capturedBody = fs.readFileSync(bodyFile, "utf-8");
+			return "https://github.com/owner/repo/issues/1";
+		};
+
+		createSignalIssues("owner/repo", review, 10, dir, execFn);
+
+		assert.ok(
+			capturedBody.includes("## Detector Removal Request"),
+			"body should have removal request heading",
+		);
+		assert.ok(capturedBody.includes("`test-signal`"), "body should include signal name");
+		assert.ok(capturedBody.includes("### What to Do"), "body should have 'What to Do' section");
+		assert.ok(
+			capturedBody.includes("Remove `test-signal` detector"),
+			"body should include removal step",
+		);
+		assert.ok(
+			capturedBody.includes("Auto-generated by session-advice signal review"),
+			"body should have auto-generated footer",
+		);
+	});
+
+	it("add issue body format matches expected markdown structure", () => {
+		const dir = makeDir();
+		const review = {
+			verdicts: [],
+			newSignals: [
+				{
+					signal: "new-signal",
+					label: "New Detector",
+					description: "Detects redundant reads",
+					reason: "Saves tokens",
+					estimatedValue: "~500 tokens/session",
+					detectionApproach: "Check for repeated read calls on same path",
+				},
+			],
+			summary: "Add",
+		};
+
+		let capturedBody = "";
+		const execFn = (_cmd: string, _opts: unknown) => {
+			const bodyFile = path.join(dir, ".gh-issue-body.tmp");
+			capturedBody = fs.readFileSync(bodyFile, "utf-8");
+			return "https://github.com/owner/repo/issues/1";
+		};
+
+		createSignalIssues("owner/repo", review, 10, dir, execFn);
+
+		assert.ok(
+			capturedBody.includes("## New Detector Proposal"),
+			"body should have new detector proposal heading",
+		);
+		assert.ok(capturedBody.includes("`new-signal`"), "body should include signal name");
+		assert.ok(capturedBody.includes("### Description"), "body should have description section");
+		assert.ok(capturedBody.includes("### What to Do"), "body should have 'What to Do' section");
+		assert.ok(
+			capturedBody.includes("Implement `new-signal` detector"),
+			"body should include implementation step",
+		);
+		assert.ok(
+			capturedBody.includes("Auto-generated by session-advice signal review"),
+			"body should have auto-generated footer",
+		);
 	});
 });
