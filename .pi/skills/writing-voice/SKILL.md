@@ -1,21 +1,27 @@
 ---
 name: writing-voice
-description: Applies stored writing voice/style rules from voice-{lang}.md files when generating documentation, summaries, or any text for users. Loads rules from voice/ folder in this skill directory. Use when writing user-facing text that must follow established style guidelines.
+description: "TRIGGER ON ANY WRITING TASK. Before writing user-facing text (summaries, documentation, READMEs, guides, explanations, responses), you MUST read SKILL.md and apply voice-{lang}.md rules. Defines project's official writing voice — formal academic register, no contractions, fronted prepositional phrases, first-person plural. FAILURE TO APPLY = style guideline violation."
 ---
 
 # Writing Voice Skill
 
 Apply stored writing voice rules when generating text for users. Reads `voice-{lang}.md` files from `voice/` folder in this skill directory.
 
-## When to Trigger
+## When to Trigger — MANDATORY
 
-Trigger this skill when task involves writing **user-facing text**:
+You MUST trigger this skill when the task involves writing **any user-facing text**:
+
 - Documentation
-- Summaries
+- Summaries (e.g. project overview, feature recap)
+- READMEs
 - Guides and tutorials
 - Explanations
 - User messages and responses
-- Any text that must maintain consistent writing voice
+- Reviews
+- Reports
+- **Any text where you produce sentences for the user to read**
+
+**Rule:** If user asks you to write, describe, explain, or summarize in prose → load this skill first. No exceptions.
 
 ## Voice File Location
 
