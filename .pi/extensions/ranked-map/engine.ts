@@ -19,7 +19,13 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { buildCtagsArgs, buildSymbolIndex } from "./ctags.ts";
 import { loadCachedIndex } from "./cache.ts";
-import { selectMode, dumpAllFiles, formatOutput } from "./format.ts";
+import {
+	selectMode,
+	dumpAllFiles,
+	formatOutput,
+	getStructuralOverview,
+	formatSymbols,
+} from "./format.ts";
 import { computeKeywordScores, computeRecencyScores, rankFiles } from "./scoring.ts";
 import { runKeywordSearch } from "./search.ts";
 import { runGitRecency, getGitHead } from "./git.ts";
@@ -165,6 +171,41 @@ export class RankedMapEngine {
 			budget,
 			index.symbols,
 		);
+
+		// In recency-only mode (no query), inject structural overview files
+		// to ensure at least one file per top-level directory appears in output.
+		// Structural files get score 0.1 so they don't get truncated by token budget.
+		if (!hasQuery) {
+			const allPaths = Object.keys(index.symbols);
+			const structuralFiles = getStructuralOverview(allPaths);
+			const existingByPath = new Map(ranked.files.map((f) => [f.path, f]));
+
+			for (const sf of structuralFiles) {
+				const existing = existingByPath.get(sf.path);
+				if (existing) {
+					// Bump score to at least 0.1 for structural overview files
+					if (existing.score < sf.score) {
+						existing.score = sf.score;
+					}
+				} else {
+					const syms = index.symbols[sf.path] ?? [];
+					const symText = formatSymbols(syms, sf.path);
+					ranked.files.push({
+						path: sf.path,
+						score: sf.score,
+						symbols: symText,
+						preview: "",
+					});
+					existingByPath.set(sf.path, ranked.files[ranked.files.length - 1]!);
+				}
+			}
+
+			// Re-sort by score descending (structural files with 0.1 will be at bottom)
+			ranked.files.sort((a, b) => {
+				if (b.score !== a.score) return b.score - a.score;
+				return a.path.localeCompare(b.path);
+			});
+		}
 
 		return { ...ranked, mode: "ranked" as const };
 	}

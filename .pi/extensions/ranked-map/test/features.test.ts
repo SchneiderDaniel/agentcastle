@@ -598,3 +598,130 @@ describe("Phase 7: Engine integration", () => {
 		}
 	});
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 8: Structural overview integration in engine.rank
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Phase 8: Structural overview integration in engine.rank", () => {
+	it("recency-only mode (no query) merges structural overview files", async () => {
+		const index: CachedIndex = {
+			head: "abc",
+			builtAt: Date.now(),
+			symbols: {
+				".pi/extensions/foo/src/a.ts": [{ type: "function", name: "foo", line: 1 }],
+				".pi/extensions/bar/src/b.ts": [{ type: "function", name: "bar", line: 1 }],
+				Makefile: [{ type: "other", name: "Makefile", line: 1 }],
+			},
+		};
+		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
+		const result = await engine.rank(index, "", 50000, undefined);
+		assert.equal(result.mode, "ranked");
+
+		// Structural overview should add files for top-level dirs: .pi, Makefile
+		// .pi is one top-level dir, Makefile is another
+		const paths = result.files.map((f) => f.path);
+		// At minimum, .pi/extensions/foo/src/a.ts and .pi/extensions/bar/src/b.ts are in the ranked results
+		// Makefile is a structural file (root-level file, its own "directory")
+		assert.ok(paths.includes("Makefile"), "structural overview should include root-level files");
+	});
+
+	it("structural overview files do not duplicate files already in ranked results", async () => {
+		const index: CachedIndex = {
+			head: "abc",
+			builtAt: Date.now(),
+			symbols: {
+				"src/a.ts": [{ type: "function", name: "foo", line: 1 }],
+				"src/b.ts": [{ type: "function", name: "bar", line: 1 }],
+				"docs/readme.md": [{ type: "other", name: "readme", line: 1 }],
+				Makefile: [{ type: "other", name: "Makefile", line: 1 }],
+			},
+		};
+		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
+		const result = await engine.rank(index, "", 50000, undefined);
+		const paths = result.files.map((f) => f.path);
+		// Each path should appear at most once
+		for (const p of paths) {
+			const count = paths.filter((x) => x === p).length;
+			assert.equal(count, 1, `Path "${p}" appears ${count} times (should be 1)`);
+		}
+	});
+
+	it("structural overview files appear at low score (0.1)", async () => {
+		const index: CachedIndex = {
+			head: "abc",
+			builtAt: Date.now(),
+			symbols: {
+				"src/a.ts": [{ type: "function", name: "foo", line: 1 }],
+				Makefile: [{ type: "other", name: "Makefile", line: 1 }],
+			},
+		};
+		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
+		const result = await engine.rank(index, "", 50000, undefined);
+
+		// autoThreshold: 0, totalSymbols: 2, 2 > 0 → ranked (recency-only)
+		assert.equal(result.mode, "ranked");
+
+		// Makefile is a structural overview file (root-level)
+		const makefileEntry = result.files.find((f) => f.path === "Makefile");
+		assert.ok(makefileEntry, "Makefile should be in results");
+		// Makefile gets 0.1 from structural overview
+		assert.equal(makefileEntry!.score, 0.1, "structural overview files should have score 0.1");
+	});
+
+	it("query mode does NOT inject structural overview", async () => {
+		const index: CachedIndex = {
+			head: "abc",
+			builtAt: Date.now(),
+			symbols: {
+				"src/a.ts": [{ type: "function", name: "foo", line: 1 }],
+				Makefile: [{ type: "other", name: "Makefile", line: 1 }],
+			},
+		};
+		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
+		const result = await engine.rank(index, "foo bar", 50000, undefined);
+		// In query mode, Makefile appears with score 0 (no recency, no keyword match)
+		// Structural overview should NOT boost it to 0.1 in query mode
+		const makefileEntry = result.files.find((f) => f.path === "Makefile");
+		assert.ok(makefileEntry, "Makefile appears in query mode (in symbol index)");
+		assert.equal(
+			makefileEntry!.score,
+			0,
+			"Makefile should have score 0 in query mode (not boosted)",
+		);
+	});
+
+	it("full_dump mode does NOT inject structural overview", async () => {
+		const index: CachedIndex = {
+			head: "abc",
+			builtAt: Date.now(),
+			symbols: {
+				"src/a.ts": [{ type: "function", name: "foo", line: 1 }],
+				Makefile: [{ type: "other", name: "Makefile", line: 1 }],
+			},
+		};
+		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 100 }), mockExecFn(), "/tmp");
+		const result = await engine.rank(index, "", 50000, undefined);
+		// Should be full_dump mode since totalSymbols (2) <= autoThreshold (100)
+		assert.equal(result.mode, "full_dump");
+		// In full_dump mode, all files are already included sorted by path
+		const paths = result.files.map((f) => f.path);
+		assert.ok(paths.includes("Makefile"), "full_dump should already include all files");
+		assert.ok(paths.includes("src/a.ts"), "full_dump should include all files");
+	});
+
+	it("empty repo with no query → no crash, no structural files added", async () => {
+		const index: CachedIndex = {
+			head: "abc",
+			builtAt: Date.now(),
+			symbols: {},
+		};
+		// With autoThreshold=0 and totalSymbols=0, 0 <= 0 → full_dump mode
+		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
+		const result = await engine.rank(index, "", 50000, undefined);
+		// Empty repo: no symbols → no files at all, no crash
+		assert.equal(result.files.length, 0, "empty repo should have no files");
+		// 0 <= 20000 (default autoThreshold) → full_dump
+		assert.equal(result.mode, "full_dump");
+	});
+});
