@@ -1,6 +1,6 @@
 ---
 name: writing-voice
-description: "TRIGGER ON ANY WRITING TASK. Before writing user-facing text (summaries, documentation, READMEs, guides, explanations, responses), you MUST read SKILL.md and apply voice-{lang}.md rules. Defines project's official writing voice — formal academic register, no contractions, fronted prepositional phrases, first-person plural. FAILURE TO APPLY = style guideline violation."
+description: "Formal academic writing style guide for project documentation. Specifies tone (declarative, formal), word choice (Latinate, high noun-verb ratio), sentence structure (right-branching, fronted adverbials), and conventions (no contractions, first-person plural, present tense). Apply before writing summaries, docs, READMEs, guides, or any user-facing text."
 ---
 
 # Writing Voice Skill
