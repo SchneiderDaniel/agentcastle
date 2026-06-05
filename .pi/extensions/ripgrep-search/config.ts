@@ -105,6 +105,7 @@ export async function ripgrepAvailable(
 	// Primary: PATH directory check (no spawn, instant, reliable)
 	const pathDirs = (process.env.PATH ?? "").split(delimiter);
 	for (const dir of pathDirs) {
+		if (!dir) continue;
 		try {
 			accessSync(join(dir, "rg"), constants.X_OK);
 			return true;
@@ -113,11 +114,19 @@ export async function ripgrepAvailable(
 		}
 	}
 
-	// Fallback: spawn-based detection for exotic environments
+	// Fallback 1: check pi's own binary directory (~/.pi/agent/bin)
+	const homeDir = process.env.HOME || "";
+	if (homeDir) {
+		try {
+			accessSync(join(homeDir, ".pi", "agent", "bin", "rg"), constants.X_OK);
+			return true;
+		} catch {}
+	}
+
+	// Fallback 2: spawn-based detection for exotic environments
 	try {
 		const result = await exec("rg", ["--version"], { timeout: 3_000 });
 		if (result.code === 0) return true;
-		// rg on PATH but spawn failed — likely transient (timeout, resource)
 		console.warn(
 			"[ripgrep-search] `rg --version` failed (exit=" +
 				result.code +
