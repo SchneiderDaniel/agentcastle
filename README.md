@@ -53,6 +53,7 @@ AgentCastle is a **Kanban-centred AI agent** built on the [Pi coding agent](http
 - **TypeScript checkpoint** — `/check` command: `tsc --noEmit` on demand
 - **PiIgnore** — Block paths from agent read/write/edit/bash
 - **Format on save** — Auto Prettier + ESLint after every write/edit
+- **Writing voice prompt** — Derive a consistent AI writing voice from sample text (paste, URL, or file), generates `voice-{lang}.md` style guide
 - **Extensions-based** — 12+ secure pi extensions, no MCP servers, no network-exposed endpoints
 - **Custom theme** — Dark cyberpunk TUI (agentcastle)
 
