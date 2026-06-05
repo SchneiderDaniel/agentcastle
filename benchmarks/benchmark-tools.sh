@@ -7,7 +7,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PI_DIR="$PROJECT_DIR/.pi"
 SESSIONS_DIR="$PI_DIR/sessions"
 RESULTS_DIR="$SCRIPT_DIR/benchmark-results"
-RUNS=${RUNS:-2}  # default 2 for quick test, override with RUNS=5
+RUNS=${RUNS:-5}  # default 5 for meaningful averages, override with RUNS=N
 
 TASK="Audit test coverage of chart/figure generation methods in flask_planhead/app/services/. Steps:
 1. Find all service files with generate_*_figure() methods
