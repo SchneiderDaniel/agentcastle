@@ -63,13 +63,25 @@ export function isValidISODatetime(s: string): boolean {
 	if (typeof s !== "string" || s.length < 10) return false;
 	const d = new Date(s);
 	if (isNaN(d.getTime())) return false;
-	// Catch overflow dates like "2026-02-30" that JS Date silently rolls forward
-	const iso = d.toISOString();
-	// Compare date portion (first 10 chars) to detect overflow
-	// Using date-only comparison avoids false rejections from timezone normalization:
-	// d.toISOString() always emits Z-suffix UTC, while input may have +HH:MM offset
-	// or no timezone at all.
-	if (iso.slice(0, 10) !== s.slice(0, 10)) return false;
+	// Extract date components from the input string directly (first 10 chars)
+	// and compare against a local-date constructor to detect overflow dates
+	// (e.g. Feb 30 → Mar 2) WITHOUT rejecting valid timestamps where the UTC
+	// date differs from the input date due to timezone offset.
+	const datePart = s.slice(0, 10);
+	const parts = datePart.split("-");
+	if (parts.length !== 3) return false;
+	const year = parseInt(parts[0]!, 10);
+	const month = parseInt(parts[1]!, 10);
+	const day = parseInt(parts[2]!, 10);
+	// Construct a local date from the components to detect overflow rollover
+	const constructed = new Date(year, month - 1, day);
+	if (
+		constructed.getFullYear() !== year ||
+		constructed.getMonth() !== month - 1 ||
+		constructed.getDate() !== day
+	) {
+		return false;
+	}
 	return true;
 }
 
