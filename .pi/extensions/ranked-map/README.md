@@ -14,7 +14,7 @@
 - **Test-file penalty** — Test files (`.test.`, `.spec.`, `/test/`) receive 0.5x score penalty to favor source files
 - **.piignore integration** — Patterns from `.piignore` are automatically added as ctags excludes
 - **Improved previews** — Shows ctag definition lines (from pattern field) instead of first 5 comment/import lines
-- **Smart ctags excludes** — Q&A data files (`*.jsonl`), docs (`*.md`), pi agent internals, and unrelated submodules are excluded from indexing
+- **Smart ctags excludes** — Q&A data files (`*.jsonl`), docs (`*.md`), and pi agent internals are excluded from indexing; submodules are scanned like any other directory
 - **Prompt integration** — Injects mode-aware `promptSnippet` and `promptGuidelines` so the LLM knows how to use the tool
 - **No external dependencies** — Uses `ctags` for indexing, `ripgrep` for keyword search, `git` for recency
 
@@ -32,7 +32,7 @@ Each phase accepts `ExecFn` + config via constructor, making all methods testabl
 ## How it works
 
 1. On first call, the extension builds a symbol index via `ctags --output-format=json -R` over the target directory
-   - Automatically excludes: `node_modules`, `.git`, `*.json`, `*.jsonl`, `*.md`, `*.min.js`, `*.css`, `static`, `context`, `sessions`, `npm`, `chromium-deps`, `crawl4ai-venv`, `flask_blogs`, `benchmarks`
+   - Automatically excludes: `node_modules`, `.git`, `*.json`, `*.jsonl`, `*.md`, `*.min.js`, `*.css`, `static`, `context`, `sessions`, `npm`, `chromium-deps`, `crawl4ai-venv`, `benchmarks`
      - Basename-only patterns — `ctags --exclude` matches against the basename of each file/directory, so path prefixes like `.pi/` are omitted
    - Also reads `.piignore` for additional exclusion patterns
 2. The index is cached to disk keyed by current git HEAD
