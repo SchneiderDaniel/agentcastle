@@ -284,35 +284,40 @@ export class BashCommand {
 	}
 
 	/**
-	 * Detect tool mismatch and suggest alternative.
-	 * Returns null if no mismatch detected.
+	 * Shared detection logic — identifies the kind of tool mismatch
+	 * in a bash command.
 	 *
-	 * Logic matches harness-rules.ts detectMismatchAndSuggest().
+	 * Returns:
+	 *  - "search"    — grep/rg used where ripgrep_search is appropriate
+	 *  - "file-read" — cat/head/tail/less/more used where read is appropriate
+	 *  - null        — no recognized mismatch
+	 *
+	 * Used by both detectMismatch() (which maps to category/suggestion objects)
+	 * and suggestRedirection() (which maps to tool-name strings).
+	 *
+	 * NOTE: Redirect (>) does NOT suppress grep/rg search detection —
+	 * a user piping grep results to a file should still be told to use
+	 * ripgrep_search. However, redirect DOES suppress file-read detection
+	 * (cat > file is a write, not a read).
 	 */
-	detectMismatch(): { category: string; suggestion: string } | null {
+	private detectMismatchKind(): "search" | "file-read" | null {
 		if (!this.raw) return null;
 
 		// Backtick search patterns are always search
 		if (this.lower.includes("`grep") || this.lower.includes("`rg")) {
-			return {
-				category: "tool-mismatch",
-				suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
-			};
+			return "search";
 		}
 
 		if (this.segments.length === 0) return null;
 
 		// Search in bash (grep/rg as first token — standalone only, not piped)
+		// Redirect does NOT suppress search detection
 		if (this.isStandalone()) {
 			for (const seg of this.segments) {
-				if (seg.redirect) continue;
 				if (seg.tokens.length >= 1) {
 					const first = seg.tokens[0];
 					if (first === "grep" || first === "rg") {
-						return {
-							category: "tool-mismatch",
-							suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
-						};
+						return "search";
 					}
 				}
 			}
@@ -324,15 +329,40 @@ export class BashCommand {
 			const first = firstSeg.tokens[0];
 			for (const c of READ_BASH_CMDS) {
 				if (first === c) {
-					return {
-						category: "tool-mismatch",
-						suggestion: `Use read tool instead of bash ${c} for file inspection`,
-					};
+					return "file-read";
 				}
 			}
 		}
 
-		// ls (informational only)
+		return null;
+	}
+
+	/**
+	 * Detect tool mismatch and suggest alternative.
+	 * Returns null if no mismatch detected.
+	 *
+	 * Delegates to detectMismatchKind() for shared detection logic,
+	 * then maps the result to a { category, suggestion } object.
+	 * Includes an ls-specific check not present in suggestRedirection().
+	 */
+	detectMismatch(): { category: string; suggestion: string } | null {
+		const kind = this.detectMismatchKind();
+
+		if (kind === "search") {
+			return {
+				category: "tool-mismatch",
+				suggestion: "Use ripgrep_search tool for text search instead of bash grep/rg",
+			};
+		}
+
+		if (kind === "file-read") {
+			return {
+				category: "tool-mismatch",
+				suggestion: "Use read tool instead of bash cat/head/tail/less/more for file inspection",
+			};
+		}
+
+		// ls (informational only — unique to detectMismatch)
 		if (this.isLs()) {
 			return {
 				category: "tool-mismatch",
@@ -348,41 +378,14 @@ export class BashCommand {
 	 * Suggest a redirection for a mismatched bash command.
 	 * Returns the suggested tool name or null if no mismatch.
 	 *
-	 * Logic matches harness-rules.ts suggestRedirection().
+	 * Delegates to detectMismatchKind() for shared detection logic,
+	 * then maps the result to a tool-name string.
 	 */
 	suggestRedirection(): string | null {
-		if (!this.raw) return null;
+		const kind = this.detectMismatchKind();
 
-		// Backtick search patterns → ripgrep_search
-		if (this.lower.includes("`grep") || this.lower.includes("`rg")) {
-			return "ripgrep_search";
-		}
-
-		if (this.segments.length === 0) return null;
-
-		// grep/rg as first token — standalone only, not piped
-		if (this.isStandalone()) {
-			for (const seg of this.segments) {
-				if (seg.redirect) continue;
-				if (seg.tokens.length >= 1) {
-					const first = seg.tokens[0];
-					if (first === "grep" || first === "rg") {
-						return "ripgrep_search";
-					}
-				}
-			}
-		}
-
-		// cat/head/tail as first token in first segment, no redirect → read
-		const firstSeg = this.segments[0];
-		if (firstSeg && firstSeg.tokens.length >= 1 && !firstSeg.redirect) {
-			const first = firstSeg.tokens[0];
-			for (const c of READ_BASH_CMDS) {
-				if (first === c) {
-					return "read";
-				}
-			}
-		}
+		if (kind === "search") return "ripgrep_search";
+		if (kind === "file-read") return "read";
 
 		return null;
 	}

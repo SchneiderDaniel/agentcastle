@@ -318,6 +318,76 @@ describe("BashCommand.detectMismatch", () => {
 		assert.notEqual(result, null);
 		assert.ok(result!.suggestion.includes("read"));
 	});
+
+	// ── Phase 1 characterization: edge cases for detectMismatch ──
+
+	it("standalone rg → mismatch with ripgrep_search suggestion", () => {
+		const result = new BashCommand("rg pattern").detectMismatch();
+		assert.notEqual(result, null);
+		assert.equal(result!.category, "tool-mismatch");
+		assert.ok(result!.suggestion.includes("ripgrep_search"));
+	});
+
+	it("backtick rg → mismatch with ripgrep_search suggestion", () => {
+		const result = new BashCommand("`rg`").detectMismatch();
+		assert.notEqual(result, null);
+		assert.equal(result!.category, "tool-mismatch");
+		assert.ok(result!.suggestion.includes("ripgrep_search"));
+	});
+
+	it("grep with redirect in standalone → mismatch", () => {
+		const result = new BashCommand("grep foo > out.txt").detectMismatch();
+		assert.notEqual(result, null);
+		assert.equal(result!.category, "tool-mismatch");
+		assert.ok(result!.suggestion.includes("ripgrep_search"));
+	});
+
+	it("rg with redirect in standalone → mismatch", () => {
+		const result = new BashCommand("rg pattern > out.txt").detectMismatch();
+		assert.notEqual(result, null);
+		assert.equal(result!.category, "tool-mismatch");
+		assert.ok(result!.suggestion.includes("ripgrep_search"));
+	});
+
+	it("grep as second token (npm grep foo) → null", () => {
+		const result = new BashCommand("npm grep foo").detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("rg as second token (npm rg foo) → null", () => {
+		const result = new BashCommand("npm rg foo").detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("head inside quoted argument → null", () => {
+		const result = new BashCommand(`gh issue view 123 --title "head -5"`).detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("tail inside quoted argument → null", () => {
+		const result = new BashCommand(`gh issue view 123 --title "tail -10"`).detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("less inside quoted argument → null", () => {
+		const result = new BashCommand(`gh issue view 123 --title "less file"`).detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("more inside quoted argument → null", () => {
+		const result = new BashCommand(`gh issue view 123 --title "more file"`).detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("grep in quoted argument → null", () => {
+		const result = new BashCommand(`gh issue view 123 --title "grep"`).detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("rg in quoted argument → null", () => {
+		const result = new BashCommand(`gh issue view 123 --title "rg"`).detectMismatch();
+		assert.equal(result, null);
+	});
 });
 
 // ── Behavior: suggestRedirection ──
@@ -363,6 +433,96 @@ describe("BashCommand.suggestRedirection", () => {
 
 	it("more triggers suggestRedirection 'read' (characterization)", () => {
 		assert.equal(new BashCommand("more f.ts").suggestRedirection(), "read");
+	});
+
+	// ── Phase 1 characterization: edge cases for suggestRedirection ──
+
+	it("piped grep (ls | rg pattern) → null", () => {
+		assert.equal(new BashCommand("ls | rg pattern").suggestRedirection(), null);
+	});
+
+	it("&& chained grep (cd src && rg foo) → null", () => {
+		assert.equal(new BashCommand("cd src && rg foo").suggestRedirection(), null);
+	});
+
+	it("semicolon chained grep (echo hi; grep foo) → null", () => {
+		assert.equal(new BashCommand("echo hi; grep foo").suggestRedirection(), null);
+	});
+
+	it("piped cat (ps aux | head -5) → null", () => {
+		assert.equal(new BashCommand("ps aux | head -5").suggestRedirection(), null);
+	});
+
+	it("cat with write redirect (cat > /tmp/foo) → null", () => {
+		assert.equal(new BashCommand("cat > /tmp/foo").suggestRedirection(), null);
+	});
+
+	it("ls -la → null (divergence from detectMismatch)", () => {
+		assert.equal(new BashCommand("ls -la").suggestRedirection(), null);
+	});
+
+	it("standalone rg → ripgrep_search", () => {
+		assert.equal(new BashCommand("rg pattern").suggestRedirection(), "ripgrep_search");
+	});
+
+	it("backtick rg → ripgrep_search", () => {
+		assert.equal(new BashCommand("`rg`").suggestRedirection(), "ripgrep_search");
+	});
+
+	it("grep with redirect in standalone → ripgrep_search", () => {
+		assert.equal(new BashCommand("grep foo > out.txt").suggestRedirection(), "ripgrep_search");
+	});
+
+	it("rg with redirect in standalone → ripgrep_search", () => {
+		assert.equal(new BashCommand("rg pattern > out.txt").suggestRedirection(), "ripgrep_search");
+	});
+
+	it("grep as second token (npm grep foo) → null", () => {
+		assert.equal(new BashCommand("npm grep foo").suggestRedirection(), null);
+	});
+
+	it("rg as second token (npm rg foo) → null", () => {
+		assert.equal(new BashCommand("npm rg foo").suggestRedirection(), null);
+	});
+
+	it("cat inside quoted argument → null", () => {
+		assert.equal(
+			new BashCommand(`gh issue view 123 --title "cat file"`).suggestRedirection(),
+			null,
+		);
+	});
+
+	it("head inside quoted argument → null", () => {
+		assert.equal(new BashCommand(`gh issue view 123 --title "head -5"`).suggestRedirection(), null);
+	});
+
+	it("tail inside quoted argument → null", () => {
+		assert.equal(
+			new BashCommand(`gh issue view 123 --title "tail -10"`).suggestRedirection(),
+			null,
+		);
+	});
+
+	it("less inside quoted argument → null", () => {
+		assert.equal(
+			new BashCommand(`gh issue view 123 --title "less file"`).suggestRedirection(),
+			null,
+		);
+	});
+
+	it("more inside quoted argument → null", () => {
+		assert.equal(
+			new BashCommand(`gh issue view 123 --title "more file"`).suggestRedirection(),
+			null,
+		);
+	});
+
+	it("grep in quoted argument → null", () => {
+		assert.equal(new BashCommand(`gh issue view 123 --title "grep"`).suggestRedirection(), null);
+	});
+
+	it("rg in quoted argument → null", () => {
+		assert.equal(new BashCommand(`gh issue view 123 --title "rg"`).suggestRedirection(), null);
 	});
 });
 
