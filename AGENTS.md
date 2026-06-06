@@ -60,6 +60,7 @@ Core philosophies:
 3. **Read once, page with offset.** Don't re-read same file within 3 turns.
 4. **Error = change approach.** Stop → change args, tool, or ask user. Don't retry same tool+args twice.
 5. Never commit to main
+6. **Writing voice before prose.** Before writing summaries, docs, READMEs, guides, or any user-facing text → that is the writing-voice skill. Load `.pi/skills/writing-voice/SKILL.md` and its `references/voice-en.md` first.
 
 ```
 Tool error → stop → change args, tool, or ask user

@@ -11,7 +11,7 @@ import type { RankedMapConfig } from "./types.ts";
 
 /** Default configuration values when settings.json is missing or partial. */
 export const DEFAULT_CONFIG: RankedMapConfig = {
-	tokenBudget: 2048,
+	tokenBudget: 4096,
 	recencyWindowDays: 30,
 	cacheTtlHours: 24,
 	autoThreshold: 20000,

@@ -2,7 +2,11 @@
 // Status notifications, pipeline completion summary, bell.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig, PipelineAgentResult, SupervisorMessageDetails } from "../config/types.ts";
+import type {
+	SupervisorConfig,
+	PipelineAgentResult,
+	SupervisorMessageDetails,
+} from "../config/types.ts";
 import { formatDuration } from "../config/formatting.ts";
 import { buildPipelineSummary } from "../pipeline/output.ts";
 
@@ -98,12 +102,9 @@ export function sendAgentResultMessage(
 			toolCount: result.toolCount,
 			tokenCount: result.tokenCount,
 			durationMs: result.durationMs,
-			textOutput: result.textOutput,
 			summaryLine: result.summaryLine,
 			thinkingOutput: result.thinkingOutput,
 			hasThinking: !!result.thinkingOutput,
-			rawOutput: result.output,
-			hasRawOutput: true,
 			auditScore,
 		} satisfies SupervisorMessageDetails,
 	});

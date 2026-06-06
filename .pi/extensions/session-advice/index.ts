@@ -9,7 +9,7 @@
  * LLM advice generation + signal review in llm-advisor.ts.
  * Report pipeline in advice-pipeline.ts.
  * Symlink management in symlink-manager.ts.
- * Fix constants in fixes.ts.
+ * Fix constants in advice-pipeline.ts.
  */
 
 import * as path from "node:path";
@@ -57,7 +57,6 @@ import {
 	generateAdviceReport,
 	writeAdvice,
 } from "./advice-pipeline.ts";
-import { buildSessionAnalysis, renderWasteSummary } from "./advisor.ts";
 import { analyzeSession, parseJsonlFile } from "./advisor.ts";
 
 const pipeline = new AdvicePipeline();

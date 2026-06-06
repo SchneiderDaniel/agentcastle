@@ -1,6 +1,6 @@
 /**
  * ripgrep-search entry point: registrations, events, execute, render.
- * Business logic extracted to submodules (config, args, parse, validate, temp).
+ * Business logic extracted to submodules (config, args, parse) and internal.ts.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -14,9 +14,14 @@ import type { RgResult, SearchConfig } from "./types.ts";
 import { loadSearchConfig, resolveBackend, ripgrepAvailable } from "./config.ts";
 import { buildRgArgs, buildGrepArgs } from "./args.ts";
 import { parseVimgrepOutput, parseGrepOutput } from "./parse.ts";
-import { validateQuery } from "./validate.ts";
-import { registerTempDir, cleanupTrackedTempDirs } from "./temp.ts";
-import { getCachedResult, setCachedResult, clearCache } from "./cache.ts";
+import {
+	validateQuery,
+	registerTempDir,
+	cleanupTrackedTempDirs,
+	getCachedResult,
+	setCachedResult,
+	clearCache,
+} from "./internal.ts";
 
 const MAX_TOTAL_RESULTS = 500;
 const DEFAULT_DISPLAY_RESULTS = 10;

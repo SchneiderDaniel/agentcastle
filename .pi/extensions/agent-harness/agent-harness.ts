@@ -18,15 +18,15 @@
  * @packageDocumentation
  */
 
-import { createHarnessState } from "../../lib/harness-state.ts";
-import type { HarnessState } from "../../lib/harness-state.ts";
+import { createHarnessState } from "./lib/harness-state.ts";
+import type { HarnessState } from "./lib/harness-state.ts";
 import {
 	BashCommand,
 	buildRedirectMessage,
 	MULTI_VERB_TOOLS,
 	CASCADE_THRESHOLD,
 	getToolMeta,
-} from "../../lib/harness-rules.ts";
+} from "./lib/harness-rules.ts";
 
 // ── Types ──
 

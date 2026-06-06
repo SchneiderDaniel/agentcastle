@@ -66,6 +66,24 @@ In `.pi/settings.json`:
 - ripgrep recommended (`rg` — install via `apt`, `brew`, or `choco`)
 - Falls back to system `grep` if ripgrep unavailable
 
+## ripgrep Availability Detection
+The extension detects `rg` at startup in three stages:
+
+1. **PATH scan** — walks `process.env.PATH` with `accessSync` (zero-overhead, no subprocess)
+2. **Pi bin dir fallback** — checks `~/.pi/agent/bin/rg` (pi's own managed tools directory)
+3. **Spawn fallback** — runs `rg --version` via subprocess (last resort)
+
+If none succeed, the extension falls back to system `grep`.
+
+### Common Fix: Symlink into `~/.local/bin`
+If `~/.pi/agent/bin` is not on PATH (e.g. WSL interop environment mismatch):
+
+```bash
+ln -sf ~/.pi/agent/bin/rg ~/.local/bin/rg
+```
+
+`~/.local/bin` is typically on PATH and persists across sessions.
+
 ## License
 
 MIT

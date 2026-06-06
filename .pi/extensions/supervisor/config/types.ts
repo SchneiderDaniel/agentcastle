@@ -143,14 +143,18 @@ export interface SupervisorMessageDetails {
 	toolCount: number;
 	tokenCount: number;
 	durationMs: number;
-	textOutput: string;
+	/** Agent text output (optional — excluded from sendAgentResultMessage
+	 *  to prevent subagent context leak into supervisor session, GH #525) */
+	textOutput?: string;
 	summaryLine: string;
 	/** Thinking output for expanded view */
 	thinkingOutput?: string;
 	/** Whether thinking output is available */
 	hasThinking?: boolean;
-	/** Complete raw stdout+stderr from agent session (untruncated) */
-	rawOutput: string;
+	/** Complete raw stdout+stderr from agent session (optional — excluded
+	 *  from sendAgentResultMessage to prevent subagent context leak into
+	 *  supervisor session, GH #525) */
+	rawOutput?: string;
 	/** Whether raw output is available */
 	hasRawOutput?: boolean;
 	/** Audit score extracted from auditor output, e.g. "5/6" */

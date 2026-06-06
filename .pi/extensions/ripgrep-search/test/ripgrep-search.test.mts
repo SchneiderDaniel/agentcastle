@@ -26,16 +26,18 @@ import type { RgMatch, RgResult, SearchConfig } from "../types.ts";
 import { loadSearchConfig, resolveBackend, ripgrepAvailable } from "../config.ts";
 import { buildRgArgs, buildGrepArgs } from "../args.ts";
 import { parseVimgrepOutput } from "../parse.ts";
-import { validateQuery } from "../validate.ts";
-import { registerTempDir, cleanupTrackedTempDirs, trackedTempDirs } from "../temp.ts";
 import { buildStructuredSummary } from "../index.ts";
 import {
+	validateQuery,
+	registerTempDir,
+	cleanupTrackedTempDirs,
+	trackedTempDirs,
 	getCachedResult,
 	setCachedResult,
 	clearCache,
 	getCacheSize,
 	buildCacheKey,
-} from "../cache.ts";
+} from "../internal.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Tests

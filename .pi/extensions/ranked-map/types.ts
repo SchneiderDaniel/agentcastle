@@ -26,6 +26,8 @@ export interface SymbolEntry {
 	type: string;
 	name: string;
 	line: number;
+	/** Optional ctag search pattern (e.g. /^function foo()$/) for preview. */
+	pattern?: string;
 }
 
 /** Scored file entry for tool output. */

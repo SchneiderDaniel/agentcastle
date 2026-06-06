@@ -103,7 +103,10 @@ export async function runAgentInProcess(
 	let watchdogHandle: WatchdogHandle | undefined;
 	let instrumenter: InstrumenterHandle | undefined;
 
-	// Resolve model
+	// ── Bug 2 fix: Model resolution guard ──
+	// Throw when model can't be resolved instead of silently falling back
+	// to supervisor default. This prevents token misattribution and model
+	// confusion (GH #525).
 	const modelInfo = await resolveModel(agent.config.model || "");
 	let resolvedModel: ReturnType<typeof getModel> | undefined;
 	if (modelInfo) {
@@ -112,13 +115,25 @@ export async function runAgentInProcess(
 				modelInfo.provider as Parameters<typeof getModel>[0],
 				modelInfo.modelId as Parameters<typeof getModel>[1],
 			);
-		} catch {
-			// getModel threw — try fallback
-			log.warn(
+		} catch (getModelErr: unknown) {
+			const getModelMsg = getModelErr instanceof Error ? getModelErr.message : String(getModelErr);
+			log.error(
 				"agent-session-runner",
-				`getModel threw for ${modelInfo?.provider}/${modelInfo?.modelId}`,
+				`getModel threw for ${modelInfo?.provider}/${modelInfo?.modelId}: ${getModelMsg}`,
+			);
+			throw new Error(
+				`Agent ${agentName}: model "${modelInfo?.provider}/${modelInfo?.modelId}" not available — ` +
+					`getModel failed: ${getModelMsg}`,
 			);
 		}
+	}
+	if (!resolvedModel) {
+		const modelStr = agent.config.model || "(not configured)";
+		log.error("agent-session-runner", `Model not resolved for ${agentName}: ${modelStr}`);
+		throw new Error(
+			`Agent ${agentName}: model "${modelStr}" cannot be resolved — ` +
+				`check that the provider/model is configured and credentials are available`,
+		);
 	}
 
 	// Build tool list

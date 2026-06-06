@@ -9,8 +9,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { BashCommand } from "../../lib/bash-command.ts";
-import { isCodeFilePath, SEARCH_TOOLS } from "../../lib/harness-rules.ts";
+import { BashCommand } from "../agent-harness/lib/bash-command.ts";
 
 // ── Types ──
 
@@ -387,7 +386,6 @@ function detectErrorLoop(data: SessionData): WasteSignal[] {
 		const sameToolRetries = window.filter((e) => e.toolName === err.toolName);
 
 		if (sameToolRetries.length >= 2) {
-			const all = [err, ...sameToolRetries];
 			const waste = sumTokenCost(sameToolRetries);
 			const details = [
 				`\`${err.toolName}\` errored turn ${err.turnIndex}, retried ${sameToolRetries.length}x without changing approach`,

@@ -602,7 +602,15 @@ export async function handlePostPipeline(
 	try {
 		// Step 1: Post-pipeline merge resolution — needs worktree to exist
 		if (isDoneStatus(loopStatus) && agentResults.length > 0) {
-			await handlePostPipelineMerge(issueNum, issueTitle, loopStatus, config, pi, ctx);
+			await handlePostPipelineMerge(
+				issueNum,
+				issueTitle,
+				loopStatus,
+				config,
+				pi,
+				ctx,
+				worktreePath,
+			);
 		}
 	} finally {
 		// Step 2: Worktree cleanup — always runs, even if merge throws

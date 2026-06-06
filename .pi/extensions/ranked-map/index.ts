@@ -20,7 +20,7 @@ export default function rankedMap(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"ranked_map replaces map_codebase — use it for all codebase browsing. Auto-mode: pass `query` for ranked results, omit for full dump (small repos) or recency-ranked (large repos).",
 			"Pass a `query` describing what you're looking for (e.g. 'login auth token') to rank by keyword relevance. Without query, the tool auto-selects full dump or recency-ranked based on repo size.",
-			"Set `tokenBudget` to control output size (default 2048 tokens). Smaller budget = fewer files = faster response.",
+			"Set `tokenBudget` to control output size (default 4096 tokens). Smaller budget = fewer files = faster response.",
 			"Configure autoThreshold in .pi/settings.json rankedMap.autoThreshold (default 20000). Set to 0 for always-ranked.",
 			"The tool is on-demand (not auto-injected). Call it when you need codebase context, not every turn.",
 		],
@@ -34,7 +34,7 @@ export default function rankedMap(pi: ExtensionAPI): void {
 			),
 			tokenBudget: Type.Optional(
 				Type.Number({
-					default: 2048,
+					default: 4096,
 					description:
 						"Maximum token budget for output. Greedy fill from highest-ranked file until budget exhausted. Overrides settings.json rankedMap.tokenBudget if provided.",
 				}),
@@ -85,8 +85,8 @@ export default function rankedMap(pi: ExtensionAPI): void {
 			// Phase 2: Rank/dump files
 			const ranked = await engine.rank(index, query, budget, signal);
 
-			// Phase 3: Add file previews (ranked mode only)
-			const filesWithPreviews = engine.addPreviews(ranked.files, targetDir, ranked.mode);
+			// Phase 3: Add file previews (ranked mode only) — pass index for pattern-based preview
+			const filesWithPreviews = engine.addPreviews(ranked.files, targetDir, ranked.mode, index);
 
 			// Phase 4: Format output
 			const output = engine.format(filesWithPreviews, budget, ranked.truncated, ranked.mode);

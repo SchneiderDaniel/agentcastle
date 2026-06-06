@@ -378,4 +378,88 @@ describe("handlePostPipeline() — merge/cleanup ordering (Phase 1)", () => {
 		);
 		assert.ok(cleanupCalls.length > 0, "cleanup should run even when merge check fails");
 	});
+
+	it("passes worktreePath through to git fetch cwd in tryAutoMerge", async () => {
+		const calls: ExecCall[] = [];
+		// Need extra results for cleanup (3 git calls)
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: prListResult(true), stderr: "" }, // gh pr list
+				{ code: 0, stdout: "fetch ok", stderr: "" }, // git fetch
+				{ code: 0, stdout: "merge ok", stderr: "" }, // git merge
+				{ code: 0, stdout: "push ok", stderr: "" }, // git push
+				{ code: 0, stdout: "", stderr: "" }, // git worktree remove
+				{ code: 0, stdout: "", stderr: "" }, // git worktree prune
+				{ code: 0, stdout: "", stderr: "" }, // git branch -D
+			],
+			calls,
+		);
+		const ctx = createMockCtx(true);
+		const expectedCwd = "/custom/worktree/path/worktree-git-issue-42-test";
+
+		await handlePostPipeline(
+			42,
+			"Test issue",
+			"Done",
+			[mockAgentResult],
+			mockConfig as any,
+			pi,
+			ctx,
+			expectedCwd,
+			"worktree-git-issue-42-test",
+		);
+
+		// Find git fetch call from tryAutoMerge
+		const fetchCalls = calls.filter(
+			(c) => c.cmd === "git" && c.args[0] === "fetch" && c.args[1] === "origin",
+		);
+		assert.ok(fetchCalls.length > 0, "should have git fetch calls");
+		assert.equal(
+			fetchCalls[0].opts.cwd,
+			expectedCwd,
+			"git fetch cwd should equal the worktreePath passed to handlePostPipeline",
+		);
+
+		// Find git merge call from tryAutoMerge
+		const mergeCalls = calls.filter((c) => c.cmd === "git" && c.args[0] === "merge");
+		assert.ok(mergeCalls.length > 0, "should have git merge calls");
+		assert.equal(
+			mergeCalls[0].opts.cwd,
+			expectedCwd,
+			"git merge cwd should equal the worktreePath passed to handlePostPipeline",
+		);
+	});
+
+	it("skips both merge and cleanup when worktreePath is undefined and agentResults empty", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+			],
+			calls,
+		);
+		const ctx = createMockCtx(true);
+
+		await handlePostPipeline(
+			42,
+			"Test issue",
+			"Done",
+			[], // empty agentResults → skip merge
+			mockConfig as any,
+			pi,
+			ctx,
+			undefined, // no worktreePath → skip cleanup too
+			"worktree-git-issue-42-test",
+		);
+
+		// No gh calls = no merge
+		const ghCalls = calls.filter((c) => c.cmd === "gh");
+		assert.equal(ghCalls.length, 0, "no merge attempted when agentResults empty");
+
+		// No cleanup either since worktreePath is undefined
+		const gitCalls = calls.filter((c) => c.cmd === "git");
+		assert.equal(gitCalls.length, 0, "no cleanup when worktreePath is undefined");
+	});
 });

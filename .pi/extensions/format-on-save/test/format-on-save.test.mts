@@ -22,8 +22,7 @@ import { buildPrettierArgs, findProjectRoot } from "../formatting.mts";
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { formatFile } from "../formatter.mts";
-import type { EslintDiagnostic } from "../types.mts";
+import type { EslintDiagnostic } from "../eslint.mts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Tests: parseEslintOutput
@@ -258,34 +257,6 @@ function mockExec(result: {
 }): ExecFn {
 	return async (_cmd: string, _args: string[], _opts?: unknown) => result;
 }
-
-describe("formatFile (async, exec)", () => {
-	it("returns true when exec returns code 0", async () => {
-		const exec = mockExec({ stdout: "", stderr: "", code: 0, killed: false });
-		const ok = await formatFile(exec, "/tmp/test.ts", "/tmp");
-		assert.strictEqual(ok, true);
-	});
-
-	it("returns false when exec returns non-zero code", async () => {
-		const exec = mockExec({ stdout: "", stderr: "error", code: 1, killed: false });
-		const ok = await formatFile(exec, "/tmp/test.ts", "/tmp");
-		assert.strictEqual(ok, false);
-	});
-
-	it("passes correct command and args to exec", async () => {
-		let captured: { cmd: string; args: string[]; opts?: unknown } | undefined;
-		const exec: ExecFn = async (cmd, args, opts) => {
-			captured = { cmd, args, opts };
-			return { stdout: "", stderr: "", code: 0, killed: false };
-		};
-		await formatFile(exec, "/tmp/test.ts", "/tmp");
-		assert.ok(captured);
-		assert.strictEqual(captured!.cmd, "npx");
-		assert.ok(captured!.args.includes("prettier"));
-		assert.ok(captured!.args.includes("--write"));
-		assert.strictEqual((captured!.opts as any)?.cwd, "/tmp");
-	});
-});
 
 describe("runEslintOnFile (async, exec)", () => {
 	it("returns empty string on eslint code 0 (no errors)", async () => {
