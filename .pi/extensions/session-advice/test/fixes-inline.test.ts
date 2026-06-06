@@ -19,32 +19,22 @@ import type { SignalReview } from "../llm-advisor.ts";
 describe("FIXES inlining — domain tests", () => {
 	it('FIXES["tool-mismatch"].effort === "Low"', async () => {
 		const mod = await import("../advice-pipeline.ts");
-		assert.equal(
-			// @ts-expect-error — FIXES should exist after inlining
-			mod.FIXES["tool-mismatch"].effort,
-			"Low",
-		);
+		assert.equal(mod.FIXES["tool-mismatch"].effort, "Low");
 	});
 
 	it('FIXES["redundant-read"].effort === "Medium"', async () => {
 		const mod = await import("../advice-pipeline.ts");
-		assert.equal(
-			// @ts-expect-error — FIXES should exist after inlining
-			mod.FIXES["redundant-read"].effort,
-			"Medium",
-		);
+		assert.equal(mod.FIXES["redundant-read"].effort, "Medium");
 	});
 
 	it('FIXES["nonexistent-signal"] ?? DEFAULT_FIX returns default fallback', async () => {
 		const mod = await import("../advice-pipeline.ts");
-		// @ts-expect-error — FIXES and DEFAULT_FIX should exist after inlining
 		const fallback = mod.FIXES["nonexistent-signal"] ?? mod.DEFAULT_FIX;
 		assert.equal(fallback.effort, "Medium");
 	});
 
 	it('DEFAULT_FIX.effort === "Medium"', async () => {
 		const mod = await import("../advice-pipeline.ts");
-		// @ts-expect-error — DEFAULT_FIX should exist after inlining
 		assert.equal(mod.DEFAULT_FIX.effort, "Medium");
 	});
 
@@ -61,20 +51,17 @@ describe("FIXES inlining — domain tests", () => {
 			"tool-coverage-gap",
 			"structural-search-underuse",
 		];
-		// @ts-expect-error — FIXES should exist after inlining
 		const actualKeys = Object.keys(mod.FIXES).sort();
 		assert.deepEqual(actualKeys, [...expectedKeys].sort());
 	});
 
 	it("DEFAULT_FIX.idea is a non-empty string", async () => {
 		const mod = await import("../advice-pipeline.ts");
-		// @ts-expect-error — DEFAULT_FIX should exist after inlining
 		assert.ok(mod.DEFAULT_FIX.idea.length > 0);
 	});
 
 	it("All FIXES entries have valid effort values", async () => {
 		const mod = await import("../advice-pipeline.ts");
-		// @ts-expect-error — FIXES should exist after inlining
 		for (const [key, fix] of Object.entries(mod.FIXES)) {
 			assert.ok(
 				["Low", "Medium", "High"].includes(fix.effort),
