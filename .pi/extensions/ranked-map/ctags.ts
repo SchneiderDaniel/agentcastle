@@ -108,7 +108,7 @@ export function buildCtagsArgs(
 		}
 	}
 
-	const args: string[] = ["-R", "--output-format=json"];
+	const args: string[] = ["-R", "--output-format=json", "--tag-relative=always"];
 
 	for (const ex of excludes) {
 		args.push(`--exclude=${ex}`);
@@ -124,22 +124,42 @@ export function buildCtagsArgs(
 }
 
 /**
+ * Normalize absolute paths relative to targetDir.
+ * If the path starts with targetDir + "/", strip the prefix.
+ * Returns the path unchanged if no prefix match or no targetDir.
+ */
+export function normalizeCtagsPath(path: string, targetDir?: string): string {
+	if (!targetDir || !path) return path;
+	const prefix = targetDir.endsWith("/") ? targetDir : targetDir + "/";
+	if (path.startsWith(prefix)) {
+		return path.slice(prefix.length);
+	}
+	return path;
+}
+
+/**
  * Build symbol index from ctags JSONL output.
  * Groups symbols by file path and sorts by line number.
+ *
+ * When targetDir is provided, absolute paths are normalized to relative
+ * by stripping the targetDir prefix. This ensures symbol keys match
+ * the relative paths used by git and ripgrep.
  */
 export function buildSymbolIndex(
 	ctagsJsonl: string,
 	head: string,
 	now: number = Date.now(),
+	targetDir?: string,
 ): CachedIndex {
 	const tags = parseCtagsOutput(ctagsJsonl);
 	const symbols: Record<string, SymbolEntry[]> = {};
 
 	for (const tag of tags) {
-		if (!symbols[tag.path]) {
-			symbols[tag.path] = [];
+		const normalizedPath = normalizeCtagsPath(tag.path, targetDir);
+		if (!symbols[normalizedPath]) {
+			symbols[normalizedPath] = [];
 		}
-		symbols[tag.path]!.push({
+		symbols[normalizedPath]!.push({
 			type: tag.kind,
 			name: tag.name,
 			line: tag.line ?? 0,

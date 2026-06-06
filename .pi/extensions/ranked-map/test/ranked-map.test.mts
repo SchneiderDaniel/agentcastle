@@ -41,10 +41,15 @@ import type {
 import { loadRankedMapConfig, DEFAULT_CONFIG, MAX_RECENCY_WINDOW_DAYS } from "../config.ts";
 
 // Ctags
-import { parseCtagsOutput, buildCtagsArgs, buildSymbolIndex } from "../ctags.ts";
+import {
+	parseCtagsOutput,
+	buildCtagsArgs,
+	buildSymbolIndex,
+	normalizeCtagsPath,
+} from "../ctags.ts";
 
 // Cache
-import { loadCachedIndex } from "../cache.ts";
+import { loadCachedIndex, computeConfigHash } from "../cache.ts";
 
 // Format
 import {
@@ -715,6 +720,59 @@ describe("buildCtagsArgs", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// Phase 2b-ii: --tag-relative=always ctags flag
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("buildCtagsArgs — --tag-relative=always", () => {
+	it("includes --tag-relative=always with absolute targetDir", () => {
+		const result = buildCtagsArgs("/home/user/project", 0);
+		assert.ok(result.args.includes("--tag-relative=always"));
+	});
+
+	it("includes --tag-relative=always with relative targetDir", () => {
+		const result = buildCtagsArgs(".", 0);
+		assert.ok(result.args.includes("--tag-relative=always"));
+	});
+
+	it("--tag-relative=always appears before targetDir in args", () => {
+		const result = buildCtagsArgs("/home/user/project", 0);
+		const tagRelativeIdx = result.args.indexOf("--tag-relative=always");
+		const targetIdx = result.args.indexOf("/home/user/project");
+		assert.ok(tagRelativeIdx >= 0, "--tag-relative=always should be present");
+		assert.ok(tagRelativeIdx < targetIdx, "--tag-relative=always should appear before targetDir");
+	});
+
+	it("regression: existing excludes still present when --tag-relative=always added", () => {
+		const result = buildCtagsArgs("/home/user/project", 0);
+		assert.ok(result.args.includes("--exclude=node_modules"));
+		assert.ok(result.args.includes("--exclude=.git"));
+		assert.ok(result.args.includes("--exclude=*.json"));
+		assert.ok(result.args.includes("--exclude=*.jsonl"));
+		assert.ok(result.args.includes("--exclude=*.md"));
+	});
+
+	it("regression: --output-format=json still present", () => {
+		const result = buildCtagsArgs("/home/user/project", 0);
+		assert.ok(result.args.includes("--output-format=json"));
+	});
+
+	it("regression: targetDir is still last arg", () => {
+		const result = buildCtagsArgs("/home/user/project", 0);
+		assert.strictEqual(result.args[result.args.length - 1], "/home/user/project");
+	});
+
+	it("dedup works, --tag-relative=always present with extraExcludes+absolute dir", () => {
+		const result = buildCtagsArgs("/home/user/project", 0, ["extra_dir", "*.extra"]);
+		assert.ok(result.args.includes("--tag-relative=always"));
+		assert.ok(result.args.includes("--exclude=extra_dir"));
+		assert.ok(result.args.includes("--exclude=*.extra"));
+		// node_modules should not be duplicated
+		const nodeModulesCount = result.args.filter((a) => a === "--exclude=node_modules").length;
+		assert.equal(nodeModulesCount, 1, "node_modules should not be duplicated");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // Phase 2c: Symbol Index Build
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -753,6 +811,136 @@ describe("buildSymbolIndex", () => {
 		});
 		const result = buildSymbolIndex(ptagOutput, SAMPLE_HEAD);
 		assert.strictEqual(Object.keys(result.symbols).length, 0);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2c-ii: Path normalization (defense-in-depth)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("normalizeCtagsPath", () => {
+	it("strips targetDir prefix from absolute paths", () => {
+		const result = normalizeCtagsPath("/home/user/project/src/foo.ts", "/home/user/project");
+		assert.equal(result, "src/foo.ts");
+	});
+
+	it("handles targetDir with trailing slash", () => {
+		const result = normalizeCtagsPath("/home/user/project/src/foo.ts", "/home/user/project/");
+		assert.equal(result, "src/foo.ts");
+	});
+
+	it("returns path unchanged when no targetDir", () => {
+		const result = normalizeCtagsPath("/absolute/path/to/file.ts", undefined);
+		assert.equal(result, "/absolute/path/to/file.ts");
+	});
+
+	it("returns path unchanged when targetDir is empty string", () => {
+		const result = normalizeCtagsPath("/absolute/path/to/file.ts", "");
+		assert.equal(result, "/absolute/path/to/file.ts");
+	});
+
+	it("does not modify relative paths", () => {
+		const result = normalizeCtagsPath("src/foo.ts", "/home/user/project");
+		assert.equal(result, "src/foo.ts");
+	});
+
+	it("does not modify paths that don't start with targetDir prefix", () => {
+		const result = normalizeCtagsPath("/other/dir/file.ts", "/home/user/project");
+		assert.equal(result, "/other/dir/file.ts");
+	});
+
+	it("handles empty path", () => {
+		const result = normalizeCtagsPath("", "/home/user/project");
+		assert.equal(result, "");
+	});
+});
+
+describe("buildSymbolIndex — targetDir normalization", () => {
+	it("normalizes absolute ctags paths when targetDir provided", () => {
+		const jsonl = JSON.stringify({
+			_type: "tag",
+			name: "foo",
+			kind: "function",
+			path: "/home/user/project/src/foo.ts",
+			pattern: "/^foo()$/",
+			line: 1,
+		});
+		const index = buildSymbolIndex(jsonl, "head", undefined, "/home/user/project");
+		const keys = Object.keys(index.symbols);
+		assert.equal(keys.length, 1);
+		assert.equal(keys[0], "src/foo.ts");
+	});
+
+	it("preserves absolute paths when targetDir not provided", () => {
+		const jsonl = JSON.stringify({
+			_type: "tag",
+			name: "foo",
+			kind: "function",
+			path: "/home/user/project/src/foo.ts",
+			pattern: "/^foo()$/",
+			line: 1,
+		});
+		const index = buildSymbolIndex(jsonl, "head");
+		const keys = Object.keys(index.symbols);
+		assert.equal(keys.length, 1);
+		assert.equal(keys[0], "/home/user/project/src/foo.ts");
+	});
+
+	it("does not modify relative paths when targetDir provided", () => {
+		const jsonl = JSON.stringify({
+			_type: "tag",
+			name: "foo",
+			kind: "function",
+			path: "src/foo.ts",
+			pattern: "/^foo()$/",
+			line: 1,
+		});
+		const index = buildSymbolIndex(jsonl, "head", undefined, "/home/user/project");
+		const keys = Object.keys(index.symbols);
+		assert.equal(keys.length, 1);
+		assert.equal(keys[0], "src/foo.ts");
+	});
+
+	it("does not modify paths not matching targetDir prefix", () => {
+		const jsonl = JSON.stringify({
+			_type: "tag",
+			name: "foo",
+			kind: "function",
+			path: "/other/dir/src/foo.ts",
+			pattern: "/^foo()$/",
+			line: 1,
+		});
+		const index = buildSymbolIndex(jsonl, "head", undefined, "/home/user/project");
+		const keys = Object.keys(index.symbols);
+		assert.equal(keys.length, 1);
+		assert.equal(keys[0], "/other/dir/src/foo.ts");
+	});
+
+	it("handles empty ctags output with targetDir (no crash)", () => {
+		const index = buildSymbolIndex("", "head", undefined, "/home/user/project");
+		assert.equal(Object.keys(index.symbols).length, 0);
+	});
+
+	it("normalizes paths when some are absolute and some relative", () => {
+		const jsonl = [
+			JSON.stringify({
+				_type: "tag",
+				name: "foo",
+				kind: "function",
+				path: "/home/user/project/src/foo.ts",
+				line: 1,
+			}),
+			JSON.stringify({
+				_type: "tag",
+				name: "bar",
+				kind: "function",
+				path: "src/bar.ts",
+				line: 10,
+			}),
+		].join("\n");
+		const index = buildSymbolIndex(jsonl, "head", undefined, "/home/user/project");
+		const keys = Object.keys(index.symbols).sort();
+		assert.deepEqual(keys, ["src/bar.ts", "src/foo.ts"]);
 	});
 });
 
@@ -855,6 +1043,165 @@ describe("loadCachedIndex", () => {
 			const result = loadCachedIndex(cachePath, SAMPLE_HEAD);
 			assert.ok(result !== null);
 			assert.strictEqual(Object.keys(result!.symbols).length, 0);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2e: Config Hash Cache Invalidation
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("computeConfigHash", () => {
+	it("returns deterministic hash for same config", () => {
+		const config: RankedMapConfig = {
+			tokenBudget: 4096,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3 },
+		};
+		const hash1 = computeConfigHash(config);
+		const hash2 = computeConfigHash(config);
+		assert.equal(hash1, hash2);
+	});
+
+	it("returns different hash for different config", () => {
+		const configA: RankedMapConfig = {
+			tokenBudget: 4096,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3 },
+		};
+		const configB: RankedMapConfig = {
+			tokenBudget: 8192,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3 },
+		};
+		assert.notEqual(computeConfigHash(configA), computeConfigHash(configB));
+	});
+
+	it("returns hex string", () => {
+		const config: RankedMapConfig = {
+			tokenBudget: 4096,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3 },
+		};
+		const hash = computeConfigHash(config);
+		assert.ok(/^[0-9a-f]+$/.test(hash), "hash should be hex string, got: " + hash);
+	});
+});
+
+describe("loadCachedIndex — configHash validation", () => {
+	function setupCacheDir(): string {
+		const dir = mkdtempSync(join(tmpdir(), "ranked-cfgcache-"));
+		mkdirSync(join(dir, ".pi", "cache"), { recursive: true });
+		return dir;
+	}
+
+	function cleanupDir(dir: string) {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+	}
+
+	it("returns cached index when configHash matches", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const valid = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+				configHash: "abc123",
+			};
+			writeFileSync(cachePath, JSON.stringify(valid));
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, "abc123");
+			assert.ok(result !== null);
+			assert.equal(result!.head, SAMPLE_HEAD);
+			assert.equal(result!.configHash, "abc123");
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("returns null when configHash mismatches", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const stale = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+				configHash: "oldhash",
+			};
+			writeFileSync(cachePath, JSON.stringify(stale));
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, "newhash");
+			assert.strictEqual(result, null);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("accepts cached index without configHash (backward compat)", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const valid = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+				// no configHash
+			};
+			writeFileSync(cachePath, JSON.stringify(valid));
+			// When current configHash is provided but cached index has none, accept it
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, "currenthash");
+			assert.ok(result !== null);
+			assert.equal(result!.configHash, undefined);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("accepted when no configHash provided and cached has none", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const valid = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+			};
+			writeFileSync(cachePath, JSON.stringify(valid));
+			// No configHash argument: backward compat, no validation
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD);
+			assert.ok(result !== null);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("accepted when configHash provided but cached has none (backward compat)", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const valid = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+			};
+			writeFileSync(cachePath, JSON.stringify(valid));
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, "anyhash");
+			assert.ok(result !== null);
+			assert.equal(result!.configHash, undefined);
 		} finally {
 			cleanupDir(dir);
 		}

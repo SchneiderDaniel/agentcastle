@@ -6,13 +6,47 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import type { CachedIndex, SymbolEntry } from "./types.ts";
+import type { CachedIndex, RankedMapConfig, SymbolEntry } from "./types.ts";
+
+/**
+ * Compute a deterministic hash from config values for cache invalidation.
+ *
+ * Serializes only the numeric/config fields (not builtAt or other timestamps)
+ * to produce a stable hash that changes when any config value changes.
+ */
+export function computeConfigHash(config: RankedMapConfig): string {
+	const fields = {
+		tokenBudget: config.tokenBudget,
+		recencyWindowDays: config.recencyWindowDays,
+		cacheTtlHours: config.cacheTtlHours,
+		autoThreshold: config.autoThreshold,
+		wKw: config.weights.keyword,
+		wRec: config.weights.recency,
+	};
+	const str = JSON.stringify(fields, Object.keys(fields).sort());
+	// Simple djb2 hash
+	let hash = 5381;
+	for (let i = 0; i < str.length; i++) {
+		hash = ((hash << 5) + hash + str.charCodeAt(i)) | 0;
+	}
+	return Math.abs(hash).toString(16);
+}
 
 /**
  * Load cached index from disk.
- * Returns null if cache missing, malformed, HEAD mismatch, or missing required keys.
+ * Returns null if cache missing, malformed, HEAD mismatch, configHash mismatch, or missing required keys.
+ *
+ * @param cachePath - Path to cached index file
+ * @param currentHead - Current git HEAD for staleness check
+ * @param configHash - Optional config hash. When provided and cached index has configHash,
+ *                     mismatch invalidates the cache. Absent configHash in cached index is
+ *                     accepted for backward compatibility.
  */
-export function loadCachedIndex(cachePath: string, currentHead: string): CachedIndex | null {
+export function loadCachedIndex(
+	cachePath: string,
+	currentHead: string,
+	configHash?: string,
+): CachedIndex | null {
 	try {
 		if (!existsSync(cachePath)) return null;
 		const raw = readFileSync(cachePath, "utf-8");
@@ -26,10 +60,20 @@ export function loadCachedIndex(cachePath: string, currentHead: string): CachedI
 		// HEAD mismatch → stale
 		if (parsed.head !== currentHead) return null;
 
+		// configHash mismatch → stale (if both present)
+		if (
+			configHash !== undefined &&
+			parsed.configHash !== undefined &&
+			parsed.configHash !== configHash
+		) {
+			return null;
+		}
+
 		return {
 			head: parsed.head,
 			builtAt: parsed.builtAt,
 			symbols: parsed.symbols as Record<string, SymbolEntry[]>,
+			configHash: typeof parsed.configHash === "string" ? parsed.configHash : undefined,
 		};
 	} catch {
 		return null;
