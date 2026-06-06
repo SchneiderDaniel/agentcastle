@@ -8,7 +8,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
 	parseJsonlFile,
 	analyzeSession,
@@ -564,16 +564,18 @@ export function createGhIssue(
 	body: string,
 	sessionsDir: string,
 	execFn: (
-		cmd: string,
+		file: string,
+		args: string[],
 		opts: { cwd: string; timeout: number; encoding: string },
-	) => string | Buffer = execSync,
+	) => string | Buffer = execFileSync,
 ): string {
 	const bodyFile = path.join(sessionsDir, ".gh-issue-body.tmp");
 	try {
 		fs.writeFileSync(bodyFile, body, "utf-8");
 
 		const raw = execFn(
-			`gh issue create --repo "${repo}" --title "${title}" --body-file "${bodyFile}"`,
+			"gh",
+			["issue", "create", "--repo", repo, "--title", title, "--body-file", bodyFile],
 			{
 				cwd: process.cwd(),
 				timeout: 30_000,
@@ -601,6 +603,11 @@ export function createSignalIssues(
 	review: SignalReview,
 	analysesCount: number,
 	sessionsDir: string,
+	execFn?: (
+		file: string,
+		args: string[],
+		opts: { cwd: string; timeout: number; encoding: string },
+	) => string | Buffer,
 ): string[] {
 	const results: string[] = [];
 	const date = new Date().toISOString().slice(0, 10);
@@ -632,7 +639,7 @@ export function createSignalIssues(
 		].join("\n");
 
 		try {
-			const url = createGhIssue(repo, title, body, sessionsDir);
+			const url = createGhIssue(repo, title, body, sessionsDir, execFn);
 			results.push(url);
 		} catch (err) {
 			console.error(
@@ -672,7 +679,7 @@ export function createSignalIssues(
 		].join("\n");
 
 		try {
-			const url = createGhIssue(repo, title, body, sessionsDir);
+			const url = createGhIssue(repo, title, body, sessionsDir, execFn);
 			results.push(url);
 		} catch (err) {
 			console.error(
