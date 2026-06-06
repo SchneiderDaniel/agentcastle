@@ -9,9 +9,14 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { shouldFormat, shouldLint, looksLikeFilePath, MAX_FILE_SIZE_BYTES } from "./formatting.mts";
+import {
+	shouldFormat,
+	shouldLint,
+	looksLikeFilePath,
+	MAX_FILE_SIZE_BYTES,
+	buildPrettierArgs,
+} from "./formatting.mts";
 import { runEslintOnFile } from "./eslint.mts";
-import { formatFile } from "./formatter.mts";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_result", async (event, ctx) => {
@@ -43,7 +48,9 @@ export default function (pi: ExtensionAPI) {
 		}
 
 		// Step 1: Format the file in-place with --write
-		const ok = await formatFile(pi.exec.bind(pi), absolutePath, ctx.cwd);
+		const { command, args } = buildPrettierArgs(ctx.cwd, absolutePath);
+		const result = await pi.exec.bind(pi)(command, args, { cwd: ctx.cwd, timeout: 15_000 });
+		const ok = result.code === 0;
 		if (ok && ctx.hasUI) {
 			ctx.ui.notify(`Formatted: ${filePath}`, "info");
 		}
