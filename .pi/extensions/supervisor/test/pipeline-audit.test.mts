@@ -2,8 +2,9 @@
  * Tests for pipeline-audit.ts — worktreePath plumbing fix (Issue #284)
  *
  * Phase 1: `worktreePath` parameter plumbing in `pipeline-audit.ts`
- * Phase 2: `worktreePath` passed from `pipeline.ts` call site
- * Phase 3: Path construction consistency (resolvePath not string concat)
+ * Phase 2: `getRunTscCheckpoint` returns function with only worktreePath param
+ * Phase 3: `worktreePath` passed from `pipeline.ts` call site
+ * Phase 4: Path construction consistency (resolvePath not string concat)
  * Phase 6: Non-standard `worktreeBase` config compatibility
  *
  * Run with:
@@ -19,8 +20,10 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const AUDIT_TS = resolve(__dirname, "../pipeline-audit.ts");
+const AUDIT_TS = resolve(__dirname, "../pipeline/audit.ts");
 const PIPELINE_TS = resolve(__dirname, "../pipeline/handler.ts");
+const TSC_DECISIONS_TS = resolve(__dirname, "../checks/tsc-decisions.ts");
+const TSC_CHECKPOINT_INDEX_TS = resolve(__dirname, "../../tsc-checkpoint/index.ts");
 
 function readAuditSource(): string {
 	return readFileSync(AUDIT_TS, "utf-8");
@@ -56,21 +59,21 @@ describe("pipeline-audit.ts — worktreePath param plumbing (Phase 1)", () => {
 		);
 	});
 
-	it("runTscCheckpointFn called with worktreePath not ctx.cwd", () => {
+	it("runTscCheckpointFn called with worktreePath not pi", () => {
 		const src = readAuditSource();
-		// Check that runTscCheckpointFn is called with worktreePath
-		const tscCallIdx = src.indexOf("runTscCheckpointFn(pi, ");
-		assert.ok(tscCallIdx >= 0, "runTscCheckpointFn call exists");
+		// Check that runTscCheckpointFn is called with worktreePath only
+		const tscCallIdx = src.indexOf("runTscCheckpointFn(worktreePath");
+		assert.ok(tscCallIdx >= 0, "runTscCheckpointFn(worktreePath) call exists");
 		// Extract arguments after call
 		const callSection = src.substring(tscCallIdx, tscCallIdx + 80);
-		// Should reference worktreePath, not ctx.cwd
+		// Should reference worktreePath, not pi
 		assert.ok(
 			callSection.includes("worktreePath"),
-			"runTscCheckpointFn should receive worktreePath as 2nd arg",
+			"runTscCheckpointFn should receive worktreePath",
 		);
 		assert.ok(
-			!callSection.includes("ctx.cwd"),
-			"runTscCheckpointFn should NOT receive ctx.cwd as 2nd arg",
+			!callSection.includes("runTscCheckpointFn(pi,"),
+			"runTscCheckpointFn should NOT receive pi as first arg",
 		);
 	});
 
@@ -148,10 +151,58 @@ describe("pipeline-audit.ts — worktreePath param plumbing (Phase 1)", () => {
 });
 
 // ===========================================================================
-// Phase 2: `worktreePath` passed from `pipeline.ts` call site
+// Phase 2: `getRunTscCheckpoint` returns function with only worktreePath param
 // ===========================================================================
 
-describe("pipeline.ts — worktreePath passed to runTscAndLspAudit (Phase 2)", () => {
+describe("getRunTscCheckpoint — pi param removed (Phase 2)", () => {
+	it("getRunTscCheckpoint returns function with .length === 1 (no pi param)", async () => {
+		const { runTscCheckpoint } = await import("../../tsc-checkpoint/index.ts");
+		assert.strictEqual(
+			runTscCheckpoint.length,
+			1,
+			"runTscCheckpoint should accept only worktreePath",
+		);
+	});
+
+	it("getRunTscCheckpoint source shows (worktreePath: string) signature with no pi", () => {
+		const src = readFileSync(TSC_DECISIONS_TS, "utf-8");
+		const getRunIdx = src.indexOf("export async function getRunTscCheckpoint");
+		assert.ok(getRunIdx >= 0, "getRunTscCheckpoint function exists in tsc-decisions.ts");
+		// Verify the return type shows only worktreePath param (no pi)
+		const returnTypeSection = src.substring(getRunIdx, src.indexOf("> {", getRunIdx) + 3);
+		assert.ok(
+			returnTypeSection.includes("worktreePath: string"),
+			"getRunTscCheckpoint return type should have worktreePath: string",
+		);
+		assert.ok(
+			!returnTypeSection.includes("pi:"),
+			"getRunTscCheckpoint return type should NOT have pi param",
+		);
+	});
+
+	it("calling resolved function with single string argument does not throw", async () => {
+		const { runTscCheckpoint } = await import("../../tsc-checkpoint/index.ts");
+		// Should not throw — returns empty diagnostics for nonexistent path
+		await assert.doesNotReject(async () => {
+			await runTscCheckpoint("/nonexistent/tsconfig-path");
+		});
+	});
+
+	it("calling resolved function with zero args throws (worktreePath is required)", async () => {
+		const { runTscCheckpoint } = await import("../../tsc-checkpoint/index.ts");
+		// Since the function uses resolve() on worktreePath, calling without args should throw
+		await assert.rejects(async () => {
+			// @ts-expect-error testing runtime behavior with missing required param
+			await runTscCheckpoint();
+		});
+	});
+});
+
+// ===========================================================================
+// Phase 3: `worktreePath` passed from `pipeline.ts` call site
+// ===========================================================================
+
+describe("pipeline.ts — worktreePath passed to runTscAndLspAudit (Phase 3)", () => {
 	it("runTscAndLspAudit call includes worktreePath as 8th arg", () => {
 		const src = readPipelineSource();
 		// Find the runTscAndLspAudit call
@@ -183,10 +234,10 @@ describe("pipeline.ts — worktreePath passed to runTscAndLspAudit (Phase 2)", (
 });
 
 // ===========================================================================
-// Phase 3: Path construction consistency (resolvePath not string concat)
+// Phase 4: Path construction consistency (resolvePath not string concat)
 // ===========================================================================
 
-describe("pipeline-audit.ts — resolvePath used in runLspPreAudit (Phase 3)", () => {
+describe("pipeline-audit.ts — resolvePath used in runLspPreAudit (Phase 4)", () => {
 	it("resolvePath imported in pipeline-audit.ts", () => {
 		const src = readAuditSource();
 		const importSection = src.substring(0, src.indexOf("export async function"));

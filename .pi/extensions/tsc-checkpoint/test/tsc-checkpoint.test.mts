@@ -21,9 +21,10 @@ import {
 	resolveDiagnosticFilePath,
 	formatDiagnostics,
 	formatTrend,
+	runTscCheckpoint,
 } from "../index.ts";
 
-import type { TscDiagnostic, TscWatchAdapter } from "../index.ts";
+import type { TscDiagnostic, TscWatchAdapter, TscCheckpointResult } from "../index.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Mock Adapter for Testing
@@ -487,7 +488,36 @@ describe("formatTrend", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 5: Integration — Extension Entry Point
+// Phase 5: runTscCheckpoint (deprecated one-shot adapter)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("runTscCheckpoint (deprecated one-shot)", () => {
+	it("is exported and callable with single worktreePath argument", async () => {
+		const result = await runTscCheckpoint("/nonexistent/path");
+		assert.ok(typeof result === "object");
+		assert.ok("diagnostics" in result);
+		assert.ok("hasErrors" in result);
+	});
+
+	it("has .length === 1 (only worktreePath param)", () => {
+		assert.strictEqual(runTscCheckpoint.length, 1);
+	});
+
+	it("calling with nonexistent path returns empty diagnostics", async () => {
+		const result = await runTscCheckpoint("/nonexistent/path");
+		assert.deepStrictEqual(result, { diagnostics: [], hasErrors: false });
+	});
+
+	it("ExtensionAPI type import still present in source (used by tscCheckpoint entry)", async () => {
+		// Verify by checking that the module still exports the entry function
+		// which depends on ExtensionAPI
+		const mod = await import("../index.ts");
+		assert.ok(typeof mod.default === "function", "default export (tscCheckpoint) still present");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 6: Integration — Extension Entry Point
 // ═══════════════════════════════════════════════════════════════════════
 
 interface MockSendUserMessage {
