@@ -1,6 +1,7 @@
 // ─── Pipeline Audit ──────────────────────────────────────────────
-// TSC checkpoint + LSP pre-audit orchestration during Implementation→Audit
-// transition. Extracted from pipeline.ts to keep that file under 300 lines.
+// TSC checkpoint + LSP pre-audit + duplicate code check orchestration
+// during Implementation→Audit transition. Extracted from pipeline.ts
+// to keep that file under 300 lines.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SupervisorConfig, DebugLogger } from "../config/types.ts";
@@ -10,10 +11,12 @@ import { generateBranchName } from "../agent/task.ts";
 import { determineTscCheckpointDecision, getRunTscCheckpoint } from "../checks/tsc-decisions.ts";
 import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-decisions.ts";
 import { pollCiChecks } from "../checks/ci-gating.ts";
+import { runDuplicateCheck } from "../checks/duplicate-code.ts";
 
 /**
- * Run TSC checkpoint and LSP pre-audit during Implementation → Audit transition.
- * Returns the effective next status ("Audit" or "Implementation") and any note.
+ * Run TSC checkpoint, LSP pre-audit, and duplicate code check during
+ * Implementation → Audit transition. Returns the effective next status
+ * ("Audit" or "Implementation") and any note.
  */
 export async function runTscAndLspAudit(
 	issueNum: number,
@@ -80,10 +83,34 @@ export async function runTscAndLspAudit(
 			}
 		}
 
-		// Step 1: TSC checkpoint (Tier 2)
-		// Run against worktree path so type-checking covers feature branch code,
-		// not main branch. worktreePath is resolved and passed from pipeline.ts.
-		// npm ci is run on worktree creation so node_modules are available.
+		// Step 1: Duplicate code detection gate
+		// Runs on full worktree and filters clones to changed files.
+		// Non-blocking — duplicates found are surfaced as warning and
+		// verified by the auditor agent.
+		ctx.ui.setStatus("supervisor", "Checking for duplicate code...");
+		getDebugLogger().info("pipeline-audit", "Running duplicate code check", { worktreePath });
+		const execFn = (cmd: string, args: string[], opts?: Record<string, unknown>) =>
+			pi.exec(cmd, args, opts);
+		const dupResult = await runDuplicateCheck(execFn, worktreePath, config.defaultBranch || "main");
+
+		if (dupResult.status === "duplicates_found") {
+			ctx.ui.notify(
+				`Duplicate code detected: ${dupResult.clones.length} clone(s) found (${dupResult.totalDuplicateLines} lines). Auditor will verify.`,
+				"warning",
+			);
+			getDebugLogger().info("pipeline-audit", "Duplicates found", {
+				cloneCount: dupResult.clones.length,
+				totalLines: dupResult.totalDuplicateLines,
+			});
+		} else if (dupResult.status === "no_jscpd") {
+			getDebugLogger().info("pipeline-audit", "jscpd not available, skipping duplicate check");
+		} else if (dupResult.status === "error") {
+			getDebugLogger().warn("pipeline-audit", "Duplicate check error", {
+				message: dupResult.message,
+			});
+		}
+
+		// Step 2: TSC checkpoint (Tier 2)
 		const runTscCheckpointFn = await getRunTscCheckpoint();
 
 		if (runTscCheckpointFn) {
@@ -112,7 +139,7 @@ export async function runTscAndLspAudit(
 			}
 		}
 
-		// Step 2: LSP pre-audit (Tier 3)
+		// Step 3: LSP pre-audit (Tier 3)
 		const result = await runLspPreAudit(issueNum, issueTitle, config, pi, ctx, worktreePath);
 		getDebugLogger().info("pipeline-audit", "LSP pre-audit result", {
 			nextStatus: result.nextStatus,

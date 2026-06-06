@@ -1,12 +1,12 @@
 // ─── Pipeline Hooks ──────────────────────────────────────────────
-// CI/TSC/LSP pre-transition checks. Wraps pipeline-audit.ts.
+// CI/TSC/LSP/duplicate-code pre-transition checks. Wraps pipeline-audit.ts.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { SupervisorConfig } from "../config/types.ts";
 import { runTscAndLspAudit } from "../pipeline/audit.ts";
 
 /**
- * Run hook checks (CI, TSC, LSP) before a status transition.
+ * Run hook checks (CI, TSC, LSP, duplicate code) before a status transition.
  * Returns the effective next status and any note.
  */
 export async function runPreTransitionHooks(

@@ -30,6 +30,8 @@ import {
 import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
 import type { AgentOutput } from "../config/types.ts";
 import { hasResearchFindings } from "../config/workflow.ts";
+import { runDuplicateCheck } from "../checks/duplicate-code.ts";
+import type { DuplicateCodeResult } from "../checks/duplicate-code.ts";
 
 // ─── Constants ────────────────────────────────────────────────────
 
@@ -42,6 +44,8 @@ export interface StageState {
 	loopStatus: string;
 	lastAuditScore: AuditScore | null;
 	auditCycleCount: number;
+	/** Duplicate code check result, set during Implementation→Audit hooks */
+	duplicateCodeResult: DuplicateCodeResult | null;
 }
 
 export function createStageState(initialStatus: string): StageState {
@@ -49,6 +53,7 @@ export function createStageState(initialStatus: string): StageState {
 		loopStatus: initialStatus,
 		lastAuditScore: null,
 		auditCycleCount: 0,
+		duplicateCodeResult: null,
 	};
 }
 
@@ -171,6 +176,55 @@ export async function checkReadmeUpdated(
 		// If git diff fails, we can't verify — return updated=true to not block
 		return { updated: true };
 	}
+}
+
+// ─── Duplicate Code Gate ────────────────────────────────────────────
+
+/**
+ * Run duplicate code check on the worktree and return result.
+ * Updates the stage state with the result for later auditor context injection.
+ */
+export async function handleDuplicateCheck(
+	execFn: (
+		cmd: string,
+		args: string[],
+		opts?: Record<string, unknown>,
+	) => Promise<{ code: number; stdout: string; stderr: string }>,
+	worktreePath: string,
+	defaultBranch: string,
+	state: StageState,
+): Promise<DuplicateCodeResult> {
+	const result = await runDuplicateCheck(execFn, worktreePath, defaultBranch);
+	state.duplicateCodeResult = result;
+	return result;
+}
+
+/**
+ * Build a formatted string from DuplicateCodeResult for injection into auditor task context.
+ * Returns null if no duplicates found or result is null.
+ */
+export function buildDuplicateCodeContext(result: DuplicateCodeResult | null): string | null {
+	if (!result || result.status !== "duplicates_found" || result.clones.length === 0) return null;
+
+	const lines: string[] = [];
+	lines.push(
+		`**${result.clones.length} clone(s) found (${result.totalDuplicateLines} total duplicate lines)**`,
+	);
+	lines.push("");
+
+	for (let i = 0; i < result.clones.length; i++) {
+		const clone = result.clones[i]!;
+		lines.push(
+			`Clone #${i + 1}: **${clone.type}** — ${clone.lines} lines, ${clone.similarity}% similarity`,
+		);
+		lines.push("Locations:");
+		for (const loc of clone.locations) {
+			lines.push(`  - \`${loc.file}\` lines ${loc.startLine}-${loc.endLine}`);
+		}
+		lines.push("");
+	}
+
+	return lines.join("\n");
 }
 
 // ─── Check Rejection Limit ────────────────────────────────────────
