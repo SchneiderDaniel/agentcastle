@@ -10,7 +10,7 @@
   - Query-free fallback to recency-only ranking
   - Structural overview in recency-only mode — one file per top-level directory ensures broad repo awareness
 - **Configurable token budget** — Default 4096 tokens, adjustable per call
-- **Caching** — Symbol index cached to `.pi/cache/ranked-map-index.json` keyed by git HEAD and config hash (config changes invalidate the cache)
+- **Caching** — Symbol index cached to `.pi/cache/ranked-map-index.json` keyed by git HEAD, config hash, and target directory (config changes or different directory scope invalidate the cache)
 - **Test-file penalty** — Test files (`.test.`, `.spec.`, `/test/`) receive 0.5x score penalty to favor source files
 - **.piignore integration** — Patterns from `.piignore` are automatically added as ctags excludes
 - **Improved previews** — Shows ctag definition lines (from pattern field) instead of first 5 comment/import lines
@@ -35,7 +35,7 @@ Each phase accepts `ExecFn` + config via constructor, making all methods testabl
    - Automatically excludes: `node_modules`, `.git`, `*.json`, `*.jsonl`, `*.md`, `*.min.js`, `*.css`, `static`, `context`, `sessions`, `npm`, `chromium-deps`, `crawl4ai-venv`, `benchmarks`
      - Basename-only patterns — `ctags --exclude` matches against the basename of each file/directory, so path prefixes like `.pi/` are omitted
    - Also reads `.piignore` for additional exclusion patterns
-2. The index is cached to disk keyed by current git HEAD
+2. The index is cached to disk keyed by current git HEAD, config hash, and target directory scope
 3. When called, the extension selects mode:
    - **Full dump** — repo small enough, returns all files sorted by path up to token budget
    - **Ranked** — runs `rg --files-with-matches` for keyword scoring, `git log --name-only` for recency scoring, then combines scores with configurable weights. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory

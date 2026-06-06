@@ -34,18 +34,24 @@ export function computeConfigHash(config: RankedMapConfig): string {
 
 /**
  * Load cached index from disk.
- * Returns null if cache missing, malformed, HEAD mismatch, configHash mismatch, or missing required keys.
+ * Returns null if cache missing, malformed, HEAD mismatch, configHash mismatch, targetDir mismatch,
+ * or missing required keys.
  *
  * @param cachePath - Path to cached index file
  * @param currentHead - Current git HEAD for staleness check
  * @param configHash - Optional config hash. When provided and cached index has configHash,
  *                     mismatch invalidates the cache. Absent configHash in cached index is
  *                     accepted for backward compatibility.
+ * @param targetDir - Optional target directory for cache scope validation.
+ *                    When provided and cached index has targetDir, they must match exactly.
+ *                    Absent targetDir in cached index is accepted for backward compatibility.
+ *                    When omitted, no targetDir validation is performed.
  */
 export function loadCachedIndex(
 	cachePath: string,
 	currentHead: string,
 	configHash?: string,
+	targetDir?: string,
 ): CachedIndex | null {
 	try {
 		if (!existsSync(cachePath)) return null;
@@ -69,11 +75,21 @@ export function loadCachedIndex(
 			return null;
 		}
 
+		// targetDir mismatch → stale (if both present, must match exactly)
+		if (
+			targetDir !== undefined &&
+			parsed.targetDir !== undefined &&
+			parsed.targetDir !== targetDir
+		) {
+			return null;
+		}
+
 		return {
 			head: parsed.head,
 			builtAt: parsed.builtAt,
 			symbols: parsed.symbols as Record<string, SymbolEntry[]>,
 			configHash: typeof parsed.configHash === "string" ? parsed.configHash : undefined,
+			targetDir: typeof parsed.targetDir === "string" ? parsed.targetDir : undefined,
 		};
 	} catch {
 		return null;

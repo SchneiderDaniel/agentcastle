@@ -202,6 +202,24 @@ describe("types module exports", () => {
 		assert.strictEqual(ci.head, "abc");
 	});
 
+	it("CachedIndex accepts optional targetDir field", () => {
+		const ci: CachedIndex = {
+			head: "abc",
+			builtAt: 1000,
+			symbols: { "a.ts": [{ type: "function", name: "foo", line: 1 }] },
+			targetDir: "src",
+		};
+		assert.strictEqual(ci.targetDir, "src");
+
+		const ciAbs: CachedIndex = {
+			head: "abc",
+			builtAt: 1000,
+			symbols: { "a.ts": [{ type: "function", name: "foo", line: 1 }] },
+			targetDir: "/home/user/project",
+		};
+		assert.strictEqual(ciAbs.targetDir, "/home/user/project");
+	});
+
 	it("SymbolEntry is a valid type interface", () => {
 		const se: SymbolEntry = { type: "function", name: "bar", line: 5 };
 		assert.strictEqual(se.name, "bar");
@@ -1202,6 +1220,142 @@ describe("loadCachedIndex — configHash validation", () => {
 			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, "anyhash");
 			assert.ok(result !== null);
 			assert.equal(result!.configHash, undefined);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2f: targetDir Cache Validation
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("loadCachedIndex — targetDir validation", () => {
+	function setupCacheDir(): string {
+		const dir = mkdtempSync(join(tmpdir(), "ranked-tgtdir-"));
+		mkdirSync(join(dir, ".pi", "cache"), { recursive: true });
+		return dir;
+	}
+
+	function cleanupDir(dir: string) {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+	}
+
+	it("returns cached index when stored targetDir matches current param", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const valid = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+				targetDir: "/home/user/project",
+			};
+			writeFileSync(cachePath, JSON.stringify(valid));
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, undefined, "/home/user/project");
+			assert.ok(result !== null, "should return cached index");
+			assert.equal(result!.targetDir, "/home/user/project");
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("returns null when stored targetDir mismatches current param", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const stale = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+				targetDir: "/home/user/project",
+			};
+			writeFileSync(cachePath, JSON.stringify(stale));
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, undefined, "/other/project");
+			assert.strictEqual(result, null, "should reject cache on targetDir mismatch");
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("returns null when stored targetDir is parent of current param (not prefix match)", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const stale = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+				targetDir: "/home/user/project",
+			};
+			writeFileSync(cachePath, JSON.stringify(stale));
+			const result = loadCachedIndex(
+				cachePath,
+				SAMPLE_HEAD,
+				undefined,
+				"/home/user/project/subdir",
+			);
+			assert.strictEqual(result, null, "should reject cache — not a prefix match");
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("accepts cache when stored targetDir absent and current param present (backward compat)", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const valid = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+				// no targetDir
+			};
+			writeFileSync(cachePath, JSON.stringify(valid));
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, undefined, "/home/project");
+			assert.ok(result !== null, "should accept cache when stored targetDir is absent");
+			assert.equal(result!.targetDir, undefined);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("accepts cache when stored targetDir present and current param undefined (backward compat)", () => {
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const valid = {
+				head: SAMPLE_HEAD,
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+				targetDir: "/home/user/project",
+			};
+			writeFileSync(cachePath, JSON.stringify(valid));
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD); // no targetDir param
+			assert.ok(result !== null, "should accept cache when no targetDir validation requested");
+			assert.equal(result!.targetDir, "/home/user/project");
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("existing cache tests still pass when targetDir param is added", () => {
+		// HEAD mismatch still rejects
+		const dir = setupCacheDir();
+		try {
+			const cachePath = join(dir, ".pi", "cache", "ranked-map-index.json");
+			const stale = {
+				head: "differenthead",
+				builtAt: Date.now(),
+				symbols: { "a.ts": [{ type: "class", name: "A", line: 1 }] },
+			};
+			writeFileSync(cachePath, JSON.stringify(stale));
+			const result = loadCachedIndex(cachePath, SAMPLE_HEAD, undefined, "/some/dir");
+			assert.strictEqual(result, null, "HEAD mismatch should still reject");
 		} finally {
 			cleanupDir(dir);
 		}

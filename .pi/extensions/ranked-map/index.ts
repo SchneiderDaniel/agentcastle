@@ -83,7 +83,7 @@ export default function rankedMap(pi: ExtensionAPI): void {
 			}
 
 			// Phase 2: Rank/dump files
-			const ranked = await engine.rank(index, query, budget, signal);
+			const ranked = await engine.rank(index, query, budget, targetDir, signal);
 
 			// Phase 3: Add file previews (ranked mode only) — pass index for pattern-based preview
 			const filesWithPreviews = engine.addPreviews(ranked.files, targetDir, ranked.mode, index);

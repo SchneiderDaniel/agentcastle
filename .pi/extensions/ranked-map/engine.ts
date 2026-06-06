@@ -80,7 +80,7 @@ export class RankedMapEngine {
 
 		// Try cache first
 		if (currentHead) {
-			const cached = loadCachedIndex(cachePath, currentHead, configHash);
+			const cached = loadCachedIndex(cachePath, currentHead, configHash, targetDir);
 			if (cached) return cached;
 		}
 
@@ -112,6 +112,7 @@ export class RankedMapEngine {
 
 		const index = buildSymbolIndex(result.stdout, currentHead || "unknown", undefined, targetDir);
 		index.configHash = configHash;
+		index.targetDir = targetDir;
 
 		try {
 			writeFileSync(cachePath, JSON.stringify(index), "utf-8");
@@ -129,11 +130,18 @@ export class RankedMapEngine {
 	 * - query provided → "ranked" (keyword + recency scoring)
 	 * - no query, totalSymbols <= autoThreshold → "full_dump" (path-sorted)
 	 * - no query, totalSymbols > autoThreshold → "ranked" (recency-only)
+	 *
+	 * @param index - Symbol index from buildOrLoadIndex
+	 * @param query - Query string for keyword search (empty string means no query)
+	 * @param budget - Token budget for output
+	 * @param targetDir - Target directory for keyword search scope (e.g. ".", "src", "/abs/path")
+	 * @param signal - Optional AbortSignal for cancellation
 	 */
 	async rank(
 		index: CachedIndex,
 		query: string,
 		budget: number,
+		targetDir: string,
 		signal?: AbortSignal,
 	): Promise<RankResult> {
 		const totalSymbols = Object.values(index.symbols).flat().length;
@@ -151,7 +159,7 @@ export class RankedMapEngine {
 			const { fileMatches, terms } = await runKeywordSearch(
 				this.exec,
 				query,
-				/* targetDir */ ".", // uses cwd; search targetDir same as index target
+				targetDir,
 				this.cwd,
 				signal,
 			);
