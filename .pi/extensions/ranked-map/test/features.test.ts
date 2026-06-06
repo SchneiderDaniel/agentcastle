@@ -160,29 +160,29 @@ describe("Phase 2: Additional ctags exclude patterns", () => {
 		assert.ok(result.args.includes("--exclude=*.md"));
 	});
 
-	it("buildCtagsArgs excludes .pi/context/ (Q&A conversation directory)", () => {
+	it("buildCtagsArgs excludes context/ (Q&A conversation directory)", () => {
 		const result = buildCtagsArgs(".", 0);
-		assert.ok(result.args.includes("--exclude=.pi/context"));
+		assert.ok(result.args.includes("--exclude=context"));
 	});
 
-	it("buildCtagsArgs excludes .pi/sessions/ (session logs, huge/irrelevant)", () => {
+	it("buildCtagsArgs excludes sessions/ (session logs, huge/irrelevant)", () => {
 		const result = buildCtagsArgs(".", 0);
-		assert.ok(result.args.includes("--exclude=.pi/sessions"));
+		assert.ok(result.args.includes("--exclude=sessions"));
 	});
 
-	it("buildCtagsArgs excludes .pi/npm/ (npm package cache)", () => {
+	it("buildCtagsArgs excludes npm/ (npm package cache)", () => {
 		const result = buildCtagsArgs(".", 0);
-		assert.ok(result.args.includes("--exclude=.pi/npm"));
+		assert.ok(result.args.includes("--exclude=npm"));
 	});
 
-	it("buildCtagsArgs excludes .pi/chromium-deps/ (chromium for crawl4ai)", () => {
+	it("buildCtagsArgs excludes chromium-deps/ (chromium for crawl4ai)", () => {
 		const result = buildCtagsArgs(".", 0);
-		assert.ok(result.args.includes("--exclude=.pi/chromium-deps"));
+		assert.ok(result.args.includes("--exclude=chromium-deps"));
 	});
 
-	it("buildCtagsArgs excludes .pi/crawl4ai-venv/ (Python venv)", () => {
+	it("buildCtagsArgs excludes crawl4ai-venv/ (Python venv)", () => {
 		const result = buildCtagsArgs(".", 0);
-		assert.ok(result.args.includes("--exclude=.pi/crawl4ai-venv"));
+		assert.ok(result.args.includes("--exclude=crawl4ai-venv"));
 	});
 
 	it("buildCtagsArgs excludes flask_blogs/ (unrelated submodule)", () => {
@@ -244,6 +244,68 @@ describe("Phase 2: Additional ctags exclude patterns", () => {
 		const mdCount = result.args.filter((a) => a === "--exclude=*.md").length;
 		assert.equal(nodeModulesCount, 1, "node_modules should not be duplicated");
 		assert.equal(mdCount, 1, "*.md should not be duplicated");
+	});
+
+	it("basename-only convention: no default exclude arg contains a '/' path separator", () => {
+		const result = buildCtagsArgs(".", 0);
+		const excludeArgs = result.args.filter((a) => a.startsWith("--exclude="));
+		for (const arg of excludeArgs) {
+			const value = arg.slice("--exclude=".length);
+			// Glob patterns (containing *) are exempt — they match basename regardless
+			if (value.includes("*")) continue;
+			// Extra excludes (piignore-originated) may contain / — but we only check defaults here
+			// We're called without extraExcludes, so this tests only built-in defaults
+			assert.ok(
+				!value.includes("/"),
+				`Built-in exclude "${value}" contains "/" — ctags --exclude matches basename only, use just the basename`,
+			);
+		}
+	});
+
+	it("basename-only convention: all expected basenames have corresponding --exclude arg", () => {
+		const result = buildCtagsArgs(".", 0);
+		const basenames = [
+			"node_modules",
+			".git",
+			"static",
+			"context",
+			"sessions",
+			"npm",
+			"chromium-deps",
+			"crawl4ai-venv",
+			"flask_blogs",
+			"benchmarks",
+		];
+		for (const name of basenames) {
+			assert.ok(
+				result.args.includes(`--exclude=${name}`),
+				`Expected --exclude=${name} to be present in ctags args`,
+			);
+		}
+	});
+
+	it("glob excludes still present (globs match basename correctly, no change needed)", () => {
+		const result = buildCtagsArgs(".", 0);
+		assert.ok(result.args.includes("--exclude=*.json"), "*.json glob exclude");
+		assert.ok(result.args.includes("--exclude=*.jsonl"), "*.jsonl glob exclude");
+		assert.ok(result.args.includes("--exclude=*.md"), "*.md glob exclude");
+		assert.ok(result.args.includes("--exclude=*.css"), "*.css glob exclude");
+		assert.ok(result.args.includes("--exclude=*.min.js"), "*.min.js glob exclude");
+	});
+
+	it("extra excludes containing '/' are preserved (piignore-originated patterns are user choice)", () => {
+		const result = buildCtagsArgs(".", 0, [".pi/venv", "build/foo"]);
+		assert.ok(
+			result.args.includes("--exclude=.pi/venv"),
+			".pi/venv exclude with / should be preserved",
+		);
+		assert.ok(
+			result.args.includes("--exclude=build/foo"),
+			"build/foo exclude with / should be preserved",
+		);
+		// Verify dedup still works
+		const count = result.args.filter((a) => a === "--exclude=.pi/venv").length;
+		assert.equal(count, 1, "extra excludes with / should not be duplicated");
 	});
 });
 
@@ -584,10 +646,10 @@ describe("Phase 7: Engine integration", () => {
 			// Check ctags args include new excludes
 			assert.ok(ctagsCall!.args.includes("--exclude=*.jsonl"), "should exclude *.jsonl");
 			assert.ok(ctagsCall!.args.includes("--exclude=*.md"), "should exclude *.md");
-			assert.ok(ctagsCall!.args.includes("--exclude=.pi/context"), "should exclude .pi/context");
+			assert.ok(ctagsCall!.args.includes("--exclude=context"), "should exclude context");
 			assert.ok(
-				ctagsCall!.args.includes("--exclude=.pi/crawl4ai-venv"),
-				"should exclude .pi/crawl4ai-venv",
+				ctagsCall!.args.includes("--exclude=crawl4ai-venv"),
+				"should exclude crawl4ai-venv",
 			);
 
 			// Verify index was built
