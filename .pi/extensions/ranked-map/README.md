@@ -15,6 +15,7 @@
 - **.piignore integration** — Patterns from `.piignore` are automatically added as ctags excludes
 - **Improved previews** — Shows ctag definition lines (from pattern field) instead of first 5 comment/import lines
 - **Smart ctags excludes** — Q&A data files (`*.jsonl`), docs (`*.md`), and pi agent internals are excluded from indexing; submodules are scanned like any other directory
+- **.mts file support** — ESM TypeScript (`.mts`) files are mapped to the TypeScript parser via `--map-TypeScript=+.mts`, so their symbols appear in the index
 - **Prompt integration** — Injects mode-aware `promptSnippet` and `promptGuidelines` so the LLM knows how to use the tool
 - **No external dependencies** — Uses `ctags` for indexing, `ripgrep` for keyword search, `git` for recency
 

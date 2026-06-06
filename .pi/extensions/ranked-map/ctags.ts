@@ -109,7 +109,12 @@ export function buildCtagsArgs(
 		}
 	}
 
-	const args: string[] = ["-R", "--output-format=json", "--tag-relative=always"];
+	const args: string[] = [
+		"-R",
+		"--output-format=json",
+		"--tag-relative=always",
+		"--map-TypeScript=+.mts",
+	];
 
 	for (const ex of excludes) {
 		args.push(`--exclude=${ex}`);
