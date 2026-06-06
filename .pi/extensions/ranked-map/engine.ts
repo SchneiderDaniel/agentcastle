@@ -18,7 +18,7 @@ import {
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { buildCtagsArgs, buildSymbolIndex } from "./ctags.ts";
-import { loadCachedIndex } from "./cache.ts";
+import { loadCachedIndex, computeConfigHash } from "./cache.ts";
 import {
 	selectMode,
 	dumpAllFiles,
@@ -76,10 +76,11 @@ export class RankedMapEngine {
 	): Promise<CachedIndex> {
 		const cachePath = resolve(cacheDir, "ranked-map-index.json");
 		const currentHead = await getGitHead(this.exec, this.cwd, signal);
+		const configHash = computeConfigHash(this.config);
 
 		// Try cache first
 		if (currentHead) {
-			const cached = loadCachedIndex(cachePath, currentHead);
+			const cached = loadCachedIndex(cachePath, currentHead, configHash);
 			if (cached) return cached;
 		}
 
@@ -109,7 +110,8 @@ export class RankedMapEngine {
 			);
 		}
 
-		const index = buildSymbolIndex(result.stdout, currentHead || "unknown");
+		const index = buildSymbolIndex(result.stdout, currentHead || "unknown", undefined, targetDir);
+		index.configHash = configHash;
 
 		try {
 			writeFileSync(cachePath, JSON.stringify(index), "utf-8");

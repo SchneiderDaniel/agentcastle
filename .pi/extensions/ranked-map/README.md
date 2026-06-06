@@ -10,7 +10,7 @@
   - Query-free fallback to recency-only ranking
   - Structural overview in recency-only mode — one file per top-level directory ensures broad repo awareness
 - **Configurable token budget** — Default 4096 tokens, adjustable per call
-- **Caching** — Symbol index cached to `.pi/cache/ranked-map-index.json` keyed by git HEAD
+- **Caching** — Symbol index cached to `.pi/cache/ranked-map-index.json` keyed by git HEAD and config hash (config changes invalidate the cache)
 - **Test-file penalty** — Test files (`.test.`, `.spec.`, `/test/`) receive 0.5x score penalty to favor source files
 - **.piignore integration** — Patterns from `.piignore` are automatically added as ctags excludes
 - **Improved previews** — Shows ctag definition lines (from pattern field) instead of first 5 comment/import lines
@@ -32,7 +32,7 @@ Each phase accepts `ExecFn` + config via constructor, making all methods testabl
 ## How it works
 
 1. On first call, the extension builds a symbol index via `ctags --output-format=json -R` over the target directory
-   - Automatically excludes: `node_modules`, `.git`, `*.json`, `*.jsonl`, `*.md`, `*.min.js`, `*.css`, `static`, `.pi/context/`, `.pi/sessions/`, `.pi/npm/`, `.pi/chromium-deps/`, `.pi/crawl4ai-venv/`, `flask_blogs/`, `benchmarks/`
+   - Automatically excludes: `node_modules`, `.git`, `*.json`, `*.jsonl`, `*.md`, `*.min.js`, `*.css`, `static`, `.pi/context/`, `.pi/sessions/`, `.pi/npm/`, `.pi/chromium-deps/`, `.pi/crawl4ai-venv/`, `benchmarks/`
    - Also reads `.piignore` for additional exclusion patterns
 2. The index is cached to disk keyed by current git HEAD
 3. When called, the extension selects mode:

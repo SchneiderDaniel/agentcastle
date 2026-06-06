@@ -19,6 +19,8 @@ export interface CachedIndex {
 	head: string;
 	builtAt: number;
 	symbols: Record<string, SymbolEntry[]>;
+	/** Optional config hash for cache invalidation when settings change. */
+	configHash?: string;
 }
 
 /** A single symbol entry within a file. */
