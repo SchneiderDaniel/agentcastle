@@ -50,13 +50,25 @@ function isValidISODatetime(s: string): boolean {
 	if (typeof s !== "string" || s.length < 10) return false;
 	const d = new Date(s);
 	if (isNaN(d.getTime())) return false;
-	// Catch overflow dates like "2026-02-30" that JS Date silently rolls forward
-	const iso = d.toISOString();
-	// Compare date portion (first 10 chars) to detect overflow
-	// Using date-only comparison avoids false rejections from timezone normalization:
-	// d.toISOString() always emits Z-suffix UTC, while input may have +HH:MM offset
-	// or no timezone at all.
-	if (iso.slice(0, 10) !== s.slice(0, 10)) return false;
+	// Extract date components from the input string directly (first 10 chars)
+	// and compare against a local-date constructor to detect overflow dates
+	// (e.g. Feb 30 → Mar 2) WITHOUT rejecting valid timestamps where the UTC
+	// date differs from the input date due to timezone offset.
+	const datePart = s.slice(0, 10);
+	const parts = datePart.split("-");
+	if (parts.length !== 3) return false;
+	const year = parseInt(parts[0]!, 10);
+	const month = parseInt(parts[1]!, 10);
+	const day = parseInt(parts[2]!, 10);
+	// Construct a local date from the components to detect overflow rollover
+	const constructed = new Date(year, month - 1, day);
+	if (
+		constructed.getFullYear() !== year ||
+		constructed.getMonth() !== month - 1 ||
+		constructed.getDate() !== day
+	) {
+		return false;
+	}
 	return true;
 }
 
@@ -442,6 +454,69 @@ describe("isValidISODatetime", () => {
 
 	it("still rejects invalid day 2026-01-00", () => {
 		assert.ok(!isValidISODatetime("2026-01-00"));
+	});
+
+	// ── Timezone offset edge cases (Issue #539) ───────────────────────────
+
+	it("accepts ISO 8601 with positive timezone offset where UTC date differs", () => {
+		// 2026-01-01T00:00:00+05:00 → UTC is 2025-12-31T19:00:00Z
+		// Local date (Jan 1) differs from UTC date (Dec 31)
+		assert.ok(isValidISODatetime("2026-01-01T00:00:00+05:00"));
+	});
+
+	it("accepts ISO 8601 with negative timezone offset where UTC date differs", () => {
+		// 2026-01-01T23:00:00-05:00 → UTC is 2026-01-02T04:00:00Z
+		// Local date (Jan 1) differs from UTC date (Jan 2)
+		assert.ok(isValidISODatetime("2026-01-01T23:00:00-05:00"));
+	});
+
+	it("accepts ISO 8601 with timezone offset at month boundary", () => {
+		// 2026-02-01T00:00:00+05:00 → UTC is 2026-01-31T19:00:00Z
+		// Local date (Feb 1) differs from UTC date (Jan 31)
+		assert.ok(isValidISODatetime("2026-02-01T00:00:00+05:00"));
+	});
+
+	it("accepts ISO 8601 with timezone offset at year boundary", () => {
+		// 2027-01-01T00:00:00+05:00 → UTC is 2026-12-31T19:00:00Z
+		assert.ok(isValidISODatetime("2027-01-01T00:00:00+05:00"));
+	});
+
+	it("accepts ISO 8601 with timezone offset and milliseconds", () => {
+		assert.ok(isValidISODatetime("2026-01-01T00:00:00.123+05:00"));
+	});
+
+	it("accepts negative timezone offset without date crossing", () => {
+		// 2026-05-15T10:00:00-05:00 → UTC is 2026-05-15T15:00:00Z (same date)
+		assert.ok(isValidISODatetime("2026-05-15T10:00:00-05:00"));
+	});
+
+	it("accepts zero timezone offset (+00:00)", () => {
+		assert.ok(isValidISODatetime("2026-05-15T19:00:00+00:00"));
+	});
+
+	it("accepts Z-suffix timezone", () => {
+		assert.ok(isValidISODatetime("2026-05-15T19:00:00.000Z"));
+	});
+
+	it("still rejects overflow date Feb 30 with timezone offset", () => {
+		assert.ok(!isValidISODatetime("2026-02-30T00:00:00+05:00"));
+	});
+
+	it("still rejects overflow date Apr 31 with timezone offset", () => {
+		assert.ok(!isValidISODatetime("2026-04-31T12:00:00+05:00"));
+	});
+
+	it("still rejects overflow date with Z suffix", () => {
+		assert.ok(!isValidISODatetime("2026-02-30T19:00:00.000Z"));
+	});
+
+	it("accepts valid leap year date 2024-02-29 with timezone offset", () => {
+		assert.ok(isValidISODatetime("2024-02-29T23:00:00+05:00"));
+	});
+
+	it("accepts large positive offset like +14:00", () => {
+		// +14:00 is max valid ISO 8601 timezone offset
+		assert.ok(isValidISODatetime("2026-01-01T00:00:00+14:00"));
 	});
 });
 
