@@ -5,6 +5,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { PrConflictInfo, SupervisorConfig } from "../config/types.ts";
 import { existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { generateBranchName } from "../agent/task.ts";
 import { tryAutoMerge } from "../config/merge.ts";
 import { checkPrConflicts } from "../github/pr.ts";
@@ -24,6 +25,7 @@ export async function handlePostPipelineMerge(
 	config: SupervisorConfig,
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
+	worktreePath?: string,
 ): Promise<void> {
 	const log = getDebugLogger();
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
@@ -69,7 +71,8 @@ export async function handlePostPipelineMerge(
 			);
 
 			if (shouldFix) {
-				const wt = `${config.worktreeBase}${branch}`;
+				const wt =
+					worktreePath ?? resolvePath(ctx.cwd || process.cwd(), config.worktreeBase!, branch);
 
 				ctx.ui.setStatus("supervisor", "Attempting auto-merge...");
 				log.info("pipeline-merge", "Attempting auto-merge", { wt, branch });
