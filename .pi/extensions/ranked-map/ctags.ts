@@ -87,12 +87,14 @@ export function buildCtagsArgs(
 		// Docs — no code symbols
 		"*.md",
 		// Pi agent internals — massive, irrelevant
-		".pi/context",
-		".pi/sessions",
-		".pi/npm",
-		".pi/chromium-deps",
-		".pi/crawl4ai-venv",
-		// Submodules (no explicit exclude — let ctags index them)
+		// NOTE: ctags --exclude matches against basename only, so no path prefix allowed
+		"context",
+		"sessions",
+		"npm",
+		"chromium-deps",
+		"crawl4ai-venv",
+		// Submodules
+		"flask_blogs",
 		// Benchmarks — not source
 		"benchmarks",
 	];
