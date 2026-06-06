@@ -336,10 +336,7 @@ export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
  * Kept for backward compatibility with supervisor pipeline.
  * Runs a one-shot tsc check using the TypeScript compiler API.
  */
-export async function runTscCheckpoint(
-	pi: ExtensionAPI,
-	worktreePath: string,
-): Promise<TscCheckpointResult> {
+export async function runTscCheckpoint(worktreePath: string): Promise<TscCheckpointResult> {
 	const configPath = resolve(worktreePath, "tsconfig.json");
 
 	if (!existsSync(configPath)) {

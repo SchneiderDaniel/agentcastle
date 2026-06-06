@@ -89,7 +89,7 @@ export async function runTscAndLspAudit(
 		if (runTscCheckpointFn) {
 			ctx.ui.setStatus("supervisor", "Running TSC checkpoint...");
 			getDebugLogger().info("pipeline-audit", "Running TSC checkpoint", { worktreePath });
-			const tscResult = await runTscCheckpointFn(pi, worktreePath);
+			const tscResult = await runTscCheckpointFn(worktreePath);
 			const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
 
 			getDebugLogger().info("pipeline-audit", "TSC result", {

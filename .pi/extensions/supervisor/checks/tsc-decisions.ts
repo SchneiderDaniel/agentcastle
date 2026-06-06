@@ -68,7 +68,7 @@ export function determineTscCheckpointDecision(
  * Throws if the tsc-checkpoint module is not available.
  */
 export async function getRunTscCheckpoint(): Promise<
-	(pi: ExtensionAPI, worktreePath: string) => Promise<TscCheckpointResult>
+	(worktreePath: string) => Promise<TscCheckpointResult>
 > {
 	const mod = await import("../../tsc-checkpoint");
 	return mod.runTscCheckpoint;
