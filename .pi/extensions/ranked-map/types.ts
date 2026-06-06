@@ -21,6 +21,12 @@ export interface CachedIndex {
 	symbols: Record<string, SymbolEntry[]>;
 	/** Optional config hash for cache invalidation when settings change. */
 	configHash?: string;
+	/**
+	 * Optional target directory used when building the index.
+	 * Used for cache scope validation: if the cached index was built with a different
+	 * targetDir, it must be rebuilt.
+	 */
+	targetDir?: string;
 }
 
 /** A single symbol entry within a file. */

@@ -7,8 +7,20 @@
 
 import { describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { tmpdir } from "node:os";
+import { mkdtempSync } from "node:fs";
 import { RankedMapEngine } from "../engine.ts";
 import type { CachedIndex, RankedMapConfig, RankedFileScore, ExecFn } from "../types.ts";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function tmpDirPath(): string {
+	return mkdtempSync(join(tmpdir(), "ranked-engine-"));
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -119,6 +131,130 @@ describe("RankedMapEngine — buildOrLoadIndex", () => {
 			"should reject with ctags error message",
 		);
 	});
+
+	it("stores targetDir in cache file", async () => {
+		const tmpDir = tmpDirPath();
+		try {
+			mkdirSync(join(tmpDir, "cache"), { recursive: true });
+			const exec = mockExec();
+			exec.mock.mockImplementation(async (cmd, args, _opts) => {
+				if (cmd === "git") return { stdout: "abc123\n", stderr: "", code: 0, killed: false };
+				if (cmd === "ctags")
+					return {
+						stdout:
+							JSON.stringify({
+								_type: "tag",
+								name: "foo",
+								kind: "function",
+								path: "src/foo.ts",
+								pattern: "/^foo()$/",
+							}) + "\n",
+						stderr: "",
+						code: 0,
+						killed: false,
+					};
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			});
+
+			const engine = new RankedMapEngine(defaultConfig, exec, tmpDir);
+			const cacheDir = join(tmpDir, "cache");
+			await engine.buildOrLoadIndex("src", cacheDir, undefined);
+
+			// Read the cache file directly and verify targetDir was stored
+			const cachePath = resolve(cacheDir, "ranked-map-index.json");
+			assert.ok(existsSync(cachePath), "cache file should exist");
+			const cached = JSON.parse(readFileSync(cachePath, "utf-8"));
+			assert.equal(cached.targetDir, "src");
+		} finally {
+			rmSync(tmpDir, { recursive: true, force: true });
+		}
+	});
+
+	it("stores absolute targetDir in cache file", async () => {
+		const tmpDir = tmpDirPath();
+		try {
+			mkdirSync(join(tmpDir, "cache"), { recursive: true });
+			const exec = mockExec();
+			exec.mock.mockImplementation(async (cmd, args, _opts) => {
+				if (cmd === "git") return { stdout: "abc123\n", stderr: "", code: 0, killed: false };
+				if (cmd === "ctags")
+					return {
+						stdout:
+							JSON.stringify({
+								_type: "tag",
+								name: "foo",
+								kind: "function",
+								path: "/abs/path/src/foo.ts",
+								pattern: "/^foo()$/",
+							}) + "\n",
+						stderr: "",
+						code: 0,
+						killed: false,
+					};
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			});
+
+			const engine = new RankedMapEngine(defaultConfig, exec, tmpDir);
+			const cacheDir = join(tmpDir, "cache");
+			await engine.buildOrLoadIndex("/abs/path", cacheDir, undefined);
+
+			const cachePath = resolve(cacheDir, "ranked-map-index.json");
+			assert.ok(existsSync(cachePath), "cache file should exist");
+			const cached = JSON.parse(readFileSync(cachePath, "utf-8"));
+			assert.equal(cached.targetDir, "/abs/path");
+		} finally {
+			rmSync(tmpDir, { recursive: true, force: true });
+		}
+	});
+
+	it("calls loadCachedIndex with targetDir and rejects cache on mismatch", async () => {
+		const tmpDir = tmpDirPath();
+		try {
+			mkdirSync(join(tmpDir, "cache"), { recursive: true });
+
+			// Write a cache file with a different targetDir
+			const cachePath = join(tmpDir, "cache", "ranked-map-index.json");
+			writeFileSync(
+				cachePath,
+				JSON.stringify({
+					head: "abc123",
+					builtAt: Date.now(),
+					symbols: { "a.ts": [{ type: "function", name: "a", line: 1 }] },
+					targetDir: "/other/path",
+				}),
+			);
+
+			const exec = mockExec();
+			exec.mock.mockImplementation(async (cmd, _args, _opts) => {
+				if (cmd === "git") return { stdout: "abc123\n", stderr: "", code: 0, killed: false };
+				if (cmd === "ctags")
+					return {
+						stdout:
+							JSON.stringify({
+								_type: "tag",
+								name: "foo",
+								kind: "function",
+								path: "src/foo.ts",
+								pattern: "/^foo()$/",
+							}) + "\n",
+						stderr: "",
+						code: 0,
+						killed: false,
+					};
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			});
+
+			const engine = new RankedMapEngine(defaultConfig, exec, tmpDir);
+			const cacheDir = join(tmpDir, "cache");
+			const index = await engine.buildOrLoadIndex("/current/path", cacheDir, undefined);
+
+			// Cache had mismatching targetDir, so it was rebuilt with new data
+			assert.ok(index, "index should be rebuilt");
+			assert.equal(index.targetDir, "/current/path");
+		} finally {
+			rmSync(tmpDir, { recursive: true, force: true });
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -131,7 +267,7 @@ describe("RankedMapEngine — rank", () => {
 		const engine = new RankedMapEngine(defaultConfig, exec, "/tmp");
 		const index = makeIndex();
 
-		const result = await engine.rank(index, "", 2048, undefined);
+		const result = await engine.rank(index, "", 2048, ".", undefined);
 
 		assert.equal(result.mode, "full_dump");
 		// Both files should be present
@@ -153,7 +289,7 @@ describe("RankedMapEngine — rank", () => {
 		const engine2 = new RankedMapEngine(config, exec, "/tmp");
 		const index = makeIndex();
 
-		const result = await engine2.rank(index, "foo", 2048, undefined);
+		const result = await engine2.rank(index, "foo", 2048, ".", undefined);
 
 		assert.equal(result.mode, "ranked");
 		assert.ok(result.files.length > 0, "should have ranked files");
@@ -179,7 +315,7 @@ describe("RankedMapEngine — rank", () => {
 		const engine = new RankedMapEngine(config, exec, "/tmp");
 		const index = makeIndex();
 
-		const result = await engine.rank(index, "", 2048, undefined);
+		const result = await engine.rank(index, "", 2048, ".", undefined);
 
 		assert.equal(result.mode, "ranked");
 		assert.ok(result.files.length >= 0, "should return files");
@@ -191,7 +327,7 @@ describe("RankedMapEngine — rank", () => {
 		const index = makeIndex();
 
 		// Very small budget should truncate
-		const result = await engine.rank(index, "", 1, undefined);
+		const result = await engine.rank(index, "", 1, ".", undefined);
 		assert.ok(result.truncated || result.files.length < 2, "should truncate with tiny budget");
 	});
 });

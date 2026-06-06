@@ -677,7 +677,7 @@ describe("Phase 8: Structural overview integration in engine.rank", () => {
 			},
 		};
 		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
-		const result = await engine.rank(index, "", 50000, undefined);
+		const result = await engine.rank(index, "", 50000, ".", undefined);
 		assert.equal(result.mode, "ranked");
 
 		// Structural overview should add files for top-level dirs: .pi, Makefile
@@ -700,7 +700,7 @@ describe("Phase 8: Structural overview integration in engine.rank", () => {
 			},
 		};
 		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
-		const result = await engine.rank(index, "", 50000, undefined);
+		const result = await engine.rank(index, "", 50000, ".", undefined);
 		const paths = result.files.map((f) => f.path);
 		// Each path should appear at most once
 		for (const p of paths) {
@@ -719,7 +719,7 @@ describe("Phase 8: Structural overview integration in engine.rank", () => {
 			},
 		};
 		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
-		const result = await engine.rank(index, "", 50000, undefined);
+		const result = await engine.rank(index, "", 50000, ".", undefined);
 
 		// autoThreshold: 0, totalSymbols: 2, 2 > 0 → ranked (recency-only)
 		assert.equal(result.mode, "ranked");
@@ -741,7 +741,7 @@ describe("Phase 8: Structural overview integration in engine.rank", () => {
 			},
 		};
 		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
-		const result = await engine.rank(index, "foo bar", 50000, undefined);
+		const result = await engine.rank(index, "foo bar", 50000, ".", undefined);
 		// In query mode, Makefile appears with score 0 (no recency, no keyword match)
 		// Structural overview should NOT boost it to 0.1 in query mode
 		const makefileEntry = result.files.find((f) => f.path === "Makefile");
@@ -763,7 +763,7 @@ describe("Phase 8: Structural overview integration in engine.rank", () => {
 			},
 		};
 		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 100 }), mockExecFn(), "/tmp");
-		const result = await engine.rank(index, "", 50000, undefined);
+		const result = await engine.rank(index, "", 50000, ".", undefined);
 		// Should be full_dump mode since totalSymbols (2) <= autoThreshold (100)
 		assert.equal(result.mode, "full_dump");
 		// In full_dump mode, all files are already included sorted by path
@@ -780,7 +780,7 @@ describe("Phase 8: Structural overview integration in engine.rank", () => {
 		};
 		// With autoThreshold=0 and totalSymbols=0, 0 <= 0 → full_dump mode
 		const engine = new RankedMapEngine(makeConfig({ autoThreshold: 0 }), mockExecFn(), "/tmp");
-		const result = await engine.rank(index, "", 50000, undefined);
+		const result = await engine.rank(index, "", 50000, ".", undefined);
 		// Empty repo: no symbols → no files at all, no crash
 		assert.equal(result.files.length, 0, "empty repo should have no files");
 		// 0 <= 20000 (default autoThreshold) → full_dump
