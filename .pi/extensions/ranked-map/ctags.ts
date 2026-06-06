@@ -92,8 +92,7 @@ export function buildCtagsArgs(
 		".pi/npm",
 		".pi/chromium-deps",
 		".pi/crawl4ai-venv",
-		// Unrelated submodules
-		"flask_blogs",
+		// Submodules (no explicit exclude — let ctags index them)
 		// Benchmarks — not source
 		"benchmarks",
 	];
