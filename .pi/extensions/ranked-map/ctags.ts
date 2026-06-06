@@ -93,8 +93,7 @@ export function buildCtagsArgs(
 		"npm",
 		"chromium-deps",
 		"crawl4ai-venv",
-		// Submodules
-		"flask_blogs",
+		// Submodules scanned like any other directory
 		// Benchmarks — not source
 		"benchmarks",
 	];

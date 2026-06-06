@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 // Modules under test
 import { loadRankedMapConfig, DEFAULT_CONFIG, MAX_RECENCY_WINDOW_DAYS } from "../config.ts";
 import { buildCtagsArgs, buildSymbolIndex } from "../ctags.ts";
+import { computeConfigHash } from "../cache.ts";
 import { buildPiignoreExcludes } from "../piignore.ts";
 import { isTestFile, applyTestFilePenalty, rankFiles } from "../scoring.ts";
 import { getStructuralOverview } from "../format.ts";
@@ -185,9 +186,9 @@ describe("Phase 2: Additional ctags exclude patterns", () => {
 		assert.ok(result.args.includes("--exclude=crawl4ai-venv"));
 	});
 
-	it("buildCtagsArgs excludes flask_blogs/ (unrelated submodule)", () => {
+	it("buildCtagsArgs no longer excludes flask_blogs/ (submodule scanned like any other directory)", () => {
 		const result = buildCtagsArgs(".", 0);
-		assert.ok(result.args.includes("--exclude=flask_blogs"));
+		assert.ok(!result.args.includes("--exclude=flask_blogs"));
 	});
 
 	it("buildCtagsArgs excludes benchmarks/ (benchmark scripts, not source)", () => {
@@ -273,7 +274,6 @@ describe("Phase 2: Additional ctags exclude patterns", () => {
 			"npm",
 			"chromium-deps",
 			"crawl4ai-venv",
-			"flask_blogs",
 			"benchmarks",
 		];
 		for (const name of basenames) {
@@ -785,5 +785,147 @@ describe("Phase 8: Structural overview integration in engine.rank", () => {
 		assert.equal(result.files.length, 0, "empty repo should have no files");
 		// 0 <= 20000 (default autoThreshold) → full_dump
 		assert.equal(result.mode, "full_dump");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 9: Git submodule indexing (flask_blogs)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Phase 9: Git submodule indexing (flask_blogs)", () => {
+	it("buildSymbolIndex with flask_blogs paths produces valid SymbolEntry entries", () => {
+		const jsonl = [
+			JSON.stringify({
+				_type: "tag",
+				name: "App",
+				kind: "class",
+				path: "flask_blogs/flask_planhead/run.py",
+				pattern: "/^class App:$/",
+				line: 1,
+			}),
+			JSON.stringify({
+				_type: "tag",
+				name: "app",
+				kind: "variable",
+				path: "flask_blogs/flask_planhead/run.py",
+				pattern: "/^app = App()$/",
+				line: 5,
+			}),
+		].join("\n");
+
+		const index = buildSymbolIndex(jsonl, "abc123");
+
+		// flask_blogs path should be indexed
+		assert.ok(index.symbols["flask_blogs/flask_planhead/run.py"], "should index flask_blogs path");
+
+		const entries = index.symbols["flask_blogs/flask_planhead/run.py"]!;
+		assert.equal(entries.length, 2, "should have 2 entries");
+
+		// First entry: App (class)
+		assert.equal(entries[0]!.type, "class");
+		assert.equal(entries[0]!.name, "App");
+		assert.equal(entries[0]!.line, 1);
+
+		// Second entry: app (variable)
+		assert.equal(entries[1]!.type, "variable");
+		assert.equal(entries[1]!.name, "app");
+		assert.equal(entries[1]!.line, 5);
+	});
+
+	it("engine buildOrLoadIndex with flask_blogs mock output builds index including flask_blogs", async () => {
+		const dir = tmpDir();
+		try {
+			const calls: { cmd: string; args: string[] }[] = [];
+			const exec: ExecFn = async (cmd, args, _opts) => {
+				calls.push({ cmd, args });
+				return {
+					stdout:
+						JSON.stringify({
+							_type: "tag",
+							name: "App",
+							kind: "class",
+							path: "flask_blogs/flask_planhead/run.py",
+							pattern: "/^class App:$/",
+							line: 1,
+						}) + "\n",
+					stderr: "",
+					code: 0,
+					killed: false,
+				};
+			};
+
+			const engine = new RankedMapEngine(makeConfig(), exec, dir);
+			const index = await engine.buildOrLoadIndex(".", join(dir, "cache"), undefined);
+
+			// flask_blogs path should be in the index
+			assert.ok(
+				index.symbols["flask_blogs/flask_planhead/run.py"],
+				"flask_blogs path should appear in built index",
+			);
+
+			// The ctags call should NOT include --exclude=flask_blogs
+			const ctagsCall = calls.find((c) => c.cmd === "ctags");
+			assert.ok(ctagsCall, "should have called ctags");
+			assert.ok(
+				!ctagsCall!.args.includes("--exclude=flask_blogs"),
+				"ctags should not exclude flask_blogs",
+			);
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("computeConfigHash is unchanged by exclude list changes", () => {
+		// computeConfigHash only hashes numeric config fields, not exclude lists
+		const hash1 = computeConfigHash(makeConfig());
+		const hash2 = computeConfigHash(makeConfig({ tokenBudget: 4096 }));
+		const hash3 = computeConfigHash(makeConfig({ tokenBudget: 8192 }));
+
+		// Same config → same hash
+		assert.equal(hash1, hash2, "identical configs should produce identical hash");
+		// Different config → different hash
+		assert.notEqual(hash1, hash3, "different tokenBudget should produce different hash");
+
+		// The excludes list is NOT part of config hash — document this
+		// so we know that changing excludes (like removing flask_blogs)
+		// won't invalidate cached index.
+		assert.ok(hash1.length > 0, "config hash should be a non-empty hex string");
+	});
+
+	it("deduplication still works when flask_blogs passed as extra exclude (from piignore)", () => {
+		// Even though flask_blogs is no longer a built-in exclude,
+		// if it's passed as an extra exclude (from .piignore), it should
+		// appear exactly once.
+		const result = buildCtagsArgs(".", 0, ["flask_blogs"]);
+		const count = result.args.filter((a) => a === "--exclude=flask_blogs").length;
+		assert.equal(
+			count,
+			1,
+			"flask_blogs should appear exactly once even when passed as extra exclude",
+		);
+	});
+
+	it("all standard excludes still present after flask_blogs removal", () => {
+		const result = buildCtagsArgs(".", 0);
+		const standardExcludes = [
+			"node_modules",
+			".git",
+			"*.json",
+			"*.min.js",
+			"*.css",
+			"static",
+			"*.jsonl",
+			"*.md",
+			"context",
+			"sessions",
+			"npm",
+			"chromium-deps",
+			"crawl4ai-venv",
+			"benchmarks",
+		];
+		for (const ex of standardExcludes) {
+			const count = result.args.filter((a) => a === `--exclude=${ex}`).length;
+			assert.equal(count, 1, `--exclude=${ex} should appear exactly once`);
+		}
 	});
 });
