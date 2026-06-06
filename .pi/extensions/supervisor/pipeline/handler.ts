@@ -39,6 +39,8 @@ import {
 	shouldSkipResearcher,
 	checkReadmeUpdated,
 	inferForwardStatus,
+	handleDuplicateCheck,
+	buildDuplicateCodeContext,
 } from "./stages.ts";
 import {
 	fetchIssue,
@@ -298,6 +300,10 @@ export async function handleSupervisorCommand(
 			}
 
 			// Build task
+			const dupContext: string | undefined =
+				agentName === "auditor"
+					? (buildDuplicateCodeContext(stageState.duplicateCodeResult) ?? undefined)
+					: undefined;
 			const task = buildAgentTask(
 				agentName,
 				issueNum,
@@ -314,6 +320,7 @@ export async function handleSupervisorCommand(
 				loopFilteredData.comments.length > 1
 					? summarizeComments(loopFilteredData.comments)
 					: undefined,
+				dupContext,
 			);
 
 			getDebugLogger().info("handler", `Dispatching agent ${agentName}`, {
@@ -466,9 +473,9 @@ export async function handleSupervisorCommand(
 				getDebugLogger().info("handler", "Feedback loop", { from: loopStatus, to: nextStatus });
 			}
 
-			// Pre-transition hooks
+			// Pre-transition hooks (CI, TSC, LSP, duplicate code check)
 			let effectiveNextStatus = nextStatus;
-			if (step.hooks?.some((h) => ["ci", "tsc", "lsp"].includes(h))) {
+			if (step.hooks?.some((h) => ["ci", "tsc", "lsp", "dup"].includes(h))) {
 				try {
 					getDebugLogger().info("handler", "Running pre-transition hooks", {
 						hooks: step.hooks,

@@ -14,7 +14,7 @@ export interface WorkflowStep {
 	/** Statuses this step can send back to (feedback loop) */
 	canLoopBackTo?: string[];
 	/** Hooks to run before transition */
-	hooks?: ("tsc" | "lsp" | "ci")[];
+	hooks?: ("tsc" | "lsp" | "ci" | "dup")[];
 	/** Max rejections before forcing human intervention */
 	maxRejections?: number;
 	/** Built-in handler */
@@ -50,12 +50,12 @@ export const WORKFLOW: WorkflowStep[] = [
 		markerMap: { TEST_PLAN_COMPLETE: "Implementation" },
 	},
 
-	// Implementation → Audit (with CI + TSC + LSP hooks)
+	// Implementation → Audit (with CI + TSC + LSP + duplicate code hooks)
 	{
 		status: "Implementation",
 		agentName: "developer",
 		markerMap: { IMPLEMENTATION_COMPLETE: "Audit" },
-		hooks: ["ci", "tsc", "lsp"],
+		hooks: ["ci", "tsc", "lsp", "dup"],
 	},
 
 	// Audit → Done (approve) or Implementation (reject/loop back)
@@ -225,6 +225,7 @@ const KNOWN_AUDIT_DIMENSIONS = [
 	"correctness-safety",
 	"code-quality",
 	"completeness",
+	"duplicate-code",
 ] as const;
 
 /**
