@@ -154,9 +154,11 @@ function extractFirstArg(match: Record<string, unknown>): string[] {
  * Extract a simple argument value from the first arg string.
  * Strips surrounding quotes for clean comparison.
  */
-function cleanArg(arg: string): string {
-	return arg.replace(/^["'`]|["'`]$/g, "");
-}
+// No longer used — callArgs now stores raw (quoted) args
+// to let downstream code distinguish string literals from variable references
+// function cleanArg(arg: string): string {
+// 	return arg.replace(/^["'`]|["'`]$/g, "");
+// }
 
 /**
  * Run ast-grep for a pattern and parse JSON results.
@@ -441,7 +443,7 @@ export async function scanExtensionsAST(
 					column: colNum,
 					lineContent: firstLine.trim(),
 					matchContext: "runtime-call",
-					callArgs: args.map(cleanArg),
+					callArgs: args.map((a) => a.trim()),
 					changelogVersion: "",
 					isBreaking: false,
 					category: "",
@@ -480,7 +482,7 @@ export async function scanExtensionsAST(
 					column: colNum,
 					lineContent: firstLine.trim(),
 					matchContext: "runtime-call",
-					callArgs: args.map(cleanArg),
+					callArgs: args.map((a) => a.trim()),
 					changelogVersion: "",
 					isBreaking: false,
 					category: "",

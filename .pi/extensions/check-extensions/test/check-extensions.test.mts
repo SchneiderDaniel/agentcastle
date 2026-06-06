@@ -1041,7 +1041,7 @@ describe("change-resolver", () => {
 			changelogVersion: "",
 			isBreaking: false,
 			category: "",
-			callArgs: ["tool_call"],
+			callArgs: ['"tool_call"'],
 			matchContext: "runtime-call" as const,
 		};
 		const structured: StructuredChange = {
@@ -1052,6 +1052,39 @@ describe("change-resolver", () => {
 
 		const result = resolveRelevance(entry, finding, structured);
 		assert.strictEqual(result, true);
+	});
+
+	it("returns undefined when finding uses variable arg (can't determine relevance)", () => {
+		const entry = {
+			version: "1.0.0",
+			category: "Changed" as const,
+			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+			apiNames: ["on"],
+			isBreaking: true,
+		};
+		// Variable arg (eventName) — no quotes → can't statically determine relevance
+		const finding = {
+			extensionName: "caveman",
+			file: "index.ts",
+			apiName: "pi.on",
+			line: 1,
+			column: 1,
+			lineContent: "pi.on(eventName, handler)",
+			changelogVersion: "",
+			isBreaking: false,
+			category: "",
+			callArgs: ["eventName"],
+			matchContext: "runtime-call" as const,
+		};
+		const structured: StructuredChange = {
+			deprecatedSignature: 'pi.on("tool_call")',
+			newSignature: 'pi.on("tool_before_call")',
+			affectedEventType: "tool_call",
+		};
+
+		const result = resolveRelevance(entry, finding, structured);
+		// Variable arg → can't determine → undefined (falls through, no false negative)
+		assert.strictEqual(result, undefined);
 	});
 
 	it("returns false when changelog event doesn't match finding args", () => {
@@ -1072,7 +1105,7 @@ describe("change-resolver", () => {
 			changelogVersion: "",
 			isBreaking: false,
 			category: "",
-			callArgs: ["session_start"],
+			callArgs: ['"session_start"'],
 			matchContext: "runtime-call" as const,
 		};
 		const structured: StructuredChange = {
@@ -1103,7 +1136,7 @@ describe("change-resolver", () => {
 			changelogVersion: "",
 			isBreaking: false,
 			category: "",
-			callArgs: ["session_start"],
+			callArgs: ['"session_start"'],
 			matchContext: "runtime-call" as const,
 		};
 
@@ -1112,7 +1145,7 @@ describe("change-resolver", () => {
 		assert.strictEqual(result, undefined);
 	});
 
-	it("returns false when finding has no callArgs", () => {
+	it("returns undefined when finding has no callArgs", () => {
 		const entry = {
 			version: "1.0.0",
 			category: "Changed" as const,
@@ -1161,7 +1194,7 @@ describe("change-resolver", () => {
 			changelogVersion: "",
 			isBreaking: false,
 			category: "",
-			callArgs: ["my-cmd"],
+			callArgs: ['"my-cmd"'],
 			matchContext: "runtime-call" as const,
 		};
 

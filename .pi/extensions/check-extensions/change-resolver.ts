@@ -59,6 +59,14 @@ export function resolveRelevance(
 				: finding.callArgs[0];
 
 		if (targetArg) {
+			// Detect variable/expression arg (no surrounding quotes)
+			// Variables can hold any value at runtime so we can't determine
+			// relevance from static analysis alone — return undefined (falls through)
+			const firstChar = targetArg.trim()[0];
+			if (firstChar !== '"' && firstChar !== "'" && firstChar !== "`") {
+				return undefined;
+			}
+
 			// Strip quotes for comparison
 			const cleanFindingArg = targetArg.replace(/^["'`]|["'`]$/g, "");
 			const cleanEventType = structured.affectedEventType.replace(/^["'`]|["'`]$/g, "");
