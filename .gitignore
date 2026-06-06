@@ -7,6 +7,7 @@ ignore/
 
 # crawl4ai auto-setup (venv + Chromium system libs)
 .pi/crawl4ai-venv/
+.pi/web-search-venv/
 .pi/chromium-deps/
 npm/
 custom/
