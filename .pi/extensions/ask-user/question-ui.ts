@@ -14,7 +14,6 @@ import {
 	type SelectListTheme,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import type { LabelValuePair } from "./types.ts";
 
 /** Max visible lines for the question area before scrolling kicks in. */
 const MAX_QUESTION_LINES = 12;
@@ -29,8 +28,6 @@ const QUESTION_SCROLL_STEP = 5;
  * @param done - Callback from ctx.ui.custom
  * @param question - The question text (may contain code blocks)
  * @param items - SelectList items
- * @param labelToValue - Mapping from display label to value
- * @param otherLabel - Display text for "Other" option (empty string if disabled)
  */
 export function renderScrollableDialog(
 	tui: {
@@ -42,8 +39,6 @@ export function renderScrollableDialog(
 	done: (value: string | undefined) => void,
 	question: string,
 	items: SelectItem[],
-	_labelToValue: LabelValuePair[],
-	_otherLabel: string,
 ): {
 	render: (width: number) => string[];
 	invalidate: () => void;

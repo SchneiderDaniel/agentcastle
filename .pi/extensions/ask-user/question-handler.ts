@@ -235,13 +235,5 @@ function renderChoiceDialog(
 	question: string,
 	items: Array<{ value: string; label: string }>,
 ): ReturnType<typeof renderScrollableDialog> {
-	return renderScrollableDialog(
-		tui,
-		theme,
-		done,
-		question,
-		items,
-		[] as LabelValuePair[], // Not needed by the dialog renderer itself
-		"", // Not needed by the dialog renderer itself
-	);
+	return renderScrollableDialog(tui, theme, done, question, items);
 }
