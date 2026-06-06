@@ -8,8 +8,13 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execSync } from "node:child_process";
-import { parseJsonlFile, analyzeSession, buildSessionAnalysis } from "./advisor.ts";
+import { execFileSync } from "node:child_process";
+import {
+	parseJsonlFile,
+	analyzeSession,
+	buildSessionAnalysis,
+	renderWasteSummary,
+} from "./advisor.ts";
 import type { SessionAnalysis, WasteSignal, SessionData } from "./advisor.ts";
 import { generateAdvice, generateReportAdvice } from "./llm-advisor.ts";
 import type {
@@ -20,14 +25,10 @@ import type {
 	ModelRegistryLike as ModelRegistryRef,
 } from "./llm-advisor.ts";
 export type { ModelRef, ModelRegistryRef };
+import { FIXES, DEFAULT_FIX } from "./fixes.ts";
 import { SymlinkManager } from "./symlink-manager.ts";
 
 // ── Types ──
-
-export interface FixSuggestion {
-	idea: string;
-	effort: "Low" | "Medium" | "High";
-}
 
 export interface AggregatedSignal {
 	signal: string;
@@ -51,50 +52,6 @@ export interface WasteReport {
 	adviceMd?: string; // LLM-generated cross-session advice
 	review?: SignalReview; // LLM signal quality review (if enabled)
 }
-
-export const FIXES: Record<string, FixSuggestion> = {
-	"tool-mismatch": {
-		idea: "Implement pre-call validation in harness: intercept bash commands containing grep/rg/cat/head/tail and auto-route to dedicated tool (ripgrep_search/read). Falls back to tool-choice table in AGENTS.md only if harness hook not feasible.",
-		effort: "Low",
-	},
-	"error-not-actioned": {
-		idea: "Track last 3 errors per tool in agent runtime. If same tool errors twice consecutively, force strategy switch — block that tool, surface alternative. AGENTS.md rule only if code-level error tracking unavailable.",
-		effort: "Medium",
-	},
-	"identical-call-loop": {
-		idea: "Add tool-call dedup cache in harness: before issuing call, compare args against last N calls. Skip or merge duplicates. Detect loops via arg fingerprinting and break them at runtime. AGENTS.md guidance as secondary guard.",
-		effort: "High",
-	},
-	"same-tool-cascade": {
-		idea: "Implement tool-level batching in harness queue: when N same-tool calls collected within a turn, merge into single call (e.g., combine bash with `&&`, batch reads by coalescing offsets). AGENTS.md batching guidance only if queue merge not viable.",
-		effort: "Medium",
-	},
-	"redundant-read": {
-		idea: "Add read-result cache in harness keyed by (path, offset, limit). If same file re-read within 3 turns, serve cached content automatically. Fallback: add 'read once, use offset to page' to AGENTS.md.",
-		effort: "Medium",
-	},
-	"high-error-rate": {
-		idea: "Add pre-flight validation in harness: check file exists before read/edit, verify command exists before bash, validate path before write. Surface errors early via typed error responses. Code validation preferred over AGENTS.md rules.",
-		effort: "High",
-	},
-	"excessive-turns": {
-		idea: "Add turn budget tracker in agent loop: if N tool calls produce no file change, pause and prompt user for direction. Code-based budget enforcement; AGENTS.md guidance only if loop hook not available.",
-		effort: "Medium",
-	},
-	"tool-coverage-gap": {
-		idea: "Add auto-detection hook: when code files read/edited but structural_search never called in first 3 turns, emit in-context reminder to use AST queries. Code reminder over AGENTS.md mention.",
-		effort: "Low",
-	},
-	"structural-search-underuse": {
-		idea: "Add runtime counter: track read/edit calls on code files. If count hits 3 and structural_search never invoked, auto-prompt agent with AST query suggestion. Code trigger over AGENTS.md instruction.",
-		effort: "Low",
-	},
-};
-
-export const DEFAULT_FIX: FixSuggestion = {
-	idea: "Implement automated detection hook for this pattern in code. If code hook not feasible, add fallback rule to AGENTS.md.",
-	effort: "Medium",
-};
 
 // ── AdvicePipeline ──
 
@@ -276,7 +233,7 @@ export class AdvicePipeline {
 				sections.push(``);
 			}
 
-			// Look up fix from inline FIXES table
+			// Look up fix from fixes.ts
 			const fix = FIXES[s.signal] ?? DEFAULT_FIX;
 			sections.push(`**Fix idea:** ${fix.idea}`);
 			sections.push(`**Effort:** ${fix.effort}`);
@@ -607,16 +564,18 @@ export function createGhIssue(
 	body: string,
 	sessionsDir: string,
 	execFn: (
-		cmd: string,
+		file: string,
+		args: string[],
 		opts: { cwd: string; timeout: number; encoding: string },
-	) => string | Buffer = execSync,
+	) => string | Buffer = execFileSync,
 ): string {
 	const bodyFile = path.join(sessionsDir, ".gh-issue-body.tmp");
 	try {
 		fs.writeFileSync(bodyFile, body, "utf-8");
 
 		const raw = execFn(
-			`gh issue create --repo "${repo}" --title "${title}" --body-file "${bodyFile}"`,
+			"gh",
+			["issue", "create", "--repo", repo, "--title", title, "--body-file", bodyFile],
 			{
 				cwd: process.cwd(),
 				timeout: 30_000,
@@ -634,32 +593,6 @@ export function createGhIssue(
 }
 
 /**
- * Helper: create a single GitHub issue for a signal and push the URL to results.
- * Handles body joining, issue creation via createGhIssue, and error logging.
- */
-function createIssueForSignal(
-	repo: string,
-	title: string,
-	body: string[],
-	sessionsDir: string,
-	signal: string,
-	results: string[],
-	execFn?: (
-		cmd: string,
-		opts: { cwd: string; timeout: number; encoding: string },
-	) => string | Buffer,
-): void {
-	try {
-		const url = createGhIssue(repo, title, body.join("\n"), sessionsDir, execFn);
-		results.push(url);
-	} catch (err) {
-		console.error(
-			`[session-advice] Failed to create issue for \`${signal}\`: ${(err as Error).message}`,
-		);
-	}
-}
-
-/**
  * Create GitHub issues from signal review verdicts.
  * For detectors marked "remove" → issue to remove bad detector.
  * For proposed new detectors → issue to add good detector.
@@ -671,7 +604,8 @@ export function createSignalIssues(
 	analysesCount: number,
 	sessionsDir: string,
 	execFn?: (
-		cmd: string,
+		file: string,
+		args: string[],
 		opts: { cwd: string; timeout: number; encoding: string },
 	) => string | Buffer,
 ): string[] {
@@ -697,14 +631,21 @@ export function createSignalIssues(
 			``,
 			`### What to Do`,
 			`1. Remove \`${v.signal}\` detector from \`.pi/extensions/session-advice/advisor.ts\``,
-			`2. Remove corresponding fix entry from \`.pi/extensions/session-advice/advice-pipeline.ts\``,
+			`2. Remove corresponding fix entry from \`.pi/extensions/session-advice/fixes.ts\``,
 			`3. Run tests to verify no regressions`,
 			``,
 			`---`,
 			`*Auto-generated by session-advice signal review.*`,
-		];
+		].join("\n");
 
-		createIssueForSignal(repo, title, body, sessionsDir, v.signal, results, execFn);
+		try {
+			const url = createGhIssue(repo, title, body, sessionsDir, execFn);
+			results.push(url);
+		} catch (err) {
+			console.error(
+				`[session-advice] Failed to create issue for \`${v.signal}\`: ${(err as Error).message}`,
+			);
+		}
 	}
 
 	// Issues for proposed new detectors
@@ -731,13 +672,20 @@ export function createSignalIssues(
 			`### What to Do`,
 			`1. Implement \`${n.signal}\` detector in \`.pi/extensions/session-advice/advisor.ts\``,
 			`2. Add test cases in \`.pi/extensions/session-advice/test/\``,
-			`3. Add fix entry in \`.pi/extensions/session-advice/advice-pipeline.ts\``,
+			`3. Add fix entry in \`.pi/extensions/session-advice/fixes.ts\``,
 			``,
 			`---`,
 			`*Auto-generated by session-advice signal review.*`,
-		];
+		].join("\n");
 
-		createIssueForSignal(repo, title, body, sessionsDir, n.signal, results, execFn);
+		try {
+			const url = createGhIssue(repo, title, body, sessionsDir, execFn);
+			results.push(url);
+		} catch (err) {
+			console.error(
+				`[session-advice] Failed to create issue for \`${n.signal}\`: ${(err as Error).message}`,
+			);
+		}
 	}
 
 	return results;

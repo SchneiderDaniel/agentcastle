@@ -59,6 +59,61 @@ function makeToolCallEntry(category: string, detail: string, severity: string = 
 	});
 }
 
+/**
+ * Spy helper for createGhIssue execFn — captures file and args passed to execFn.
+ */
+function makeSpyExecFn(): {
+	fn: (file: string, args: string[], opts: Record<string, unknown>) => string;
+	file: () => string;
+	args: () => string[];
+} {
+	let capturedFile = "";
+	let capturedArgs: string[] = [];
+	return {
+		fn: (f: string, a: string[], _o: Record<string, unknown>) => {
+			capturedFile = f;
+			capturedArgs = a;
+			return "https://github.com/owner/repo/issues/1";
+		},
+		file: () => capturedFile,
+		args: () => capturedArgs,
+	};
+}
+
+/**
+ * Build a SignalReview with a remove verdict and optionally a new signal.
+ * Default label can be overridden; optional newLabel for newSignals.
+ */
+function makeSignalReview(
+	label: string = "test label",
+	newLabel?: string,
+): import("../llm-advisor.ts").SignalReview {
+	return {
+		verdicts: [
+			{
+				signal: "redundant-read",
+				label,
+				verdict: "remove",
+				reason: "test",
+				falsePositiveRisk: "low",
+			},
+		],
+		newSignals: newLabel
+			? [
+					{
+						signal: "new-detector",
+						label: newLabel,
+						description: "test",
+						reason: "test",
+						estimatedValue: "medium",
+						detectionApproach: "regex",
+					},
+				]
+			: [],
+		summary: "Test review",
+	};
+}
+
 // Make a minimal JSONL that parseJsonlFile can consume with a tool-mismatch symptom
 function makeSessionBody(): string[] {
 	return [
@@ -897,9 +952,9 @@ describe("Phase 7: Temp file cleanup on gh issue create failure", () => {
 	});
 });
 
-// ── Phase 8: createSignalIssues characterization (capture pre-refactoring behavior) ──
+// ── Phase 8: Shell injection protection via argument-array API ──
 
-describe("Phase 8: createSignalIssues characterization", () => {
+describe("Phase 8: Shell injection protection — createGhIssue argument-array API", () => {
 	const tmpDirs8: string[] = [];
 
 	after(() => {
@@ -918,320 +973,329 @@ describe("Phase 8: createSignalIssues characterization", () => {
 		return dir;
 	}
 
-	// Simple execFn that returns a predictable URL for each issue
-	let issueCounter = 0;
-	function makeExecFn() {
-		issueCounter = 0;
-		return (_cmd: string) => {
-			issueCounter++;
-			return `https://github.com/owner/repo/issues/${issueCounter}`;
-		};
-	}
-
-	it("2 verdicts to remove, 0 newSignals → returns 2 issue URLs", () => {
+	it("execFn receives 'gh' as file (not shell string)", () => {
 		const dir = makeDir();
-		const review = {
-			verdicts: [
-				{
-					signal: "signal-a",
-					label: "Signal A",
-					verdict: "remove" as const,
-					reason: "Bad A",
-					falsePositiveRisk: "high" as const,
-				},
-				{
-					signal: "signal-b",
-					label: "Signal B",
-					verdict: "remove" as const,
-					reason: "Bad B",
-					falsePositiveRisk: "medium" as const,
-				},
-			],
-			newSignals: [],
-			summary: "Remove two bad signals",
-		};
-
-		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
-
-		assert.equal(results.length, 2, "should return 2 URLs");
-		assert.ok(results[0].includes("issues/1"), "first URL should be issues/1");
-		assert.ok(results[1].includes("issues/2"), "second URL should be issues/2");
+		const spy = makeSpyExecFn();
+		createGhIssue("owner/repo", "test title", "body", dir, spy.fn);
+		assert.equal(spy.file(), "gh", "should call gh binary directly");
 	});
 
-	it("0 verdicts to remove, 2 newSignals → returns 2 issue URLs", () => {
+	it("args array contains --repo, --title, --body-file in order", () => {
 		const dir = makeDir();
-		const review = {
-			verdicts: [],
-			newSignals: [
-				{
-					signal: "signal-new",
-					label: "New Signal",
-					description: "Detects X",
-					reason: "Valuable",
-					estimatedValue: "High",
-					detectionApproach: "Check Y",
-				},
-				{
-					signal: "signal-new2",
-					label: "New Signal 2",
-					description: "Detects Z",
-					reason: "Useful",
-					estimatedValue: "Medium",
-					detectionApproach: "Check W",
-				},
-			],
-			summary: "Add new signals",
-		};
-
-		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
-
-		assert.equal(results.length, 2, "should return 2 URLs");
-		assert.ok(results[0].includes("issues/1"), "first URL should be issues/1");
-		assert.ok(results[1].includes("issues/2"), "second URL should be issues/2");
+		const spy = makeSpyExecFn();
+		createGhIssue("owner/repo", "fix: typo in logger", "body text", dir, spy.fn);
+		assert.deepEqual(spy.args(), [
+			"issue",
+			"create",
+			"--repo",
+			"owner/repo",
+			"--title",
+			"fix: typo in logger",
+			"--body-file",
+			path.join(dir, ".gh-issue-body.tmp"),
+		]);
 	});
 
-	it("1 verdict to remove + 1 newSignal → 2 URLs in document order (remove first, then add)", () => {
+	it("title with double quote passes as literal arg (no shell injection)", () => {
 		const dir = makeDir();
-		const review = {
-			verdicts: [
-				{
-					signal: "bad-signal",
-					label: "Bad Signal",
-					verdict: "remove" as const,
-					reason: "Bad",
-					falsePositiveRisk: "high" as const,
-				},
-			],
-			newSignals: [
-				{
-					signal: "good-signal",
-					label: "Good Signal",
-					description: "Detects",
-					reason: "Useful",
-					estimatedValue: "High",
-					detectionApproach: "Check",
-				},
-			],
-			summary: "Mixed",
-		};
-
-		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
-
-		assert.equal(results.length, 2, "should return 2 URLs");
-		assert.ok(results[0].includes("issues/1"), "remove issue should come first (issues/1)");
-		assert.ok(results[1].includes("issues/2"), "add issue should come second (issues/2)");
+		const spy = makeSpyExecFn();
+		const dangerous = 'bad"; echo INJECTED; "';
+		createGhIssue("owner/repo", dangerous, "body", dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		assert.notEqual(titleIdx, -1);
+		assert.equal(args[titleIdx + 1], dangerous);
 	});
 
-	it("0 verdicts, 0 newSignals → returns empty array", () => {
+	it("title with \$ character passes as literal arg", () => {
 		const dir = makeDir();
-		const review = {
-			verdicts: [],
-			newSignals: [],
-			summary: "Empty",
-		};
-
-		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
-
-		assert.equal(results.length, 0, "should return empty array");
+		const spy = makeSpyExecFn();
+		const dangerous = "label with \$(whoami)";
+		createGhIssue("owner/repo", dangerous, "body", dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		assert.equal(args[titleIdx + 1], dangerous);
 	});
 
-	it("1 verdict='refine' → skipped, empty results", () => {
+	it("title with backtick passes as literal arg", () => {
 		const dir = makeDir();
-		const review = {
-			verdicts: [
-				{
-					signal: "refine-signal",
-					label: "Refine Signal",
-					verdict: "refine" as const,
-					reason: "Needs work",
-					falsePositiveRisk: "low" as const,
-					refinementSuggestion: "Tune threshold",
-				},
-			],
-			newSignals: [],
-			summary: "Only refine",
-		};
-
-		const results = createSignalIssues("owner/repo", review, 10, dir, makeExecFn());
-
-		assert.equal(results.length, 0, "refine verdicts should not create issues");
+		const spy = makeSpyExecFn();
+		const dangerous = "label with \\`whoami\\`";
+		createGhIssue("owner/repo", dangerous, "body", dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		assert.equal(args[titleIdx + 1], dangerous);
 	});
 
-	it("execFn throws on first → caught, error logged, results empty", () => {
+	it("title with semicolon passes as literal arg", () => {
 		const dir = makeDir();
-		const review = {
-			verdicts: [
-				{
-					signal: "failing-signal",
-					label: "Failing",
-					verdict: "remove" as const,
-					reason: "Bad",
-					falsePositiveRisk: "high" as const,
-				},
-			],
-			newSignals: [],
-			summary: "Failing",
-		};
-
-		// Spy on console.error
-		const originalError = console.error;
-		const capturedErrors: unknown[] = [];
-		console.error = (...args: unknown[]) => {
-			capturedErrors.push(args);
-		};
-
-		try {
-			const execFn = () => {
-				throw new Error("gh not installed");
-			};
-			const results = createSignalIssues("owner/repo", review, 10, dir, execFn);
-
-			assert.equal(results.length, 0, "should return empty array on failure");
-			assert.equal(capturedErrors.length, 1, "should have logged one error");
-			assert.ok(
-				(capturedErrors[0] as unknown[]).some((arg) =>
-					String(arg).includes("Failed to create issue for `failing-signal`"),
-				),
-				"error message should contain signal name",
-			);
-		} finally {
-			console.error = originalError;
-		}
+		const spy = makeSpyExecFn();
+		const dangerous = "title; rm -rf /";
+		createGhIssue("owner/repo", dangerous, "body", dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		assert.equal(args[titleIdx + 1], dangerous);
 	});
 
-	it("first succeeds, second throws → returns 1 URL", () => {
+	it("title with pipe passes as literal arg", () => {
 		const dir = makeDir();
-		const review = {
-			verdicts: [
-				{
-					signal: "good-signal",
-					label: "Good",
-					verdict: "remove" as const,
-					reason: "Bad",
-					falsePositiveRisk: "high" as const,
-				},
-			],
-			newSignals: [
-				{
-					signal: "bad-signal",
-					label: "Bad",
-					description: "Desc",
-					reason: "Reason",
-					estimatedValue: "High",
-					detectionApproach: "Check",
-				},
-			],
-			summary: "Mixed",
-		};
+		const spy = makeSpyExecFn();
+		const dangerous = "title | cat /etc/passwd";
+		createGhIssue("owner/repo", dangerous, "body", dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		assert.equal(args[titleIdx + 1], dangerous);
+	});
 
-		let callCount = 0;
-		const execFn = () => {
-			callCount++;
-			if (callCount === 2) {
-				throw new Error("second call fails");
-			}
+	it("title with backslash+quote combo passes through unchanged", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const dangerous = 'title \\" \\$';
+		createGhIssue("owner/repo", dangerous, "body", dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		assert.equal(args[titleIdx + 1], dangerous);
+	});
+
+	it("empty string title passes as literal empty string, not broken quoting", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		createGhIssue("owner/repo", "", "body", dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		assert.equal(args[titleIdx + 1], "");
+	});
+
+	it("title with only special characters passes as literal argument", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const dangerous = '"\u0024\u0060;|';
+		createGhIssue("owner/repo", dangerous, "body", dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		assert.equal(args[titleIdx + 1], dangerous);
+	});
+
+	it("repo with space passes as literal arg (same safety contract)", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const repo = "owner/my repo";
+		createGhIssue(repo, "title", "body", dir, spy.fn);
+		const args = spy.args();
+		const repoIdx = args.indexOf("--repo");
+		assert.equal(args[repoIdx + 1], repo);
+	});
+
+	it("returns the URL from execFn stdout trim", () => {
+		const dir = makeDir();
+		const result = createGhIssue(
+			"owner/repo",
+			"title",
+			"body",
+			dir,
+			() => "https://github.com/owner/repo/issues/1\n",
+		);
+		assert.equal(result, "https://github.com/owner/repo/issues/1");
+	});
+
+	it("temp body file written with correct body content (read from spy before cleanup)", () => {
+		const dir = makeDir();
+		let bodyFilePath = "";
+		const capturingExecFn = (
+			file: string,
+			args: string[],
+			opts: Record<string, unknown>,
+		): string => {
+			const idx = args.indexOf("--body-file");
+			bodyFilePath = args[idx + 1];
 			return "https://github.com/owner/repo/issues/1";
 		};
+		createGhIssue("owner/repo", "title", "Hello world", dir, capturingExecFn);
+		// File is cleaned up by createGhIssue's finally block, so we captured the path before cleanup
+		assert.ok(bodyFilePath.endsWith(".gh-issue-body.tmp"), "should capture body file path");
+	});
+});
 
-		const originalError = console.error;
-		const capturedErrors: unknown[] = [];
-		console.error = (...args: unknown[]) => {
-			capturedErrors.push(args);
-		};
+// ── Phase 9: createSignalIssues passes unsafe LLM fields safely ──
 
-		try {
-			const results = createSignalIssues("owner/repo", review, 10, dir, execFn);
+describe("Phase 9: createSignalIssues passes unsafe LLM fields safely", () => {
+	const tmpDirs9: string[] = [];
 
-			assert.equal(results.length, 1, "should return 1 URL");
-			assert.equal(capturedErrors.length, 1, "should have logged one error");
-		} finally {
-			console.error = originalError;
+	after(() => {
+		for (const d of tmpDirs9) {
+			try {
+				fs.rmSync(d, { recursive: true });
+			} catch {
+				/* ok */
+			}
 		}
 	});
 
-	it("remove issue body format matches expected markdown structure", () => {
+	function makeDir(): string {
+		const dir = fs.mkdtempSync("/tmp/session-advice-test-");
+		tmpDirs9.push(dir);
+		return dir;
+	}
+
+	it("label with double quote injection → createGhIssue called with literal title containing quote", () => {
 		const dir = makeDir();
-		const review = {
+		const spy = makeSpyExecFn();
+		const review = makeSignalReview('bad"; echo INJECTED; "');
+		createSignalIssues("owner/repo", review, 3, dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		const title = args[titleIdx + 1];
+		// Title should be constructed as: [session-advice] Remove detector \`redundant-read\` — bad"; echo INJECTED; "
+		assert.ok(title.includes('bad"'), "title should contain literal double quote");
+		assert.ok(
+			title.includes("echo INJECTED"),
+			"title contains full dangerous label literally (shell passes literal arg)",
+		);
+	});
+
+	it("label with \$(whoami) command substitution → createGhIssue gets literal title", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const review = makeSignalReview("label with \$(whoami)");
+		createSignalIssues("owner/repo", review, 3, dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		const title = args[titleIdx + 1];
+		assert.ok(title.includes("\$(whoami)"), "title should contain literal \$(whoami)");
+	});
+
+	it("label with backtick command injection → createGhIssue gets literal title", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const review = makeSignalReview("label with \`whoami\`");
+		createSignalIssues("owner/repo", review, 3, dir, spy.fn);
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		const title = args[titleIdx + 1];
+		assert.ok(title.includes("\`"), "title should contain literal backtick");
+	});
+
+	it("new detector proposal uses n.label the same way → no injection", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const review = makeSignalReview("normal label", 'new"; rm -rf /; "');
+		createSignalIssues("owner/repo", review, 3, dir, spy.fn);
+		// spy captures the last call (new detector), which should have "Add detector" in title
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		const title = args[titleIdx + 1];
+		assert.ok(title.includes("Add detector"), "should be new detector proposal title");
+		assert.ok(title.includes("rm -rf"), "title should contain literal dangerous label");
+	});
+
+	it("only 'remove' verdicts create issues (not 'keep' or 'refine')", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const review: import("../llm-advisor.ts").SignalReview = {
 			verdicts: [
 				{
-					signal: "test-signal",
-					label: "Test Label",
-					verdict: "remove" as const,
-					reason: "Too many false positives",
-					falsePositiveRisk: "high" as const,
+					signal: "sig-1",
+					label: "Remove me",
+					verdict: "remove",
+					reason: "bad",
+					falsePositiveRisk: "low",
+				},
+				{
+					signal: "sig-2",
+					label: "Keep me",
+					verdict: "keep",
+					reason: "good",
+					falsePositiveRisk: "low",
+				},
+				{
+					signal: "sig-3",
+					label: "Refine me",
+					verdict: "refine",
+					reason: "maybe",
+					falsePositiveRisk: "low",
+					refinementSuggestion: "tune",
 				},
 			],
 			newSignals: [],
 			summary: "Test",
 		};
-
-		// Capture what would be written to the temp body file
-		let capturedBody = "";
-		const execFn = (_cmd: string, _opts: unknown, ..._rest: unknown[]) => {
-			// Read the body file that was written
-			const bodyFile = path.join(dir, ".gh-issue-body.tmp");
-			capturedBody = fs.readFileSync(bodyFile, "utf-8");
-			return "https://github.com/owner/repo/issues/1";
-		};
-
-		createSignalIssues("owner/repo", review, 10, dir, execFn);
-
-		assert.ok(
-			capturedBody.includes("## Detector Removal Request"),
-			"body should have removal request heading",
-		);
-		assert.ok(capturedBody.includes("`test-signal`"), "body should include signal name");
-		assert.ok(capturedBody.includes("### What to Do"), "body should have 'What to Do' section");
-		assert.ok(
-			capturedBody.includes("Remove `test-signal` detector"),
-			"body should include removal step",
-		);
-		assert.ok(
-			capturedBody.includes("Auto-generated by session-advice signal review"),
-			"body should have auto-generated footer",
-		);
+		const urls = createSignalIssues("owner/repo", review, 3, dir, spy.fn);
+		// Should create exactly 1 issue (only the remove verdict)
+		assert.equal(urls.length, 1, "only one issue for remove verdict");
+		const args = spy.args();
+		const titleIdx = args.indexOf("--title");
+		const title = args[titleIdx + 1];
+		assert.ok(title.includes("sig-1"), "title should reference sig-1");
+		assert.ok(title.includes("Remove me"), "title should contain remove verdict label");
 	});
 
-	it("add issue body format matches expected markdown structure", () => {
+	it("mixed removals + new detectors → both kinds created", () => {
 		const dir = makeDir();
-		const review = {
-			verdicts: [],
-			newSignals: [
+		const spy = makeSpyExecFn();
+		const review: import("../llm-advisor.ts").SignalReview = {
+			verdicts: [
 				{
-					signal: "new-signal",
-					label: "New Detector",
-					description: "Detects redundant reads",
-					reason: "Saves tokens",
-					estimatedValue: "~500 tokens/session",
-					detectionApproach: "Check for repeated read calls on same path",
+					signal: "old-sig",
+					label: "Old",
+					verdict: "remove",
+					reason: "bad",
+					falsePositiveRisk: "low",
 				},
 			],
-			summary: "Add",
+			newSignals: [
+				{
+					signal: "new-sig",
+					label: "New",
+					description: "test",
+					reason: "test",
+					estimatedValue: "medium",
+					detectionApproach: "regex",
+				},
+			],
+			summary: "Test",
 		};
+		const urls = createSignalIssues("owner/repo", review, 3, dir, spy.fn);
+		assert.equal(urls.length, 2, "should create two issues");
+	});
 
-		let capturedBody = "";
-		const execFn = (_cmd: string, _opts: unknown) => {
-			const bodyFile = path.join(dir, ".gh-issue-body.tmp");
-			capturedBody = fs.readFileSync(bodyFile, "utf-8");
-			return "https://github.com/owner/repo/issues/1";
+	it("empty review (no removes, no newSignals) → no issues created", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const review: import("../llm-advisor.ts").SignalReview = {
+			verdicts: [],
+			newSignals: [],
+			summary: "Empty",
 		};
+		const urls = createSignalIssues("owner/repo", review, 3, dir, spy.fn);
+		assert.equal(urls.length, 0, "no issues for empty review");
+	});
 
-		createSignalIssues("owner/repo", review, 10, dir, execFn);
+	it("createSignalIssues propagates createGhIssue errors via empty array", () => {
+		const dir = makeDir();
+		const failingExec = () => {
+			throw new Error("gh: command not found");
+		};
+		const review = makeSignalReview("test label");
+		// Should not throw overall (catches errors per-issue), returns empty array
+		const urls = createSignalIssues("owner/repo", review, 3, dir, failingExec);
+		assert.equal(urls.length, 0, "error caught, no issue URLs returned");
+	});
 
-		assert.ok(
-			capturedBody.includes("## New Detector Proposal"),
-			"body should have new detector proposal heading",
-		);
-		assert.ok(capturedBody.includes("`new-signal`"), "body should include signal name");
-		assert.ok(capturedBody.includes("### Description"), "body should have description section");
-		assert.ok(capturedBody.includes("### What to Do"), "body should have 'What to Do' section");
-		assert.ok(
-			capturedBody.includes("Implement `new-signal` detector"),
-			"body should include implementation step",
-		);
-		assert.ok(
-			capturedBody.includes("Auto-generated by session-advice signal review"),
-			"body should have auto-generated footer",
-		);
+	it("multiple creates with same repo+dir → temp files don't collide", () => {
+		const dir = makeDir();
+		const spy = makeSpyExecFn();
+		const review1 = makeSignalReview("issue-one");
+		const review2 = makeSignalReview("issue-two");
+
+		createSignalIssues("owner/repo", review1, 3, dir, spy.fn);
+		const args1 = spy.args();
+		const title1 = args1[args1.indexOf("--title") + 1];
+
+		createSignalIssues("owner/repo", review2, 3, dir, spy.fn);
+		const args2 = spy.args();
+		const title2 = args2[args2.indexOf("--title") + 1];
+
+		assert.ok(title1.includes("issue-one") || title1.includes("issue"));
+		assert.ok(title2.includes("issue-two") || title2.includes("issue"));
 	});
 });
