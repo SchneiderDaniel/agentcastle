@@ -22,7 +22,12 @@ import { tmpdir } from "node:os";
 import { loadRankedMapConfig, DEFAULT_CONFIG, MAX_RECENCY_WINDOW_DAYS } from "../config.ts";
 import { buildCtagsArgs, buildSymbolIndex } from "../ctags.ts";
 import { computeConfigHash } from "../cache.ts";
-import { buildPiignoreExcludes } from "../piignore.ts";
+import {
+	buildPiignoreExcludes,
+	parseIgnoreLine,
+	buildIgnoreExcludes,
+	discoverIgnoreFiles,
+} from "../piignore.ts";
 import { isTestFile, applyTestFilePenalty, rankFiles } from "../scoring.ts";
 import { getStructuralOverview } from "../format.ts";
 import { RankedMapEngine } from "../engine.ts";
@@ -791,6 +796,229 @@ describe("Phase 8: Structural overview integration in engine.rank", () => {
 // ═══════════════════════════════════════════════════════════════════════
 // Phase 9: Git submodule indexing (flask_blogs)
 // ═══════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 10: .gitignore integration in buildOrLoadIndex
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Phase 10: .gitignore integration", () => {
+	it("parseIgnoreLine handles gitignore patterns (same contract)", () => {
+		assert.equal(parseIgnoreLine("__pycache__/"), "__pycache__");
+		assert.equal(parseIgnoreLine("*.pyc"), "*.pyc");
+		assert.equal(parseIgnoreLine(".venv/"), ".venv");
+		assert.equal(parseIgnoreLine("venv/"), "venv");
+		assert.equal(parseIgnoreLine("dist/"), "dist");
+		assert.equal(parseIgnoreLine("build/"), "build");
+		assert.equal(parseIgnoreLine(".eggs/"), ".eggs");
+		assert.equal(parseIgnoreLine("*.egg-info"), "*.egg-info");
+		assert.equal(parseIgnoreLine("*.so"), "*.so");
+		assert.equal(parseIgnoreLine("**/venv/"), null);
+	});
+
+	it("buildIgnoreExcludes reads .gitignore content", () => {
+		const dir = tmpDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), ["__pycache__/", "*.pyc", ".venv/"].join("\n"));
+			const excludes = buildIgnoreExcludes(join(dir, ".gitignore"));
+			assert.deepEqual(excludes, ["__pycache__", "*.pyc", ".venv"]);
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("discoverIgnoreFiles finds .gitignore in target directory", () => {
+		const dir = tmpDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
+			const result = discoverIgnoreFiles(dir);
+			assert.ok(result.length >= 1);
+			assert.ok(result.includes(join(dir, ".gitignore")));
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("discoverIgnoreFiles finds nested .gitignore files", () => {
+		const dir = tmpDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), "root\n");
+			mkdirSync(join(dir, "submod"), { recursive: true });
+			writeFileSync(join(dir, "submod", ".gitignore"), "__pycache__/\n");
+			const result = discoverIgnoreFiles(dir);
+			assert.equal(result.length, 2);
+			assert.ok(result.includes(join(dir, ".gitignore")));
+			assert.ok(result.includes(join(dir, "submod", ".gitignore")));
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("discoverIgnoreFiles excludes .git directory", () => {
+		const dir = tmpDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
+			mkdirSync(join(dir, ".git"), { recursive: true });
+			writeFileSync(join(dir, ".git", ".gitignore"), "secret\n");
+			const result = discoverIgnoreFiles(dir);
+			// Should only find top-level .gitignore
+			assert.equal(result.length, 1);
+			assert.ok(result.includes(join(dir, ".gitignore")));
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("buildOrLoadIndex uses combined .piignore and .gitignore excludes", async () => {
+		const dir = tmpDir();
+		try {
+			// Create .piignore
+			writeFileSync(join(dir, ".piignore"), "custom_pi/\n");
+			// Create .gitignore
+			writeFileSync(join(dir, ".gitignore"), "custom_git/\n");
+
+			const calls: { cmd: string; args: string[] }[] = [];
+			const exec: ExecFn = async (cmd, args, _opts) => {
+				calls.push({ cmd, args });
+				return {
+					stdout:
+						JSON.stringify({
+							_type: "tag",
+							name: "fn",
+							kind: "function",
+							path: "src/a.ts",
+							pattern: "/^fn()$/",
+						}) + "\n",
+					stderr: "",
+					code: 0,
+					killed: false,
+				};
+			};
+
+			const engine = new RankedMapEngine(makeConfig(), exec, dir);
+			const index = await engine.buildOrLoadIndex(".", join(dir, "cache"), undefined);
+
+			// Find the ctags call
+			const ctagsCall = calls.find((c) => c.cmd === "ctags");
+			assert.ok(ctagsCall, "should have called ctags");
+
+			// Should include piignore exclude
+			assert.ok(ctagsCall!.args.includes("--exclude=custom_pi"), "should include piignore exclude");
+			// Should include gitignore exclude
+			assert.ok(
+				ctagsCall!.args.includes("--exclude=custom_git"),
+				"should include gitignore exclude",
+			);
+
+			// Verify index was built
+			assert.ok(index, "should return an index");
+			assert.ok(index.symbols["src/a.ts"], "should have parsed ctags output");
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("buildOrLoadIndex with .gitignore in target subdirectory", async () => {
+		const dir = tmpDir();
+		try {
+			// Create .gitignore in a subdirectory (simulating submodule)
+			mkdirSync(join(dir, "submod"), { recursive: true });
+			writeFileSync(join(dir, "submod", ".gitignore"), "sub_ignored/\n");
+			// Also .piignore
+			writeFileSync(join(dir, ".piignore"), "pi_ignored/\n");
+
+			const calls: { cmd: string; args: string[] }[] = [];
+			const exec: ExecFn = async (cmd, args, _opts) => {
+				calls.push({ cmd, args });
+				return {
+					stdout:
+						JSON.stringify({
+							_type: "tag",
+							name: "fn",
+							kind: "function",
+							path: "src/a.ts",
+							pattern: "/^fn()$/",
+						}) + "\n",
+					stderr: "",
+					code: 0,
+					killed: false,
+				};
+			};
+
+			const engine = new RankedMapEngine(makeConfig(), exec, dir);
+			const index = await engine.buildOrLoadIndex(".", join(dir, "cache"), undefined);
+
+			const ctagsCall = calls.find((c) => c.cmd === "ctags");
+			assert.ok(ctagsCall, "should have called ctags");
+
+			// Should include piignore exclude
+			assert.ok(
+				ctagsCall!.args.includes("--exclude=pi_ignored"),
+				"should include piignore exclude",
+			);
+			// Should include gitignore exclude from subdirectory
+			assert.ok(
+				ctagsCall!.args.includes("--exclude=sub_ignored"),
+				"should include gitignore exclude from submodule",
+			);
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("no .gitignore file => no gitignore excludes (but piignore still works)", async () => {
+		const dir = tmpDir();
+		try {
+			// Only .piignore, no .gitignore
+			writeFileSync(join(dir, ".piignore"), "pi_ignored/\n");
+
+			const calls: { cmd: string; args: string[] }[] = [];
+			const exec: ExecFn = async (cmd, args, _opts) => {
+				calls.push({ cmd, args });
+				return {
+					stdout:
+						JSON.stringify({
+							_type: "tag",
+							name: "fn",
+							kind: "function",
+							path: "src/a.ts",
+							pattern: "/^fn()$/",
+						}) + "\n",
+					stderr: "",
+					code: 0,
+					killed: false,
+				};
+			};
+
+			const engine = new RankedMapEngine(makeConfig(), exec, dir);
+			const index = await engine.buildOrLoadIndex(".", join(dir, "cache"), undefined);
+
+			const ctagsCall = calls.find((c) => c.cmd === "ctags");
+			assert.ok(ctagsCall, "should have called ctags");
+
+			// Should include piignore exclude
+			assert.ok(
+				ctagsCall!.args.includes("--exclude=pi_ignored"),
+				"should include piignore exclude",
+			);
+			// Should NOT have any custom_git exclude (no .gitignore present)
+			const gitExcludes = ctagsCall!.args.filter((a) => a.includes("custom_git"));
+			assert.equal(gitExcludes.length, 0, "should not have gitignore excludes without .gitignore");
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("backward compat: buildPiignoreExcludes still works", () => {
+		const dir = tmpDir();
+		try {
+			writeFileSync(join(dir, ".piignore"), ["dist/", "*.log", ".env"].join("\n"));
+			const excludes = buildPiignoreExcludes(join(dir, ".piignore"));
+			assert.deepEqual(excludes, ["dist", "*.log", ".env"]);
+		} finally {
+			cleanup(dir);
+		}
+	});
+});
 
 describe("Phase 9: Git submodule indexing (flask_blogs)", () => {
 	it("buildSymbolIndex with flask_blogs paths produces valid SymbolEntry entries", () => {

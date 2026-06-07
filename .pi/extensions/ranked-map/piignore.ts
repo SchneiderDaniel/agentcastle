@@ -1,8 +1,8 @@
 /**
- * ranked-map — .piignore integration
+ * ranked-map — Ignore-file integration (.piignore / .gitignore)
  *
- * Reads .piignore file and converts its patterns to ctags --exclude arguments.
- * Pure module — no pi SDK imports. Zero async I/O.
+ * Reads .piignore and .gitignore files and converts their patterns to
+ * ctags --exclude arguments. Pure module — no pi SDK imports. Zero async I/O.
  *
  * Supports:
  * - Comment lines (#)
@@ -17,13 +17,17 @@
  * - Leading slash patterns (absolute paths)
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 /**
- * Parse a single .piignore line into a ctags --exclude pattern.
+ * Parse a single ignore-file line into a ctags --exclude pattern.
  * Returns null for lines that can't be converted (comments, negations, empty).
+ *
+ * Works for both .piignore and .gitignore formats — they use the same
+ * gitignore syntax for the patterns we support.
  */
-export function parsePiignoreLine(line: string): string | null {
+export function parseIgnoreLine(line: string): string | null {
 	const trimmed = line.trim();
 
 	// Skip empty lines and comments
@@ -55,19 +59,20 @@ export function parsePiignoreLine(line: string): string | null {
 }
 
 /**
- * Read .piignore file and return list of ctags --exclude argument values.
- * Returns empty array if file doesn't exist or can't be read.
+ * Read an ignore file (.piignore or .gitignore) and return list of
+ * ctags --exclude argument values. Returns empty array if file
+ * doesn't exist or can't be read.
  */
-export function buildPiignoreExcludes(piignorePath: string): string[] {
+export function buildIgnoreExcludes(ignoreFilePath: string): string[] {
 	try {
-		if (!existsSync(piignorePath)) return [];
+		if (!existsSync(ignoreFilePath)) return [];
 
-		const content = readFileSync(piignorePath, "utf-8");
+		const content = readFileSync(ignoreFilePath, "utf-8");
 		const lines = content.split("\n");
 		const excludes: string[] = [];
 
 		for (const line of lines) {
-			const pattern = parsePiignoreLine(line);
+			const pattern = parseIgnoreLine(line);
 			if (pattern) {
 				excludes.push(pattern);
 			}
@@ -77,4 +82,64 @@ export function buildPiignoreExcludes(piignorePath: string): string[] {
 	} catch {
 		return [];
 	}
+}
+
+/**
+ * Recursively discover all .gitignore files under rootDir.
+ * Excludes .git/ directories to avoid indexing git internals.
+ *
+ * Returns absolute paths to each .gitignore file found.
+ */
+export function discoverIgnoreFiles(rootDir: string): string[] {
+	const results: string[] = [];
+
+	try {
+		if (!existsSync(rootDir)) return [];
+
+		const entries = readdirSync(rootDir);
+
+		for (const entry of entries) {
+			// Skip .git directory
+			if (entry === ".git") continue;
+
+			const fullPath = join(rootDir, entry);
+
+			try {
+				const stat = statSync(fullPath);
+
+				if (stat.isDirectory()) {
+					// Recurse into subdirectories
+					const nested = discoverIgnoreFiles(fullPath);
+					results.push(...nested);
+				} else if (entry === ".gitignore") {
+					results.push(fullPath);
+				}
+			} catch {
+				// Skip entries we can't stat
+				continue;
+			}
+		}
+	} catch {
+		// Return empty for unreadable directories
+	}
+
+	return results;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Backward-compatible aliases (old names still work)
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * @deprecated Use parseIgnoreLine instead. Retained for backward compatibility.
+ */
+export function parsePiignoreLine(line: string): string | null {
+	return parseIgnoreLine(line);
+}
+
+/**
+ * @deprecated Use buildIgnoreExcludes instead. Retained for backward compatibility.
+ */
+export function buildPiignoreExcludes(piignorePath: string): string[] {
+	return buildIgnoreExcludes(piignorePath);
 }
