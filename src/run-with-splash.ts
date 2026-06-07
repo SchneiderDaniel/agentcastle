@@ -157,7 +157,7 @@ export async function runWithSplash(options: RunWithSplashOptions): Promise<RunW
  * Clear the splash output by moving cursor up and clearing lines.
  * Fallback: writes empty lines to overwrite.
  */
-function clearSplash(width: number, lineCount: number): void {
+export function clearSplash(width: number, lineCount: number): void {
 	if (lineCount <= 0) return;
 	// Move cursor up by lineCount, then clear each line
 	for (let i = 0; i < lineCount; i++) {
