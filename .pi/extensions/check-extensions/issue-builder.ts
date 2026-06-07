@@ -48,37 +48,27 @@ export function buildIssueBody(
 	const breaking = findings.filter((f) => f.isBreaking);
 	const nonBreaking = findings.filter((f) => !f.isBreaking);
 
-	if (breaking.length > 0) {
-		lines.push(`## Breaking Changes`);
-		lines.push(``);
-		lines.push(`The following API changes require immediate attention:`);
-		lines.push(``);
-		for (const f of breaking) {
-			lines.push(`### \`${f.apiName}\` — ${f.category}`);
-			lines.push(``);
-			lines.push(`- **File:** \`${f.file}\``);
-			lines.push(`- **Line:** ${f.line}`);
-			lines.push(`- **Code:** \`${f.lineContent}\``);
-			lines.push(`- **Changelog:** ${f.changelogVersion}`);
-			lines.push(``);
-		}
-	}
+	renderFindingsSection(
+		lines,
+		"Breaking Changes",
+		"The following API changes require immediate attention:",
+		breaking,
+		{
+			showChangelog: true,
+			showCategory: true,
+		},
+	);
 
-	if (nonBreaking.length > 0) {
-		lines.push(`## Simplifications & Non-Breaking Changes`);
-		lines.push(``);
-		lines.push(`The following changes may simplify or improve extension code:`);
-		lines.push(``);
-		for (const f of nonBreaking) {
-			lines.push(`### \`${f.apiName}\` — ${f.category}`);
-			lines.push(``);
-			lines.push(`- **File:** \`${f.file}\``);
-			lines.push(`- **Line:** ${f.line}`);
-			lines.push(`- **Code:** \`${f.lineContent}\``);
-			lines.push(`- **Changelog:** ${f.changelogVersion}`);
-			lines.push(``);
-		}
-	}
+	renderFindingsSection(
+		lines,
+		"Simplifications & Non-Breaking Changes",
+		"The following changes may simplify or improve extension code:",
+		nonBreaking,
+		{
+			showChangelog: true,
+			showCategory: true,
+		},
+	);
 
 	// Migration hints
 	lines.push(`## Suggested Actions`);
@@ -330,44 +320,26 @@ export function buildIssueBodyWithSnippets(
 	const breaking = findings.filter((f) => f.isBreaking);
 	const nonBreaking = findings.filter((f) => !f.isBreaking);
 
-	if (breaking.length > 0) {
-		lines.push("## Breaking Changes");
-		lines.push("");
-		lines.push("The following API changes require immediate attention:");
-		lines.push("");
-		for (const f of breaking) {
-			const ctxBadge = getContextBadge(f.matchContext);
-			lines.push(`### \`${f.apiName}\` ${ctxBadge}`);
-			lines.push("");
-			lines.push(`- **File:** \`${f.file}\``);
-			lines.push(`- **Line:** ${f.line}`);
-			lines.push(`- **Code:** \`${f.lineContent}\``);
-			if (f.callArgs && f.callArgs.length > 0) {
-				lines.push(`- **Args:** \`${f.callArgs.join(", ")}\``);
-			}
-			lines.push("");
-		}
-	}
+	renderFindingsSection(
+		lines,
+		"Breaking Changes",
+		"The following API changes require immediate attention:",
+		breaking,
+		{
+			showCallArgs: true,
+		},
+	);
 
 	// Non-breaking changes
-	if (nonBreaking.length > 0) {
-		lines.push("## Simplifications & Non-Breaking Changes");
-		lines.push("");
-		lines.push("The following changes may simplify or improve extension code:");
-		lines.push("");
-		for (const f of nonBreaking) {
-			const ctxBadge = getContextBadge(f.matchContext);
-			lines.push(`### \`${f.apiName}\` ${ctxBadge}`);
-			lines.push("");
-			lines.push(`- **File:** \`${f.file}\``);
-			lines.push(`- **Line:** ${f.line}`);
-			lines.push(`- **Code:** \`${f.lineContent}\``);
-			if (f.callArgs && f.callArgs.length > 0) {
-				lines.push(`- **Args:** \`${f.callArgs.join(", ")}\``);
-			}
-			lines.push("");
-		}
-	}
+	renderFindingsSection(
+		lines,
+		"Simplifications & Non-Breaking Changes",
+		"The following changes may simplify or improve extension code:",
+		nonBreaking,
+		{
+			showCallArgs: true,
+		},
+	);
 
 	// Migration Guide section
 	if (snippets.length > 0) {
@@ -391,9 +363,58 @@ export function buildIssueBodyWithSnippets(
 }
 
 /**
+ * Render a findings section with common template structure.
+ *
+ * Pure function — pushes markdown lines directly into the provided array.
+ * Used to eliminate duplicated template logic across issue body builders.
+ *
+ * @param lines - Target array to push markdown lines into
+ * @param title - Section heading (without ## prefix)
+ * @param description - Section description paragraph
+ * @param findings - Findings to render
+ * @param options - Rendering options
+ *   - showCallArgs: when true, shows context badge in heading and Args line
+ *   - showChangelog: when true, shows Changelog line per finding
+ *   - showCategory: when true, shows — category in heading (used by buildIssueBody)
+ */
+export function renderFindingsSection(
+	lines: string[],
+	title: string,
+	description: string,
+	findings: ASTFinding[],
+	options?: { showCallArgs?: boolean; showChangelog?: boolean; showCategory?: boolean },
+): void {
+	if (findings.length === 0) return;
+	lines.push(`## ${title}`);
+	lines.push(``);
+	lines.push(description);
+	lines.push(``);
+	for (const f of findings) {
+		let heading = `### \`${f.apiName}\``;
+		if (options?.showCallArgs) {
+			heading += ` ${getContextBadge(f.matchContext)}`;
+		} else if (options?.showCategory) {
+			heading += ` — ${f.category}`;
+		}
+		lines.push(heading);
+		lines.push(``);
+		lines.push(`- **File:** \`${f.file}\``);
+		lines.push(`- **Line:** ${f.line}`);
+		lines.push(`- **Code:** \`${f.lineContent}\``);
+		if (options?.showCallArgs && f.callArgs?.length > 0) {
+			lines.push(`- **Args:** \`${f.callArgs.join(", ")}\``);
+		}
+		if (options?.showChangelog) {
+			lines.push(`- **Changelog:** ${f.changelogVersion}`);
+		}
+		lines.push(``);
+	}
+}
+
+/**
  * Get a short emoji badge for match context type.
  */
-function getContextBadge(context: string): string {
+export function getContextBadge(context: string): string {
 	const badges: Record<string, string> = {
 		"runtime-call": "⚡",
 		"import-type": "📦",
