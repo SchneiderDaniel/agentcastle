@@ -120,7 +120,21 @@ Organize the test plan by implementation phase (vertical slices), not by layer. 
 - **Transaction rollback** (if applicable) — verify state unchanged after failure. Test partial failure scenarios.
 - **Regression risks** — which existing behavior must not change. Reference existing tests that guard it by file path.
 - **Characterization tests** (if touching untested code) — capture current behavior before change. State what's uncertain.
-- **Phase gating** — group tests by implementation phase so the Auditor can verify incrementally. Each phase must pass before the next begins.
+- **User journeys** — at least one persona-based scenario per phase. Identifies user goal, step-by-step flow, and user-visible feedback at each step.
+- **Phase gating** — group tests by implementation phase so the Auditor can verify incrementally. Each phase must pass before the next begins. The Auditor also checks that user-journey scenarios exist per phase.
+
+### 8. User-Journey & Persona-Based Testing (Norman, Hendrickson)
+
+**Derive test scenarios from the user's goal and step-by-step flow through the product, not just from code structure.**
+
+- **Identify personas** for each phase — who uses this feature? Name the persona and their primary goal.
+- **Trace the full journey** — steps the user takes before, during, and after using the feature, including entry/exit points and interactions with other features.
+- **Test user-visible feedback at each step** — the system must communicate state changes, errors, confirmations, and progress to the user. Silent failures confuse users.
+- **Real-world conditions** — network degradation, empty states, concurrent edits, browser back-button, interrupted flows, first-run experience vs established user.
+- **Non-happy-path journeys** — user makes a mistake, changes their mind mid-flow, navigates away and returns, encounters an error and retries.
+- **User-journey scenarios are not E2E tests** — they are narrative scenarios that can be verified at multiple layers (unit, integration, or manual), as long as the user-visible contract is exercised. Prefer the fastest layer that covers the user-visible behavior.
+
+**When a user-journey scenario reveals missing or unclear user-visible feedback, flag it in the test plan.** The Developer may need to add UI/UX instrumentation.
 
 ## Codebase Exploration
 
@@ -152,6 +166,8 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
    **Phases** — one per vertical slice. Each: goal (1 line) + test list.
    - Format: `### Phase N: <goal>` then bullet list of tests
    - Each test: `<layer>` — `<scenario>` → `<expected outcome>`
+   - Layer values: `entity`, `use-case`, `adapter`, `e2e`, `user-journey`
+   - Each phase MUST include at least one `user-journey` test (or state explicitly why none applies)
 
    **Scenarios** — cover:
    - Happy path (concrete input/output)
