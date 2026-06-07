@@ -11,7 +11,7 @@ export interface RankedMapConfig {
 	recencyWindowDays: number;
 	cacheTtlHours: number;
 	autoThreshold: number;
-	weights: { keyword: number; recency: number };
+	weights: { keyword: number; recency: number; fileSize?: number };
 }
 
 /** On-disk cache format for symbol index. */

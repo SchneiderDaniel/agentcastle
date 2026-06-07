@@ -68,6 +68,43 @@ export function computeRecencyScores(
 }
 
 /**
+ * Compute file size penalty scores.
+ *
+ * Smaller files get higher scores (closer to 1.0), larger files get lower
+ * scores (closer to 0.0). This encourages smaller, more focused files to
+ * rank higher than large monolithic files with similar keyword/recency scores.
+ *
+ * Score formula: score = 1 - (fileSize - minSize) / (maxSize - minSize)
+ * - Smallest file → score 1.0
+ * - Largest file → score 0.0
+ * - All files same size → all get 0 (no penalty distinction)
+ * - Single file → score 0
+ */
+export function computeFileSizeScores(fileSizes: Record<string, number>): Record<string, number> {
+	const scores: Record<string, number> = {};
+	const sizes = Object.values(fileSizes);
+
+	if (sizes.length === 0) return scores;
+
+	const minSize = Math.min(...sizes);
+	const maxSize = Math.max(...sizes);
+
+	// All same size (including single file) → all get 0
+	if (maxSize === minSize) {
+		for (const file of Object.keys(fileSizes)) {
+			scores[file] = 0;
+		}
+		return scores;
+	}
+
+	for (const [file, size] of Object.entries(fileSizes)) {
+		scores[file] = Math.round((1 - (size - minSize) / (maxSize - minSize)) * 100) / 100;
+	}
+
+	return scores;
+}
+
+/**
  * Apply test-file penalty to a set of ranked file scores.
  *
  * Files matching test patterns (.test., .spec., /test/) get their score
@@ -103,18 +140,22 @@ export function applyTestFilePenalty(files: { path: string; score: number }[]): 
 }
 
 /**
- * Rank files by combined score (weighted sum of keyword + recency),
+ * Rank files by combined score (weighted sum of keyword + recency + fileSize),
  * sort descending, and fill within token budget (greedy).
  *
  * Test files (.test., .spec., /test/) receive a 0.5x score penalty
  * so source files rank higher than their corresponding tests.
+ *
+ * @param fileSizeScores - Optional file size scores from computeFileSizeScores.
+ *                         When omitted, fileSize weight contributes 0 to the score.
  */
 export function rankFiles(
 	keywordScores: Record<string, number>,
 	recencyScores: Record<string, number>,
-	weights: { keyword: number; recency: number },
+	weights: { keyword: number; recency: number; fileSize?: number },
 	tokenBudget: number,
 	symbolEntries: Record<string, SymbolEntry[]>,
+	fileSizeScores?: Record<string, number>,
 ): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
 	const allFiles = new Set([
 		...Object.keys(keywordScores),
@@ -128,8 +169,10 @@ export function rankFiles(
 	for (const file of allFiles) {
 		const kw = keywordScores[file] ?? 0;
 		const rec = recencyScores[file] ?? 0;
+		const fs = fileSizeScores?.[file] ?? 0;
+		const fsWeight = weights.fileSize ?? 0;
 		const syms = symbolEntries[file] ?? [];
-		const score = kw * weights.keyword + rec * weights.recency;
+		const score = kw * weights.keyword + rec * weights.recency + fs * fsWeight;
 		scored.push({ path: file, score: Math.round(score * 100) / 100, symbols: syms });
 	}
 

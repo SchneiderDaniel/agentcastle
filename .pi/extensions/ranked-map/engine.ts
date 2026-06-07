@@ -15,7 +15,7 @@ import {
 	type RankedFileScore,
 	type RankedMapResult,
 } from "./types.ts";
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { buildCtagsArgs, buildSymbolIndex } from "./ctags.ts";
 import { loadCachedIndex, computeConfigHash } from "./cache.ts";
@@ -26,7 +26,12 @@ import {
 	getStructuralOverview,
 	formatSymbols,
 } from "./format.ts";
-import { computeKeywordScores, computeRecencyScores, rankFiles } from "./scoring.ts";
+import {
+	computeKeywordScores,
+	computeRecencyScores,
+	computeFileSizeScores,
+	rankFiles,
+} from "./scoring.ts";
 import { runKeywordSearch } from "./search.ts";
 import { runGitRecency, getGitHead } from "./git.ts";
 import { buildPiignoreExcludes, buildIgnoreExcludes, discoverIgnoreFiles } from "./piignore.ts";
@@ -181,12 +186,27 @@ export class RankedMapEngine {
 		);
 		const recencyScores = computeRecencyScores(fileDates, this.config.recencyWindowDays);
 
+		// Compute file size scores for file size penalty
+		const fileSizes: Record<string, number> = {};
+		for (const filePath of Object.keys(index.symbols)) {
+			try {
+				const fullPath = resolve(this.cwd, targetDir, filePath);
+				if (existsSync(fullPath)) {
+					fileSizes[filePath] = statSync(fullPath).size;
+				}
+			} catch {
+				// ignore files that can't be read
+			}
+		}
+		const fileSizeScores = computeFileSizeScores(fileSizes);
+
 		const ranked = rankFiles(
 			keywordScores,
 			recencyScores,
 			this.config.weights,
 			budget,
 			index.symbols,
+			fileSizeScores,
 		);
 
 		// In recency-only mode (no query), inject structural overview files

@@ -65,7 +65,7 @@ function makeConfig(overrides?: Partial<RankedMapConfig>): RankedMapConfig {
 		recencyWindowDays: 30,
 		cacheTtlHours: 24,
 		autoThreshold: 20000,
-		weights: { keyword: 0.5, recency: 0.3 },
+		weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
 		...overrides,
 	};
 }

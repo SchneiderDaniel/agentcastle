@@ -43,7 +43,7 @@ Refactor the `ranked-map` extension from a single 877-line monolith file at `.pi
 | Parameters: `query`, `tokenBudget`, `directory`                                                                           | Tool params       | ✅ No change                       |
 | Output: `files`, `total_tokens`, `budget`, `truncated`, `mode`                                                            | Tool output shape | ✅ No change                       |
 | Config key `rankedMap` in `.pi/settings.json`                                                                             | Config            | ✅ No change                       |
-| Config fields: `tokenBudget`, `recencyWindowDays`, `cacheTtlHours`, `autoThreshold`, `weights.keyword`, `weights.recency` | Config            | ✅ No change                       |
+| Config fields: `tokenBudget`, `recencyWindowDays`, `cacheTtlHours`, `autoThreshold`, `weights.keyword`, `weights.recency`, `weights.fileSize` | Config            | ✅ No change                       |
 | Cache file `.pi/cache/ranked-map-index.json`                                                                              | Cache format      | ✅ No change                       |
 | Exported pure functions for testing                                                                                       | Test imports      | ✅ All re-exported from `index.ts` |
 
@@ -154,7 +154,7 @@ export interface RankedMapConfig {
 	recencyWindowDays: number;
 	cacheTtlHours: number;
 	autoThreshold: number;
-	weights: { keyword: number; recency: number };
+	weights: { keyword: number; recency: number; fileSize?: number };
 }
 
 export interface CachedIndex {

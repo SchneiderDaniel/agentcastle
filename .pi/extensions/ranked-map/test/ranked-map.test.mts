@@ -188,9 +188,55 @@ describe("types module exports", () => {
 			recencyWindowDays: 30,
 			cacheTtlHours: 24,
 			autoThreshold: 20000,
-			weights: { keyword: 0.5, recency: 0.3 },
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
 		};
 		assert.strictEqual(config.tokenBudget, 2048);
+	});
+
+	it("RankedMapConfig accepts weights with fileSize field", () => {
+		const config: RankedMapConfig = {
+			tokenBudget: 2048,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.6, recency: 0.3, fileSize: 0.1 },
+		};
+		assert.strictEqual(config.weights.fileSize, 0.1);
+	});
+
+	it("RankedMapConfig accepts fileSize=0 (lower bound)", () => {
+		const config: RankedMapConfig = {
+			tokenBudget: 2048,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.7, recency: 0.3, fileSize: 0 },
+		};
+		assert.strictEqual(config.weights.fileSize, 0);
+	});
+
+	it("RankedMapConfig accepts fileSize=1 (upper bound)", () => {
+		const config: RankedMapConfig = {
+			tokenBudget: 2048,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0, recency: 0, fileSize: 1 },
+		};
+		assert.strictEqual(config.weights.fileSize, 1);
+	});
+
+	it("RankedMapConfig requires fileSize in weights", () => {
+		const config: RankedMapConfig = {
+			tokenBudget: 2048,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
+		};
+		assert.strictEqual(config.weights.keyword, 0.5);
+		assert.strictEqual(config.weights.recency, 0.3);
+		assert.strictEqual(config.weights.fileSize, 0.2);
 	});
 
 	it("CachedIndex is a valid type interface", () => {
@@ -296,6 +342,7 @@ describe("loadRankedMapConfig", () => {
 			assert.strictEqual(result.cacheTtlHours, 24);
 			assert.strictEqual(result.weights.keyword, 0.5);
 			assert.strictEqual(result.weights.recency, 0.3);
+			assert.strictEqual(result.weights.fileSize, 0.2);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -307,6 +354,7 @@ describe("loadRankedMapConfig", () => {
 			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ theme: "dark" }));
 			const result = loadRankedMapConfig(dir);
 			assert.strictEqual(result.tokenBudget, 4096);
+			assert.strictEqual(result.weights.fileSize, 0.2);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -468,6 +516,7 @@ describe("loadRankedMapConfig", () => {
 			assert.strictEqual(result.autoThreshold, 20000); // default
 			assert.strictEqual(result.weights.keyword, 0.5); // default
 			assert.strictEqual(result.weights.recency, 0.3); // default
+			assert.strictEqual(result.weights.fileSize, 0.2); // default
 		} finally {
 			cleanupDir(dir);
 		}
@@ -542,6 +591,131 @@ describe("loadRankedMapConfig", () => {
 			cleanupDir(dir);
 		}
 	});
+
+	it("parses custom fileSize weight from settings.json", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { weights: { keyword: 0.6, recency: 0.3, fileSize: 0.1 } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.weights.keyword, 0.6);
+			assert.strictEqual(result.weights.recency, 0.3);
+			assert.strictEqual(result.weights.fileSize, 0.1);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("rejects fileSize < 0, falls back to default", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { weights: { keyword: 0.5, recency: 0.3, fileSize: -0.1 } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.weights.keyword, 0.5);
+			assert.strictEqual(result.weights.recency, 0.3);
+			assert.strictEqual(result.weights.fileSize, 0.2);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("rejects fileSize > 1, falls back to default", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { weights: { keyword: 0.5, recency: 0.3, fileSize: 1.5 } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.weights.fileSize, 0.2);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("rejects non-numeric fileSize, falls back to default", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { weights: { keyword: 0.5, recency: 0.3, fileSize: "abc" } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.weights.fileSize, 0.2);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("normalizes sum of keyword+recency+fileSize when sum > 1", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { weights: { keyword: 0.8, recency: 0.6, fileSize: 0.6 } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			// 0.8 + 0.6 + 0.6 = 2.0, normalize: 0.8/2.0 = 0.4, 0.6/2.0 = 0.3, 0.6/2.0 = 0.3
+			assert.ok(Math.abs(result.weights.keyword - 0.4) < 0.01);
+			assert.ok(Math.abs(result.weights.recency - 0.3) < 0.01);
+			assert.ok(Math.abs(result.weights.fileSize! - 0.3) < 0.01);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("partial config with only fileSize sets defaults for keyword and recency", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { weights: { fileSize: 0.1 } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.weights.keyword, 0.5);
+			assert.strictEqual(result.weights.recency, 0.3);
+			assert.strictEqual(result.weights.fileSize, 0.1);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("fileSize: 0 does not trigger normalization when keyword+recency+fileSize <= 1", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { weights: { keyword: 0.5, recency: 0.3, fileSize: 0 } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.weights.keyword, 0.5);
+			assert.strictEqual(result.weights.recency, 0.3);
+			assert.strictEqual(result.weights.fileSize, 0);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("fileSize: 0.2 with keyword 0.5 and recency 0.3 sums to 1.0 exactly, no normalization", () => {
+		const dir = setupTmpDir();
+		try {
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.weights.keyword, 0.5);
+			assert.strictEqual(result.weights.recency, 0.3);
+			assert.strictEqual(result.weights.fileSize, 0.2);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
 });
 
 describe("DEFAULT_CONFIG", () => {
@@ -552,6 +726,12 @@ describe("DEFAULT_CONFIG", () => {
 		assert.strictEqual(DEFAULT_CONFIG.autoThreshold, 20000);
 		assert.strictEqual(DEFAULT_CONFIG.weights.keyword, 0.5);
 		assert.strictEqual(DEFAULT_CONFIG.weights.recency, 0.3);
+		assert.strictEqual(DEFAULT_CONFIG.weights.fileSize, 0.2);
+	});
+
+	it("default weights sum to exactly 1.0", () => {
+		const { keyword, recency, fileSize } = DEFAULT_CONFIG.weights;
+		assert.strictEqual(keyword + recency + (fileSize ?? 0), 1.0);
 	});
 
 	it("MAX_RECENCY_WINDOW_DAYS is 365", () => {
@@ -1078,7 +1258,7 @@ describe("computeConfigHash", () => {
 			recencyWindowDays: 30,
 			cacheTtlHours: 24,
 			autoThreshold: 20000,
-			weights: { keyword: 0.5, recency: 0.3 },
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
 		};
 		const hash1 = computeConfigHash(config);
 		const hash2 = computeConfigHash(config);
@@ -1091,14 +1271,14 @@ describe("computeConfigHash", () => {
 			recencyWindowDays: 30,
 			cacheTtlHours: 24,
 			autoThreshold: 20000,
-			weights: { keyword: 0.5, recency: 0.3 },
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
 		};
 		const configB: RankedMapConfig = {
 			tokenBudget: 8192,
 			recencyWindowDays: 30,
 			cacheTtlHours: 24,
 			autoThreshold: 20000,
-			weights: { keyword: 0.5, recency: 0.3 },
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
 		};
 		assert.notEqual(computeConfigHash(configA), computeConfigHash(configB));
 	});
@@ -1109,10 +1289,46 @@ describe("computeConfigHash", () => {
 			recencyWindowDays: 30,
 			cacheTtlHours: 24,
 			autoThreshold: 20000,
-			weights: { keyword: 0.5, recency: 0.3 },
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
 		};
 		const hash = computeConfigHash(config);
 		assert.ok(/^[0-9a-f]+$/.test(hash), "hash should be hex string, got: " + hash);
+	});
+
+	it("returns different hash when fileSize weight changes (cache invalidation)", () => {
+		const baseConfig: RankedMapConfig = {
+			tokenBudget: 4096,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
+		};
+		const changedConfig: RankedMapConfig = {
+			tokenBudget: 4096,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.1 },
+		};
+		assert.notEqual(computeConfigHash(baseConfig), computeConfigHash(changedConfig));
+	});
+
+	it("different fileSize values produce different hash", () => {
+		const configA: RankedMapConfig = {
+			tokenBudget: 4096,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
+		};
+		const configB: RankedMapConfig = {
+			tokenBudget: 4096,
+			recencyWindowDays: 30,
+			cacheTtlHours: 24,
+			autoThreshold: 20000,
+			weights: { keyword: 0.5, recency: 0.3, fileSize: 0 },
+		};
+		assert.notEqual(computeConfigHash(configA), computeConfigHash(configB));
 	});
 });
 
