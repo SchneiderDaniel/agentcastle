@@ -233,9 +233,9 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `AGENTS.md`                                         | Caveman protocol (active every session)                                                                                |
 | `scripts/setup-github-project.sh`                   | Create GitHub Project from settings                                                                                    |
 | `scripts/session-query.sh`                          | Query JSONL session logs with jq                                                                                       |
-| `Makefile`                                          | Docker workflow: `make up` (build+start), `make shell` (enter container), `make pi` (launch agent)                     |
+| `Makefile`                                          | Docker workflow: `make up` (build+start), `make shell` (enter container), `make pi` (launch agent with loading screen — uses `src/start-pi.ts` wrapper) |
 | `test/`                                             | Unit/integration test files                                                                                            |
-| `src/`                                              | Library modules — `SplashComponent`, `ProgressEmitter`, `runWithSplash`, splash-integration wiring (`integrate-splash.ts`) |
+| `src/`                                              | Library modules — `SplashComponent`, `ProgressEmitter`, `runWithSplash`, splash-integration wiring (`integrate-splash.ts`), startup wrapper (`start-pi.ts`) |
 | `.pi/lib/`                                          | Shared library (bash-command, harness-rules, harness-state, lsp-types, types, github-types)                            |
 | `.pi/state/session-extensions.json`                 | Tracks extension on/off state                                                                                          |
 | `.pi/specs/`                                        | PRD specs (ranked-map, ripgrep-search, supervisor-refactor)                                                            |

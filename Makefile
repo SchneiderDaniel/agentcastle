@@ -55,10 +55,11 @@ shell:
 	fi
 	docker exec -it agentcastle /bin/bash
 
-# Launch the pi agent inside the container
+# Launch the pi agent inside the container (with splash loading screen)
 pi:
 	@if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^agentcastle$$'; then \
 		echo "Container agentcastle not running. Run 'make up' first."; \
 		exit 1; \
 	fi
-	docker exec -it agentcastle /bin/bash -c 'cd /workspaces/main && pi'
+	# Use startup wrapper for splash integration during extension loading
+	docker exec -it agentcastle /bin/bash -c 'cd /workspaces/main && node --experimental-strip-types src/start-pi.ts'

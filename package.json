@@ -4,8 +4,9 @@
 	"description": "---",
 	"main": "index.js",
 	"scripts": {
-		"test": "node --experimental-strip-types --test .pi/extensions/session-logger/test/session-logger-files.test.mts .pi/extensions/session-logger/test/session-logger-stats.test.mts .pi/extensions/session-logger/test/session-logger.test.mts test/session-query.test.mts test/extensions-load.test.mts test/extension-progress-types.test.mts test/splash-component.test.mts test/extension-runner-progress.test.mts test/progress-emitter.test.mts test/run-with-splash.test.mts .pi/extensions/context-info/test/context-info.test.mts .pi/extensions/context-info/test/context-status-bar.test.mts .pi/extensions/supervisor/test/supervisor-extensions.test.mts .pi/extensions/supervisor/test/supervisor-process-context-info.test.mts .pi/extensions/lsp-auditor/test/lsp-auditor.test.mts .pi/extensions/lsp-auditor/test/lsp-auditor-settings.test.mts .pi/extensions/format-on-save/test/format-on-save.test.mts .pi/extensions/tsc-checkpoint/test/tsc-checkpoint.test.mts .pi/extensions/supervisor/test/tsc-decisions.test.mts",
-		"tsc:extensions": "tsc --noEmit --project .pi/tsconfig.json"
+		"test": "node --experimental-strip-types --test .pi/extensions/session-logger/test/session-logger-files.test.mts .pi/extensions/session-logger/test/session-logger-stats.test.mts .pi/extensions/session-logger/test/session-logger.test.mts test/session-query.test.mts test/extensions-load.test.mts test/extension-progress-types.test.mts test/splash-component.test.mts test/extension-runner-progress.test.mts test/progress-emitter.test.mts test/run-with-splash.test.mts test/integrate-splash.test.mts test/startup-integration.test.mts .pi/extensions/context-info/test/context-info.test.mts .pi/extensions/context-info/test/context-status-bar.test.mts .pi/extensions/supervisor/test/supervisor-extensions.test.mts .pi/extensions/supervisor/test/supervisor-process-context-info.test.mts .pi/extensions/lsp-auditor/test/lsp-auditor.test.mts .pi/extensions/lsp-auditor/test/lsp-auditor-settings.test.mts .pi/extensions/format-on-save/test/format-on-save.test.mts .pi/extensions/tsc-checkpoint/test/tsc-checkpoint.test.mts .pi/extensions/supervisor/test/tsc-decisions.test.mts",
+		"tsc:extensions": "tsc --noEmit --project .pi/tsconfig.json",
+		"pi": "node --experimental-strip-types src/start-pi.ts"
 	},
 	"keywords": [],
 	"author": "",
