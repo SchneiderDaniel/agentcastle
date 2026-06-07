@@ -306,18 +306,19 @@ export class ChangelogPipeline {
 			}
 
 			snippetsByExtension.set(extName, extSnippets);
-
-			// Compute impact score
-			const score = computeImpactScore(extName, extFindings);
-			scoresByExtension.set(extName, score);
 		}
 
 		// Filter out extensions where all findings are non-applicable
+		// AND compute impact scores using only relevant (non-not-applicable) findings
 		const relevantFindingsByExtension = new Map<string, ASTFinding[]>();
 		for (const [extName, extFindings] of findingsByExtension) {
 			const relevant = extFindings.filter((f) => f.category !== "not-applicable");
 			if (relevant.length > 0) {
 				relevantFindingsByExtension.set(extName, relevant);
+
+				// Compute impact score using only relevant findings
+				const score = computeImpactScore(extName, relevant);
+				scoresByExtension.set(extName, score);
 			}
 		}
 
