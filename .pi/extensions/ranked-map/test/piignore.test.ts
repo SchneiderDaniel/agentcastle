@@ -32,20 +32,20 @@ describe("parsePiignoreLine", () => {
 		assert.equal(parsePiignoreLine("*.log"), "*.log");
 	});
 
-	it("returns pattern for path pattern without trailing slash", () => {
-		assert.equal(parsePiignoreLine(".pi/cache"), ".pi/cache");
+	it("extracts basename for path pattern without trailing slash", () => {
+		assert.equal(parsePiignoreLine(".pi/cache"), "cache");
 	});
 
-	it("returns pattern for path pattern with trailing slash", () => {
-		assert.equal(parsePiignoreLine(".pi/cache/"), ".pi/cache");
+	it("extracts basename for path pattern with trailing slash", () => {
+		assert.equal(parsePiignoreLine(".pi/cache/"), "cache");
 	});
 
 	it("strips trailing /**", () => {
 		assert.equal(parsePiignoreLine("dist/**"), "dist");
 	});
 
-	it("strips trailing /** with nested path", () => {
-		assert.equal(parsePiignoreLine("build/output/**"), "build/output");
+	it("extracts basename for nested path with trailing /**", () => {
+		assert.equal(parsePiignoreLine("build/output/**"), "output");
 	});
 
 	it("returns null for empty line", () => {
@@ -217,20 +217,46 @@ describe("parseIgnoreLine", () => {
 		assert.equal(parseIgnoreLine("*.log"), "*.log");
 	});
 
-	it("returns pattern for path pattern without trailing slash", () => {
-		assert.equal(parseIgnoreLine(".pi/cache"), ".pi/cache");
+	it("extracts basename for path pattern without trailing slash", () => {
+		assert.equal(parseIgnoreLine(".pi/cache"), "cache");
 	});
 
-	it("returns pattern for path pattern with trailing slash", () => {
-		assert.equal(parseIgnoreLine(".pi/cache/"), ".pi/cache");
+	it("extracts basename for path pattern with trailing slash", () => {
+		assert.equal(parseIgnoreLine(".pi/cache/"), "cache");
 	});
 
 	it("strips trailing /**", () => {
 		assert.equal(parseIgnoreLine("dist/**"), "dist");
 	});
 
-	it("strips trailing /** with nested path", () => {
-		assert.equal(parseIgnoreLine("build/output/**"), "build/output");
+	it("extracts basename for nested path with trailing /**", () => {
+		assert.equal(parseIgnoreLine("build/output/**"), "output");
+	});
+
+	// ── Path-prefixed patterns (real-world .piignore use) ──
+
+	it("extracts basename for .pi/npm (no trailing slash)", () => {
+		assert.equal(parseIgnoreLine(".pi/npm"), "npm");
+	});
+
+	it("extracts basename for .pi/npm/ (with trailing slash)", () => {
+		assert.equal(parseIgnoreLine(".pi/npm/"), "npm");
+	});
+
+	it("extracts basename for .pi/chromium-deps/", () => {
+		assert.equal(parseIgnoreLine(".pi/chromium-deps/"), "chromium-deps");
+	});
+
+	it("extracts basename for .pi/crawl4ai-venv/", () => {
+		assert.equal(parseIgnoreLine(".pi/crawl4ai-venv/"), "crawl4ai-venv");
+	});
+
+	it("extracts basename for deeply nested path a/b/c/d/", () => {
+		assert.equal(parseIgnoreLine("a/b/c/d/"), "d");
+	});
+
+	it("extracts filename for some/path/file.ts", () => {
+		assert.equal(parseIgnoreLine("some/path/file.ts"), "file.ts");
 	});
 
 	it("returns null for empty line", () => {
@@ -558,4 +584,3 @@ describe("backward compatibility — old names are aliases", () => {
 		}
 	});
 });
-
