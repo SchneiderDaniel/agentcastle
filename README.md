@@ -56,6 +56,7 @@ AgentCastle is a **Kanban-centred AI agent** built on the [Pi coding agent](http
 - **Writing voice prompt** — Derive a consistent AI writing voice from sample text (paste, URL, or file), generates `voice-{lang}.md` style guide
 - **Extensions-based** — 12+ secure pi extensions, no MCP servers, no network-exposed endpoints
 - **Custom theme** — Dark cyberpunk TUI (agentcastle)
+- **Loading screen** — Extension loading splash with spinner animation, progress events, and extension status visible during startup — integrated into the pi extension loading pipeline
 
 All components run locally. No code leaves your machine (except LLM API calls to your provider).
 
@@ -232,8 +233,9 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `AGENTS.md`                                         | Caveman protocol (active every session)                                                                                |
 | `scripts/setup-github-project.sh`                   | Create GitHub Project from settings                                                                                    |
 | `scripts/session-query.sh`                          | Query JSONL session logs with jq                                                                                       |
-| `Makefile`                                          | Docker workflow: `make up` (build+start), `make shell` (enter container), `make pi` (launch agent)                     |
-| `test/`                                             | 64 unit/integration test files                                                                                         |
+| `Makefile`                                          | Docker workflow: `make up` (build+start), `make shell` (enter container), `make pi` (launch agent with loading screen — uses `src/start-pi.ts` wrapper) |
+| `test/`                                             | Unit/integration test files                                                                                            |
+| `src/`                                              | Library modules — `SplashComponent`, `ProgressEmitter`, `runWithSplash`, splash-integration wiring (`integrate-splash.ts`), startup wrapper (`start-pi.ts`) |
 | `.pi/lib/`                                          | Shared library (bash-command, harness-rules, harness-state, lsp-types, types, github-types)                            |
 | `.pi/state/session-extensions.json`                 | Tracks extension on/off state                                                                                          |
 | `.pi/specs/`                                        | PRD specs (ranked-map, ripgrep-search, supervisor-refactor)                                                            |

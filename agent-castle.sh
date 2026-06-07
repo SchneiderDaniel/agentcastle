@@ -59,4 +59,6 @@ docker compose -f docker/docker-compose.yml up -d --build
 
 # --- Step 6: Launch interactive pi session ----------------------------
 echo "Entering pi agent inside container..."
-docker exec -it agentcastle /bin/bash -c 'cd /workspaces/main && pi'
+# Use the startup wrapper which integrates the splash loading screen
+# setupSplashIntegration() patches DefaultResourceLoader before main() runs
+docker exec -it agentcastle /bin/bash -c 'cd /workspaces/main && node --experimental-strip-types src/start-pi.ts "$@"' --
