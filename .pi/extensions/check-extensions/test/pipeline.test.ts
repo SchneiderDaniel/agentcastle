@@ -478,6 +478,220 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 
 		assert.equal(result.relevantFindingsByExtension.size, 0, "no relevant findings");
 	});
+
+	it("excludes not-applicable findings from impact score (bug fix)", () => {
+		const pi = createMockPi();
+		const ctx = createMockCtx();
+		const pipeline = new ChangelogPipeline(pi, ctx);
+
+		// 2 applicable (1 breaking, 1 non-breaking) + 1 non-applicable (isBreaking=true)
+		// The non-applicable finding is created by providing a structured change entry
+		// and a finding that will trigger resolveRelevance to mark it "not-applicable"
+
+		// Entry with structured change description that triggers resolveRelevance
+		// Pattern: `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`
+		// This sets affectedEventType="tool_call" which resolveRelevance compares
+		// against finding.callArgs to determine relevance
+		const toolCallEntry = makeChangeEntry({
+			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+			apiNames: ["pi.on"],
+			category: "Deprecated",
+			isBreaking: true,
+		});
+		const execEntry = makeChangeEntry({
+			description: "Added `pi.exec` for external command execution",
+			apiNames: ["pi.exec"],
+			isBreaking: false,
+		});
+
+		// Not-applicable finding: callArgs don't match affectedEventType
+		const naFinding = makeASTFinding({
+			extensionName: "test-ext",
+			apiName: "pi.on",
+			isBreaking: true,
+			callArgs: ['"session_start"'],
+			matchContext: "runtime-call",
+			lineContent: 'pi.on("session_start", handler)',
+		});
+
+		// Applicable breaking finding: callArgs match affectedEventType
+		const breakingFinding = makeASTFinding({
+			extensionName: "test-ext",
+			apiName: "pi.on",
+			isBreaking: true,
+			callArgs: ['"tool_call"'],
+			matchContext: "runtime-call",
+			lineContent: 'pi.on("tool_call", handler)',
+		});
+
+		// Applicable non-breaking finding: different API
+		const nonBreakingFinding = makeASTFinding({
+			extensionName: "test-ext",
+			apiName: "pi.exec",
+			isBreaking: false,
+			callArgs: ['"gh"'],
+			matchContext: "runtime-call",
+			lineContent: 'pi.exec("gh", [])',
+		});
+
+		const findingsByExtension = new Map<string, ASTFinding[]>();
+		findingsByExtension.set("test-ext", [naFinding, breakingFinding, nonBreakingFinding]);
+
+		const scanResult: ASTScanningResult = {
+			findings: [naFinding, breakingFinding, nonBreakingFinding],
+			skipCount: 0,
+		};
+
+		const result = pipeline.crossRefPhase(
+			[toolCallEntry, execEntry],
+			"0.74.0",
+			findingsByExtension,
+			scanResult,
+		);
+
+		const score = result.scoresByExtension.get("test-ext");
+
+		assert.ok(score, "should have a score for test-ext");
+		assert.equal(
+			score!.breakingCount,
+			1,
+			"breakingCount should be 1 (only applicable breaking finding), NOT 2",
+		);
+		assert.equal(score!.severity, "medium", "severity should be medium (1 breaking), not high (2)");
+		assert.equal(
+			result.relevantFindingsByExtension.get("test-ext")!.length,
+			2,
+			"should have 2 relevant findings",
+		);
+	});
+
+	it("all findings not-applicable produces empty scores and empty relevant findings", () => {
+		const pi = createMockPi();
+		const ctx = createMockCtx();
+		const pipeline = new ChangelogPipeline(pi, ctx);
+
+		const entry = makeChangeEntry({
+			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+			apiNames: ["pi.on"],
+			category: "Deprecated",
+			isBreaking: true,
+		});
+
+		const finding = makeASTFinding({
+			extensionName: "test-ext",
+			apiName: "pi.on",
+			isBreaking: true,
+			callArgs: ['"session_start"'],
+			matchContext: "runtime-call",
+			lineContent: 'pi.on("session_start", handler)',
+		});
+
+		const findingsByExtension = new Map<string, ASTFinding[]>();
+		findingsByExtension.set("test-ext", [finding]);
+
+		const scanResult: ASTScanningResult = {
+			findings: [finding],
+			skipCount: 0,
+		};
+
+		const result = pipeline.crossRefPhase([entry], "0.74.0", findingsByExtension, scanResult);
+
+		assert.equal(
+			result.relevantFindingsByExtension.size,
+			0,
+			"no relevant findings when all are not-applicable",
+		);
+		assert.equal(
+			result.scoresByExtension.size,
+			0,
+			"no scores when all findings are not-applicable",
+		);
+	});
+
+	it("single not-applicable breaking finding produces no score entry", () => {
+		const pi = createMockPi();
+		const ctx = createMockCtx();
+		const pipeline = new ChangelogPipeline(pi, ctx);
+
+		const entry = makeChangeEntry({
+			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
+			apiNames: ["pi.on"],
+			category: "Deprecated",
+			isBreaking: true,
+		});
+
+		const finding = makeASTFinding({
+			extensionName: "test-ext",
+			apiName: "pi.on",
+			isBreaking: true,
+			callArgs: ['"session_start"'],
+			matchContext: "runtime-call",
+			lineContent: 'pi.on("session_start", handler)',
+		});
+
+		const findingsByExtension = new Map<string, ASTFinding[]>();
+		findingsByExtension.set("test-ext", [finding]);
+
+		const scanResult: ASTScanningResult = {
+			findings: [finding],
+			skipCount: 0,
+		};
+
+		const result = pipeline.crossRefPhase([entry], "0.74.0", findingsByExtension, scanResult);
+
+		assert.equal(result.relevantFindingsByExtension.size, 0, "no relevant findings");
+		assert.ok(
+			!result.scoresByExtension.has("test-ext"),
+			"score key should be absent for extension with only not-applicable findings",
+		);
+	});
+
+	it("all applicable findings still get correct score (regression guard)", () => {
+		const pi = createMockPi();
+		const ctx = createMockCtx();
+		const pipeline = new ChangelogPipeline(pi, ctx);
+
+		// Findings with matching entries so they're all applicable
+		// Default makeChangeEntry() has isBreaking: false, apiNames: ["pi.on"]
+		// So findings matched to it will get isBreaking = false
+		const entries: ChangeEntry[] = [
+			makeChangeEntry(), // apiNames: ["pi.on"], isBreaking: false
+			makeChangeEntry({ apiNames: ["pi.exec"], isBreaking: true }),
+		];
+		const findingsByExtension = new Map<string, ASTFinding[]>();
+		// ext-a: 1 finding, pi.on → matches entry 1 → isBreaking=false → non-breaking
+		findingsByExtension.set("ext-a", [makeASTFinding({ extensionName: "ext-a" })]);
+		// ext-b: pi.on finding matches entry 1 (isBreaking=false), pi.exec finds entry 2 (isBreaking=true)
+		findingsByExtension.set("ext-b", [
+			makeASTFinding({ extensionName: "ext-b" }),
+			makeASTFinding({ extensionName: "ext-b", apiName: "pi.exec", isBreaking: true }),
+		]);
+
+		const scanResult: ASTScanningResult = {
+			findings: [
+				makeASTFinding({ extensionName: "ext-a" }),
+				makeASTFinding({ extensionName: "ext-b" }),
+				makeASTFinding({ extensionName: "ext-b", apiName: "pi.exec", isBreaking: true }),
+			],
+			skipCount: 0,
+		};
+
+		const result = pipeline.crossRefPhase(entries, "0.74.0", findingsByExtension, scanResult);
+
+		assert.ok(result.scoresByExtension.has("ext-a"), "should have score for ext-a");
+		assert.ok(result.scoresByExtension.has("ext-b"), "should have score for ext-b");
+
+		// ext-a: 1 finding matched to entry (isBreaking=false) → severity "low", 0 breaking
+		const scoreA = result.scoresByExtension.get("ext-a")!;
+		assert.equal(scoreA.severity, "low");
+		assert.equal(scoreA.breakingCount, 0);
+
+		// ext-b: 2 findings — pi.on matched to entry 1 (isBreaking=false), pi.exec matched to entry 2 (isBreaking=true)
+		// breakingCount = 1, severity = "medium"
+		const scoreB = result.scoresByExtension.get("ext-b")!;
+		assert.equal(scoreB.severity, "medium");
+		assert.equal(scoreB.breakingCount, 1);
+	});
 });
 
 // ── Phase 3: issuePhase ──
