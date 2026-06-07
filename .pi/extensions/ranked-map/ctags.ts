@@ -93,6 +93,7 @@ export function buildCtagsArgs(
 		"npm",
 		"chromium-deps",
 		"crawl4ai-venv",
+		"web-search-venv",
 		// Submodules scanned like any other directory
 		// Benchmarks — not source
 		"benchmarks",
