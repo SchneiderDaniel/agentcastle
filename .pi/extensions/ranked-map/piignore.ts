@@ -8,7 +8,7 @@
  * - Comment lines (#)
  * - Directory patterns (dir/ → --exclude=dir)
  * - Glob patterns (*.ext → --exclude=*.ext)
- * - Path patterns (path/to/dir/ → --exclude=path/to/dir)
+ * - Path patterns — extracts basename for ctags compat (path/to/dir/ → --exclude=dir)
  * - Negation patterns (!pattern → skipped, ctags can't negate)
  *
  * Not supported (silently skipped):
@@ -50,10 +50,20 @@ export function parseIgnoreLine(line: string): string | null {
 
 	// Ctags --exclude supports globs but not ** (double-star)
 	// Skip patterns containing ** that aren't just trailing /**
+	// NOTE: check before basename extraction — a/**/b must be rejected
+	// even though basename alone ("b") wouldn't contain **.
 	if (pattern.includes("**")) return null;
 
 	// Skip patterns with leading / (absolute-style paths)
+	// NOTE: check before basename extraction — /absolute/path must be
+	// rejected even though basename alone ("path") wouldn't start with /.
 	if (pattern.startsWith("/")) return null;
+
+	// Extract basename (last path component) for ctags --exclude compatibility.
+	// ctags --exclude matches against basename only, not full path.
+	if (pattern.includes("/")) {
+		pattern = pattern.split("/").pop()!;
+	}
 
 	return pattern || null;
 }

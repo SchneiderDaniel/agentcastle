@@ -90,7 +90,7 @@ The extension automatically reads `.piignore` from the project root and converts
 
 - Directory patterns (`dist/` → `--exclude=dist`)
 - Glob patterns (`*.log` → `--exclude=*.log`)
-- Path patterns (`.pi/cache` → `--exclude=.pi/cache`)
+- Path patterns (`.pi/cache` → `--exclude=cache` via basename extraction)
 
 Comments and negations are skipped. Patterns with double-star (`**`) or leading slash (`/`) are skipped.
 
