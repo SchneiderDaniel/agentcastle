@@ -29,7 +29,7 @@ import {
 import { computeKeywordScores, computeRecencyScores, rankFiles } from "./scoring.ts";
 import { runKeywordSearch } from "./search.ts";
 import { runGitRecency, getGitHead } from "./git.ts";
-import { buildPiignoreExcludes } from "./piignore.ts";
+import { buildPiignoreExcludes, buildIgnoreExcludes, discoverIgnoreFiles } from "./piignore.ts";
 
 /** Result shape for the rank method — extends dumpAllFiles/rankFiles result with mode. */
 export interface RankResult {
@@ -95,9 +95,16 @@ export class RankedMapEngine {
 
 		// Incorporate .piignore patterns as additional ctags excludes
 		const piignorePath = join(this.cwd, ".piignore");
-		const piignoreExcludes = buildPiignoreExcludes(piignorePath);
+		const piignoreExcludes = buildIgnoreExcludes(piignorePath);
 
-		const { command, args } = buildCtagsArgs(targetDir, 0, piignoreExcludes);
+		// Incorporate .gitignore patterns from root and submodules
+		const targetAbs = resolve(this.cwd, targetDir);
+		const gitignorePaths = discoverIgnoreFiles(targetAbs);
+		const gitignoreExcludes = gitignorePaths.flatMap((p) => buildIgnoreExcludes(p));
+
+		const allExcludes = [...piignoreExcludes, ...gitignoreExcludes];
+
+		const { command, args } = buildCtagsArgs(targetDir, 0, allExcludes);
 		const result = await this.exec(command, args, {
 			cwd: this.cwd,
 			timeout: 30_000,
