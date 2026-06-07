@@ -22,6 +22,7 @@ export function computeConfigHash(config: RankedMapConfig): string {
 		autoThreshold: config.autoThreshold,
 		wKw: config.weights.keyword,
 		wRec: config.weights.recency,
+		wFs: config.weights.fileSize ?? 0,
 	};
 	const str = JSON.stringify(fields, Object.keys(fields).sort());
 	// Simple djb2 hash

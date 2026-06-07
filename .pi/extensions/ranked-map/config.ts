@@ -15,7 +15,7 @@ export const DEFAULT_CONFIG: RankedMapConfig = {
 	recencyWindowDays: 30,
 	cacheTtlHours: 24,
 	autoThreshold: 20000,
-	weights: { keyword: 0.5, recency: 0.3 },
+	weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
 };
 
 /** Maximum allowed recency window in days. */
@@ -75,6 +75,7 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 
 		let kwWeight = DEFAULT_CONFIG.weights.keyword;
 		let recWeight = DEFAULT_CONFIG.weights.recency;
+		let fsWeight: number = DEFAULT_CONFIG.weights.fileSize ?? 0;
 
 		if (rm.weights && typeof rm.weights === "object") {
 			const w = rm.weights;
@@ -97,10 +98,31 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 				recWeight = w.recency;
 			}
 
-			const sum = kwWeight + recWeight;
+			// When fileSize is explicitly present, validate it.
+			// When absent from the weights object, default to 0 to avoid
+			// surprising normalization of user-provided keyword+recency weights.
+			if ("fileSize" in w) {
+				if (
+					typeof w.fileSize === "number" &&
+					Number.isFinite(w.fileSize) &&
+					w.fileSize >= 0 &&
+					w.fileSize <= 1
+				) {
+					fsWeight = w.fileSize;
+				} else {
+					// Present but invalid — fall back to default
+					fsWeight = DEFAULT_CONFIG.weights.fileSize ?? 0.2;
+				}
+			} else {
+				// Not present in weights object — default to 0
+				fsWeight = 0;
+			}
+
+			const sum = kwWeight + recWeight + fsWeight;
 			if (sum > 1) {
 				kwWeight = kwWeight / sum;
 				recWeight = recWeight / sum;
+				fsWeight = fsWeight / sum;
 			}
 		}
 
@@ -109,7 +131,7 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			recencyWindowDays,
 			cacheTtlHours,
 			autoThreshold,
-			weights: { keyword: kwWeight, recency: recWeight },
+			weights: { keyword: kwWeight, recency: recWeight, fileSize: fsWeight },
 		};
 	} catch {
 		return { ...DEFAULT_CONFIG };

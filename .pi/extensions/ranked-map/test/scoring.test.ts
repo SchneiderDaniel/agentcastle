@@ -10,7 +10,12 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { rankFiles, computeKeywordScores, computeRecencyScores } from "../scoring.ts";
+import {
+	rankFiles,
+	computeKeywordScores,
+	computeRecencyScores,
+	computeFileSizeScores,
+} from "../scoring.ts";
 import type { SymbolEntry } from "../types.ts";
 
 // ---------------------------------------------------------------------------
@@ -230,5 +235,148 @@ describe("rankFiles — Phase 2: consistent key behavior", () => {
 		const scores = computeRecencyScores(fileDates, 30, now);
 		assert.equal(scores["src/new.ts"], 1.0);
 		assert.equal(scores["src/old.ts"], 0.0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3: computeFileSizeScores
+// ---------------------------------------------------------------------------
+
+describe("computeFileSizeScores", () => {
+	it("empty input returns empty object", () => {
+		const scores = computeFileSizeScores({});
+		assert.deepEqual(scores, {});
+	});
+
+	it("single file gets score 0 (no penalty)", () => {
+		const scores = computeFileSizeScores({ "a.ts": 1000 });
+		assert.strictEqual(scores["a.ts"], 0);
+	});
+
+	it("same-size files all get score 0", () => {
+		const scores = computeFileSizeScores({ "a.ts": 500, "b.ts": 500, "c.ts": 500 });
+		assert.strictEqual(scores["a.ts"], 0);
+		assert.strictEqual(scores["b.ts"], 0);
+		assert.strictEqual(scores["c.ts"], 0);
+	});
+
+	it("largest file gets 0, smallest gets 1", () => {
+		const scores = computeFileSizeScores({ "small.ts": 100, "medium.ts": 500, "large.ts": 1000 });
+		assert.strictEqual(scores["large.ts"], 0);
+		assert.strictEqual(scores["small.ts"], 1);
+	});
+
+	it("interpolated sizes get proportional scores between 0 and 1", () => {
+		const scores = computeFileSizeScores({ "a.ts": 200, "b.ts": 600 });
+		// a: 1 - (200-200)/(600-200) = 1 - 0 = 1.0
+		// b: 1 - (600-200)/(600-200) = 1 - 1 = 0.0
+		assert.strictEqual(scores["a.ts"], 1);
+		assert.strictEqual(scores["b.ts"], 0);
+	});
+
+	it("handles 0-size files without division by zero (all get 0)", () => {
+		const scores = computeFileSizeScores({ "a.ts": 0, "b.ts": 0 });
+		assert.strictEqual(scores["a.ts"], 0);
+		assert.strictEqual(scores["b.ts"], 0);
+	});
+
+	it("score is 0 if all files are 0 bytes", () => {
+		const scores = computeFileSizeScores({ "a.ts": 0 });
+		assert.strictEqual(scores["a.ts"], 0);
+	});
+
+	it("mid-size file gets interpolated score", () => {
+		// min=100, max=1000, mid=550: 1 - (550-100)/(1000-100) = 1 - 450/900 = 1 - 0.5 = 0.5
+		const scores = computeFileSizeScores({ "small.ts": 100, "mid.ts": 550, "large.ts": 1000 });
+		assert.strictEqual(scores["mid.ts"], 0.5);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4: rankFiles with fileSize weight
+// ---------------------------------------------------------------------------
+
+describe("rankFiles with fileSize weight", () => {
+	const symEntries: Record<string, SymbolEntry[]> = {
+		"small.ts": [{ type: "function", name: "foo", line: 1 }],
+		"large.ts": [{ type: "function", name: "bar", line: 1 }],
+	};
+
+	it("uses fileSize weight when fileSizeScores provided", () => {
+		const kw = { "small.ts": 1.0, "large.ts": 1.0 };
+		const rec = { "small.ts": 0, "large.ts": 0 };
+		const fs = { "small.ts": 1.0, "large.ts": 0.0 };
+		const weights = { keyword: 0.5, recency: 0.3, fileSize: 0.2 };
+
+		const result = rankFiles(kw, rec, weights, 10_000, symEntries, fs);
+		const small = result.files.find((f) => f.path === "small.ts")!;
+		const large = result.files.find((f) => f.path === "large.ts")!;
+
+		// small: 1.0*0.5 + 0*0.3 + 1.0*0.2 = 0.7
+		// large: 1.0*0.5 + 0*0.3 + 0.0*0.2 = 0.5
+		assert.strictEqual(small.score, 0.7);
+		assert.strictEqual(large.score, 0.5);
+		// small should rank higher
+		assert.ok(result.files.indexOf(small) < result.files.indexOf(large));
+	});
+
+	it("large file with same keyword+recency gets lower total score", () => {
+		const kw = { "small.ts": 0.8, "large.ts": 0.8 };
+		const rec = { "small.ts": 0.5, "large.ts": 0.5 };
+		const fs = { "small.ts": 1.0, "large.ts": 0.0 };
+		const weights = { keyword: 0.5, recency: 0.3, fileSize: 0.2 };
+
+		const result = rankFiles(kw, rec, weights, 10_000, symEntries, fs);
+		const small = result.files.find((f) => f.path === "small.ts")!;
+		const large = result.files.find((f) => f.path === "large.ts")!;
+
+		// small: 0.8*0.5 + 0.5*0.3 + 1.0*0.2 = 0.4 + 0.15 + 0.2 = 0.75
+		// large: 0.8*0.5 + 0.5*0.3 + 0.0*0.2 = 0.4 + 0.15 + 0 = 0.55
+		assert.ok(small.score > large.score, "smaller file should rank higher");
+	});
+
+	it("works without fileSizeScores (backward compat, fileSize score defaults to 0)", () => {
+		const kw = { "small.ts": 1.0, "large.ts": 1.0 };
+		const rec = { "small.ts": 0.5, "large.ts": 0.5 };
+		const weights = { keyword: 0.5, recency: 0.3, fileSize: 0.2 };
+
+		// No fileSizeScores passed — fileSize weight contributes 0
+		const result = rankFiles(kw, rec, weights, 10_000, symEntries);
+		const small = result.files.find((f) => f.path === "small.ts")!;
+		// small: 1.0*0.5 + 0.5*0.3 + 0*0.2 = 0.5 + 0.15 + 0 = 0.65
+		assert.strictEqual(small.score, 0.65);
+	});
+
+	it("works without fileSize in weights (backward compat)", () => {
+		const kw = { "small.ts": 1.0, "large.ts": 0.5 };
+		const rec = { "small.ts": 0.5, "large.ts": 0.5 };
+		const fs = { "small.ts": 1.0, "large.ts": 0.0 };
+		const weights = { keyword: 0.6, recency: 0.4 }; // no fileSize
+
+		// fileSize weight defaults to 0, even when fileSizeScores provided
+		const result = rankFiles(kw, rec, weights, 10_000, symEntries, fs);
+		const small = result.files.find((f) => f.path === "small.ts")!;
+		// small: 1.0*0.6 + 0.5*0.4 + 1.0*0 = 0.6 + 0.2 + 0 = 0.8
+		assert.strictEqual(small.score, 0.8);
+	});
+
+	it("fileSizeScores entries default to 0 for files not in the map", () => {
+		const syms: Record<string, SymbolEntry[]> = {
+			"with_fs.ts": [{ type: "function", name: "foo", line: 1 }],
+			"no_fs.ts": [{ type: "function", name: "bar", line: 1 }],
+		};
+		const kw = { "with_fs.ts": 1.0, "no_fs.ts": 1.0 };
+		const rec = { "with_fs.ts": 0, "no_fs.ts": 0 };
+		const fs = { "with_fs.ts": 1.0 }; // no_fs.ts not in fileSizeScores
+		const weights = { keyword: 0.5, recency: 0.3, fileSize: 0.2 };
+
+		const result = rankFiles(kw, rec, weights, 10_000, syms, fs);
+		const withFs = result.files.find((f) => f.path === "with_fs.ts")!;
+		const noFs = result.files.find((f) => f.path === "no_fs.ts")!;
+
+		// with_fs: 1.0*0.5 + 0*0.3 + 1.0*0.2 = 0.7
+		// no_fs: 1.0*0.5 + 0*0.3 + 0*0.2 = 0.5
+		assert.strictEqual(withFs.score, 0.7);
+		assert.strictEqual(noFs.score, 0.5);
 	});
 });
