@@ -8,24 +8,24 @@ metadata:
 
 # Extension Bug Hunter
 
-Systematic bug hunter for pi extensions. **Hunt until bug found.** Each invocation pick random extension, analyze using structured techniques, validate with proof, file GitHub issue. If no bugs found in selected extension, discard it and pick another. Repeat until one bug is confirmed and filed.
+Systematic bug hunter for pi extensions. **Hunt all bugs.** Each invocation pick random extension, analyze using structured techniques, validate with proof, file ALL confirmed bugs. If no bugs found in selected extension, discard it and pick another. Repeat until all extensions exhausted.
 
 ## How It Works
 
 ### Phase 1 — Random Selection + Hunt Loop
 
-This is a **hunt loop**. The core instruction: **keep hunting until you file at least one bug.**
+This is a **hunt loop**. The core instruction: **file every bug with proof, regardless of severity.**
 
 ```
 loop:
   1. Pick random extension from .pi/extensions/ (skip previously picked)
-  2. Run Phase 2-4 (understand + hunt + validate)
-  3. If bug found AND proof confirmed → file GitHub issue (Phase 5) → exit loop
-  4. If no bug found → log reason, goto loop start (pick next extension)
-  5. If ALL extensions exhausted with zero bugs → output "Hunt complete: 0 bugs found across all extensions"
+  2. Run Phase 2-4 (understand + hunt + validate) on this extension
+  3. For every bug found WITH proof → file GitHub issue (Phase 5)
+  4. After exhausting current extension, goto loop start (pick next extension)
+  5. If ALL extensions exhausted → output "Hunt complete: N bugs found across all extensions"
 ```
 
-**Critical rule:** Do NOT lower proof standards when hunt gets long. A bug without proof is not a bug. Skip and move on.
+**Critical rule:** Do NOT lower proof standards. A bug without proof is not a bug. Skip only if proof is insufficient — never skip a confirmed bug because it's minor.
 
 ### Phase 1a — Random Selection
 
@@ -181,6 +181,8 @@ Each bug report must include ALL of:
 
 If code is ambiguous (possible false positive), skip it. Do not file speculative bugs. When unsure, re-read the full file to trace the execution path. If still unsure, skip.
 
+**Do NOT skip a confirmed bug because it's low severity.** If proof exists (code evidence + expected/actual + reproduction steps), file it regardless of impact level.
+
 ### Phase 5 — GitHub Issue Creation
 
 Only create issue after proof is complete. Use `gh issue create` via `bash gh`.
@@ -285,9 +287,9 @@ After hunt loop completes (either bug filed or all extensions exhausted), output
 
 ## Rules
 
-1. **Hunt until found** — Must loop through extensions until one bug filed or all exhausted. Do not stop after first extension if bugless.
+1. **Hunt all confirmed bugs** — Loop through all extensions, file every bug with proof. Do not stop after first bug. Minor + proof = file.
 2. **ONE bug per issue** — No batching multiple bugs in one issue
-3. **Proof or skip** — No speculative bugs. Ambiguous = skip
+3. **Proof or skip** — No speculative bugs. Only skip when proof is insufficient. Minor bugs with proof must be filed.
 4. **Three strikes** — code evidence + expected/actual + reproduction steps minimum
 5. **No duplicate** — Check existing open issues first
 6. **File cleanup** — Delete temp files after issue creation
@@ -295,7 +297,7 @@ After hunt loop completes (either bug filed or all extensions exhausted), output
 8. **LLM is the hunter** — Do NOT delegate analysis to tools. Read code directly, reason about it
 9. **Structural search allowed** — Use `structural_search` for AST patterns (try/catch, function calls, class defs)
 10. **Literal search allowed** — Use `ripgrep_search` for text patterns (magic numbers, error messages, `any` casts)
-11. **No false positives** — If you cannot reproduce the bug by tracing the code path, do not file it. Low bar means skip extension entirely.
+11. **No false positives** — If you cannot reproduce the bug by tracing the code path, do not file it. Minor bugs with clear proof must be filed regardless of severity.
 12. **All exhausted = report** — If every extension checked and zero bugs found, output full report stating that. No fabricated bugs.
 
 ## Reference
