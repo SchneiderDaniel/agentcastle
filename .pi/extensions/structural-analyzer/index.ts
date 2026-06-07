@@ -19,15 +19,6 @@ import { Type } from "typebox";
 // Types
 // ═══════════════════════════════════════════════════════════════════════
 
-/** Raw sg JSONL output line (only fields we care about). */
-export interface SgTag {
-	file: string;
-	lines: string;
-	column?: number;
-	text: string;
-	language?: string;
-}
-
 /** Processed match entry in output. */
 export interface SgMatch {
 	file: string;
