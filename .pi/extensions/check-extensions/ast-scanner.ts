@@ -207,7 +207,7 @@ function findImportFindings(filePath: string, content: string, extName: string):
 	const lines = content.split("\n");
 
 	// Patterns for imports from pi-related modules
-	const piModulePattern = /@earendil-works\/pi-coding-agent|["']pi["']/i;
+	const piModulePattern = /@earendil-works\/pi-coding-agent|^pi$/i;
 
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i]!;
@@ -218,12 +218,13 @@ function findImportFindings(filePath: string, content: string, extName: string):
 			/^import\s+type\s+\{\s*([^}]+)\s*\}\s+from\s+["']([^"']+)["']/,
 		);
 		if (typeImportMatch && piModulePattern.test(typeImportMatch[2]!)) {
-			const importedNames = typeImportMatch[1]!;
-			// Check if any imported name is pi-related
-			if (
-				importedNames.toLowerCase().includes("extensionapi") ||
-				importedNames.toLowerCase().includes("pi")
-			) {
+			const importedNames = typeImportMatch[1]!.trim();
+			// Emit finding for any non-empty type import from a pi module.
+			// The import source being a pi module is sufficient — no need
+			// to check the imported name content. This fixes false negatives
+			// for names like ExtensionContext, ExtensionOptions, etc. that
+			// don't contain "pi" or "extensionapi" as substrings.
+			if (importedNames.length > 0) {
 				findings.push({
 					extensionName: extName,
 					file: filePath,

@@ -1100,6 +1100,220 @@ describe("ast-scanner", () => {
 	});
 
 	// ═══════════════════════════════════════════════════════════
+	// Bug fix: type-import false negatives — non-API type names
+	// (ExtensionContext, ExtensionOptions, etc.) must be detected
+	// regardless of whether the name contains "pi" as substring.
+	// ═══════════════════════════════════════════════════════════
+
+	it("import-type finding for ExtensionContext (no 'pi' substring)", async () => {
+		const extDir = join(tmpDir, "ext-ctx-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			`import type { ExtensionContext } from "@earendil-works/pi-coding-agent";\n`,
+		);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, "ast-grep");
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.strictEqual(
+			typeImports.length,
+			1,
+			`Expected 1 import-type for ExtensionContext, got ${typeImports.length}`,
+		);
+		assert.strictEqual(typeImports[0]!.apiName, "pi.import-type");
+	});
+
+	it("import-type finding for any single non-API type (ExtensionOptions)", async () => {
+		const extDir = join(tmpDir, "ext-options-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			`import type { ExtensionOptions } from "@earendil-works/pi-coding-agent";\n`,
+		);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, "ast-grep");
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.strictEqual(
+			typeImports.length,
+			1,
+			`Expected 1 import-type for ExtensionOptions, got ${typeImports.length}`,
+		);
+		assert.strictEqual(typeImports[0]!.apiName, "pi.import-type");
+	});
+
+	it("import-type finding for multiple non-API types in one import", async () => {
+		const extDir = join(tmpDir, "multi-type-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			`import type { ExtensionContext, ExtensionOptions, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";\n`,
+		);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, "ast-grep");
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.strictEqual(
+			typeImports.length,
+			1,
+			`Expected 1 import-type for multiple types (1 per line), got ${typeImports.length}`,
+		);
+		assert.strictEqual(typeImports[0]!.apiName, "pi.import-type");
+	});
+
+	it("import-type finding for import from 'pi' source", async () => {
+		const extDir = join(tmpDir, "pi-source-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "index.ts"), `import type { ExtensionContext } from "pi";\n`);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, "ast-grep");
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.strictEqual(
+			typeImports.length,
+			1,
+			`Expected 1 import-type for 'pi' source, got ${typeImports.length}`,
+		);
+		assert.strictEqual(typeImports[0]!.apiName, "pi.import-type");
+	});
+
+	it("import-type finding still works for existing API names (regression guard)", async () => {
+		const extDir = join(tmpDir, "api-name-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\n`,
+		);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, "ast-grep");
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.strictEqual(
+			typeImports.length,
+			1,
+			`Expected 1 import-type for ExtensionAPI (regression guard), got ${typeImports.length}`,
+		);
+		assert.strictEqual(typeImports[0]!.apiName, "pi.import-type");
+	});
+
+	it("type import from non-pi module is not flagged", async () => {
+		const extDir = join(tmpDir, "non-pi-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(join(extDir, "index.ts"), `import type { Foo } from "some-other-lib";\n`);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, "ast-grep");
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.strictEqual(
+			typeImports.length,
+			0,
+			`Expected 0 import-type for non-pi module, got ${typeImports.length}`,
+		);
+	});
+
+	it("empty type import from pi module produces 0 findings, no crash", async () => {
+		const extDir = join(tmpDir, "empty-type-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			`import type {} from "@earendil-works/pi-coding-agent";\n`,
+		);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, "ast-grep");
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.strictEqual(
+			typeImports.length,
+			0,
+			`Expected 0 import-type for empty type import, got ${typeImports.length}`,
+		);
+	});
+
+	it("type import with rename produces import-type finding", async () => {
+		const extDir = join(tmpDir, "rename-type-ext");
+		mkdirSync(extDir, { recursive: true });
+		writeFileSync(
+			join(extDir, "index.ts"),
+			`import type { ExtensionContext as Ctx } from "@earendil-works/pi-coding-agent";\n`,
+		);
+
+		const execFn = async (): Promise<{
+			stdout: string;
+			stderr: string;
+			code: number;
+			killed: boolean;
+		}> => {
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		};
+
+		const result = await scanExtensionsAST(extDir, ["pi.on"], execFn, "ast-grep");
+		const typeImports = result.findings.filter((f) => f.matchContext === "import-type");
+		assert.strictEqual(
+			typeImports.length,
+			1,
+			`Expected 1 import-type for renamed type, got ${typeImports.length}`,
+		);
+		assert.strictEqual(typeImports[0]!.apiName, "pi.import-type");
+	});
+
+	// ═══════════════════════════════════════════════════════════
 	// False-positive prevention: substring matching in import findings
 	// ═══════════════════════════════════════════════════════════
 
