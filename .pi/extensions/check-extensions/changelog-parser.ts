@@ -13,7 +13,7 @@ export interface ChangeEntry {
 }
 
 // Keywords that flag an entry as API-visible
-const API_KEYWORDS = [
+export const API_KEYWORDS = [
 	"extension",
 	"tool",
 	"command",
@@ -163,7 +163,7 @@ function isInternalEntry(description: string): boolean {
 /**
  * Extract API names from a changelog entry description.
  */
-function extractApiNames(description: string): string[] {
+export function extractApiNames(description: string): string[] {
 	const names: string[] = [];
 	const lower = description.toLowerCase();
 
@@ -181,7 +181,6 @@ function extractApiNames(description: string): string[] {
 			else if (kw === "pi.setActiveTools") names.push("setActiveTools");
 			else if (kw === "registerCommand") names.push("registerCommand");
 			else if (kw === "registerTool") names.push("registerTool");
-			else if (kw === "config option") names.push("config");
 			else if (kw === "export") names.push("export");
 			else if (kw === "tool") names.push("tool");
 			else if (kw === "command") names.push("command");

@@ -2648,3 +2648,144 @@ describe("types", () => {
 		assert.ok(hasReExport, "issue-builder.ts must re-export ExecFn from types.ts");
 	});
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 15: extractApiNames — "config option" keyword mapping (Issue #566)
+// ═══════════════════════════════════════════════════════════════════════
+
+import { extractApiNames, API_KEYWORDS } from "../changelog-parser.ts";
+
+describe("extractApiNames — config option (Phase 1: characterization)", () => {
+	it('returns "config option" for "Added config option for extension flag support"', () => {
+		const names = extractApiNames("Added config option for extension flag support");
+		assert.ok(names.includes("config option"), "Should include 'config option'");
+	});
+
+	it('returns "config option" for "Added config option only"', () => {
+		const names = extractApiNames("Added config option only");
+		assert.ok(names.includes("config option"), "Should include 'config option'");
+	});
+
+	it('returns "config option" for "New config option"', () => {
+		const names = extractApiNames("New config option");
+		assert.ok(names.includes("config option"), "Should include 'config option' on substring match");
+	});
+
+	it('does NOT return "config" for "Added configuration option"', () => {
+		const names = extractApiNames("Added configuration option");
+		// "configuration" contains "config" substring but not "config option"
+		assert.ok(!names.includes("config"), "Should NOT include 'config' for 'configuration'");
+	});
+
+	it('returns empty array for ""', () => {
+		assert.deepStrictEqual(extractApiNames(""), []);
+	});
+
+	it('returns empty array for "No API keywords here"', () => {
+		assert.deepStrictEqual(extractApiNames("No API keywords here"), []);
+	});
+});
+
+describe("CHANGELOG_API_TO_PATTERN — config option (Phase 2: fix mapping)", () => {
+	it('CHANGELOG_API_TO_PATTERN["config option"] equals ["pi.registerFlag", "pi.getFlag"]', () => {
+		assert.deepStrictEqual(CHANGELOG_API_TO_PATTERN["config option"], [
+			"pi.registerFlag",
+			"pi.getFlag",
+		]);
+	});
+
+	it("CHANGELOG_API_TO_PATTERN remains frozen", () => {
+		assert.ok(Object.isFrozen(CHANGELOG_API_TO_PATTERN));
+	});
+
+	it("All API_KEYWORDS map to existing CHANGELOG_API_TO_PATTERN keys (SSOT invariant)", () => {
+		// For each keyword, determine what name extractApiNames pushes (excluding regex additions)
+		// The if-else chain or else-fallthrough pushes the canonical name
+		const ifElseMapping: Record<string, string> = {
+			"pi.on": "on",
+			"pi.exec": "exec",
+			"pi.sendUserMessage": "sendUserMessage",
+			"ctx.ui": "ctx.ui",
+			"ctx.sessionManager": "sessionManager",
+			"ctx.abort": "abort",
+			"pi.registerFlag": "registerFlag",
+			"pi.registerShortcut": "registerShortcut",
+			"pi.getFlag": "getFlag",
+			"pi.setActiveTools": "setActiveTools",
+			registerCommand: "registerCommand",
+			registerTool: "registerTool",
+			"config option": "config option", // after if-else removal, falls through to else
+			export: "export",
+			tool: "tool",
+			command: "command",
+			event: "event",
+			SDK: "SDK",
+			sdk: "SDK",
+		};
+		for (const kw of API_KEYWORDS) {
+			const name = ifElseMapping[kw] ?? kw;
+			const patterns = CHANGELOG_API_TO_PATTERN[name];
+			assert.ok(
+				Array.isArray(patterns) && patterns.length > 0,
+				`Keyword "${kw}" maps to name "${name}" which has no entry in CHANGELOG_API_TO_PATTERN`,
+			);
+		}
+	});
+
+	it("parsePhase round-trip: 'Added config option for extension flags' affects pi.registerFlag and pi.getFlag", () => {
+		const pi = { sendUserMessage: () => {} } as any;
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const pipeline = new ChangelogPipeline(pi, ctx);
+
+		const md = `## [0.76.0] - 2026-06-01\n\n### Added\n\n- Added config option for extension flags\n`;
+		const result = pipeline.parsePhase(md);
+
+		assert.ok(result.affectedApiPatterns.has("pi.registerFlag"), "Should include pi.registerFlag");
+		assert.ok(result.affectedApiPatterns.has("pi.getFlag"), "Should include pi.getFlag");
+	});
+});
+
+describe("extractApiNames — config option (Phase 3: remove if-else coupling)", () => {
+	it('returns "config option" instead of "config" for "Added config option for extension flag support"', () => {
+		const names = extractApiNames("Added config option for extension flag support");
+		// After removing the if-else, "config option" keyword falls through to else and pushes kw as-is
+		assert.ok(
+			names.includes("config option"),
+			"Should include 'config option' (pushed via else fallback, not if-else translation)",
+		);
+	});
+
+	it('returns "config option" not "config" for "Added config option only"', () => {
+		const names = extractApiNames("Added config option only");
+		assert.ok(names.includes("config option"), "Should include 'config option'");
+		// After if-else removal, "config" should NOT be in the result
+		// (unless another keyword happens to push "config")
+	});
+
+	it("SSOT invariant still holds: CHANGELOG_API_TO_PATTERN has 'config option' key", () => {
+		assert.ok(
+			Array.isArray(CHANGELOG_API_TO_PATTERN["config option"]),
+			"CHANGELOG_API_TO_PATTERN should have 'config option' key",
+		);
+		assert.deepStrictEqual(
+			CHANGELOG_API_TO_PATTERN["config option"],
+			["pi.registerFlag", "pi.getFlag"],
+			"Should map to same patterns as 'config'",
+		);
+	});
+
+	it("parsePhase round-trip still produces correct patterns", () => {
+		const pi = { sendUserMessage: () => {} } as any;
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const pipeline = new ChangelogPipeline(pi, ctx);
+
+		const md = `## [0.76.0] - 2026-06-01\n\n### Added\n\n- Added config option for extension flags\n`;
+		const result = pipeline.parsePhase(md);
+
+		assert.ok(
+			result.affectedApiPatterns.has("pi.registerFlag"),
+			"pi.registerFlag should still be affected",
+		);
+		assert.ok(result.affectedApiPatterns.has("pi.getFlag"), "pi.getFlag should still be affected");
+	});
+});
