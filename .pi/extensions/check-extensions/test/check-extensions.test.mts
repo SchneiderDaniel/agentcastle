@@ -297,6 +297,8 @@ import {
 	createIssue,
 	ensureLabel,
 	checkGhAuth,
+	getContextBadge,
+	renderFindingsSection,
 	type ExecFn,
 } from "../issue-builder.ts";
 import type { ASTFinding } from "../ast-scanner.ts";
@@ -555,6 +557,360 @@ describe("issue-builder", () => {
 			const authed = await checkGhAuth(exec);
 			assert.strictEqual(authed, false);
 		});
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 1: renderFindingsSection + getContextBadge helpers
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("renderFindingsSection", () => {
+	it("empty findings produces zero new lines, section not added", () => {
+		const lines: string[] = [];
+		renderFindingsSection(lines, "Breaking Changes", "desc", []);
+		assert.strictEqual(lines.length, 0);
+	});
+
+	it("appends title heading, description, and finding items for non-empty findings", () => {
+		const lines: string[] = [];
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "index.ts",
+				apiName: "pi.on",
+				line: 10,
+				column: 1,
+				lineContent: 'pi.on("start", fn)',
+				changelogVersion: "1.0.0",
+				isBreaking: false,
+				category: "Added",
+				callArgs: [],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		renderFindingsSection(lines, "Breaking Changes", "Important desc", findings);
+		assert.ok(lines.some((l) => l.includes("Breaking Changes")));
+		assert.ok(lines.some((l) => l.includes("Important desc")));
+		assert.ok(lines.some((l) => l.includes("pi.on")));
+	});
+
+	it("renders File, Line, Code in each finding item", () => {
+		const lines: string[] = [];
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "src/index.ts",
+				apiName: "pi.exec",
+				line: 42,
+				column: 1,
+				lineContent: 'pi.exec("cmd")',
+				changelogVersion: "",
+				isBreaking: false,
+				category: "",
+				callArgs: [],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		renderFindingsSection(lines, "Section", "Description", findings);
+		const joined = lines.join("\n");
+		assert.ok(joined.includes("**File:**"), "Should render File");
+		assert.ok(joined.includes("src/index.ts"), "Should render file path");
+		assert.ok(joined.includes("**Line:**"), "Should render Line");
+		assert.ok(joined.includes("42"), "Should render line number");
+		assert.ok(joined.includes("**Code:**"), "Should render Code");
+		assert.ok(joined.includes('pi.exec("cmd")'), "Should render line content");
+	});
+
+	it("With showChangelog: true includes - **Changelog:** line", () => {
+		const lines: string[] = [];
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "i.ts",
+				apiName: "pi.test",
+				line: 1,
+				column: 1,
+				lineContent: "test",
+				changelogVersion: "2.0.0",
+				isBreaking: false,
+				category: "",
+				callArgs: [],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		renderFindingsSection(lines, "Title", "Desc", findings, { showChangelog: true });
+		assert.ok(
+			lines.some((l) => l.includes("**Changelog:**")),
+			"Should have Changelog line",
+		);
+		assert.ok(
+			lines.some((l) => l.includes("2.0.0")),
+			"Should have changelog version",
+		);
+	});
+
+	it("With showChangelog: false (default) omits changelog line", () => {
+		const lines: string[] = [];
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "i.ts",
+				apiName: "pi.test",
+				line: 1,
+				column: 1,
+				lineContent: "test",
+				changelogVersion: "2.0.0",
+				isBreaking: false,
+				category: "",
+				callArgs: [],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		renderFindingsSection(lines, "Title", "Desc", findings);
+		assert.ok(!lines.some((l) => l.includes("**Changelog:**")), "Should NOT have Changelog line");
+	});
+
+	it("With showCallArgs: true and callArgs populated includes - **Args:** line", () => {
+		const lines: string[] = [];
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "i.ts",
+				apiName: "pi.test",
+				line: 1,
+				column: 1,
+				lineContent: "test",
+				changelogVersion: "",
+				isBreaking: false,
+				category: "",
+				callArgs: ['"arg1"'],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		renderFindingsSection(lines, "Title", "Desc", findings, { showCallArgs: true });
+		assert.ok(
+			lines.some((l) => l.includes("**Args:**")),
+			"Should have Args line",
+		);
+		assert.ok(
+			lines.some((l) => l.includes('"arg1"')),
+			"Should have arg value",
+		);
+	});
+
+	it("With showCallArgs: true and empty callArgs omits Args line", () => {
+		const lines: string[] = [];
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "i.ts",
+				apiName: "pi.test",
+				line: 1,
+				column: 1,
+				lineContent: "test",
+				changelogVersion: "",
+				isBreaking: false,
+				category: "",
+				callArgs: [],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		renderFindingsSection(lines, "Title", "Desc", findings, { showCallArgs: true });
+		assert.ok(!lines.some((l) => l.includes("**Args:**")), "Should NOT have Args line");
+	});
+
+	it("With showCallArgs: true includes context badge emoji in heading after apiName", () => {
+		const lines: string[] = [];
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "i.ts",
+				apiName: "pi.test",
+				line: 1,
+				column: 1,
+				lineContent: "test",
+				changelogVersion: "",
+				isBreaking: false,
+				category: "",
+				callArgs: ['"x"'],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		renderFindingsSection(lines, "Title", "Desc", findings, { showCallArgs: true });
+		assert.ok(
+			lines.some((l) => l.includes("⚡")),
+			"Should include context badge in heading",
+		);
+	});
+
+	it("Finding with only required fields (no callArgs, no changelogVersion) renders without optional lines", () => {
+		const lines: string[] = [];
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "index.ts",
+				apiName: "pi.test",
+				line: 5,
+				column: 1,
+				lineContent: "code",
+				changelogVersion: "",
+				isBreaking: false,
+				category: "",
+				callArgs: [],
+				matchContext: "comment" as const,
+			},
+		];
+		renderFindingsSection(lines, "Section", "Desc", findings);
+		const joined = lines.join("\n");
+		assert.ok(joined.includes("**File:**"), "Should render File");
+		assert.ok(joined.includes("**Line:**"), "Should render Line");
+		assert.ok(joined.includes("**Code:**"), "Should render Code");
+		assert.ok(!joined.includes("**Args:**"), "Should NOT render Args");
+		assert.ok(!joined.includes("**Changelog:**"), "Should NOT render Changelog");
+	});
+});
+
+describe("getContextBadge", () => {
+	it("runtime-call returns ⚡", () => {
+		assert.strictEqual(getContextBadge("runtime-call"), "⚡");
+	});
+	it("import-type returns 📦", () => {
+		assert.strictEqual(getContextBadge("import-type"), "📦");
+	});
+	it("import-value returns 📥", () => {
+		assert.strictEqual(getContextBadge("import-value"), "📥");
+	});
+	it("comment returns 💬", () => {
+		assert.strictEqual(getContextBadge("comment"), "💬");
+	});
+	it("string-literal returns 🔤", () => {
+		assert.strictEqual(getContextBadge("string-literal"), "🔤");
+	});
+	it("dead-code returns 💀", () => {
+		assert.strictEqual(getContextBadge("dead-code"), "💀");
+	});
+	it("unknown-type returns ❓", () => {
+		assert.strictEqual(getContextBadge("unknown-type"), "❓");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2: Characterization — buildIssueBody output unchanged after refactor
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("buildIssueBody — characterization", () => {
+	it("output is identical to pre-refactoring output for same input", () => {
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "src/index.ts",
+				apiName: "pi.on",
+				line: 15,
+				column: 1,
+				lineContent: 'pi.on("start", fn)',
+				changelogVersion: "1.0.0",
+				isBreaking: true,
+				category: "Deprecated",
+				callArgs: ['"start"'],
+				matchContext: "runtime-call" as const,
+			},
+			{
+				extensionName: "test-ext",
+				file: "src/index.ts",
+				apiName: "pi.exec",
+				line: 20,
+				column: 1,
+				lineContent: 'pi.exec("gh", [])',
+				changelogVersion: "1.0.0",
+				isBreaking: false,
+				category: "Added",
+				callArgs: ['"gh"'],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		const body = buildIssueBody("test-ext", findings, "1.0.0");
+		// Verify both section types present
+		assert.ok(body.includes("## Breaking Changes"), "Should have Breaking Changes section");
+		assert.ok(
+			body.includes("## Simplifications & Non-Breaking Changes"),
+			"Should have non-breaking section",
+		);
+		// Verify finding details rendered
+		assert.ok(body.includes("pi.on"), "Should contain pi.on");
+		assert.ok(body.includes("pi.exec"), "Should contain pi.exec");
+		assert.ok(body.includes("**File:** \`src/index.ts\`"), "Should contain file path");
+		assert.ok(body.includes("**Line:** 15"), "Should contain line 15");
+		assert.ok(body.includes("**Line:** 20"), "Should contain line 20");
+		assert.ok(body.includes("Deprecated"), "Should contain category Deprecated");
+		assert.ok(body.includes("Added"), "Should contain category Added");
+		assert.ok(body.includes("**Changelog:** 1.0.0"), "Should contain changelog version");
+	});
+
+	it("with empty findings produces body with no section headings", () => {
+		const body = buildIssueBody("test-ext", [], "1.0.0");
+		assert.ok(!body.includes("## Breaking Changes"), "Should NOT have Breaking Changes");
+		assert.ok(!body.includes("## Simplifications"), "Should NOT have Simplifications");
+		// Still has the standard sections
+		assert.ok(body.includes("# Extension Audit:"), "Should have title");
+		assert.ok(body.includes("## Suggested Actions"), "Should have suggested actions");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 3: Characterization — buildIssueBodyWithSnippets output unchanged after refactor
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("buildIssueBodyWithSnippets — characterization", () => {
+	it("output is identical to pre-refactoring output for same input", () => {
+		const findings: ASTFinding[] = [
+			{
+				extensionName: "test-ext",
+				file: "src/index.ts",
+				apiName: "pi.on",
+				line: 10,
+				column: 1,
+				lineContent: 'pi.on("tool_call", handler)',
+				changelogVersion: "1.0.0",
+				isBreaking: true,
+				category: "Deprecated",
+				callArgs: ['"tool_call"'],
+				matchContext: "runtime-call" as const,
+			},
+		];
+		const snippets: MigrationSnippet[] = [
+			{
+				apiName: "pi.on",
+				before: 'pi.on("tool_call", handler)',
+				after: 'pi.on("tool_before_call", handler)',
+				confidence: 0.9,
+			},
+		];
+		const impactScore = {
+			extensionName: "test-ext",
+			severity: "medium" as const,
+			uniqueApis: 1,
+			breakingCount: 1,
+			hasTests: false,
+		};
+		const body = buildIssueBodyWithSnippets("test-ext", findings, "1.0.0", snippets, impactScore);
+		// Verify section structure
+		assert.ok(body.includes("## Breaking Changes"), "Should have Breaking Changes section");
+		assert.ok(body.includes("## Migration Guide"), "Should have Migration Guide");
+		assert.ok(body.includes("## Suggested Actions"), "Should have Suggested Actions");
+		// Verify context badge rendering
+		assert.ok(body.includes("⚡"), "Should have runtime-call emoji badge");
+		// Verify args rendering
+		assert.ok(body.includes("**Args:**"), "Should have Args line");
+		assert.ok(body.includes("tool_call"), "Should contain arg value");
+		// Verify NO changelog in findings section
+		const breakingSection = body.substring(
+			body.indexOf("## Breaking Changes"),
+			body.indexOf("## Migration Guide"),
+		);
+		assert.ok(
+			!breakingSection.includes("**Changelog:**"),
+			"Should NOT have Changelog in findings section",
+		);
 	});
 });
 
