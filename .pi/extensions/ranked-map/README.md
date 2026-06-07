@@ -33,7 +33,7 @@ Each phase accepts `ExecFn` + config via constructor, making all methods testabl
 ## How it works
 
 1. On first call, the extension builds a symbol index via `ctags --output-format=json -R` over the target directory
-   - Automatically excludes: `node_modules`, `.git`, `*.json`, `*.jsonl`, `*.md`, `*.min.js`, `*.css`, `static`, `context`, `sessions`, `npm`, `chromium-deps`, `crawl4ai-venv`, `benchmarks`
+   - Automatically excludes: `node_modules`, `.git`, `*.json`, `*.jsonl`, `*.md`, `*.min.js`, `*.css`, `static`, `context`, `sessions`, `npm`, `chromium-deps`, `crawl4ai-venv`, `web-search-venv`, `benchmarks`
      - Basename-only patterns — `ctags --exclude` matches against the basename of each file/directory, so path prefixes like `.pi/` are omitted
    - Also reads `.piignore` for additional exclusion patterns
 2. The index is cached to disk keyed by current git HEAD, config hash, and target directory scope

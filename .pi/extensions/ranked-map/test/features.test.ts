@@ -191,6 +191,11 @@ describe("Phase 2: Additional ctags exclude patterns", () => {
 		assert.ok(result.args.includes("--exclude=crawl4ai-venv"));
 	});
 
+	it("buildCtagsArgs excludes web-search-venv/ (Python venv for web search)", () => {
+		const result = buildCtagsArgs(".", 0);
+		assert.ok(result.args.includes("--exclude=web-search-venv"));
+	});
+
 	it("buildCtagsArgs no longer excludes flask_blogs/ (submodule scanned like any other directory)", () => {
 		const result = buildCtagsArgs(".", 0);
 		assert.ok(!result.args.includes("--exclude=flask_blogs"));
@@ -279,6 +284,7 @@ describe("Phase 2: Additional ctags exclude patterns", () => {
 			"npm",
 			"chromium-deps",
 			"crawl4ai-venv",
+			"web-search-venv",
 			"benchmarks",
 		];
 		for (const name of basenames) {
@@ -1149,6 +1155,7 @@ describe("Phase 9: Git submodule indexing (flask_blogs)", () => {
 			"npm",
 			"chromium-deps",
 			"crawl4ai-venv",
+			"web-search-venv",
 			"benchmarks",
 		];
 		for (const ex of standardExcludes) {

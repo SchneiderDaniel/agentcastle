@@ -93,6 +93,7 @@ describe("Phase 2: Regression — existing args unchanged", () => {
 			"npm",
 			"chromium-deps",
 			"crawl4ai-venv",
+			"web-search-venv",
 			"benchmarks",
 		];
 		for (const ex of standardExcludes) {
