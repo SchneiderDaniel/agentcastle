@@ -18,6 +18,7 @@
 - **Smart ctags excludes** — Q&A data files (`*.jsonl`), docs (`*.md`), and pi agent internals are excluded from indexing; submodules are scanned like any other directory
 - **.mts file support** — ESM TypeScript (`.mts`) files are mapped to the TypeScript parser via `--map-TypeScript=+.mts`, so their symbols appear in the index
 - **Prompt integration** — Injects mode-aware `promptSnippet` and `promptGuidelines` so the LLM knows how to use the tool
+- **Kind-summarized symbol output** — `formatSymbols()` groups symbols by kind with a summary count line, listing only high-signal kinds (class, function, method, interface, type, enum) individually. Low-signal kinds (constant, variable, property, member, etc.) appear only in the count, reducing token waste and improving LLM signal-to-noise
 - **No external dependencies** — Uses `ctags` for indexing, `ripgrep` for keyword search, `git` for recency
 
 ## Architecture

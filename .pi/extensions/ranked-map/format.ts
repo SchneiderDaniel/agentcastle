@@ -74,16 +74,86 @@ export function dumpAllFiles(
 }
 
 /**
+ * Check whether a symbol kind is high-signal and should be listed individually.
+ * High-signal kinds: class, function, method, interface, type, enum.
+ * Low-signal kinds (constant, variable, property, member, other, empty) are
+ * summarized by count only.
+ */
+export function isHighSignalKind(kind: string): boolean {
+	switch (kind) {
+		case "class":
+		case "function":
+		case "method":
+		case "interface":
+		case "type":
+		case "enum":
+			return true;
+		default:
+			return false;
+	}
+}
+
+/** Pluralize a symbol kind for summary display. */
+function pluralizeKind(kind: string, count: number): string {
+	if (count === 1) return kind;
+	// Simple English plural: add "es" for words ending in s, x, ch, sh
+	if (/[sxchsh]$/i.test(kind)) return kind + "es";
+	return kind + "s";
+}
+
+/**
  * Format symbol entries into a compact string for tool output.
+ *
+ * Produces a summary line with per-kind counts, then individual lines for
+ * high-signal kinds (class, function, method, interface, type, enum).
+ * Low-signal kinds (constant, variable, property, member, etc.) appear
+ * only in the summary count.
+ *
+ * Examples:
+ *   src/foo.ts
+ *   4 symbol(s): 1 class, 1 function, 2 constants
+ *     class UserModel
+ *     function get_user
  */
 export function formatSymbols(symbols: SymbolEntry[], path: string): string {
-	if (!symbols || symbols.length === 0) return `${path}\n  (no symbols)`;
+	if (!symbols) symbols = [];
+	if (symbols.length === 0) return `${path}\n  (no symbols)`;
 
-	const lines: string[] = [];
+	// Count by kind
+	const kindCounts = new Map<string, number>();
 	for (const sym of symbols) {
-		lines.push(`  ${sym.type} ${sym.name}`);
+		const kind = sym.type || "";
+		kindCounts.set(kind, (kindCounts.get(kind) || 0) + 1);
 	}
-	return `${path}\n${lines.join("\n")}`;
+
+	// Filter out entries with empty type
+	const nonEmptyKinds = [...kindCounts.entries()].filter(([kind]) => kind !== "");
+
+	if (nonEmptyKinds.length === 0) return `${path}\n  (no symbols)`;
+
+	// Build summary — sort kinds alphabetically for deterministic output
+	const totalSymbols = symbols.length;
+	nonEmptyKinds.sort(([a], [b]) => a.localeCompare(b));
+	const summaryParts: string[] = [];
+	for (const [kind, count] of nonEmptyKinds) {
+		summaryParts.push(`${count} ${pluralizeKind(kind, count)}`);
+	}
+	const symbolLabel = totalSymbols === 1 ? "symbol" : "symbols";
+	const summary = `${totalSymbols} ${symbolLabel}: ${summaryParts.join(", ")}`;
+
+	// Build individual lines for high-signal symbols
+	const highSignalLines: string[] = [];
+	for (const sym of symbols) {
+		if (isHighSignalKind(sym.type)) {
+			highSignalLines.push(`  ${sym.type} ${sym.name}`);
+		}
+	}
+
+	if (highSignalLines.length === 0) {
+		return `${path}\n  ${summary}`;
+	}
+
+	return `${path}\n  ${summary}\n${highSignalLines.join("\n")}`;
 }
 
 /**

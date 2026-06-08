@@ -58,6 +58,7 @@ import {
 	dumpAllFiles,
 	formatSymbols,
 	formatOutput,
+	isHighSignalKind,
 } from "../format.ts";
 
 // Scoring
@@ -1886,27 +1887,173 @@ describe("formatOutput", () => {
 	});
 });
 
+describe("isHighSignalKind", () => {
+	it("returns true for class", () => {
+		assert.strictEqual(isHighSignalKind("class"), true);
+	});
+	it("returns true for function", () => {
+		assert.strictEqual(isHighSignalKind("function"), true);
+	});
+	it("returns true for method", () => {
+		assert.strictEqual(isHighSignalKind("method"), true);
+	});
+	it("returns true for interface", () => {
+		assert.strictEqual(isHighSignalKind("interface"), true);
+	});
+	it("returns true for type", () => {
+		assert.strictEqual(isHighSignalKind("type"), true);
+	});
+	it("returns true for enum", () => {
+		assert.strictEqual(isHighSignalKind("enum"), true);
+	});
+	it("returns false for constant", () => {
+		assert.strictEqual(isHighSignalKind("constant"), false);
+	});
+	it("returns false for variable", () => {
+		assert.strictEqual(isHighSignalKind("variable"), false);
+	});
+	it("returns false for property", () => {
+		assert.strictEqual(isHighSignalKind("property"), false);
+	});
+	it("returns false for member", () => {
+		assert.strictEqual(isHighSignalKind("member"), false);
+	});
+	it("returns false for other", () => {
+		assert.strictEqual(isHighSignalKind("other"), false);
+	});
+	it("returns false for empty string", () => {
+		assert.strictEqual(isHighSignalKind(""), false);
+	});
+	it("is case-sensitive: Class returns false", () => {
+		assert.strictEqual(isHighSignalKind("Class"), false);
+		assert.strictEqual(isHighSignalKind("Function"), false);
+	});
+});
+
 describe("formatSymbols", () => {
-	it("formats path and symbol types/names", () => {
+	it("summarizes mixed symbols with summary line and high-signal lines", () => {
 		const syms: SymbolEntry[] = [
 			{ type: "class", name: "UserModel", line: 1 },
 			{ type: "function", name: "get_user", line: 10 },
+			{ type: "constant", name: "DEFAULT_NAME", line: 5 },
+			{ type: "variable", name: "tmp", line: 7 },
 		];
 		const result = formatSymbols(syms, "models/user.py");
 		assert.ok(result.includes("models/user.py"));
-		assert.ok(result.includes("class UserModel"));
-		assert.ok(result.includes("function get_user"));
+		assert.ok(result.includes("4 symbols: 1 class, 1 constant, 1 function, 1 variable"));
+		assert.ok(result.includes("  class UserModel"));
+		assert.ok(result.includes("  function get_user"));
+		// Low-signal kinds (constant, variable) appear only in count, not as individual lines
+		assert.ok(!result.includes("constant DEFAULT_NAME"));
+		assert.ok(!result.includes("variable tmp"));
 	});
 
-	it("no symbols shows fallback message", () => {
+	it("only constants/variables outputs summary line only", () => {
+		const syms: SymbolEntry[] = [
+			{ type: "constant", name: "FOO", line: 1 },
+			{ type: "variable", name: "bar", line: 2 },
+		];
+		const result = formatSymbols(syms, "a.ts");
+		assert.ok(result.includes("a.ts"));
+		assert.ok(result.includes("2 symbols: 1 constant, 1 variable"));
+		// No individual lines since both are low-signal
+		const linesAfterPath = result.split("\n").slice(1).filter(Boolean);
+		assert.strictEqual(linesAfterPath.length, 1); // just the summary line
+	});
+
+	it("only high-signal kinds outputs summary + individual lines", () => {
+		const syms: SymbolEntry[] = [
+			{ type: "class", name: "Foo", line: 1 },
+			{ type: "function", name: "bar", line: 5 },
+			{ type: "method", name: "baz", line: 10 },
+		];
+		const result = formatSymbols(syms, "a.ts");
+		assert.ok(result.includes("3 symbols: 1 class, 1 function, 1 method"));
+		assert.ok(result.includes("  class Foo"));
+		assert.ok(result.includes("  function bar"));
+		assert.ok(result.includes("  method baz"));
+	});
+
+	it("empty array shows fallback message", () => {
 		const result = formatSymbols([], "empty.ts");
 		assert.ok(result.includes("empty.ts"));
 		assert.ok(result.includes("no symbols"));
 	});
 
-	it("single symbol formatted correctly", () => {
+	it("single high-signal symbol outputs summary + one line", () => {
 		const result = formatSymbols([{ type: "function", name: "foo", line: 1 }], "a.ts");
-		assert.strictEqual(result, "a.ts\n  function foo");
+		assert.strictEqual(result, "a.ts\n  1 symbol: 1 function\n  function foo");
+	});
+
+	it("40 constants + 3 classes: summary shows counts, only 3 class lines", () => {
+		const syms: SymbolEntry[] = [
+			...Array.from({ length: 40 }, (_, i) => ({
+				type: "constant" as const,
+				name: `c${i}`,
+				line: i,
+			})),
+			{ type: "class", name: "A", line: 100 },
+			{ type: "class", name: "B", line: 200 },
+			{ type: "class", name: "C", line: 300 },
+		];
+		const result = formatSymbols(syms, "big.ts");
+		assert.ok(result.includes("43 symbols: 3 classes, 40 constants"));
+		// Only class lines emitted
+		assert.ok(result.includes("  class A"));
+		assert.ok(result.includes("  class B"));
+		assert.ok(result.includes("  class C"));
+		// No constant lines
+		assert.ok(!result.includes("constant c"));
+		// Summary + 3 class lines = 4 additional lines besides path
+		const lines = result.split("\n");
+		assert.strictEqual(lines.length, 5); // path + summary + 3 class lines
+	});
+
+	it("null/undefined symbols falls back to (no symbols) without crash", () => {
+		const result1 = formatSymbols(null as unknown as SymbolEntry[], "n.ts");
+		assert.ok(result1.includes("(no symbols)"));
+		const result2 = formatSymbols(undefined as unknown as SymbolEntry[], "n.ts");
+		assert.ok(result2.includes("(no symbols)"));
+	});
+
+	it("100 high-signal symbols produces 102 lines (summary + 100 individual)", () => {
+		const syms: SymbolEntry[] = Array.from({ length: 100 }, (_, i) => ({
+			type: "function" as const,
+			name: `f${i}`,
+			line: i,
+		}));
+		const result = formatSymbols(syms, "big.ts");
+		const lines = result.split("\n");
+		assert.strictEqual(lines.length, 102); // path + summary + 100 lines
+		assert.ok(result.includes("100 symbols: 100 functions"));
+	});
+
+	it("mixed kinds where count sums to 0 (all filtered) shows (no symbols)", () => {
+		// If somehow all symbols have empty type, they're not counted in summary
+		const syms: SymbolEntry[] = [
+			{ type: "", name: "x", line: 1 },
+			{ type: "", name: "y", line: 2 },
+		];
+		const result = formatSymbols(syms, "a.ts");
+		assert.ok(result.includes("(no symbols)"));
+	});
+
+	it("summary uses singular for count of 1", () => {
+		const result = formatSymbols([{ type: "class", name: "Foo", line: 1 }], "a.ts");
+		assert.ok(result.includes("1 symbol"));
+		assert.ok(!result.includes("1 symbols"));
+	});
+
+	it("summary uses plural for count > 1", () => {
+		const syms: SymbolEntry[] = [
+			{ type: "class", name: "Foo", line: 1 },
+			{ type: "class", name: "Bar", line: 5 },
+			{ type: "function", name: "baz", line: 10 },
+		];
+		const result = formatSymbols(syms, "a.ts");
+		assert.ok(result.includes("2 classes"));
+		assert.ok(result.includes("1 function"));
+		assert.ok(result.includes("3 symbols"));
 	});
 });
 
