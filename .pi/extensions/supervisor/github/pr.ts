@@ -95,18 +95,17 @@ export async function createPullRequest(
 		args.push("--body-file", bodyFile);
 		log.debug("pr", `PR body from file: ${bodyFile}`);
 	}
-	args.push("--json", "number");
 
-	// Execute gh pr create with --json number for machine-parseable output (Bug 7 fix)
-	// Single exec call — try JSON parse first, then fall back to URL/number regex
+	// gh pr create returns PR URL (e.g. https://github.com/o/r/pull/123)
+	// Parse via URL regex, with JSON parse fallback for backward compat
 	const rawOutput = await gh(pi, args);
 
-	// Primary path: parse --json number output (machine-parseable)
+	// Optional: try JSON parse (backward compat with older code that passed --json)
 	try {
 		const parsed = JSON.parse(rawOutput);
 		if (parsed !== null && typeof parsed === "object" && typeof parsed.number === "number") {
 			const num = parsed.number;
-			log.info("pr", `PR #${num} created (from --json number): ${head} → ${base}`);
+			log.info("pr", `PR #${num} created (from JSON): ${head} → ${base}`);
 			return { number: num };
 		}
 	} catch {
