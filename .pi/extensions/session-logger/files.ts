@@ -94,32 +94,28 @@ export interface FileOps {
  * Create a symlink at `linkDir/linkName` pointing to `targetFile`.
  *
  * Uses a unique temp name (with random suffix) to avoid EEXIST races
- * between concurrent writers. Cleans up stale temp files before creating
- * the symlink, then atomically renames tmp → target.
+ * between concurrent writers, then atomically renames tmp → target.
  *
  * If rename fails with ENOENT another concurrent writer won the race —
- * the target link already points to a valid symlink, so we skip.
+ * the target link already points to a valid symlink, so we clean up our
+ * temp file and return silently. Non-ENOENT errors are rethrown.
+ *
+ * This is the single source of truth for atomic symlink creation — both
+ * {@link ensureLatestLink} and the background retry in {@link scheduleLinkRetry}
+ * delegate to this helper to avoid code duplication.
  */
-async function ensureLatestLink(
+export async function createAtomicSymlink(
 	linkDir: string,
 	targetFile: string,
 	linkName: string,
 ): Promise<void> {
-	// Ensure symlink directory exists.
-	await fs.mkdir(linkDir, { recursive: true });
-
 	const latestLink = path.join(linkDir, linkName);
 	const linkTarget = path.relative(linkDir, targetFile);
 	const rand = crypto.randomBytes(4).toString("hex");
 	const tmpLink = `${latestLink}.tmp.${rand}`;
 
-	// Create symlink at unique temp path — no collision possible.
-	// Target file may not exist yet (session_start fires before core writes
-	// JSONL). Symlink will be dangling briefly — background retry fixes it.
 	await fs.symlink(linkTarget, tmpLink);
 
-	// Atomic rename — replaces existing symlink atomically on same filesystem.
-	// If ENOENT, another concurrent writer already renamed (they won the race).
 	try {
 		await fs.rename(tmpLink, latestLink);
 	} catch (err: unknown) {
@@ -135,6 +131,24 @@ async function ensureLatestLink(
 			throw err;
 		}
 	}
+}
+
+/**
+ * Create a symlink at `linkDir/linkName` pointing to `targetFile`.
+ *
+ * Ensures the link directory exists, delegates to {@link createAtomicSymlink}
+ * for the actual symlink creation, then schedules a background retry if
+ * the target file doesn't exist yet (dangling symlink fix).
+ */
+async function ensureLatestLink(
+	linkDir: string,
+	targetFile: string,
+	linkName: string,
+): Promise<void> {
+	// Ensure symlink directory exists.
+	await fs.mkdir(linkDir, { recursive: true });
+
+	await createAtomicSymlink(linkDir, targetFile, linkName);
 
 	// Non-blocking: if target doesn't exist yet, schedule background retry
 	// to fix dangling symlink when file appears.
@@ -163,16 +177,7 @@ function scheduleLinkRetry(linkDir: string, targetFile: string, linkName: string
 		fs.stat(targetFile)
 			.then(() => {
 				// File exists — re-create symlink (now valid)
-				const latestLink = path.join(linkDir, linkName);
-				const linkTarget = path.relative(linkDir, targetFile);
-				const rand = crypto.randomBytes(4).toString("hex");
-				const tmpLink = `${latestLink}.tmp.${rand}`;
-
-				fs.symlink(linkTarget, tmpLink)
-					.then(() =>
-						fs.rename(tmpLink, latestLink).catch(() => fs.unlink(tmpLink).catch(() => {})),
-					)
-					.catch(() => {});
+				createAtomicSymlink(linkDir, targetFile, linkName).catch(() => {});
 			})
 			.catch(() => {
 				setTimeout(tick, RETRY_INTERVAL);
