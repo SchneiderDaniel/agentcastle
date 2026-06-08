@@ -16,7 +16,7 @@ import {
 	type RankedMapResult,
 } from "./types.ts";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname, relative } from "node:path";
 import { buildCtagsArgs, buildSymbolIndex } from "./ctags.ts";
 import { loadCachedIndex, computeConfigHash } from "./cache.ts";
 import {
@@ -102,10 +102,36 @@ export class RankedMapEngine {
 		const piignorePath = join(this.cwd, ".piignore");
 		const piignoreExcludes = buildIgnoreExcludes(piignorePath);
 
-		// Incorporate .gitignore patterns from root and submodules
+		// Incorporate .gitignore patterns — scope submodule patterns to their directory
 		const targetAbs = resolve(this.cwd, targetDir);
-		const gitignorePaths = discoverIgnoreFiles(targetAbs);
-		const gitignoreExcludes = gitignorePaths.flatMap((p) => buildIgnoreExcludes(p));
+
+		// First, read root .gitignore to determine which dirs to skip during discovery
+		const rootGitignore = join(targetAbs, ".gitignore");
+		const rootExcludes = buildIgnoreExcludes(rootGitignore);
+		// Compute skipDirs from root .gitignore patterns that are simple directory
+		// names (no globs, no path separators — only basename-level dir ignores).
+		// This prevents traversal into directories already gitignored at root level,
+		// which is especially important for large ignored dirs like node_modules.
+		const skipDirs = rootExcludes.filter((e) => !e.includes("*") && !e.includes("/"));
+
+		// Discover .gitignore files, skipping directories matched by root .gitignore
+		const gitignorePaths = discoverIgnoreFiles(targetAbs, skipDirs);
+
+		// Build excludes — scope submodule .gitignore patterns to their directory
+		const gitignoreExcludes: string[] = [];
+		for (const p of gitignorePaths) {
+			const parentDir = dirname(p);
+			const relPath = relative(targetAbs, parentDir);
+			if (relPath === "." || relPath === "" || relPath === targetAbs) {
+				// Root .gitignore — use patterns as-is (ctags basename matching)
+				gitignoreExcludes.push(...buildIgnoreExcludes(p));
+			} else {
+				// Submodule .gitignore — scope patterns with relative path prefix.
+				// ctags --exclude matches against full path when pattern contains '/',
+				// so flask_blogs/__pycache__ only matches within flask_blogs/.
+				gitignoreExcludes.push(...buildIgnoreExcludes(p, relPath));
+			}
+		}
 
 		const allExcludes = [...piignoreExcludes, ...gitignoreExcludes];
 

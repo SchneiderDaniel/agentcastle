@@ -13,12 +13,15 @@
  *
  * Not supported (silently skipped):
  * - Negation (!)
- * - Double-star glob patterns (**)
+ * - Double-star in middle of glob patterns
  * - Leading slash patterns (absolute paths)
+ *
+ * Supported:
+ * - Leading double-star slash prefix (strip prefix, process remainder)
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 /**
  * Parse a single ignore-file line into a ctags --exclude pattern.
@@ -48,8 +51,16 @@ export function parseIgnoreLine(line: string): string | null {
 		if (pattern.endsWith("/")) pattern = pattern.slice(0, -1);
 	}
 
-	// Ctags --exclude supports globs but not ** (double-star)
-	// Skip patterns containing ** that aren't just trailing /**
+	// Strip leading **/ prefix (gitignore "at any depth" indicator)
+	// e.g. **/venv/ → venv, **/credentials.* → credentials.*
+	// Strip repeatedly to handle patterns like **/**/dir/
+	while (pattern.startsWith("**/")) {
+		pattern = pattern.slice(3);
+	}
+
+	// Ctags --exclude supports globs but not ** in middle of pattern
+	// After stripping leading **/, remaining ** means a/**/b or similar — reject.
+	// Also reject bare ** (just the globstar).
 	// NOTE: check before basename extraction — a/**/b must be rejected
 	// even though basename alone ("b") wouldn't contain **.
 	if (pattern.includes("**")) return null;
@@ -72,8 +83,16 @@ export function parseIgnoreLine(line: string): string | null {
  * Read an ignore file (.piignore or .gitignore) and return list of
  * ctags --exclude argument values. Returns empty array if file
  * doesn't exist or can't be read.
+ *
+ * When scopePrefix is provided, each pattern is prefixed with the scope path
+ * to scope the exclude to that subdirectory. This is used for submodule
+ * .gitignore files so patterns like __pycache__/ are applied only within
+ * the submodule (e.g. flask_blogs/__pycache__) rather than globally.
+ *
+ * ctags --exclude matches against full path when pattern contains '/',
+ * otherwise matches against basename only.
  */
-export function buildIgnoreExcludes(ignoreFilePath: string): string[] {
+export function buildIgnoreExcludes(ignoreFilePath: string, scopePrefix?: string): string[] {
 	try {
 		if (!existsSync(ignoreFilePath)) return [];
 
@@ -84,7 +103,11 @@ export function buildIgnoreExcludes(ignoreFilePath: string): string[] {
 		for (const line of lines) {
 			const pattern = parseIgnoreLine(line);
 			if (pattern) {
-				excludes.push(pattern);
+				if (scopePrefix) {
+					excludes.push(`${scopePrefix}/${pattern}`);
+				} else {
+					excludes.push(pattern);
+				}
 			}
 		}
 
@@ -98,10 +121,16 @@ export function buildIgnoreExcludes(ignoreFilePath: string): string[] {
  * Recursively discover all .gitignore files under rootDir.
  * Excludes .git/ directories to avoid indexing git internals.
  *
+ * Optional skipDirs parameter specifies directory basenames to skip
+ * during traversal (e.g. ["node_modules", ".venv", "dist"]).
+ * These are typically derived from the root .gitignore file and prevent
+ * traversal into directories that are already gitignored.
+ *
  * Returns absolute paths to each .gitignore file found.
  */
-export function discoverIgnoreFiles(rootDir: string): string[] {
+export function discoverIgnoreFiles(rootDir: string, skipDirs?: string[]): string[] {
 	const results: string[] = [];
+	const skipSet = new Set(skipDirs ?? []);
 
 	try {
 		if (!existsSync(rootDir)) return [];
@@ -109,8 +138,9 @@ export function discoverIgnoreFiles(rootDir: string): string[] {
 		const entries = readdirSync(rootDir);
 
 		for (const entry of entries) {
-			// Skip .git directory
+			// Skip .git directory and any directories matching skipDirs
 			if (entry === ".git") continue;
+			if (skipSet.has(entry)) continue;
 
 			const fullPath = join(rootDir, entry);
 
@@ -118,8 +148,8 @@ export function discoverIgnoreFiles(rootDir: string): string[] {
 				const stat = statSync(fullPath);
 
 				if (stat.isDirectory()) {
-					// Recurse into subdirectories
-					const nested = discoverIgnoreFiles(fullPath);
+					// Recurse into subdirectories, passing skipDirs through
+					const nested = discoverIgnoreFiles(fullPath, skipDirs);
 					results.push(...nested);
 				} else if (entry === ".gitignore") {
 					results.push(fullPath);
