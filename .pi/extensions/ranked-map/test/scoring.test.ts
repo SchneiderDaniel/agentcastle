@@ -1,11 +1,16 @@
 /**
- * Tests for rankFiles — key alignment between keywordScores and symbolEntries
+ * Tests for rankFiles — non-indexed file exclusion
  *
- * Phase 1 (Characterization): Documents the bug where ./-prefixed keys from
- * rg don't match unprefixed keys from ctags, causing split entries.
+ * Phase 1: After fix — non-indexed files (no ctags symbols) are excluded from
+ * ranked output, preventing token waste on non-code files.
  *
- * Phase 2 (Fix verification): After path normalization in runKeywordSearch,
- * keys are consistent, producing single entries with both scores and symbols.
+ * Phase 2: Consistent keys produce correct rankings with scores and symbols.
+ *
+ * Phase 3: Targeted tests for non-indexed file exclusion behavior.
+ *
+ * Phase 4: computeFileSizeScores unit tests.
+ *
+ * Phase 5: rankFiles with fileSize weight.
  */
 
 import { describe, it } from "node:test";
@@ -30,11 +35,14 @@ function makeSymbols(names: string[]): SymbolEntry[] {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 1: Characterization — key mismatch bug
+// Phase 1: After fix — non-indexed files (no ctags symbols) are excluded
+// from ranked output, preventing token waste on non-code files.
 // ---------------------------------------------------------------------------
 
-describe("rankFiles — Phase 1: key mismatch characterization", () => {
-	it("mismatched ./ prefix keys produce two separate entries", () => {
+describe("rankFiles — Phase 1: non-indexed file exclusion", () => {
+	it("file not in symbolEntries is excluded even with keyword score", () => {
+		// Before fix, ./src/foo.ts (not in symbolEntries) would appear
+		// as a separate entry with "(no symbols)". After fix, excluded.
 		const keywordScores: Record<string, number> = { "./src/foo.ts": 1.0 };
 		const recencyScores: Record<string, number> = {};
 		const symbolEntries: Record<string, SymbolEntry[]> = {
@@ -49,20 +57,12 @@ describe("rankFiles — Phase 1: key mismatch characterization", () => {
 			symbolEntries,
 		);
 
-		// Bug: two entries for what should be the same file
-		const paths = result.files.map((f) => f.path);
-		assert.ok(paths.includes("./src/foo.ts"), "should include ./src/foo.ts entry");
-		assert.ok(paths.includes("src/foo.ts"), "should include src/foo.ts entry");
-
-		// The ./src/foo.ts entry should have score but no symbols
-		const prefixedEntry = result.files.find((f) => f.path === "./src/foo.ts");
-		assert.equal(prefixedEntry?.score, 1.0);
-		assert.ok(prefixedEntry?.symbols.includes("(no symbols)"), "prefixed entry has no symbols");
-
-		// The src/foo.ts entry should have symbols but 0 score
-		const unprefixedEntry = result.files.find((f) => f.path === "src/foo.ts");
-		assert.equal(unprefixedEntry?.score, 0.0);
-		assert.ok(unprefixedEntry?.symbols.includes("hello"), "unprefixed entry has symbols");
+		// ./src/foo.ts is excluded (not in symbolEntries).
+		// Only src/foo.ts appears — with symbols but no keyword match (different key).
+		assert.equal(result.files.length, 1);
+		assert.equal(result.files[0]!.path, "src/foo.ts");
+		assert.equal(result.files[0]!.score, 0.0);
+		assert.ok(result.files[0]!.symbols.includes("hello"), "entry should have symbols");
 	});
 
 	it("consistent keys produce single entry with both score and symbols", () => {
@@ -87,7 +87,7 @@ describe("rankFiles — Phase 1: key mismatch characterization", () => {
 		assert.ok(result.files[0]!.symbols.includes("hello"), "entry should have symbols");
 	});
 
-	it("multiple files with mixed key formats produce duplicate-like entries", () => {
+	it("multiple files with mixed key formats exclude non-indexed entries", () => {
 		const keywordScores: Record<string, number> = {
 			"./src/a.ts": 0.5,
 			"./src/b.ts": 1.0,
@@ -107,8 +107,9 @@ describe("rankFiles — Phase 1: key mismatch characterization", () => {
 			symbolEntries,
 		);
 
-		// Should be 5 entries (2 mismatched + 3 regular)
-		assert.equal(result.files.length, 5);
+		// ./src/a.ts and ./src/b.ts excluded (not in symbolEntries).
+		// Only 3 entries: src/a.ts, src/b.ts, src/c.ts
+		assert.equal(result.files.length, 3);
 	});
 
 	it("no keyword matches — all entries come from symbolEntries", () => {
@@ -129,7 +130,7 @@ describe("rankFiles — Phase 1: key mismatch characterization", () => {
 		assert.equal(result.files[0]!.path, "src/a.ts");
 	});
 
-	it("no symbolEntries — all entries come from keywordScores", () => {
+	it("empty symbolEntries returns zero entries even with keyword scores", () => {
 		const keywordScores: Record<string, number> = { "./src/a.ts": 1.0 };
 		const recencyScores: Record<string, number> = {};
 		const symbolEntries: Record<string, SymbolEntry[]> = {};
@@ -141,8 +142,8 @@ describe("rankFiles — Phase 1: key mismatch characterization", () => {
 			highBudget,
 			symbolEntries,
 		);
-		assert.equal(result.files.length, 1);
-		assert.equal(result.files[0]!.path, "./src/a.ts");
+		// Empty symbolEntries → no files in allFiles → no output
+		assert.equal(result.files.length, 0);
 	});
 });
 
@@ -239,7 +240,218 @@ describe("rankFiles — Phase 2: consistent key behavior", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 3: computeFileSizeScores
+// Phase 3: Non-indexed file exclusion — targeted behavior tests
+// ---------------------------------------------------------------------------
+
+describe("rankFiles — Phase 3: non-indexed file exclusion", () => {
+	it("file in keywordScores but not in symbolEntries is excluded", () => {
+		const keywordScores: Record<string, number> = { "not-indexed.json": 1.0 };
+		const recencyScores: Record<string, number> = {};
+		const symbolEntries: Record<string, SymbolEntry[]> = {};
+
+		const result = rankFiles(
+			keywordScores,
+			recencyScores,
+			defaultWeights,
+			highBudget,
+			symbolEntries,
+		);
+		assert.equal(result.files.length, 0, "non-indexed file should be excluded");
+	});
+
+	it("file in recencyScores but not in symbolEntries is excluded", () => {
+		const keywordScores: Record<string, number> = {};
+		const recencyScores: Record<string, number> = { "not-indexed.json": 0.8 };
+		const symbolEntries: Record<string, SymbolEntry[]> = {};
+
+		const result = rankFiles(
+			keywordScores,
+			recencyScores,
+			defaultWeights,
+			highBudget,
+			symbolEntries,
+		);
+		assert.equal(result.files.length, 0, "non-indexed file with recency should be excluded");
+	});
+
+	it("file in keywordScores AND recencyScores but not symbolEntries is excluded", () => {
+		const keywordScores: Record<string, number> = { "not-indexed.json": 1.0 };
+		const recencyScores: Record<string, number> = { "not-indexed.json": 0.8 };
+		const symbolEntries: Record<string, SymbolEntry[]> = {};
+
+		const result = rankFiles(
+			keywordScores,
+			recencyScores,
+			defaultWeights,
+			highBudget,
+			symbolEntries,
+		);
+		assert.equal(result.files.length, 0, "file with both scores but no symbols excluded");
+	});
+
+	it("indexed file with keyword score still included with score", () => {
+		const keywordScores: Record<string, number> = { "indexed.ts": 1.0 };
+		const recencyScores: Record<string, number> = {};
+		const symbolEntries: Record<string, SymbolEntry[]> = {
+			"indexed.ts": makeSymbols(["foo"]),
+		};
+
+		const result = rankFiles(
+			keywordScores,
+			recencyScores,
+			defaultWeights,
+			highBudget,
+			symbolEntries,
+		);
+		assert.equal(result.files.length, 1);
+		assert.equal(result.files[0]!.path, "indexed.ts");
+		assert.equal(result.files[0]!.score, 1.0);
+		assert.ok(result.files[0]!.symbols.includes("foo"));
+	});
+
+	it("indexed file with recency score still included with score", () => {
+		const keywordScores: Record<string, number> = {};
+		const recencyScores: Record<string, number> = { "indexed.ts": 0.5 };
+		const weights = { keyword: 0.0, recency: 1.0 };
+		const symbolEntries: Record<string, SymbolEntry[]> = {
+			"indexed.ts": makeSymbols(["bar"]),
+		};
+
+		const result = rankFiles(keywordScores, recencyScores, weights, highBudget, symbolEntries);
+		assert.equal(result.files.length, 1);
+		assert.equal(result.files[0]!.path, "indexed.ts");
+		assert.equal(result.files[0]!.score, 0.5);
+		assert.ok(result.files[0]!.symbols.includes("bar"));
+	});
+
+	it("multiple files — indexed and non-indexed — only indexed appear", () => {
+		const keywordScores: Record<string, number> = {
+			"src/app.ts": 1.0,
+			"package-lock.json": 0.5,
+			"README.md": 0.3,
+		};
+		const recencyScores: Record<string, number> = {
+			"src/app.ts": 0.9,
+			"package-lock.json": 0.8,
+		};
+		const symbolEntries: Record<string, SymbolEntry[]> = {
+			"src/app.ts": makeSymbols(["run"]),
+		};
+		const weights = { keyword: 0.6, recency: 0.4 };
+
+		const result = rankFiles(keywordScores, recencyScores, weights, highBudget, symbolEntries);
+		// Only src/app.ts appears (indexed); package-lock.json and README.md excluded
+		assert.equal(result.files.length, 1);
+		assert.equal(result.files[0]!.path, "src/app.ts");
+		// Score: 1.0*0.6 + 0.9*0.4 = 0.6 + 0.36 = 0.96
+		assert.equal(result.files[0]!.score, 0.96);
+	});
+
+	it("indexed file with both keyword and recency scores", () => {
+		const keywordScores: Record<string, number> = { "lib/helper.ts": 0.8 };
+		const recencyScores: Record<string, number> = { "lib/helper.ts": 0.3 };
+		const weights = { keyword: 0.5, recency: 0.5 };
+		const symbolEntries: Record<string, SymbolEntry[]> = {
+			"lib/helper.ts": makeSymbols(["help"]),
+		};
+
+		const result = rankFiles(keywordScores, recencyScores, weights, highBudget, symbolEntries);
+		assert.equal(result.files.length, 1);
+		assert.equal(result.files[0]!.path, "lib/helper.ts");
+		// 0.8*0.5 + 0.3*0.5 = 0.4 + 0.15 = 0.55
+		assert.equal(result.files[0]!.score, 0.55);
+	});
+
+	it("symbolEntries with empty arrays — file still appears (indexed)", () => {
+		const keywordScores: Record<string, number> = { "empty.ts": 0.7 };
+		const recencyScores: Record<string, number> = {};
+		const symbolEntries: Record<string, SymbolEntry[]> = {
+			"empty.ts": [], // empty symbol array but file IS indexed
+		};
+
+		const result = rankFiles(
+			keywordScores,
+			recencyScores,
+			defaultWeights,
+			highBudget,
+			symbolEntries,
+		);
+		// Empty symbol array means the file has an entry in symbolEntries → it's indexed → included
+		assert.equal(result.files.length, 1);
+		assert.equal(result.files[0]!.path, "empty.ts");
+		assert.equal(result.files[0]!.score, 0.7);
+	});
+
+	it("large tokenBudget includes all indexed files", () => {
+		const keywordScores: Record<string, number> = {
+			"a.ts": 1.0,
+			"b.ts": 0.5,
+			"c.ts": 0.2,
+		};
+		const recencyScores: Record<string, number> = {};
+		const symbolEntries: Record<string, SymbolEntry[]> = {
+			"a.ts": makeSymbols(["a"]),
+			"b.ts": makeSymbols(["b"]),
+			"c.ts": makeSymbols(["c"]),
+		};
+
+		const result = rankFiles(keywordScores, recencyScores, defaultWeights, 10_000, symbolEntries);
+		// All 3 indexed files appear
+		assert.equal(result.files.length, 3);
+	});
+
+	it("tokenBudget 0 returns empty files", () => {
+		const keywordScores: Record<string, number> = { "a.ts": 1.0 };
+		const recencyScores: Record<string, number> = {};
+		const symbolEntries: Record<string, SymbolEntry[]> = {
+			"a.ts": makeSymbols(["a"]),
+		};
+
+		const result = rankFiles(keywordScores, recencyScores, defaultWeights, 0, symbolEntries);
+		assert.equal(result.files.length, 0, "zero budget returns empty");
+		assert.ok(result.truncated, "should be truncated when budget is 0");
+	});
+
+	it("empty symbolEntries returns empty files with keyword and recency data present", () => {
+		const keywordScores: Record<string, number> = { "a.ts": 1.0, "b.ts": 0.5 };
+		const recencyScores: Record<string, number> = { "a.ts": 0.9 };
+		const symbolEntries: Record<string, SymbolEntry[]> = {};
+
+		const result = rankFiles(
+			keywordScores,
+			recencyScores,
+			defaultWeights,
+			highBudget,
+			symbolEntries,
+		);
+		assert.equal(result.files.length, 0, "no symbols → no files");
+	});
+
+	it("empty symbolEntries AND empty keywordScores AND empty recencyScores returns empty", () => {
+		const result = rankFiles({}, {}, defaultWeights, highBudget, {});
+		assert.equal(result.files.length, 0, "all empty → no files");
+	});
+
+	it("fileSizeScores for non-indexed files are ignored", () => {
+		const kw: Record<string, number> = { "indexed.ts": 1.0 };
+		const rec: Record<string, number> = {};
+		const fs: Record<string, number> = {
+			"indexed.ts": 1.0,
+			"not-indexed.ts": 0.5, // non-indexed — should be ignored
+		};
+		const weights = { keyword: 0.5, recency: 0.0, fileSize: 0.5 };
+		const syms: Record<string, SymbolEntry[]> = {
+			"indexed.ts": makeSymbols(["foo"]),
+		};
+
+		const result = rankFiles(kw, rec, weights, highBudget, syms, fs);
+		assert.equal(result.files.length, 1, "only indexed file appears");
+		assert.equal(result.files[0]!.path, "indexed.ts");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4: computeFileSizeScores
 // ---------------------------------------------------------------------------
 
 describe("computeFileSizeScores", () => {
@@ -293,7 +505,7 @@ describe("computeFileSizeScores", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 4: rankFiles with fileSize weight
+// Phase 5: rankFiles with fileSize weight
 // ---------------------------------------------------------------------------
 
 describe("rankFiles with fileSize weight", () => {
