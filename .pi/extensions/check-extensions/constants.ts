@@ -61,6 +61,7 @@ const _CHANGELOG_API_TO_PATTERN: Record<string, string[]> = {
 	extension: ["pi.on", "pi.registerCommand"],
 	SDK: ["pi.exec", "pi.sendUserMessage"],
 	config: ["pi.registerFlag", "pi.getFlag"],
+	"config option": ["pi.registerFlag", "pi.getFlag"],
 	export: ["pi.sendUserMessage", "pi.sendMessage"],
 };
 

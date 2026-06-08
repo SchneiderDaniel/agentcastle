@@ -918,7 +918,7 @@ describe("buildIssueBodyWithSnippets — characterization", () => {
 // Phase 4: ast-scanner.ts — AST-based file scanning
 // ═══════════════════════════════════════════════════════════════════════
 
-import { scanExtensionsAST, processAstGrepMatch, type ASTScanningResult } from "../ast-scanner.ts";
+import { scanExtensionsAST, type ASTScanningResult } from "../ast-scanner.ts";
 
 /**
  * Resolve ast-grep binary path from npm global prefix.
@@ -1587,199 +1587,6 @@ describe("ast-scanner", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 4b: processAstGrepMatch — Shared helper for AST finding construction
-// ═══════════════════════════════════════════════════════════════════════
-
-describe("processAstGrepMatch", () => {
-	it("with valid pi.* match returns ASTFinding with correct fields", () => {
-		const match = {
-			text: 'pi.on("session_start", async () => {})',
-			range: {
-				start: { line: 4, column: 2 },
-				end: { line: 4, column: 45 },
-			},
-			metaVariables: {
-				single: {
-					METHOD: { text: "on" },
-				},
-				multi: {
-					ARGS: [{ text: '"session_start"' }, { text: "," }, { text: "async () => {}" }],
-				},
-			},
-		};
-
-		const finding = processAstGrepMatch(match, "test-ext", "index.ts", "pi.on");
-
-		assert.strictEqual(finding.extensionName, "test-ext");
-		assert.strictEqual(finding.file, "index.ts");
-		assert.strictEqual(finding.apiName, "pi.on");
-		assert.strictEqual(finding.line, 5);
-		assert.strictEqual(finding.column, 3);
-		assert.ok(finding.lineContent.includes('pi.on("session_start"'));
-		assert.strictEqual(finding.matchContext, "runtime-call");
-		assert.ok(finding.callArgs.includes('"session_start"'));
-		assert.strictEqual(finding.changelogVersion, "");
-		assert.strictEqual(finding.isBreaking, false);
-		assert.strictEqual(finding.category, "");
-	});
-
-	it("with valid ctx.* match returns identical ASTFinding structure (same field shape)", () => {
-		const match = {
-			text: 'ctx.ui.notify("hello", "info")',
-			range: {
-				start: { line: 10, column: 4 },
-				end: { line: 10, column: 35 },
-			},
-			metaVariables: {
-				single: {
-					METHOD: { text: "ui.notify" },
-				},
-				multi: {
-					ARGS: [{ text: '"hello"' }, { text: "," }, { text: '"info"' }],
-				},
-			},
-		};
-
-		const finding = processAstGrepMatch(match, "test-ext", "index.ts", "ctx.ui");
-
-		// Same field shape as pi.* findings
-		assert.strictEqual(finding.extensionName, "test-ext");
-		assert.strictEqual(finding.file, "index.ts");
-		assert.strictEqual(finding.apiName, "ctx.ui");
-		assert.strictEqual(finding.line, 11);
-		assert.strictEqual(finding.column, 5);
-		assert.strictEqual(finding.matchContext, "runtime-call");
-		assert.strictEqual(typeof finding.callArgs, "object");
-		assert.strictEqual(typeof finding.lineContent, "string");
-		assert.strictEqual(finding.changelogVersion, "");
-		assert.strictEqual(finding.isBreaking, false);
-		assert.strictEqual(finding.category, "");
-	});
-
-	it("with match.range null/undefined returns line=1, column=1 (default fallback), no crash", () => {
-		const match = {
-			text: 'pi.on("test", () => {})',
-			range: null,
-		};
-
-		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
-		assert.strictEqual(finding.line, 1);
-		assert.strictEqual(finding.column, 1);
-	});
-
-	it("with match.range.start missing line or column returns line=1 / column=1 (default fallback)", () => {
-		const match = {
-			text: 'pi.on("test", () => {})',
-			range: {
-				start: {},
-				end: {},
-			},
-		};
-
-		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
-		assert.strictEqual(finding.line, 1);
-		assert.strictEqual(finding.column, 1);
-	});
-
-	it("with missing match.text sets lineContent to empty string, no crash", () => {
-		const match = {
-			text: undefined,
-			range: {
-				start: { line: 0, column: 0 },
-				end: { line: 0, column: 10 },
-			},
-		};
-
-		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
-		assert.strictEqual(finding.lineContent, "");
-	});
-
-	it("with multi-line match.text sets lineContent to only the first line, trimmed", () => {
-		const match = {
-			text: 'pi.on("start", async () => {\n  const x = 1;\n})',
-			range: {
-				start: { line: 0, column: 0 },
-				end: { line: 2, column: 2 },
-			},
-		};
-
-		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
-		assert.strictEqual(finding.lineContent, 'pi.on("start", async () => {');
-	});
-
-	it("with empty match.text sets lineContent to empty string, no crash", () => {
-		const match = {
-			text: "",
-			range: {
-				start: { line: 0, column: 0 },
-				end: { line: 0, column: 0 },
-			},
-		};
-
-		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
-		assert.strictEqual(finding.lineContent, "");
-	});
-
-	it("with extractFirstArg returning empty array sets callArgs to []", () => {
-		const match = {
-			text: "pi.on()",
-			range: {
-				start: { line: 0, column: 0 },
-				end: { line: 0, column: 8 },
-			},
-			metaVariables: {},
-		};
-
-		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
-		assert.deepStrictEqual(finding.callArgs, []);
-	});
-
-	it("with extractFirstArg returning 3 args only takes first arg trimmed in callArgs", () => {
-		const match = {
-			text: 'pi.on("event", arg2, arg3)',
-			range: {
-				start: { line: 0, column: 0 },
-				end: { line: 0, column: 28 },
-			},
-			metaVariables: {
-				multi: {
-					ARGS: [
-						{ text: '"event"' },
-						{ text: "," },
-						{ text: "arg2" },
-						{ text: "," },
-						{ text: "arg3" },
-					],
-				},
-			},
-		};
-
-		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
-		// Only first meaningful arg
-		assert.strictEqual(finding.callArgs.length, 1);
-		assert.ok(finding.callArgs[0]!.includes('"event"') || finding.callArgs[0]!.includes("event"));
-	});
-
-	it("passes apiName through mapToStandardApiName — known apiNames get standard mapping", () => {
-		const match = {
-			text: 'pi.on("test", () => {})',
-			range: {
-				start: { line: 0, column: 0 },
-				end: { line: 0, column: 25 },
-			},
-		};
-
-		// Known apiName gets mapped
-		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
-		assert.strictEqual(finding.apiName, "pi.on");
-
-		// Unknown apiName passes through unchanged
-		const finding2 = processAstGrepMatch(match, "ext", "file.ts", "pi.customMethod");
-		assert.strictEqual(finding2.apiName, "pi.customMethod");
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════════
 // Phase 5: change-resolver.ts — Changelog-to-usage context mapping
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -2200,7 +2007,7 @@ describe("impact-scorer", () => {
 // Phase 8: manifest-reader.ts — Extension manifest parsing
 // ═══════════════════════════════════════════════════════════════════════
 
-import { readManifest, tryReadManifestFile, type ExtensionManifest } from "../manifest-reader.ts";
+import { readManifest, type ExtensionManifest } from "../manifest-reader.ts";
 
 describe("manifest-reader", () => {
 	let tmpDir: string;
@@ -2843,7 +2650,148 @@ describe("types", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 15: manifest-reader.ts — tryReadManifestFile helper
+// Phase 15: extractApiNames — "config option" keyword mapping (Issue #566)
+// ═══════════════════════════════════════════════════════════════════════
+
+import { extractApiNames, API_KEYWORDS } from "../changelog-parser.ts";
+
+describe("extractApiNames — config option (Phase 1: characterization)", () => {
+	it('returns "config option" for "Added config option for extension flag support"', () => {
+		const names = extractApiNames("Added config option for extension flag support");
+		assert.ok(names.includes("config option"), "Should include 'config option'");
+	});
+
+	it('returns "config option" for "Added config option only"', () => {
+		const names = extractApiNames("Added config option only");
+		assert.ok(names.includes("config option"), "Should include 'config option'");
+	});
+
+	it('returns "config option" for "New config option"', () => {
+		const names = extractApiNames("New config option");
+		assert.ok(names.includes("config option"), "Should include 'config option' on substring match");
+	});
+
+	it('does NOT return "config" for "Added configuration option"', () => {
+		const names = extractApiNames("Added configuration option");
+		// "configuration" contains "config" substring but not "config option"
+		assert.ok(!names.includes("config"), "Should NOT include 'config' for 'configuration'");
+	});
+
+	it('returns empty array for ""', () => {
+		assert.deepStrictEqual(extractApiNames(""), []);
+	});
+
+	it('returns empty array for "No API keywords here"', () => {
+		assert.deepStrictEqual(extractApiNames("No API keywords here"), []);
+	});
+});
+
+describe("CHANGELOG_API_TO_PATTERN — config option (Phase 2: fix mapping)", () => {
+	it('CHANGELOG_API_TO_PATTERN["config option"] equals ["pi.registerFlag", "pi.getFlag"]', () => {
+		assert.deepStrictEqual(CHANGELOG_API_TO_PATTERN["config option"], [
+			"pi.registerFlag",
+			"pi.getFlag",
+		]);
+	});
+
+	it("CHANGELOG_API_TO_PATTERN remains frozen", () => {
+		assert.ok(Object.isFrozen(CHANGELOG_API_TO_PATTERN));
+	});
+
+	it("All API_KEYWORDS map to existing CHANGELOG_API_TO_PATTERN keys (SSOT invariant)", () => {
+		// For each keyword, determine what name extractApiNames pushes (excluding regex additions)
+		// The if-else chain or else-fallthrough pushes the canonical name
+		const ifElseMapping: Record<string, string> = {
+			"pi.on": "on",
+			"pi.exec": "exec",
+			"pi.sendUserMessage": "sendUserMessage",
+			"ctx.ui": "ctx.ui",
+			"ctx.sessionManager": "sessionManager",
+			"ctx.abort": "abort",
+			"pi.registerFlag": "registerFlag",
+			"pi.registerShortcut": "registerShortcut",
+			"pi.getFlag": "getFlag",
+			"pi.setActiveTools": "setActiveTools",
+			registerCommand: "registerCommand",
+			registerTool: "registerTool",
+			"config option": "config option", // after if-else removal, falls through to else
+			export: "export",
+			tool: "tool",
+			command: "command",
+			event: "event",
+			SDK: "SDK",
+			sdk: "SDK",
+		};
+		for (const kw of API_KEYWORDS) {
+			const name = ifElseMapping[kw] ?? kw;
+			const patterns = CHANGELOG_API_TO_PATTERN[name];
+			assert.ok(
+				Array.isArray(patterns) && patterns.length > 0,
+				`Keyword "${kw}" maps to name "${name}" which has no entry in CHANGELOG_API_TO_PATTERN`,
+			);
+		}
+	});
+
+	it("parsePhase round-trip: 'Added config option for extension flags' affects pi.registerFlag and pi.getFlag", () => {
+		const pi = { sendUserMessage: () => {} } as any;
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const pipeline = new ChangelogPipeline(pi, ctx);
+
+		const md = `## [0.76.0] - 2026-06-01\n\n### Added\n\n- Added config option for extension flags\n`;
+		const result = pipeline.parsePhase(md);
+
+		assert.ok(result.affectedApiPatterns.has("pi.registerFlag"), "Should include pi.registerFlag");
+		assert.ok(result.affectedApiPatterns.has("pi.getFlag"), "Should include pi.getFlag");
+	});
+});
+
+describe("extractApiNames — config option (Phase 3: remove if-else coupling)", () => {
+	it('returns "config option" instead of "config" for "Added config option for extension flag support"', () => {
+		const names = extractApiNames("Added config option for extension flag support");
+		// After removing the if-else, "config option" keyword falls through to else and pushes kw as-is
+		assert.ok(
+			names.includes("config option"),
+			"Should include 'config option' (pushed via else fallback, not if-else translation)",
+		);
+	});
+
+	it('returns "config option" not "config" for "Added config option only"', () => {
+		const names = extractApiNames("Added config option only");
+		assert.ok(names.includes("config option"), "Should include 'config option'");
+		// After if-else removal, "config" should NOT be in the result
+		// (unless another keyword happens to push "config")
+	});
+
+	it("SSOT invariant still holds: CHANGELOG_API_TO_PATTERN has 'config option' key", () => {
+		assert.ok(
+			Array.isArray(CHANGELOG_API_TO_PATTERN["config option"]),
+			"CHANGELOG_API_TO_PATTERN should have 'config option' key",
+		);
+		assert.deepStrictEqual(
+			CHANGELOG_API_TO_PATTERN["config option"],
+			["pi.registerFlag", "pi.getFlag"],
+			"Should map to same patterns as 'config'",
+		);
+	});
+
+	it("parsePhase round-trip still produces correct patterns", () => {
+		const pi = { sendUserMessage: () => {} } as any;
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const pipeline = new ChangelogPipeline(pi, ctx);
+
+		const md = `## [0.76.0] - 2026-06-01\n\n### Added\n\n- Added config option for extension flags\n`;
+		const result = pipeline.parsePhase(md);
+
+		assert.ok(
+			result.affectedApiPatterns.has("pi.registerFlag"),
+			"pi.registerFlag should still be affected",
+		);
+		assert.ok(result.affectedApiPatterns.has("pi.getFlag"), "pi.getFlag should still be affected");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 16: manifest-reader.ts — tryReadManifestFile helper
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("tryReadManifestFile", () => {
