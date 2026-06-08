@@ -161,6 +161,40 @@ function extractFirstArg(match: Record<string, unknown>): string[] {
 // }
 
 /**
+ * Build an ASTFinding from an ast-grep match and contextual metadata.
+ *
+ * Shared helper used by both pi.* and ctx.* processing blocks to eliminate
+ * near-identical code duplication (previously ~27 lines × 2 locations).
+ */
+export function processAstGrepMatch(
+	match: Record<string, unknown>,
+	dirName: string,
+	filePath: string,
+	apiName: string,
+): ASTFinding {
+	const range = match.range as Record<string, unknown>;
+	const start = range?.start as Record<string, number> | undefined;
+	const lineNum = (start?.line ?? 0) + 1;
+	const colNum = (start?.column ?? 0) + 1;
+	const firstLine = ((match.text ?? "") as string).split("\n")[0] ?? "";
+	const args = extractFirstArg(match);
+
+	return {
+		extensionName: dirName,
+		file: filePath,
+		apiName: mapToStandardApiName(apiName),
+		line: lineNum,
+		column: colNum,
+		lineContent: firstLine.trim(),
+		matchContext: "runtime-call",
+		callArgs: args.map((a) => a.trim()),
+		changelogVersion: "",
+		isBreaking: false,
+		category: "",
+	};
+}
+
+/**
  * Run ast-grep for a pattern and parse JSON results.
  */
 async function runAstGrep(
@@ -426,29 +460,7 @@ export async function scanExtensionsAST(
 				const apiName = classifyApiName(methodText, true, false);
 				if (!apiName || !targetPiMethods.has(methodText)) continue;
 
-				const text = match.text as string;
-				const range = match.range as Record<string, unknown>;
-				const start = range?.start as Record<string, number> | undefined;
-				const lineNum = (start?.line ?? 0) + 1;
-				const colNum = (start?.column ?? 0) + 1;
-				const lines = text as string;
-				const firstLine = lines.split("\n")[0] ?? "";
-
-				const args = extractFirstArg(match);
-
-				findings.push({
-					extensionName: dirName,
-					file: filePath,
-					apiName: mapToStandardApiName(apiName),
-					line: lineNum,
-					column: colNum,
-					lineContent: firstLine.trim(),
-					matchContext: "runtime-call",
-					callArgs: args.map((a) => a.trim()),
-					changelogVersion: "",
-					isBreaking: false,
-					category: "",
-				});
+				findings.push(processAstGrepMatch(match, dirName, filePath, apiName));
 			}
 		}
 
@@ -466,28 +478,7 @@ export async function scanExtensionsAST(
 				const baseMethod = methodText.split(".")[0] ?? methodText;
 				if (!targetCtxMethods.has(baseMethod)) continue;
 
-				const text = match.text as string;
-				const range = match.range as Record<string, unknown>;
-				const start = range?.start as Record<string, number> | undefined;
-				const lineNum = (start?.line ?? 0) + 1;
-				const colNum = (start?.column ?? 0) + 1;
-				const firstLine = (text as string).split("\n")[0] ?? "";
-
-				const args = extractFirstArg(match);
-
-				findings.push({
-					extensionName: dirName,
-					file: filePath,
-					apiName: mapToStandardApiName(apiName),
-					line: lineNum,
-					column: colNum,
-					lineContent: firstLine.trim(),
-					matchContext: "runtime-call",
-					callArgs: args.map((a) => a.trim()),
-					changelogVersion: "",
-					isBreaking: false,
-					category: "",
-				});
+				findings.push(processAstGrepMatch(match, dirName, filePath, apiName));
 			}
 		}
 

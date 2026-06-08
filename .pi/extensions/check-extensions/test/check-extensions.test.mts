@@ -918,7 +918,7 @@ describe("buildIssueBodyWithSnippets — characterization", () => {
 // Phase 4: ast-scanner.ts — AST-based file scanning
 // ═══════════════════════════════════════════════════════════════════════
 
-import { scanExtensionsAST, type ASTScanningResult } from "../ast-scanner.ts";
+import { scanExtensionsAST, processAstGrepMatch, type ASTScanningResult } from "../ast-scanner.ts";
 
 /**
  * Resolve ast-grep binary path from npm global prefix.
@@ -1583,6 +1583,199 @@ describe("ast-scanner", () => {
 		assert.strictEqual(cavemanFindings.length, 1);
 		const rootFindings = result.findings.filter((f) => f.extensionName === "tsc-checkpoint");
 		assert.strictEqual(rootFindings.length, 1);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 4b: processAstGrepMatch — Shared helper for AST finding construction
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("processAstGrepMatch", () => {
+	it("with valid pi.* match returns ASTFinding with correct fields", () => {
+		const match = {
+			text: 'pi.on("session_start", async () => {})',
+			range: {
+				start: { line: 4, column: 2 },
+				end: { line: 4, column: 45 },
+			},
+			metaVariables: {
+				single: {
+					METHOD: { text: "on" },
+				},
+				multi: {
+					ARGS: [{ text: '"session_start"' }, { text: "," }, { text: "async () => {}" }],
+				},
+			},
+		};
+
+		const finding = processAstGrepMatch(match, "test-ext", "index.ts", "pi.on");
+
+		assert.strictEqual(finding.extensionName, "test-ext");
+		assert.strictEqual(finding.file, "index.ts");
+		assert.strictEqual(finding.apiName, "pi.on");
+		assert.strictEqual(finding.line, 5);
+		assert.strictEqual(finding.column, 3);
+		assert.ok(finding.lineContent.includes('pi.on("session_start"'));
+		assert.strictEqual(finding.matchContext, "runtime-call");
+		assert.ok(finding.callArgs.includes('"session_start"'));
+		assert.strictEqual(finding.changelogVersion, "");
+		assert.strictEqual(finding.isBreaking, false);
+		assert.strictEqual(finding.category, "");
+	});
+
+	it("with valid ctx.* match returns identical ASTFinding structure (same field shape)", () => {
+		const match = {
+			text: 'ctx.ui.notify("hello", "info")',
+			range: {
+				start: { line: 10, column: 4 },
+				end: { line: 10, column: 35 },
+			},
+			metaVariables: {
+				single: {
+					METHOD: { text: "ui.notify" },
+				},
+				multi: {
+					ARGS: [{ text: '"hello"' }, { text: "," }, { text: '"info"' }],
+				},
+			},
+		};
+
+		const finding = processAstGrepMatch(match, "test-ext", "index.ts", "ctx.ui");
+
+		// Same field shape as pi.* findings
+		assert.strictEqual(finding.extensionName, "test-ext");
+		assert.strictEqual(finding.file, "index.ts");
+		assert.strictEqual(finding.apiName, "ctx.ui");
+		assert.strictEqual(finding.line, 11);
+		assert.strictEqual(finding.column, 5);
+		assert.strictEqual(finding.matchContext, "runtime-call");
+		assert.strictEqual(typeof finding.callArgs, "object");
+		assert.strictEqual(typeof finding.lineContent, "string");
+		assert.strictEqual(finding.changelogVersion, "");
+		assert.strictEqual(finding.isBreaking, false);
+		assert.strictEqual(finding.category, "");
+	});
+
+	it("with match.range null/undefined returns line=1, column=1 (default fallback), no crash", () => {
+		const match = {
+			text: 'pi.on("test", () => {})',
+			range: null,
+		};
+
+		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
+		assert.strictEqual(finding.line, 1);
+		assert.strictEqual(finding.column, 1);
+	});
+
+	it("with match.range.start missing line or column returns line=1 / column=1 (default fallback)", () => {
+		const match = {
+			text: 'pi.on("test", () => {})',
+			range: {
+				start: {},
+				end: {},
+			},
+		};
+
+		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
+		assert.strictEqual(finding.line, 1);
+		assert.strictEqual(finding.column, 1);
+	});
+
+	it("with missing match.text sets lineContent to empty string, no crash", () => {
+		const match = {
+			text: undefined,
+			range: {
+				start: { line: 0, column: 0 },
+				end: { line: 0, column: 10 },
+			},
+		};
+
+		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
+		assert.strictEqual(finding.lineContent, "");
+	});
+
+	it("with multi-line match.text sets lineContent to only the first line, trimmed", () => {
+		const match = {
+			text: 'pi.on("start", async () => {\n  const x = 1;\n})',
+			range: {
+				start: { line: 0, column: 0 },
+				end: { line: 2, column: 2 },
+			},
+		};
+
+		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
+		assert.strictEqual(finding.lineContent, 'pi.on("start", async () => {');
+	});
+
+	it("with empty match.text sets lineContent to empty string, no crash", () => {
+		const match = {
+			text: "",
+			range: {
+				start: { line: 0, column: 0 },
+				end: { line: 0, column: 0 },
+			},
+		};
+
+		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
+		assert.strictEqual(finding.lineContent, "");
+	});
+
+	it("with extractFirstArg returning empty array sets callArgs to []", () => {
+		const match = {
+			text: "pi.on()",
+			range: {
+				start: { line: 0, column: 0 },
+				end: { line: 0, column: 8 },
+			},
+			metaVariables: {},
+		};
+
+		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
+		assert.deepStrictEqual(finding.callArgs, []);
+	});
+
+	it("with extractFirstArg returning 3 args only takes first arg trimmed in callArgs", () => {
+		const match = {
+			text: 'pi.on("event", arg2, arg3)',
+			range: {
+				start: { line: 0, column: 0 },
+				end: { line: 0, column: 28 },
+			},
+			metaVariables: {
+				multi: {
+					ARGS: [
+						{ text: '"event"' },
+						{ text: "," },
+						{ text: "arg2" },
+						{ text: "," },
+						{ text: "arg3" },
+					],
+				},
+			},
+		};
+
+		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
+		// Only first meaningful arg
+		assert.strictEqual(finding.callArgs.length, 1);
+		assert.ok(finding.callArgs[0]!.includes('"event"') || finding.callArgs[0]!.includes("event"));
+	});
+
+	it("passes apiName through mapToStandardApiName — known apiNames get standard mapping", () => {
+		const match = {
+			text: 'pi.on("test", () => {})',
+			range: {
+				start: { line: 0, column: 0 },
+				end: { line: 0, column: 25 },
+			},
+		};
+
+		// Known apiName gets mapped
+		const finding = processAstGrepMatch(match, "ext", "file.ts", "pi.on");
+		assert.strictEqual(finding.apiName, "pi.on");
+
+		// Unknown apiName passes through unchanged
+		const finding2 = processAstGrepMatch(match, "ext", "file.ts", "pi.customMethod");
+		assert.strictEqual(finding2.apiName, "pi.customMethod");
 	});
 });
 
