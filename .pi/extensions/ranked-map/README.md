@@ -44,7 +44,7 @@ Each phase accepts `ExecFn` + config via constructor, making all methods testabl
 2. The index is cached to disk keyed by current git HEAD, config hash, and target directory scope
 3. When called, the extension selects mode:
    - **Full dump** — repo small enough, returns all files sorted by path up to token budget
-   - **Ranked** — runs `rg --files-with-matches` for keyword scoring, `git log --name-only` for recency scoring (includes submodule commits via `discoverSubmodules` + `runGitRecency`), then combines scores with configurable weights. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory
+   - **Ranked** — runs `rg --files-with-matches` for keyword scoring, `git log --name-only` for recency scoring (includes submodule commits via `discoverSubmodules` + `runGitRecency`), then combines scores with configurable weights. Only files present in the ctags symbol index are eligible for ranking — files excluded by `--exclude` patterns (`.json`, `.md`, `node_modules`, etc.) are filtered out regardless of keyword or recency matches, preventing token waste on non-code files. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory
 4. Results are formatted as JSON with file paths, symbols, token counts, and (in ranked mode) file previews showing definition lines
 
 ## Install
