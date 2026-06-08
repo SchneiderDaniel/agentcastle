@@ -36,7 +36,7 @@ const RETRY_BASE_DELAY_MS = 1000;
  * - Returns PrCreationResult instead of void (Bug 6 fix)
  * - Push failure stops the flow early (Bug 3 fix)
  * - Retries gh pr create with exponential backoff (Bug 5 fix)
- * - Uses --json number for machine-parseable output (Bug 7 fix)
+ * - Pre-checks commit count before PR creation (Bug 3 fix)
  */
 export async function createPrOnApproval(
 	pi: ExtensionAPI,

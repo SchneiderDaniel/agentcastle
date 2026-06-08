@@ -539,8 +539,7 @@ describe("createPrOnApproval()", () => {
 				{ code: 0, stdout: "push ok", stderr: "" },
 				compareAheadResponse(3),
 				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
-				// Returns JSON with --json number
-				{ code: 0, stdout: '{"number":456}', stderr: "" },
+				{ code: 0, stdout: "https://github.com/o/r/pull/456\n", stderr: "" },
 			],
 			execCalls,
 		);
@@ -673,7 +672,7 @@ describe("createPrOnApproval()", () => {
 				// 3. gh pr list FAILS
 				{ code: 1, stdout: "", stderr: "network error" },
 				// 4. gh pr create (should still attempt)
-				{ code: 0, stdout: '{"number":456}', stderr: "" },
+				{ code: 0, stdout: "https://github.com/o/r/pull/456\n", stderr: "" },
 			],
 			execCalls,
 		);
@@ -711,7 +710,7 @@ describe("createPrOnApproval()", () => {
 				// 1st gh pr create FAILS
 				{ code: 1, stdout: "", stderr: "rate limit exceeded" },
 				// 2nd gh pr create succeeds (retry)
-				{ code: 0, stdout: '{"number":789}', stderr: "" },
+				{ code: 0, stdout: "https://github.com/o/r/pull/789\n", stderr: "" },
 			],
 			execCalls,
 		);

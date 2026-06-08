@@ -126,18 +126,6 @@ describe("createPullRequest()", () => {
 		assert.equal(args.includes("--json"), false, "should NOT include --json flag");
 	});
 
-	it("can parse both URL and JSON formats for backward compat", async () => {
-		// URL format (default gh pr create output)
-		const pi1 = createMockPi({ code: 0, stdout: "https://github.com/o/r/pull/42", stderr: "" });
-		const r1 = await createPullRequest(pi1, "o/r", "main", "b1", "title");
-		assert.equal(r1.number, 42);
-
-		// JSON format (backward compat with older code)
-		const pi2 = createMockPi({ code: 0, stdout: '{"number":99}', stderr: "" });
-		const r2 = await createPullRequest(pi2, "o/r", "main", "b2", "title");
-		assert.equal(r2.number, 99);
-	});
-
 	it("throws when gh output has no parseable PR number", async () => {
 		const pi = createMockPi({ code: 0, stdout: "unexpected output without number", stderr: "" });
 		await assert.rejects(
