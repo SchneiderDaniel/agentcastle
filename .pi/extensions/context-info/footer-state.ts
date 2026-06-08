@@ -29,6 +29,10 @@ export class FooterState {
 	startupWidgetActive = false;
 	timerInterval: ReturnType<typeof setInterval> | null = null;
 
+	/** Disposed flag: set true when state is replaced on session transition.
+	 *  Prevents stale ctx access from timer callback after runner invalidation. */
+	disposed = false;
+
 	ctx: ExtensionContext;
 	installFooterCb: InstallFooterFn;
 
@@ -47,8 +51,16 @@ export class FooterState {
 		};
 	}
 
-	/** Invoke the footer install callback with current context and footerConfig */
+	/** Mark state as disposed — stops timer and prevents any further callInstallFooter */
+	dispose(): void {
+		this.disposed = true;
+		this.stopTimer();
+	}
+
+	/** Invoke the footer install callback with current context and footerConfig.
+	 *  No-op if state is disposed (prevents stale ctx access after session replacement). */
 	callInstallFooter(): void {
+		if (this.disposed) return;
 		this.installFooterCb(this.ctx, this.config, this.footerConfig);
 	}
 
@@ -57,8 +69,13 @@ export class FooterState {
 	startTimer(): void {
 		this.stopTimer();
 		this.timerInterval = setInterval(() => {
-			if (this.config) {
+			if (this.disposed || !this.config) return;
+			try {
 				this.callInstallFooter();
+			} catch (e) {
+				// If ctx is stale from session replacement, stop silently
+				this.disposed = true;
+				this.stopTimer();
 			}
 		}, 1000);
 	}

@@ -71,11 +71,11 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	// ── Hooks ──────────────────────────────────────────────────────
 
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
-		// Stop previous session's timer to prevent stale ctx usage after
+		// Dispose previous state to prevent stale ctx usage after
 		// reload/newSession/fork/switchSession. The old state's timer closure
 		// holds a captured ctx that becomes invalid on session replacement.
 		if (state) {
-			state.stopTimer();
+			state.dispose();
 		}
 		state = new FooterState(ctx, installFooter);
 		state.resetProperties();
