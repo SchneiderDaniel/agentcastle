@@ -818,7 +818,7 @@ describe("Phase 10: .gitignore integration", () => {
 		assert.equal(parseIgnoreLine(".eggs/"), ".eggs");
 		assert.equal(parseIgnoreLine("*.egg-info"), "*.egg-info");
 		assert.equal(parseIgnoreLine("*.so"), "*.so");
-		assert.equal(parseIgnoreLine("**/venv/"), null);
+		assert.equal(parseIgnoreLine("**/venv/"), "venv");
 	});
 
 	it("buildIgnoreExcludes reads .gitignore content", () => {
@@ -923,7 +923,7 @@ describe("Phase 10: .gitignore integration", () => {
 		}
 	});
 
-	it("buildOrLoadIndex with .gitignore in target subdirectory", async () => {
+	it("buildOrLoadIndex scopes submodule .gitignore patterns", async () => {
 		const dir = tmpDir();
 		try {
 			// Create .gitignore in a subdirectory (simulating submodule)
@@ -961,10 +961,15 @@ describe("Phase 10: .gitignore integration", () => {
 				ctagsCall!.args.includes("--exclude=pi_ignored"),
 				"should include piignore exclude",
 			);
-			// Should include gitignore exclude from subdirectory
+			// Submodule .gitignore exclude should be SCOPED with submod/ prefix
 			assert.ok(
-				ctagsCall!.args.includes("--exclude=sub_ignored"),
-				"should include gitignore exclude from submodule",
+				ctagsCall!.args.includes("--exclude=submod/sub_ignored"),
+				"submodule gitignore exclude should be scoped with submod/ prefix",
+			);
+			// The un-scoped version should NOT be present
+			assert.ok(
+				!ctagsCall!.args.includes("--exclude=sub_ignored"),
+				"submodule gitignore exclude should NOT appear unscoped",
 			);
 		} finally {
 			cleanup(dir);

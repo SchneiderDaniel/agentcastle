@@ -80,8 +80,8 @@ describe("parsePiignoreLine", () => {
 		assert.equal(parsePiignoreLine("*.pem"), "*.pem");
 	});
 
-	it("returns pattern for nested glob", () => {
-		assert.equal(parsePiignoreLine("**/credentials.*"), null); // contains **
+	it("strips **/ prefix from glob pattern", () => {
+		assert.equal(parsePiignoreLine("**/credentials.*"), "credentials.*");
 	});
 
 	it("returns pattern for directory glob", () => {
@@ -291,8 +291,8 @@ describe("parseIgnoreLine", () => {
 		assert.equal(parseIgnoreLine("*.pem"), "*.pem");
 	});
 
-	it("returns null for double-star prefix glob", () => {
-		assert.equal(parseIgnoreLine("**/credentials.*"), null);
+	it("strips **/ prefix from credentials.*", () => {
+		assert.equal(parseIgnoreLine("**/credentials.*"), "credentials.*");
 	});
 
 	it("returns pattern for directory glob", () => {
@@ -316,8 +316,28 @@ describe("parseIgnoreLine", () => {
 		assert.equal(parseIgnoreLine("*.zip"), "*.zip");
 	});
 
-	it("returns null for **/venv/ double-star prefix", () => {
-		assert.equal(parseIgnoreLine("**/venv/"), null);
+	it("strips **/ prefix from directory pattern", () => {
+		assert.equal(parseIgnoreLine("**/venv/"), "venv");
+	});
+
+	it("strips **/ before trailing /**", () => {
+		assert.equal(parseIgnoreLine("**/node_modules/**"), "node_modules");
+	});
+
+	it("strips repeated **/ prefixes", () => {
+		assert.equal(parseIgnoreLine("**/**/dir/"), "dir");
+	});
+
+	it("strips **/ from glob pattern", () => {
+		assert.equal(parseIgnoreLine("**/*.pyc"), "*.pyc");
+	});
+
+	it("still rejects ** in middle of pattern", () => {
+		assert.equal(parseIgnoreLine("a/**/b"), null);
+	});
+
+	it("still rejects bare ** pattern", () => {
+		assert.equal(parseIgnoreLine("**"), null);
 	});
 
 	it("parses .venv/ directory pattern (python venv)", () => {
@@ -465,6 +485,61 @@ describe("buildIgnoreExcludes", () => {
 			cleanupDir(dir);
 		}
 	});
+
+	it("scopePrefix prefixes patterns with submodule path", () => {
+		const dir = setupDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), ["__pycache__/", "*.pyc"].join("\n"));
+			const result = buildIgnoreExcludes(join(dir, ".gitignore"), "flask_blogs");
+			assert.deepEqual(result, ["flask_blogs/__pycache__", "flask_blogs/*.pyc"]);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("scopePrefix with deeper submodule path", () => {
+		const dir = setupDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), ["venv/", "*.log", "build/"].join("\n"));
+			const result = buildIgnoreExcludes(join(dir, ".gitignore"), "sub/deep");
+			assert.deepEqual(result, ["sub/deep/venv", "sub/deep/*.log", "sub/deep/build"]);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("scopePrefix with no scope (empty) behaves like normal", () => {
+		const dir = setupDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), ["__pycache__/", "*.pyc"].join("\n"));
+			const result = buildIgnoreExcludes(join(dir, ".gitignore"), "");
+			assert.deepEqual(result, ["__pycache__", "*.pyc"]);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("scopePrefix with null (no arg) behaves like normal", () => {
+		const dir = setupDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), ["__pycache__/", "*.pyc"].join("\n"));
+			const result = buildIgnoreExcludes(join(dir, ".gitignore"));
+			assert.deepEqual(result, ["__pycache__", "*.pyc"]);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("scopePrefix with empty .gitignore produces empty result", () => {
+		const dir = setupDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), "");
+			const result = buildIgnoreExcludes(join(dir, ".gitignore"), "submod");
+			assert.deepEqual(result, []);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -549,6 +624,61 @@ describe("discoverIgnoreFiles", () => {
 			writeFileSync(join(dir, "a", "b", ".gitignore"), "b_ignored\n");
 
 			const result = discoverIgnoreFiles(dir);
+			assert.equal(result.length, 3);
+			assert.ok(result.includes(join(dir, ".gitignore")));
+			assert.ok(result.includes(join(dir, "a", ".gitignore")));
+			assert.ok(result.includes(join(dir, "a", "b", ".gitignore")));
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("skipDirs skips matching directories during traversal", () => {
+		const dir = setupDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), "root\n");
+			mkdirSync(join(dir, "node_modules"), { recursive: true });
+			// .gitignore inside node_modules should NOT be discovered
+			writeFileSync(join(dir, "node_modules", ".gitignore"), "ignored\n");
+			mkdirSync(join(dir, "src"), { recursive: true });
+			writeFileSync(join(dir, "src", ".gitignore"), "src_ignored\n");
+
+			const result = discoverIgnoreFiles(dir, ["node_modules", "dist"]);
+			assert.equal(result.length, 2, "should skip node_modules");
+			assert.ok(result.includes(join(dir, ".gitignore")));
+			assert.ok(result.includes(join(dir, "src", ".gitignore")));
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("skipDirs empty array skips nothing (same as no arg)", () => {
+		const dir = setupDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), "root\n");
+			mkdirSync(join(dir, "sub"), { recursive: true });
+			writeFileSync(join(dir, "sub", ".gitignore"), "sub\n");
+
+			const result = discoverIgnoreFiles(dir, []);
+			assert.equal(result.length, 2);
+		} finally {
+			cleanupDir(dir);
+		}
+	});
+
+	it("skipDirs passes through to recursive calls", () => {
+		const dir = setupDir();
+		try {
+			writeFileSync(join(dir, ".gitignore"), "root\n");
+			mkdirSync(join(dir, "a"), { recursive: true });
+			writeFileSync(join(dir, "a", ".gitignore"), "a\n");
+			mkdirSync(join(dir, "a", "node_modules"), { recursive: true });
+			// This .gitignore inside a/node_modules should be skipped
+			writeFileSync(join(dir, "a", "node_modules", ".gitignore"), "should_be_skipped\n");
+			mkdirSync(join(dir, "a", "b"), { recursive: true });
+			writeFileSync(join(dir, "a", "b", ".gitignore"), "b\n");
+
+			const result = discoverIgnoreFiles(dir, ["node_modules"]);
 			assert.equal(result.length, 3);
 			assert.ok(result.includes(join(dir, ".gitignore")));
 			assert.ok(result.includes(join(dir, "a", ".gitignore")));
