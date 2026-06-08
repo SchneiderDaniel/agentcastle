@@ -19,6 +19,31 @@ export interface ExtensionManifest {
 }
 
 /**
+ * Try to read manifest fields from a JSON file.
+ *
+ * Checks if the file exists, reads it, parses JSON, and extracts
+ * piVersion and testedWithVersion into the provided manifest object.
+ * Returns true if the file was successfully read and parsed,
+ * false if the file doesn't exist or contains invalid JSON.
+ *
+ * @param filePath - Path to the JSON file to read
+ * @param manifest - Manifest object to populate
+ * @returns true if file was read and parsed successfully, false otherwise
+ */
+export function tryReadManifestFile(filePath: string, manifest: ExtensionManifest): boolean {
+	if (!existsSync(filePath)) return false;
+	try {
+		const content = readFileSync(filePath, "utf-8");
+		const data = JSON.parse(content);
+		if (data.piVersion) manifest.piVersion = String(data.piVersion);
+		if (data.testedWithVersion) manifest.testedWithVersion = String(data.testedWithVersion);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Read extension manifest from a directory.
  * Checks extension.json first, then package.json as fallback.
  *
@@ -33,31 +58,13 @@ export function readManifest(extensionDir: string): ExtensionManifest {
 	};
 
 	// Try extension.json first
-	const extJsonPath = join(extensionDir, "extension.json");
-	if (existsSync(extJsonPath)) {
-		try {
-			const content = readFileSync(extJsonPath, "utf-8");
-			const data = JSON.parse(content);
-			if (data.piVersion) manifest.piVersion = String(data.piVersion);
-			if (data.testedWithVersion) manifest.testedWithVersion = String(data.testedWithVersion);
-			return manifest;
-		} catch {
-			// Invalid JSON — fall through to package.json
-		}
+	if (tryReadManifestFile(join(extensionDir, "extension.json"), manifest)) {
+		return manifest;
 	}
 
 	// Try package.json as fallback
-	const pkgJsonPath = join(extensionDir, "package.json");
-	if (existsSync(pkgJsonPath)) {
-		try {
-			const content = readFileSync(pkgJsonPath, "utf-8");
-			const data = JSON.parse(content);
-			if (data.piVersion) manifest.piVersion = String(data.piVersion);
-			if (data.testedWithVersion) manifest.testedWithVersion = String(data.testedWithVersion);
-			return manifest;
-		} catch {
-			// Invalid JSON — return defaults
-		}
+	if (tryReadManifestFile(join(extensionDir, "package.json"), manifest)) {
+		return manifest;
 	}
 
 	return manifest;
