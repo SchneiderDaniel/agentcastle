@@ -119,10 +119,9 @@ describe("pipeline-worktree integration — error handling", () => {
 	});
 
 	it("PR push uses worktreePath as cwd", () => {
-		const src = readPipelineSource();
-		const prIdx = src.indexOf("// PR creation on audit approval");
-		const prSection = src.substring(prIdx, prIdx + 3000);
-		assert.ok(prSection.includes("git push"), "git push in PR section");
+		const prSrc = readFileSync(join(__dirname, "../pipeline/pr-creation.ts"), "utf-8");
+		assert.ok(prSrc.includes('pi.exec("git", ["push"'), "git push in PR creation section");
+		assert.ok(prSrc.includes("worktreePath"), "worktreePath used in PR creation");
 	});
 });
 

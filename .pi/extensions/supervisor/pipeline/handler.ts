@@ -11,6 +11,7 @@ import type {
 	PipelineAgentResult,
 	ParsedAgent,
 	DebugLogger,
+	PrCreationResult,
 } from "../config/types.ts";
 import { loadConfig, resolveTimeoutMs } from "../config/config.ts";
 import { findIssueItem, getItemStatusName, filterIssueData } from "../github/index.ts";
@@ -100,6 +101,7 @@ export async function handleSupervisorCommand(
 	let issueTitle = "";
 	let worktreePath: string | undefined;
 	let worktreeBranch: string | undefined;
+	let prCreationResult: PrCreationResult | undefined;
 
 	// Build ExecFn and NotifyFn from pi/ctx for helpers
 	const exec: ExecFn = (cmd, args, opts) => pi.exec(cmd, args, opts);
@@ -419,10 +421,11 @@ export async function handleSupervisorCommand(
 				stopReason: nsStop,
 			});
 
-			// PR creation on audit approval
+			// PR creation on audit approval — capture result for completion summary
+			// (Bug 2, Bug 6 fix: propagate PR creation result to caller)
 			if (agentName === "auditor" && result.success && nextStatus === "Done") {
 				getDebugLogger().info("handler", "Creating PR on approval");
-				await createPrOnApproval(
+				prCreationResult = await createPrOnApproval(
 					pi,
 					ctx,
 					issueNum,
@@ -432,6 +435,11 @@ export async function handleSupervisorCommand(
 					worktreePath,
 					worktreeBranch,
 				);
+				if (prCreationResult && !prCreationResult.success) {
+					getDebugLogger().warn("handler", "PR creation failed", {
+						error: prCreationResult.error,
+					});
+				}
 			}
 
 			if (result.budgetExceeded) {
@@ -544,10 +552,15 @@ export async function handleSupervisorCommand(
 			ctx,
 			worktreePath,
 			worktreeBranch,
+			prCreationResult,
+			isDebug,
 		);
 
 		// Completion notification
 		if (agentResults.length > 0 || stopReason !== undefined) {
+			// Compute overall status considering PR creation result
+			// If loop reached Done but PR creation failed, still report as "success"
+			// with a PR-creation-failure note (Bug 4 fix)
 			const overallStatus: "success" | "failed" | "stopped" = isDoneStatus(loopStatus)
 				? "success"
 				: agentResults.some((a) => a.status === "FAILED")
@@ -562,6 +575,7 @@ export async function handleSupervisorCommand(
 				issueTitle,
 				config,
 				stopReason,
+				prCreationResult,
 			);
 			getDebugLogger().info("handler", "Pipeline finished", {
 				overallStatus,
@@ -593,6 +607,8 @@ export async function handleSupervisorCommand(
 // Extracted for testability — runs merge before cleanup.
 // Order: merge (needs worktree) → cleanup (deletes worktree).
 // In try/finally so cleanup always runs even if merge throws.
+// When debug is active and PR creation failed, worktree is preserved
+// for post-hoc inspection (Bug 7 fix).
 
 export async function handlePostPipeline(
 	issueNum: number,
@@ -604,6 +620,8 @@ export async function handlePostPipeline(
 	ctx: ExtensionCommandContext,
 	worktreePath: string | undefined,
 	worktreeBranch: string | undefined,
+	prCreationResult?: PrCreationResult,
+	isDebug?: boolean,
 ): Promise<void> {
 	try {
 		// Step 1: Post-pipeline merge resolution — needs worktree to exist
@@ -620,8 +638,23 @@ export async function handlePostPipeline(
 		}
 	} finally {
 		// Step 2: Worktree cleanup — always runs, even if merge throws
+		// Exception: preserve worktree on PR failure when debug is active
+		// (Bug 7 fix — keeps evidence for post-hoc debugging)
 		if (worktreePath && worktreeBranch) {
-			await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
+			const prFailed = prCreationResult && !prCreationResult.success;
+			if (isDebug && prFailed) {
+				const log = getDebugLogger();
+				log.info("handler", "PR creation failed in debug mode — preserving worktree", {
+					worktreePath,
+					branch: worktreeBranch,
+				});
+				ctx.ui.notify(
+					`PR creation failed. Worktree preserved at ${worktreePath} for inspection.`,
+					"warning",
+				);
+			} else {
+				await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
+			}
 		}
 	}
 }

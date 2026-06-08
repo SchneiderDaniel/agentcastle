@@ -1,8 +1,14 @@
 // ─── PR Creation ─────────────────────────────────────────────────
 // PR creation logic: decoupled from handler, triggered on auditor approval.
+// Returns structured result so the handler can react to failure.
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig, PipelineAgentResult, PrConflictInfo } from "../config/types.ts";
+import type {
+	SupervisorConfig,
+	PipelineAgentResult,
+	PrConflictInfo,
+	PrCreationResult,
+} from "../config/types.ts";
 import { writeFile } from "node:fs/promises";
 import { join as joinPath } from "node:path";
 import { tmpdir } from "node:os";
@@ -13,11 +19,24 @@ import { buildPipelineSummary } from "../pipeline/output.ts";
 import { getDebugLogger } from "../config/debug.ts";
 
 /**
+ * Maximum number of retry attempts for gh pr create.
+ * Handles transient GitHub API failures and rate limiting.
+ */
+const MAX_PR_CREATE_RETRIES = 2;
+
+/** Base delay (ms) for exponential backoff retry. */
+const RETRY_BASE_DELAY_MS = 1000;
+
+/**
  * Create a pull request after auditor approves and transitions to Done.
- * Pushes branch, builds body, creates PR. Does NOT check ahead commits —
- * that gate caused silent PR-skipping bugs (issue #501). Instead, always
- * attempts PR creation and lets gh produce a clear error if the branch
- * has no commits.
+ * Pushes branch, builds body, creates PR. Returns structured result so
+ * the handler can detect failure and adjust pipeline completion status.
+ *
+ * Features:
+ * - Returns PrCreationResult instead of void (Bug 6 fix)
+ * - Push failure stops the flow early (Bug 3 fix)
+ * - Retries gh pr create with exponential backoff (Bug 5 fix)
+ * - Uses --json number for machine-parseable output (Bug 7 fix)
  */
 export async function createPrOnApproval(
 	pi: ExtensionAPI,
@@ -28,7 +47,7 @@ export async function createPrOnApproval(
 	agentResults: PipelineAgentResult[],
 	worktreePath: string | undefined,
 	worktreeBranch: string | undefined,
-): Promise<void> {
+): Promise<PrCreationResult> {
 	const log = getDebugLogger();
 	const headBranch =
 		worktreeBranch ?? generateBranchName(issueNum, issueTitle, config.branchPrefix!);
@@ -36,50 +55,55 @@ export async function createPrOnApproval(
 	const prBody = buildPipelineSummary(agentResults, "success", issueNum, issueTitle, config);
 	const tempFile = joinPath(tmpdir(), `pr-body-${issueNum}.md`);
 	log.info("pr-creation", `Writing PR body to ${tempFile}`);
+
+	// ─── Phase 1: Write body file ───────────────────────────────────
 	try {
 		await writeFile(tempFile, prBody, "utf-8");
-		const prTitle = `feat(#${issueNum}): ${issueTitle}`;
-		log.info("pr-creation", `PR title: ${prTitle}`);
+	} catch (writeErr: unknown) {
+		const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+		log.error("pr-creation", `Failed to write PR body file: ${writeMsg}`);
+		ctx.ui.notify(`Failed to write PR body: ${writeMsg}`, "error");
+		return { success: false, error: `Failed to write PR body file: ${writeMsg}` };
+	}
 
-		// Push branch before creating/updating PR so remote ref exists.
-		// Use --force for idempotency: same branch from a previous pipeline run
-		// may exist on remote with divergent history.
-		if (worktreePath) {
-			log.info("pr-creation", `Pushing ${headBranch} from worktree`);
-			try {
-				await pi.exec("git", ["push", "--force", config.remote!, headBranch], {
-					cwd: worktreePath,
-					timeout: 15000,
-				});
-				log.info("pr-creation", "Push OK");
-			} catch (pushErr: unknown) {
-				const pushMsg = pushErr instanceof Error ? pushErr.message : String(pushErr);
-				log.warn("pr-creation", `Push failed: ${pushMsg}`);
-				ctx.ui.notify(
-					`Branch push failed: ${pushMsg} — PR may still be created from existing remote ref`,
-					"warning",
-				);
-			}
-		}
+	const prTitle = `feat(#${issueNum}): ${issueTitle}`;
+	log.info("pr-creation", `PR title: ${prTitle}`);
 
-		// Check if PR already exists for this branch (from a previous pipeline run).
-		// If so, update the existing PR body instead of creating a duplicate.
-		// If the check fails (network error, gh not authenticated), log a warning
-		// and continue with PR creation — don't let a failed check block the pipeline.
-		let existingPr: PrConflictInfo | null = null;
+	// ─── Phase 2: Push branch (if worktree exists) ───────────────────
+	if (worktreePath) {
+		log.info("pr-creation", `Pushing ${headBranch} from worktree`);
 		try {
-			existingPr = await checkPrConflicts(pi, headBranch, config.repo);
-		} catch (checkErr: unknown) {
-			const checkMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
-			log.warn("pr-creation", `PR conflict check failed: ${checkMsg}`);
-			ctx.ui.notify(
-				`PR conflict check failed: ${checkMsg} — attempting PR creation anyway`,
-				"warning",
-			);
+			await pi.exec("git", ["push", "--force", config.remote!, headBranch], {
+				cwd: worktreePath,
+				timeout: 15000,
+			});
+			log.info("pr-creation", "Push OK");
+		} catch (pushErr: unknown) {
+			const pushMsg = pushErr instanceof Error ? pushErr.message : String(pushErr);
+			log.error("pr-creation", `Push failed: ${pushMsg}`);
+			ctx.ui.notify(`Branch push failed: ${pushMsg}`, "error");
+			// Surface push failure immediately (Bug 3 fix)
+			return { success: false, error: `Branch push failed: ${pushMsg}` };
 		}
+	}
 
-		if (existingPr) {
-			log.info("pr-creation", `PR #${existingPr.number} already exists — updating body`);
+	// ─── Phase 3: Check for existing PR ────────────────────────────
+	let existingPr: PrConflictInfo | null = null;
+	try {
+		existingPr = await checkPrConflicts(pi, headBranch, config.repo);
+	} catch (checkErr: unknown) {
+		const checkMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+		log.warn("pr-creation", `PR conflict check failed: ${checkMsg}`);
+		ctx.ui.notify(
+			`PR conflict check failed: ${checkMsg} — attempting PR creation anyway`,
+			"warning",
+		);
+	}
+
+	// ─── Phase 4: Create or update PR (with retry) ─────────────────
+	if (existingPr) {
+		log.info("pr-creation", `PR #${existingPr.number} already exists — updating body`);
+		try {
 			ctx.ui.notify(`Updating PR #${existingPr.number} with latest changes`, "info");
 			await gh(pi, [
 				"pr",
@@ -93,7 +117,28 @@ export async function createPrOnApproval(
 				prTitle,
 			]);
 			ctx.ui.notify(`PR #${existingPr.number} updated`, "info");
-		} else {
+			return { success: true, prNumber: existingPr.number, wasUpdate: true };
+		} catch (editErr: unknown) {
+			const editMsg = editErr instanceof Error ? editErr.message : String(editErr);
+			log.error("pr-creation", `Failed to update PR #${existingPr.number}: ${editMsg}`);
+			ctx.ui.notify(`Failed to update PR #${existingPr.number}: ${editMsg}`, "error");
+			return { success: false, error: `Failed to update PR: ${editMsg}` };
+		}
+	}
+
+	// Create PR with retry (Bug 5 fix)
+	let lastError: string | undefined;
+	for (let attempt = 0; attempt < MAX_PR_CREATE_RETRIES; attempt++) {
+		try {
+			if (attempt > 0) {
+				const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+				log.info(
+					"pr-creation",
+					`Retry attempt ${attempt + 1}/${MAX_PR_CREATE_RETRIES} after ${delayMs}ms`,
+				);
+				await new Promise((resolve) => setTimeout(resolve, delayMs));
+			}
+
 			const prResult = await createPullRequest(
 				pi,
 				config.repo,
@@ -104,11 +149,22 @@ export async function createPrOnApproval(
 			);
 			log.info("pr-creation", `PR #${prResult.number} created`);
 			ctx.ui.notify(`PR #${prResult.number} created`, "info");
+			return { success: true, prNumber: prResult.number };
+		} catch (prErr: unknown) {
+			lastError = prErr instanceof Error ? prErr.message : String(prErr);
+			log.warn(
+				"pr-creation",
+				`Attempt ${attempt + 1}/${MAX_PR_CREATE_RETRIES} failed: ${lastError}`,
+			);
 		}
-	} catch (prErr: unknown) {
-		const prMsg = prErr instanceof Error ? prErr.message : String(prErr);
-		log.error("pr-creation", `Failed to create/update PR: ${prMsg}`);
-		ctx.ui.notify(`Failed to create/update PR: ${prMsg}`, "error");
-		console.warn(`[supervisor] createPullRequest failed: ${prMsg}`);
 	}
+
+	// All retries exhausted
+	const errorMsg = lastError || "Unknown error during PR creation";
+	log.error("pr-creation", `All ${MAX_PR_CREATE_RETRIES} attempts failed: ${errorMsg}`);
+	ctx.ui.notify(
+		`Failed to create PR after ${MAX_PR_CREATE_RETRIES} attempts: ${errorMsg}`,
+		"error",
+	);
+	return { success: false, error: errorMsg };
 }

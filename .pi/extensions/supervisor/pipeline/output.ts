@@ -2,7 +2,12 @@
 // Summary building, agent result validation, PR creation helpers.
 // Extracted from pipeline.ts to keep that file under 300 lines.
 
-import type { AgentRunResult, PipelineAgentResult, SupervisorConfig } from "../config/types.ts";
+import type {
+	AgentRunResult,
+	PipelineAgentResult,
+	SupervisorConfig,
+	PrCreationResult,
+} from "../config/types.ts";
 import { formatDuration, formatTokens } from "../config/formatting.ts";
 
 // ─── validateAgentResult ────────────────────────────────────────────
@@ -23,6 +28,7 @@ export function validateAgentResult(result: AgentRunResult): void {
 
 /**
  * Build markdown summary of pipeline results.
+ * Accepts optional PrCreationResult to include PR creation status.
  */
 export function buildPipelineSummary(
 	agentResults: PipelineAgentResult[],
@@ -31,17 +37,30 @@ export function buildPipelineSummary(
 	issueTitle: string,
 	config: SupervisorConfig,
 	stopReason?: string,
+	prCreationResult?: PrCreationResult,
 ): string {
 	const lines: string[] = [];
 
-	// Header
-	const headerEmoji = overallStatus === "success" ? "✅" : overallStatus === "failed" ? "❌" : "⏹";
+	// Header — adjust for PR creation failure
+	const isPrFailed = prCreationResult && !prCreationResult.success;
+	const effectiveStatus = isPrFailed && overallStatus === "success" ? "pr-failed" : overallStatus;
+
+	const headerEmoji =
+		effectiveStatus === "success"
+			? "✅"
+			: effectiveStatus === "pr-failed"
+				? "⚠️"
+				: effectiveStatus === "failed"
+					? "❌"
+					: "⏹";
 	const headerText =
-		overallStatus === "success"
+		effectiveStatus === "success"
 			? "Pipeline Complete"
-			: overallStatus === "failed"
-				? "Pipeline Failed"
-				: "Pipeline Stopped";
+			: effectiveStatus === "pr-failed"
+				? "Pipeline Complete (PR creation failed)"
+				: effectiveStatus === "failed"
+					? "Pipeline Failed"
+					: "Pipeline Stopped";
 	lines.push(`## ${headerEmoji} ${headerText} — Issue #${issueNum}`);
 	lines.push("");
 
@@ -73,6 +92,19 @@ export function buildPipelineSummary(
 
 	// Issue link
 	lines.push(`**Issue:** https://github.com/${config.repo}/issues/${issueNum}`);
+
+	// PR creation status
+	if (prCreationResult) {
+		if (prCreationResult.success) {
+			const action = prCreationResult.wasUpdate ? "updated" : "created";
+			const prLink = prCreationResult.prNumber
+				? `https://github.com/${config.repo}/pull/${prCreationResult.prNumber}`
+				: "(unknown)";
+			lines.push(`**PR:** ${action} — [#${prCreationResult.prNumber}](${prLink})`);
+		} else {
+			lines.push(`**PR creation failed:** ${prCreationResult.error || "Unknown error"}`);
+		}
+	}
 
 	// Stop reason for stopped pipelines
 	if (overallStatus === "stopped" && stopReason) {
