@@ -19,7 +19,7 @@
  *     along with the dead `runWithSplash()` function).
  */
 
-import { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { DefaultResourceLoader, VERSION } from "@earendil-works/pi-coding-agent";
 import path from "node:path";
 import { SplashComponent } from "./splash-component.js";
 import { ProgressEmitter } from "./progress-emitter.js";
@@ -37,17 +37,12 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
  */
 export function clearSplash(width: number, lineCount: number): void {
 	if (lineCount <= 0) return;
-	// Move cursor up by lineCount, then clear each line
+	// Move cursor up through each splash line, clearing as we go
 	for (let i = 0; i < lineCount; i++) {
-		// Carriage return + clear line
-		process.stderr.write("\r\x1b[K");
-		if (i < lineCount - 1) {
-			// Move cursor up one line
-			process.stderr.write("\x1b[1A");
-		}
+		process.stderr.write("\r\x1b[K\x1b[1A");
 	}
-	// Return cursor to position after cleared area
-	process.stderr.write("\r");
+	// Clear the line the cursor ends up on (first splash line)
+	process.stderr.write("\r\x1b[K");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,7 +70,7 @@ async function runReloadWithSplash(
 	const terminalWidth = process.stdout.columns || 80;
 
 	// ── Show splash before loading ──────────────────────────────
-	const splash = new SplashComponent("pi", "0.74.0");
+	const splash = new SplashComponent("pi", VERSION);
 	let splashLines = splash.render(terminalWidth);
 	for (const line of splashLines) {
 		process.stderr.write(line + "\n");
@@ -88,12 +83,12 @@ async function runReloadWithSplash(
 		spinnerIdx++;
 
 		const lines = splash.render(terminalWidth);
+		// Move up through splash lines, clearing each one
 		for (let i = 0; i < splashLines.length; i++) {
-			process.stderr.write("\r\x1b[K");
-			if (i < splashLines.length - 1) {
-				process.stderr.write("\x1b[1A");
-			}
+			process.stderr.write("\r\x1b[K\x1b[1A");
 		}
+		// Clear the line the cursor ends up on (first splash line)
+		process.stderr.write("\r\x1b[K");
 		const updatedLines = [...lines];
 		if (updatedLines.length > 0) {
 			const loadingLineIdx = updatedLines.findIndex((l) => l.includes("Loading"));
