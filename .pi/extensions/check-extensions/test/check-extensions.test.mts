@@ -2435,11 +2435,11 @@ describe("consumer-contract — pipeline.ts", () => {
 		);
 	});
 
-	it("imports CHANGELOG_API_TO_PATTERN from ./constants.ts", () => {
+	it("imports CHANGELOG_API_TO_PATTERN_LOWER from ./constants.ts", () => {
 		assert.ok(
-			pipelineSrc.includes("CHANGELOG_API_TO_PATTERN") &&
+			pipelineSrc.includes("CHANGELOG_API_TO_PATTERN_LOWER") &&
 				pipelineSrc.includes('from "./constants.ts"'),
-			"pipeline.ts must import CHANGELOG_API_TO_PATTERN from ./constants.ts",
+			"pipeline.ts must import CHANGELOG_API_TO_PATTERN_LOWER from ./constants.ts",
 		);
 	});
 
@@ -2457,10 +2457,10 @@ describe("consumer-contract — pipeline.ts", () => {
 		);
 	});
 
-	it("does NOT re-define const CHANGELOG_API_TO_PATTERN locally", () => {
+	it("does NOT re-define const CHANGELOG_API_TO_PATTERN_LOWER locally", () => {
 		assert.ok(
-			!pipelineSrc.includes("const CHANGELOG_API_TO_PATTERN"),
-			"pipeline.ts must not define CHANGELOG_API_TO_PATTERN locally",
+			!pipelineSrc.includes("const CHANGELOG_API_TO_PATTERN_LOWER"),
+			"pipeline.ts must not define CHANGELOG_API_TO_PATTERN_LOWER locally",
 		);
 	});
 });
