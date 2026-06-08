@@ -12,6 +12,7 @@ import path from "node:path";
 import os from "node:os";
 import type { ExecResult, ExecFn } from "../types.ts";
 import { ensureChromiumDeps, VENV_RETRY_TTL_MS, VENV_RETRY_MAX } from "../venv-setup.ts";
+import { shSingleQuote } from "../executor.ts";
 
 type ExecHandler = ExecFn;
 
@@ -639,5 +640,216 @@ describe("ensureChromiumDeps — apt package fallback (Bug 5)", () => {
 		} finally {
 			console.error = origError;
 		}
+	});
+});
+
+describe("ensureChromiumDeps — shell path quoting (Bug 602)", () => {
+	function setupWithCwd(
+		customCwd: string,
+		returnSuccessForFirstCheck?: boolean,
+	): {
+		cwd: string;
+		exec: ReturnType<typeof mock.fn<ExecHandler>>;
+		depsReady: Map<string, { ready: boolean; timestamp: number; retries: number }>;
+		bashCalls: Array<{ cmd: string; args: string[] }>;
+	} {
+		const depsReady = new Map<string, { ready: boolean; timestamp: number; retries: number }>();
+		const bashCalls: Array<{ cmd: string; args: string[] }> = [];
+		let firstLibCheckDone = false;
+
+		const exec = makeMockExec(async (_cmd: string, _args: string[]) => {
+			return { code: 1, stdout: "", stderr: "mock: not mocked" };
+		});
+
+		exec.mock.mockImplementation(
+			async (cmd: string, args: string[], _opts?: { timeout?: number; signal?: AbortSignal }) => {
+				const fullCmd = cmd + " " + args.join(" ");
+
+				// Capture all bash -c calls
+				if (cmd === "bash" && args[0] === "-c") {
+					bashCalls.push({ cmd, args });
+				}
+
+				if (fullCmd.includes("test -f") && fullCmd.includes("libnspr4.so")) {
+					if (returnSuccessForFirstCheck && !firstLibCheckDone) {
+						firstLibCheckDone = true;
+						return { code: 0, stdout: "", stderr: "" };
+					}
+					return { code: 1, stdout: "", stderr: "" };
+				}
+				if (fullCmd.includes("mkdir") && fullCmd.includes("-p")) {
+					const dir = args[args.length - 1];
+					try {
+						fs.mkdirSync(dir, { recursive: true });
+					} catch {
+						// ignore
+					}
+					return { code: 0, stdout: "", stderr: "" };
+				}
+				if (fullCmd.includes("apt-get download")) {
+					const pkg = fullCmd.split("apt-get download ")[1];
+					const dirMatch = fullCmd.match(/cd ([^&]+) &&/);
+					if (dirMatch) {
+						const dirPath = dirMatch[1].replace(/^'/, "").replace(/'$/, "");
+						const debPath = path.join(dirPath, `${pkg}.deb`);
+						try {
+							fs.writeFileSync(debPath, "fake");
+						} catch {
+							// ignore
+						}
+					}
+					return { code: 0, stdout: "", stderr: "" };
+				}
+				if (fullCmd.includes("ls") && fullCmd.includes("*.deb")) {
+					const lsArg = args[1];
+					const debMatch = lsArg.match(/ls (.+?)\/\*\.deb/);
+					if (debMatch) {
+						const cleanPath = debMatch[1].replace(/^'/, "").replace(/'$/, "");
+						try {
+							const debs = fs.readdirSync(cleanPath).filter((f) => f.endsWith(".deb"));
+							return {
+								code: debs.length > 0 ? 0 : 1,
+								stdout: debs.join("\n"),
+								stderr: "",
+							};
+						} catch {
+							return { code: 1, stdout: "", stderr: "" };
+						}
+					}
+					return { code: 1, stdout: "", stderr: "" };
+				}
+				if (fullCmd.includes("dpkg") && fullCmd.includes("-x")) {
+					try {
+						const depsDir = args[args.length - 1];
+						fs.mkdirSync(path.join(depsDir, "usr", "lib", "x86_64-linux-gnu"), { recursive: true });
+						fs.writeFileSync(
+							path.join(depsDir, "usr", "lib", "x86_64-linux-gnu", "libnspr4.so"),
+							"",
+						);
+					} catch {
+						// ignore
+					}
+					return { code: 0, stdout: "", stderr: "" };
+				}
+				return { code: 1, stdout: "", stderr: "mock: unhandled" };
+			},
+		);
+
+		return { cwd: customCwd, exec, depsReady, bashCalls };
+	}
+
+	it("(D) shSingleQuote imported — libCheck command wraps testLib path in single quotes", async () => {
+		const cwdWithSpace = "/tmp/my project";
+		const { cwd, exec, depsReady, bashCalls } = setupWithCwd(cwdWithSpace);
+
+		await ensureChromiumDeps(exec, cwd, undefined, depsReady);
+
+		const libCheckCall = bashCalls.find((c) => c.args[1].includes("test -f"));
+		assert.ok(libCheckCall, "should have a bash -c call with test -f");
+
+		const bashCmd = libCheckCall!.args[1];
+		assert.ok(
+			bashCmd.includes("'/tmp/my project/.pi/chromium-deps"),
+			`libCheck command should have quoted path with spaces, got: ${bashCmd}`,
+		);
+	});
+
+	it("(D) download command wraps DEPS_DIR in single quotes", async () => {
+		const cwdWithSpace = "/tmp/my project";
+		const { cwd, exec, depsReady, bashCalls } = setupWithCwd(cwdWithSpace);
+
+		await ensureChromiumDeps(exec, cwd, undefined, depsReady);
+
+		const dlCall = bashCalls.find((c) => c.args[1].includes("apt-get download"));
+		assert.ok(dlCall, "should have a bash -c call with apt-get download");
+
+		const bashCmd = dlCall!.args[1];
+		assert.ok(
+			bashCmd.includes("'/tmp/my project/.pi/chromium-deps'"),
+			`download command should have quoted DEPS_DIR in cd, got: ${bashCmd}`,
+		);
+	});
+
+	it("(D) findResult command wraps DEPS_DIR in single quotes", async () => {
+		const cwdWithSpace = "/tmp/my project";
+		const { cwd, exec, depsReady, bashCalls } = setupWithCwd(cwdWithSpace);
+
+		await ensureChromiumDeps(exec, cwd, undefined, depsReady);
+
+		const lsCall = bashCalls.find((c) => c.args[1].includes("ls ") && c.args[1].includes("*.deb"));
+		assert.ok(lsCall, "should have a bash -c call with ls *.deb");
+
+		const bashCmd = lsCall!.args[1];
+		assert.ok(
+			bashCmd.includes("'/tmp/my project/.pi/chromium-deps'"),
+			`ls command should have quoted DEPS_DIR, got: ${bashCmd}`,
+		);
+	});
+
+	it("(D) verify command wraps testLib path in single quotes", async () => {
+		const cwdWithSpace = "/tmp/my project";
+		// Use returnSuccessForFirstCheck=true so libCheck succeeds immediately
+		// and the verify path is also tested on the same test-f call
+		const { cwd, exec, depsReady, bashCalls } = setupWithCwd(cwdWithSpace, true);
+
+		await ensureChromiumDeps(exec, cwd, undefined, depsReady);
+
+		// When libCheck returns 0 (already extracted), there should still
+		// be a test -f call (the libCheck itself)
+		const testCall = bashCalls.find((c) => c.args[1].includes("test -f"));
+		assert.ok(testCall, "should have a bash -c call with test -f");
+
+		const bashCmd = testCall!.args[1];
+		assert.ok(
+			bashCmd.includes("'/tmp/my project/.pi/chromium-deps"),
+			`verify command should have quoted testLib path, got: ${bashCmd}`,
+		);
+	});
+
+	it("(D) path with embedded single quote uses proper bash escaping", async () => {
+		const cwdWithQuote = "/tmp/it's project";
+		const { cwd, exec, depsReady, bashCalls } = setupWithCwd(cwdWithQuote);
+
+		await ensureChromiumDeps(exec, cwd, undefined, depsReady);
+
+		const testCall = bashCalls.find((c) => c.args[1].includes("test -f"));
+		assert.ok(testCall, "should have test -f bash call");
+
+		const bashCmd = testCall!.args[1];
+		// Should use shSingleQuote escape pattern (embedded ' => '\\'')
+		// The bash-safe pattern for embedding ' inside single quotes is:
+		//   '...'\\''...'  (close quote, escaped quote, open quote)
+		assert.ok(
+			bashCmd.includes("\\'"),
+			`bash command should have escaped single quote (backslash-quote), got: ${bashCmd}`,
+		);
+		// Verify the path appears properly escaped using shSingleQuote pattern
+		// Pattern: '/tmp/it'\\''s project/.pi/chromium-deps/...'
+		assert.ok(
+			bashCmd.includes("'/tmp/it") && bashCmd.includes("s project"),
+			`bash command should contain quoted path fragments around the escape, got: ${bashCmd}`,
+		);
+		// The raw path with unescaped quote should NOT appear
+		assert.ok(
+			!bashCmd.includes("it's project"),
+			"raw unescaped path with single quote should NOT appear in bash command",
+		);
+	});
+
+	it("(D) cwd with leading hyphen does not break commands", async () => {
+		const cwdWithHyphen = "/tmp/-test project";
+		const { cwd, exec, depsReady, bashCalls } = setupWithCwd(cwdWithHyphen);
+
+		await ensureChromiumDeps(exec, cwd, undefined, depsReady);
+
+		const dlCall = bashCalls.find((c) => c.args[1].includes("apt-get download"));
+		assert.ok(dlCall, "should have apt-get download bash call");
+
+		const bashCmd = dlCall!.args[1];
+		// The cd should have the leading-hyphen path properly quoted
+		assert.ok(
+			bashCmd.includes("'/tmp/-test project/.pi/chromium-deps'"),
+			`cd command should have quoted DEPS_DIR, got: ${bashCmd}`,
+		);
 	});
 });
