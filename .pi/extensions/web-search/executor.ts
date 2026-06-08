@@ -54,9 +54,24 @@ export async function runSearchScript(
 
 	const bashCmd = `${qPython} ${qScript} ${qConfig}`;
 
-	return execFn
-		? execFn("bash", ["-c", bashCmd], { timeout, signal })
-		: { code: 1, stdout: "", stderr: "executor: no exec function provided" };
+	try {
+		return execFn
+			? execFn("bash", ["-c", bashCmd], { timeout, signal })
+			: { code: 1, stdout: "", stderr: "executor: no exec function provided" };
+	} finally {
+		try {
+			fs.rmSync(scriptPath, { force: true });
+			fs.rmSync(configPath, { force: true });
+			// Remove dir if empty (no leftover files)
+			try {
+				fs.rmdirSync(runDir);
+			} catch {
+				/* not empty */
+			}
+		} catch {
+			// Best-effort cleanup, never throw
+		}
+	}
 }
 
 /**
