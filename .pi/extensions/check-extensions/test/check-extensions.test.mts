@@ -2789,3 +2789,114 @@ describe("extractApiNames — config option (Phase 3: remove if-else coupling)",
 		assert.ok(result.affectedApiPatterns.has("pi.getFlag"), "pi.getFlag should still be affected");
 	});
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 16: manifest-reader.ts — tryReadManifestFile helper
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("tryReadManifestFile", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), "tryread-test-"));
+	});
+
+	afterEach(() => {
+		if (tmpDir) {
+			try {
+				rmSync(tmpDir, { recursive: true, force: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	it("returns true and populates manifest from valid JSON with piVersion and testedWithVersion", () => {
+		const filePath = join(tmpDir, "test.json");
+		writeFileSync(filePath, JSON.stringify({ piVersion: "1.0.0", testedWithVersion: "2.0.0" }));
+		const manifest: ExtensionManifest = {
+			piVersion: "UNKNOWN",
+			testedWithVersion: "UNKNOWN",
+		};
+		const result = tryReadManifestFile(filePath, manifest);
+		assert.strictEqual(result, true);
+		assert.strictEqual(manifest.piVersion, "1.0.0");
+		assert.strictEqual(manifest.testedWithVersion, "2.0.0");
+	});
+
+	it("returns false for non-existent path, manifest unchanged", () => {
+		const manifest: ExtensionManifest = {
+			piVersion: "UNKNOWN",
+			testedWithVersion: "UNKNOWN",
+		};
+		const result = tryReadManifestFile(join(tmpDir, "nonexistent.json"), manifest);
+		assert.strictEqual(result, false);
+		assert.strictEqual(manifest.piVersion, "UNKNOWN");
+		assert.strictEqual(manifest.testedWithVersion, "UNKNOWN");
+	});
+
+	it("returns false for malformed JSON, manifest unchanged", () => {
+		const filePath = join(tmpDir, "bad.json");
+		writeFileSync(filePath, "not valid json");
+		const manifest: ExtensionManifest = {
+			piVersion: "UNKNOWN",
+			testedWithVersion: "UNKNOWN",
+		};
+		const result = tryReadManifestFile(filePath, manifest);
+		assert.strictEqual(result, false);
+		assert.strictEqual(manifest.piVersion, "UNKNOWN");
+		assert.strictEqual(manifest.testedWithVersion, "UNKNOWN");
+	});
+
+	it("returns true with no field changes when JSON has no piVersion or testedWithVersion", () => {
+		const filePath = join(tmpDir, "no-field.json");
+		writeFileSync(filePath, JSON.stringify({ otherField: "value" }));
+		const manifest: ExtensionManifest = {
+			piVersion: "UNKNOWN",
+			testedWithVersion: "UNKNOWN",
+		};
+		const result = tryReadManifestFile(filePath, manifest);
+		assert.strictEqual(result, true);
+		assert.strictEqual(manifest.piVersion, "UNKNOWN");
+		assert.strictEqual(manifest.testedWithVersion, "UNKNOWN");
+	});
+
+	it("returns true and populates only piVersion when testedWithVersion missing", () => {
+		const filePath = join(tmpDir, "partial.json");
+		writeFileSync(filePath, JSON.stringify({ piVersion: "3.0.0" }));
+		const manifest: ExtensionManifest = {
+			piVersion: "UNKNOWN",
+			testedWithVersion: "UNKNOWN",
+		};
+		const result = tryReadManifestFile(filePath, manifest);
+		assert.strictEqual(result, true);
+		assert.strictEqual(manifest.piVersion, "3.0.0");
+		assert.strictEqual(manifest.testedWithVersion, "UNKNOWN");
+	});
+
+	it("coerces numeric piVersion to string", () => {
+		const filePath = join(tmpDir, "numeric.json");
+		writeFileSync(filePath, JSON.stringify({ piVersion: 42, testedWithVersion: 99 }));
+		const manifest: ExtensionManifest = {
+			piVersion: "UNKNOWN",
+			testedWithVersion: "UNKNOWN",
+		};
+		const result = tryReadManifestFile(filePath, manifest);
+		assert.strictEqual(result, true);
+		assert.strictEqual(manifest.piVersion, "42");
+		assert.strictEqual(manifest.testedWithVersion, "99");
+	});
+
+	it("does not set piVersion when value is null (falsy check)", () => {
+		const filePath = join(tmpDir, "null.json");
+		writeFileSync(filePath, JSON.stringify({ piVersion: null, testedWithVersion: "1.0.0" }));
+		const manifest: ExtensionManifest = {
+			piVersion: "UNKNOWN",
+			testedWithVersion: "UNKNOWN",
+		};
+		const result = tryReadManifestFile(filePath, manifest);
+		assert.strictEqual(result, true);
+		assert.strictEqual(manifest.piVersion, "UNKNOWN");
+		assert.strictEqual(manifest.testedWithVersion, "1.0.0");
+	});
+});

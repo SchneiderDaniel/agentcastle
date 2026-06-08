@@ -16,7 +16,6 @@ import { scanExtensionsAST, type ASTFinding, type ExecFn as AstExecFn } from "./
 import { resolveRelevance } from "./change-resolver.ts";
 import { computeImpactScore, type ImpactScore } from "./impact-scorer.ts";
 import { generateMigrationSnippet, type MigrationSnippet } from "./migration-generator.ts";
-import { readManifest } from "./manifest-reader.ts";
 import {
 	buildIssueTitle,
 	buildIssueBodyWithSnippets,
@@ -93,7 +92,7 @@ export class ChangelogPipeline {
 		const { scanResult: scan, findingsByExtension } = scanResult;
 
 		// Phase 2.5: Cross-reference
-		const { relevantFindingsByExtension, snippetsByExtension, scoresByExtension, manifestCache } =
+		const { relevantFindingsByExtension, snippetsByExtension, scoresByExtension } =
 			this.crossRefPhase(entries, latestVersion, findingsByExtension, scan);
 
 		if (relevantFindingsByExtension.size === 0) {
@@ -261,19 +260,11 @@ export class ChangelogPipeline {
 		relevantFindingsByExtension: Map<string, ASTFinding[]>;
 		snippetsByExtension: Map<string, MigrationSnippet[]>;
 		scoresByExtension: Map<string, ImpactScore>;
-		manifestCache: Map<string, ReturnType<typeof readManifest>>;
 	} {
-		const extensionsDir = join(this.ctx.cwd, ".pi", "extensions");
-		const manifestCache = new Map<string, ReturnType<typeof readManifest>>();
 		const snippetsByExtension = new Map<string, MigrationSnippet[]>();
 		const scoresByExtension = new Map<string, ImpactScore>();
 
 		for (const [extName, extFindings] of findingsByExtension) {
-			// Read manifest for version info
-			const extDir = join(extensionsDir, extName);
-			const manifest = readManifest(extDir);
-			manifestCache.set(extName, manifest);
-
 			const extSnippets: MigrationSnippet[] = [];
 
 			for (const f of extFindings) {
@@ -332,7 +323,6 @@ export class ChangelogPipeline {
 			relevantFindingsByExtension,
 			snippetsByExtension,
 			scoresByExtension,
-			manifestCache,
 		};
 	}
 
