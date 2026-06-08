@@ -5,6 +5,19 @@
  * Zero pi SDK imports — pure types only.
  */
 
+/** Information about a git submodule for recency scoring. */
+export interface SubmoduleInfo {
+	/** Relative path from repo root (e.g. "flask_blogs"). */
+	path: string;
+	/** Optional submodule URL from .gitmodules. */
+	url?: string;
+	/**
+	 * Optional commit SHA. Set to "uninitialized" for submodules
+	 * that are registered but not yet initialized.
+	 */
+	sha?: string;
+}
+
 /** Configuration for ranked-map behavior, loaded from .pi/settings.json rankedMap key. */
 export interface RankedMapConfig {
 	tokenBudget: number;

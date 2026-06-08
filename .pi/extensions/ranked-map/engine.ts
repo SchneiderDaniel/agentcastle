@@ -33,7 +33,7 @@ import {
 	rankFiles,
 } from "./scoring.ts";
 import { runKeywordSearch } from "./search.ts";
-import { runGitRecency, getGitHead } from "./git.ts";
+import { runGitRecency, getGitHead, discoverSubmodules } from "./git.ts";
 import { buildPiignoreExcludes, buildIgnoreExcludes, discoverIgnoreFiles } from "./piignore.ts";
 
 /** Result shape for the rank method — extends dumpAllFiles/rankFiles result with mode. */
@@ -178,11 +178,14 @@ export class RankedMapEngine {
 			keywordScores = computeKeywordScores(fileMatches, terms);
 		}
 
+		// Discover submodules and pass them to runGitRecency for submodule-aware recency
+		const submodules = await discoverSubmodules(this.exec, this.cwd, signal);
 		const fileDates = await runGitRecency(
 			this.exec,
 			this.config.recencyWindowDays,
 			this.cwd,
 			signal,
+			submodules,
 		);
 		const recencyScores = computeRecencyScores(fileDates, this.config.recencyWindowDays);
 

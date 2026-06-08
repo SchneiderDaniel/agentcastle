@@ -14,6 +14,7 @@
 - **Test-file penalty** — Test files (`.test.`, `.spec.`, `/test/`) receive 0.5x score penalty to favor source files
 - **.piignore integration** — Patterns from `.piignore` are automatically added as ctags excludes
 - **Improved previews** — Shows ctag definition lines (from pattern field) instead of first 5 comment/import lines
+- **Submodule-aware recency scoring** — Discovers git submodules (via `git submodule status` or `.gitmodules` fallback) and runs `git log` inside each initialized submodule, merging file recency dates with the submodule path prefix (e.g. `flask_blogs/src/file.py`). Uninitialized submodules are skipped gracefully
 - **Smart ctags excludes** — Q&A data files (`*.jsonl`), docs (`*.md`), and pi agent internals are excluded from indexing; submodules are scanned like any other directory
 - **.mts file support** — ESM TypeScript (`.mts`) files are mapped to the TypeScript parser via `--map-TypeScript=+.mts`, so their symbols appear in the index
 - **Prompt integration** — Injects mode-aware `promptSnippet` and `promptGuidelines` so the LLM knows how to use the tool
@@ -24,9 +25,13 @@
 The extension is orchestrated by a **`RankedMapEngine`** class (`engine.ts`) that separates the pipeline into independently testable phases:
 
 - **`buildOrLoadIndex()`** — Look up git HEAD, try cache, fall back to ctags + parsing. Integrates `.piignore` patterns as additional ctags excludes
-- **`rank()`** — Select mode (full-dump vs ranked), compute keyword + recency scores, apply test-file penalty, combine and truncate by token budget
+- **`rank()`** — Select mode (full-dump vs ranked), compute keyword + recency scores (including submodule git history via `discoverSubmodules()` and `runGitRecency()`), apply test-file penalty, combine and truncate by token budget
 - **`addPreviews()`** — Show ctag pattern-based previews (definition lines) when available, fall back to reading first 5 file lines
 - **`format()`** — Shape results into the final `RankedMapResult` output. Includes `getStructuralOverview()` for recency-only mode
+
+Key adapter modules:
+- **`git.ts`** — `runGitRecency()` collects file-touched dates from superproject and submodule `git log`. `discoverSubmodules()` discovers submodules via `git submodule status` (parses flags, sha, path) with `.gitmodules` fallback for uninitialized repos. `getGitHead()` returns HEAD for cache invalidation
+- **`search.ts`** — `runKeywordSearch()` uses `rg --files-with-matches` for each query term with path normalization
 
 Each phase accepts `ExecFn` + config via constructor, making all methods testable in isolation without running the full tool.
 
@@ -39,7 +44,7 @@ Each phase accepts `ExecFn` + config via constructor, making all methods testabl
 2. The index is cached to disk keyed by current git HEAD, config hash, and target directory scope
 3. When called, the extension selects mode:
    - **Full dump** — repo small enough, returns all files sorted by path up to token budget
-   - **Ranked** — runs `rg --files-with-matches` for keyword scoring, `git log --name-only` for recency scoring, then combines scores with configurable weights. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory
+   - **Ranked** — runs `rg --files-with-matches` for keyword scoring, `git log --name-only` for recency scoring (includes submodule commits via `discoverSubmodules` + `runGitRecency`), then combines scores with configurable weights. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory
 4. Results are formatted as JSON with file paths, symbols, token counts, and (in ranked mode) file previews showing definition lines
 
 ## Install
