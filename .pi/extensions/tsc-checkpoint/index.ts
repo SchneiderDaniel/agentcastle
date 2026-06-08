@@ -381,6 +381,14 @@ export async function runTscCheckpoint(worktreePath: string): Promise<TscCheckpo
 export default function tscCheckpoint(pi: ExtensionAPI): void {
 	let watcher: DiagnosticsWatcher | null = null;
 
+	// Clean up watcher when the session ends to prevent file watcher leaks
+	pi.on?.("session_shutdown", () => {
+		if (watcher) {
+			watcher.stop();
+			watcher = null;
+		}
+	});
+
 	pi.registerCommand?.("check", {
 		description: "Run tsc --noEmit type-check on the current worktree (incremental watch mode)",
 		handler: async (_args, ctx) => {
