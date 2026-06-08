@@ -62,9 +62,6 @@ export async function runTscAndLspAudit(
 					`CI checks failing: ${failedNames}. Skipping audit — returning to Implementation.`,
 					"warning",
 				);
-				pi.sendUserMessage?.(`CI failed: ${ciResult.message}. Fix and re-trigger.`, {
-					deliverAs: "followUp",
-				});
 				return { nextStatus: "Implementation", note: `CI_FAILED: ${ciResult.message}` };
 			}
 
@@ -125,10 +122,9 @@ export async function runTscAndLspAudit(
 			});
 
 			if (tscDecision.nextStatus !== "Audit") {
-				// TSC has errors — stay in Implementation, send followUp, skip LSP
+				// TSC has errors — stay in Implementation, skip LSP
 				if (tscDecision.note) {
 					ctx.ui.notify(tscDecision.note, "warning");
-					pi.sendUserMessage?.(tscDecision.note, { deliverAs: "followUp" });
 				}
 				return { nextStatus: tscDecision.nextStatus, note: tscDecision.note };
 			}
