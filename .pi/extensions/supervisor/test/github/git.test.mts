@@ -69,26 +69,27 @@ describe("pushBranch()", () => {
 // ─── Tests: commitAndPush() ───────────────────────────────────────
 
 describe("commitAndPush()", () => {
-	it("stages all changes, commits, then pushes", async () => {
+	it("stages all changes, commits, then pushes — returns true", async () => {
 		const { pi, calls } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 0, stdout: "committed", stderr: "" },
 			{ code: 0, stdout: "", stderr: "" },
 		]);
-		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "feat(#123): msg");
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "feat(#123): msg");
+		assert.equal(result, true, "should return true when commits were pushed");
 		assert.equal(calls.length, 3);
 		assert.deepEqual(calls[0].args, ["add", "-A"]);
 		assert.deepEqual(calls[1].args, ["commit", "-m", "feat(#123): msg"]);
 		assert.deepEqual(calls[2].args, ["push", "origin", "feature"]);
 	});
 
-	it("resolves successfully when git commit returns 'nothing to commit' (no changes)", async () => {
+	it("returns false when git commit returns 'nothing to commit' (no changes)", async () => {
 		const { pi, calls } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 1, stdout: "", stderr: "nothing to commit" },
 		]);
-		// Should resolve, not reject — pipeline should continue
-		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
+		assert.equal(result, false, "should return false when nothing to commit");
 		assert.equal(calls.length, 2); // add + commit, no push on nothing-to-commit
 	});
 
@@ -116,7 +117,8 @@ describe("commitAndPush()", () => {
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 1, stdout: "", stderr: "nothing to commit" },
 		]);
-		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
+		assert.equal(result, false, "should return false");
 		assert.equal(calls.length, 2); // add + commit, no push — resolved, not rejected
 	});
 });

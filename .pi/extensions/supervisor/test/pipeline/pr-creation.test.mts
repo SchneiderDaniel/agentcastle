@@ -123,19 +123,33 @@ function existingPrListResponse(prNumber: number = 123): string {
 	]);
 }
 
+/**
+ * Helper: gh api compare response for head being ahead of base.
+ * Returns the ahead_by count as stdout string.
+ */
+function compareAheadResponse(aheadBy: number = 3): {
+	code: number;
+	stdout: string;
+	stderr: string;
+} {
+	return { code: 0, stdout: String(aheadBy), stderr: "" };
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────
 
 describe("createPrOnApproval()", () => {
-	it("Happy path with worktree: push → check PR → create PR → success notifications", async () => {
+	it("Happy path with worktree: push → compare check → list PR → create PR → success notifications", async () => {
 		const execCalls: ExecCall[] = [];
 		const notifyCalls: NotifyCall[] = [];
 		const pi = createMockPi(
 			[
 				// 1. git push --force
 				{ code: 0, stdout: "Everything up-to-date", stderr: "" },
-				// 2. gh pr list (no existing PR)
+				// 2. gh api compare (pre-check: head has commits)
+				compareAheadResponse(3),
+				// 3. gh pr list (no existing PR)
 				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
-				// 3. gh pr create
+				// 4. gh pr create
 				{ code: 0, stdout: "https://github.com/owner/repo/pull/456\n", stderr: "" },
 			],
 			execCalls,
@@ -153,8 +167,8 @@ describe("createPrOnApproval()", () => {
 			"worktree-git-issue-42-test",
 		);
 
-		// Verify exec call order: push, pr list, pr create
-		assert.equal(execCalls.length, 3, "should have 3 exec calls");
+		// Verify exec call order: push, compare, pr list, pr create
+		assert.equal(execCalls.length, 4, "should have 4 exec calls");
 
 		// 1. git push
 		assert.equal(execCalls[0].cmd, "git");
@@ -165,15 +179,20 @@ describe("createPrOnApproval()", () => {
 		assert.equal(execCalls[0].opts.cwd, "/worktrees/wt-42");
 		assert.equal(execCalls[0].opts.timeout, 15000);
 
-		// 2. gh pr list
+		// 2. gh api compare
 		assert.equal(execCalls[1].cmd, "gh");
-		assert.equal(execCalls[1].args[0], "pr");
-		assert.equal(execCalls[1].args[1], "list");
+		assert.equal(execCalls[1].args[0], "api");
+		assert.ok(execCalls[1].args[1].includes("compare"));
 
-		// 3. gh pr create
+		// 3. gh pr list
 		assert.equal(execCalls[2].cmd, "gh");
 		assert.equal(execCalls[2].args[0], "pr");
-		assert.equal(execCalls[2].args[1], "create");
+		assert.equal(execCalls[2].args[1], "list");
+
+		// 4. gh pr create
+		assert.equal(execCalls[3].cmd, "gh");
+		assert.equal(execCalls[3].args[0], "pr");
+		assert.equal(execCalls[3].args[1], "create");
 
 		// Verify success notifications
 		const infoNotifies = notifyCalls.filter((n) => n.level === "info");
@@ -232,9 +251,11 @@ describe("createPrOnApproval()", () => {
 			[
 				// 1. git push --force
 				{ code: 0, stdout: "push ok", stderr: "" },
-				// 2. gh pr list (existing PR found)
+				// 2. gh api compare (pre-check: head has commits)
+				compareAheadResponse(3),
+				// 3. gh pr list (existing PR found)
 				{ code: 0, stdout: existingPrListResponse(123), stderr: "" },
-				// 3. gh pr edit
+				// 4. gh pr edit
 				{ code: 0, stdout: "", stderr: "" },
 			],
 			execCalls,
@@ -252,15 +273,18 @@ describe("createPrOnApproval()", () => {
 			"worktree-git-issue-42-test",
 		);
 
-		// Verify call order: push, pr list, pr edit
-		assert.equal(execCalls.length, 3);
+		// Verify call order: push, compare, pr list, pr edit
+		assert.equal(execCalls.length, 4);
 		assert.equal(execCalls[0].cmd, "git");
 		assert.equal(execCalls[1].cmd, "gh");
-		assert.equal(execCalls[1].args[1], "list");
+		assert.equal(execCalls[1].args[0], "api"); // gh api compare
+		assert.ok(execCalls[1].args[1].includes("compare"));
 		assert.equal(execCalls[2].cmd, "gh");
-		assert.equal(execCalls[2].args[0], "pr");
-		assert.equal(execCalls[2].args[1], "edit");
-		assert.equal(execCalls[2].args[2], "123"); // existing PR number
+		assert.equal(execCalls[2].args[1], "list");
+		assert.equal(execCalls[3].cmd, "gh");
+		assert.equal(execCalls[3].args[0], "pr");
+		assert.equal(execCalls[3].args[1], "edit");
+		assert.equal(execCalls[3].args[2], "123"); // existing PR number
 
 		// Verify no gh pr create call
 		const prCreateCalls = execCalls.filter((c) => c.cmd === "gh" && c.args[1] === "create");
@@ -354,9 +378,11 @@ describe("createPrOnApproval()", () => {
 			[
 				// 1. git push --force
 				{ code: 0, stdout: "push ok", stderr: "" },
-				// 2. gh pr list FAILS
+				// 2. gh api compare (pre-check: head has commits)
+				compareAheadResponse(3),
+				// 3. gh pr list FAILS
 				{ code: 1, stdout: "", stderr: "network error" },
-				// 3. gh pr create (fallback)
+				// 4. gh pr create (fallback)
 				{ code: 0, stdout: "https://github.com/owner/repo/pull/456\n", stderr: "" },
 			],
 			execCalls,
@@ -382,9 +408,9 @@ describe("createPrOnApproval()", () => {
 		assert.ok(checkWarning, "should have warning notification for PR conflict check failure");
 
 		// Verify PR creation was still attempted
-		assert.equal(execCalls.length, 3, "should have 3 exec calls despite check failure");
-		assert.equal(execCalls[2].cmd, "gh");
-		assert.equal(execCalls[2].args[1], "create", "should still attempt PR creation");
+		assert.equal(execCalls.length, 4, "should have 4 exec calls despite check failure");
+		assert.equal(execCalls[3].cmd, "gh");
+		assert.equal(execCalls[3].args[1], "create", "should still attempt PR creation");
 	});
 
 	it("Regression: does NOT call git rev-list --count anywhere", async () => {
@@ -511,6 +537,7 @@ describe("createPrOnApproval()", () => {
 		const pi = createMockPi(
 			[
 				{ code: 0, stdout: "push ok", stderr: "" },
+				compareAheadResponse(3),
 				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
 				// Returns JSON with --json number
 				{ code: 0, stdout: '{"number":456}', stderr: "" },
@@ -542,6 +569,7 @@ describe("createPrOnApproval()", () => {
 		const pi = createMockPi(
 			[
 				{ code: 0, stdout: "push ok", stderr: "" },
+				compareAheadResponse(3),
 				{ code: 0, stdout: existingPrListResponse(123), stderr: "" },
 				{ code: 0, stdout: "", stderr: "" },
 			],
@@ -640,9 +668,11 @@ describe("createPrOnApproval()", () => {
 			[
 				// 1. git push --force OK
 				{ code: 0, stdout: "push ok", stderr: "" },
-				// 2. gh pr list FAILS
+				// 2. gh api compare (pre-check: head has commits)
+				compareAheadResponse(3),
+				// 3. gh pr list FAILS
 				{ code: 1, stdout: "", stderr: "network error" },
-				// 3. gh pr create (should still attempt)
+				// 4. gh pr create (should still attempt)
 				{ code: 0, stdout: '{"number":456}', stderr: "" },
 			],
 			execCalls,
@@ -676,6 +706,7 @@ describe("createPrOnApproval()", () => {
 		const pi = createMockPi(
 			[
 				{ code: 0, stdout: "push ok", stderr: "" },
+				compareAheadResponse(3),
 				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
 				// 1st gh pr create FAILS
 				{ code: 1, stdout: "", stderr: "rate limit exceeded" },

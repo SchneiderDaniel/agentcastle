@@ -524,8 +524,18 @@ export async function handlePostAgentSuccess(
 	if (agentName === "developer" && worktreePath && worktreeBranch) {
 		const commitMsg = `feat(#${issueNum}): ${issueTitle}`;
 		try {
-			await commitAndPush(pi, worktreePath, config.remote!, worktreeBranch, commitMsg);
-			ctx.ui.notify("Changes committed and pushed to branch", "info");
+			const committed = await commitAndPush(
+				pi,
+				worktreePath,
+				config.remote!,
+				worktreeBranch,
+				commitMsg,
+			);
+			if (committed) {
+				ctx.ui.notify("Changes committed and pushed to branch", "info");
+			} else {
+				ctx.ui.notify("No changes to commit — pipeline continues", "info");
+			}
 		} catch (cpErr: unknown) {
 			const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr);
 			ctx.ui.notify(`commitAndPush failed: ${cpMsg}`, "warning");

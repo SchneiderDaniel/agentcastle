@@ -18,11 +18,8 @@ export async function createWorktree(
 	const log = getDebugLogger();
 	const wt = resolvePath(cwd, worktreeBase, worktreeBranch);
 	log.info("worktree", `Creating worktree: ${wt}`);
-	log.info("worktree", `git worktree add -b ${worktreeBranch} ${wt} ${defaultBranch}`, {
-		cwd,
-		branch: worktreeBranch,
-		base: defaultBranch,
-	});
+
+	// Attempt 1: git worktree add -b (creates new branch + worktree)
 	try {
 		const result = await pi.exec(
 			"git",
@@ -30,29 +27,42 @@ export async function createWorktree(
 			{ cwd, timeout: 15000 },
 		);
 		if (result.code !== 0) {
-			log.warn("worktree", `git worktree add failed, trying without -b`, {
-				stderr: (result.stderr || "").slice(0, 500),
-			});
 			throw new Error(result.stderr || result.stdout || "git worktree add failed");
 		}
 		log.info("worktree", `Worktree created at ${wt}`);
-	} catch {
-		// Branch or worktree may already exist — try add without -b
-		log.debug("worktree", "Trying worktree add without -b (branch may exist)");
-		try {
-			const result = await pi.exec("git", ["worktree", "add", wt, worktreeBranch], {
-				cwd,
-				timeout: 15000,
-			});
-			if (result.code !== 0) {
-				log.debug("worktree", "Worktree already exists — using existing");
-			}
-		} catch {
-			log.debug("worktree", "Worktree already exists — using existing");
-		}
+		return wt;
+	} catch (err: unknown) {
+		const attempt1Err = err instanceof Error ? err.message : String(err);
+		log.warn("worktree", `Attempt 1 failed: ${attempt1Err}`);
 	}
-	log.info("worktree", `Worktree ready: ${wt}`);
-	return wt;
+
+	// Attempt 2: branch already exists — try add without -b
+	try {
+		const result = await pi.exec("git", ["worktree", "add", wt, worktreeBranch], {
+			cwd,
+			timeout: 15000,
+		});
+		if (result.code !== 0) {
+			throw new Error(result.stderr || result.stdout || "git worktree add failed");
+		}
+		log.info("worktree", `Worktree attached at ${wt} (existing branch ${worktreeBranch})`);
+		return wt;
+	} catch (err2: unknown) {
+		const attempt2Err = err2 instanceof Error ? err2.message : String(err2);
+		log.warn("worktree", `Attempt 2 failed: ${attempt2Err}`);
+	}
+
+	// Both attempts failed — check if worktree dir somehow exists
+	try {
+		await pi.exec("test", ["-d", wt], { timeout: 5000 });
+		log.warn("worktree", "Both attempts failed but worktree dir exists — using it");
+		return wt;
+	} catch {
+		// Directory doesn't exist — throw to stop pipeline early
+		const msg = `Failed to create worktree at ${wt} after 2 attempts`;
+		log.error("worktree", msg);
+		throw new Error(msg);
+	}
 }
 
 // ─── Install Worktree Dependencies ───────────────────────────────
