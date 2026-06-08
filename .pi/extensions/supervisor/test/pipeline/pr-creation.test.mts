@@ -5,7 +5,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { SupervisorConfig, PipelineAgentResult } from "../../config/types.ts";
+import type {
+	SupervisorConfig,
+	PipelineAgentResult,
+	PrCreationResult,
+} from "../../config/types.ts";
 import { createPrOnApproval } from "../../pipeline/pr-creation.ts";
 
 // ─── Call Tracking ────────────────────────────────────────────────
@@ -268,23 +272,19 @@ describe("createPrOnApproval()", () => {
 		assert.ok(updateNotify, "should have PR update notification");
 	});
 
-	it("Push failure: warning notification delivered, PR creation still attempted", async () => {
+	it("Push failure: returns PrCreationResult with success=false and no PR attempt", async () => {
 		const execCalls: ExecCall[] = [];
 		const notifyCalls: NotifyCall[] = [];
 		const pi = createMockPi(
 			[
 				// 1. git push --force FAILS
 				{ code: 1, stdout: "", stderr: "push failed: network error" },
-				// 2. gh pr list (no existing PR)
-				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
-				// 3. gh pr create
-				{ code: 0, stdout: "https://github.com/owner/repo/pull/456\n", stderr: "" },
 			],
 			execCalls,
 		);
 		const ctx = createMockCtx(notifyCalls);
 
-		await createPrOnApproval(
+		const result = await createPrOnApproval(
 			pi,
 			ctx,
 			42,
@@ -295,19 +295,20 @@ describe("createPrOnApproval()", () => {
 			"worktree-git-issue-42-test",
 		);
 
-		// Verify warning notification for push failure
-		const warningNotifies = notifyCalls.filter((n) => n.level === "warning");
-		const pushWarning = warningNotifies.find((n) =>
-			n.message.toLowerCase().includes("push failed"),
-		);
-		assert.ok(pushWarning, "should have warning notification for push failure");
+		// Verify error notification for push failure
+		const errorNotifies = notifyCalls.filter((n) => n.level === "error");
+		const pushError = errorNotifies.find((n) => n.message.toLowerCase().includes("push failed"));
+		assert.ok(pushError, "should have error notification for push failure");
 
-		// Verify PR creation was still attempted
-		assert.equal(execCalls.length, 3, "should have 3 exec calls despite push failure");
-		assert.equal(execCalls[1].cmd, "gh");
-		assert.equal(execCalls[1].args[1], "list");
-		assert.equal(execCalls[2].cmd, "gh");
-		assert.equal(execCalls[2].args[1], "create");
+		// Verify NO gh calls were made after push failure (early return)
+		const ghCalls = execCalls.filter((c) => c.cmd === "gh");
+		assert.equal(ghCalls.length, 0, "should not attempt PR after push failure");
+
+		// Verify PrCreationResult
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, false, "should indicate failure");
+		assert.ok(result.error, "should contain error message");
+		assert.ok(result.error!.includes("push"), "error should mention push failure");
 	});
 
 	it("gh pr create failure: error notification delivered, function does not throw unhandled", async () => {
@@ -500,5 +501,245 @@ describe("createPrOnApproval()", () => {
 		assert.notEqual(createHeadArgIndex, -1, "should have --head argument in pr create");
 		const createBranchName = prCreateCall!.args[createHeadArgIndex + 1];
 		assert.equal(createBranchName, branchName, "pr create should use same generated branch name");
+	});
+
+	// ─── PrCreationResult Tests ────────────────────────────────────────
+
+	it("returns PrCreationResult with success=true when PR is created", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "push ok", stderr: "" },
+				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
+				// Returns JSON with --json number
+				{ code: 0, stdout: '{"number":456}', stderr: "" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, true, "should be success");
+		assert.equal(result.prNumber, 456, "should contain PR number");
+		assert.equal(result.error, undefined, "should have no error");
+	});
+
+	it("returns PrCreationResult with success=true and wasUpdate=true when PR is updated", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "push ok", stderr: "" },
+				{ code: 0, stdout: existingPrListResponse(123), stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, true, "should be success");
+		assert.equal(result.prNumber, 123, "should contain existing PR number");
+		assert.equal(result.wasUpdate, true, "should be marked as update");
+	});
+
+	it("returns PrCreationResult with success=false when gh pr create fails (both retries)", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "push ok", stderr: "" },
+				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
+				// gh pr create attempt 1 FAILS
+				{ code: 1, stdout: "", stderr: "create failed: GraphQL error" },
+				// gh pr create attempt 2 (retry) also FAILS
+				{ code: 1, stdout: "", stderr: "still failing: rate limit" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, false, "should indicate failure");
+		assert.ok(result.error, "should contain error message");
+		// Error should describe the failure
+		assert.ok(result.error!.length > 0, "error should not be empty");
+	});
+
+	it("returns PrCreationResult with success=false when push fails", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		const pi = createMockPi(
+			[
+				// 1. git push --force FAILS
+				{ code: 1, stdout: "", stderr: "push failed: network error" },
+				// 2. gh pr list would follow but push failure should stop early
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, false, "should indicate failure when push fails");
+		assert.ok(result.error, "should contain error message");
+		assert.ok(result.error!.toLowerCase().includes("push"), "error should mention push failure");
+		// Verify no gh calls were made after push failure
+		const ghCalls = execCalls.filter((c) => c.cmd === "gh");
+		assert.equal(ghCalls.length, 0, "should not attempt PR creation after push failure");
+	});
+
+	it("returns PrCreationResult with success=false when PR conflict check throws", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		const pi = createMockPi(
+			[
+				// 1. git push --force OK
+				{ code: 0, stdout: "push ok", stderr: "" },
+				// 2. gh pr list FAILS
+				{ code: 1, stdout: "", stderr: "network error" },
+				// 3. gh pr create (should still attempt)
+				{ code: 0, stdout: '{"number":456}', stderr: "" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(
+			result.success,
+			true,
+			"should still succeed if PR creation works despite check failure",
+		);
+		assert.equal(result.prNumber, 456, "should contain PR number");
+	});
+
+	it("retries gh pr create with backoff on transient failure", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		// First call fails, second succeeds (retry with backoff)
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "push ok", stderr: "" },
+				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
+				// 1st gh pr create FAILS
+				{ code: 1, stdout: "", stderr: "rate limit exceeded" },
+				// 2nd gh pr create succeeds (retry)
+				{ code: 0, stdout: '{"number":789}', stderr: "" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, true, "should succeed after retry");
+		assert.equal(result.prNumber, 789, "should contain PR number from retry");
+
+		// Verify two gh pr create calls were made
+		const prCreateCalls = execCalls.filter((c) => c.cmd === "gh" && c.args[1] === "create");
+		assert.equal(prCreateCalls.length, 2, "should retry gh pr create once");
+	});
+
+	it("fails after retry exhausted", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		// Both attempts fail
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "push ok", stderr: "" },
+				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
+				// 1st gh pr create FAILS
+				{ code: 1, stdout: "", stderr: "rate limit exceeded" },
+				// 2nd gh pr create also FAILS
+				{ code: 1, stdout: "", stderr: "still rate limited" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, false, "should fail after retry exhaustion");
+		assert.ok(result.error, "should contain error message");
+
+		// Verify two gh pr create calls were made
+		const prCreateCalls = execCalls.filter((c) => c.cmd === "gh" && c.args[1] === "create");
+		assert.equal(prCreateCalls.length, 2, "should make exactly 2 attempts");
 	});
 });

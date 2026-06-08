@@ -203,6 +203,20 @@ export interface PrConflictInfo {
 	baseRefName: string;
 }
 
+// ─── PR Creation Result ──────────────────────────────────────────────
+
+/** Result of PR creation attempt — allows handler to react to failure */
+export interface PrCreationResult {
+	/** Whether the PR was created/updated successfully */
+	success: boolean;
+	/** PR number if created/updated successfully */
+	prNumber?: number;
+	/** Error message if creation failed */
+	error?: string;
+	/** Whether this was an update to an existing PR */
+	wasUpdate?: boolean;
+}
+
 // ─── Merge result ────────────────────────────────────────────────────
 
 /** Track per-agent outcome for final summary */

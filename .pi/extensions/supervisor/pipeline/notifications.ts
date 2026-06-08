@@ -6,6 +6,7 @@ import type {
 	SupervisorConfig,
 	PipelineAgentResult,
 	SupervisorMessageDetails,
+	PrCreationResult,
 } from "../config/types.ts";
 import { formatDuration } from "../config/formatting.ts";
 import { buildPipelineSummary } from "../pipeline/output.ts";
@@ -13,6 +14,7 @@ import { buildPipelineSummary } from "../pipeline/output.ts";
 /**
  * Send pipeline completion notification.
  * Builds summary markdown and sends as supervisor-summary message.
+ * Accepts optional PrCreationResult to adjust completion message.
  */
 export function sendPipelineSummary(
 	pi: ExtensionAPI,
@@ -23,6 +25,7 @@ export function sendPipelineSummary(
 	issueTitle: string,
 	config: SupervisorConfig,
 	stopReason?: string,
+	prCreationResult?: PrCreationResult,
 ): void {
 	const summaryMarkdown = buildPipelineSummary(
 		agentResults,
@@ -31,6 +34,7 @@ export function sendPipelineSummary(
 		issueTitle,
 		config,
 		overallStatus === "stopped" ? stopReason : undefined,
+		prCreationResult,
 	);
 
 	pi.sendMessage({
@@ -39,9 +43,17 @@ export function sendPipelineSummary(
 		display: true,
 	});
 
-	ctx.ui.notify("Pipeline complete.", "info");
+	// Adjust notification text for PR creation failure
+	const isPrFailed = prCreationResult && !prCreationResult.success;
+	const effectiveStatus = isPrFailed && overallStatus === "success" ? "pr-failed" : overallStatus;
 
-	if (overallStatus === "success") {
+	if (effectiveStatus === "pr-failed") {
+		ctx.ui.notify("Pipeline complete (PR creation failed).", "warning");
+	} else {
+		ctx.ui.notify("Pipeline complete.", "info");
+	}
+
+	if (effectiveStatus === "success") {
 		const totalDurationMs = agentResults.reduce((sum, a) => sum + a.durationMs, 0);
 		ctx.ui.setStatus(
 			"supervisor",
@@ -50,7 +62,16 @@ export function sendPipelineSummary(
 				`✅ Done · ${agentResults.length} agents · ${formatDuration(totalDurationMs)}`,
 			),
 		);
-	} else if (overallStatus === "failed") {
+	} else if (effectiveStatus === "pr-failed") {
+		const totalDurationMs = agentResults.reduce((sum, a) => sum + a.durationMs, 0);
+		ctx.ui.setStatus(
+			"supervisor",
+			ctx.ui.theme.fg(
+				"warning",
+				`⚠️ Done (PR failed) · ${agentResults.length} agents · ${formatDuration(totalDurationMs)}`,
+			),
+		);
+	} else if (effectiveStatus === "failed") {
 		const lastFailed = [...agentResults].reverse().find((a) => a.status === "FAILED");
 		ctx.ui.setStatus(
 			"supervisor",

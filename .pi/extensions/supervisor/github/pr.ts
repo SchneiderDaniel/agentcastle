@@ -95,19 +95,38 @@ export async function createPullRequest(
 		args.push("--body-file", bodyFile);
 		log.debug("pr", `PR body from file: ${bodyFile}`);
 	}
-	const result = await gh(pi, args);
-	const urlMatch = result.match(/pull\/(\d+)/);
+	args.push("--json", "number");
+
+	// Execute gh pr create with --json number for machine-parseable output (Bug 7 fix)
+	// Single exec call — try JSON parse first, then fall back to URL/number regex
+	const rawOutput = await gh(pi, args);
+
+	// Primary path: parse --json number output (machine-parseable)
+	try {
+		const parsed = JSON.parse(rawOutput);
+		if (parsed !== null && typeof parsed === "object" && typeof parsed.number === "number") {
+			const num = parsed.number;
+			log.info("pr", `PR #${num} created (from --json number): ${head} → ${base}`);
+			return { number: num };
+		}
+	} catch {
+		// Not JSON — fall through to regex parsing
+	}
+
+	// Fallback: parse PR number from raw gh output (backward compat)
+	const urlMatch = rawOutput.match(/pull\/(\d+)/);
 	if (urlMatch) {
 		const num = parseInt(urlMatch[1], 10);
-		log.info("pr", `PR #${num} created: ${head} → ${base}`);
+		log.info("pr", `PR #${num} created (from URL): ${head} → ${base}`);
 		return { number: num };
 	}
-	const numMatch = result.match(/(\d+)/);
+	const numMatch = rawOutput.match(/(\d+)/);
 	if (numMatch) {
 		const num = parseInt(numMatch[1], 10);
 		log.info("pr", `PR #${num} created (from number match)`);
 		return { number: num };
 	}
-	log.error("pr", `Failed to parse PR number from: ${result.slice(0, 200)}`);
-	throw new Error(`gh pr create failed to parse PR number from output: ${result}`);
+
+	log.error("pr", `Failed to parse PR number from: ${rawOutput.slice(0, 200)}`);
+	throw new Error(`gh pr create failed to parse PR number from output: ${rawOutput}`);
 }
