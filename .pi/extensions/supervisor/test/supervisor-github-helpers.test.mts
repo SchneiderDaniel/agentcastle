@@ -122,14 +122,18 @@ describe("commitAndPush", () => {
 		assert.strictEqual(calls.length, 1); // only add, not commit/push
 	});
 
-	it("handles 'nothing to commit' gracefully (no push, no throw)", async () => {
+	it("handles 'nothing to commit' gracefully — calls pushBranch anyway", async () => {
 		const { pi, calls } = makeMockPi([
 			{ code: 0, stdout: "" },
 			{ code: 1, stderr: "nothing to commit" },
+			{ code: 0, stdout: "Everything up-to-date" },
 		]);
 		// Should NOT throw — pipeline continues gracefully
 		await assert.doesNotReject(() => commitAndPush(pi as any, "/cwd", "origin", "branch", "msg"));
-		assert.strictEqual(calls.length, 2); // add + commit, no push
+		// pushBranch is called even when nothing to commit (branch may not exist on remote)
+		assert.strictEqual(calls.length, 3); // add + commit + push
+		assert.strictEqual(calls[2].cmd, "git");
+		assert.deepStrictEqual(calls[2].args, ["push", "origin", "branch"]);
 	});
 });
 

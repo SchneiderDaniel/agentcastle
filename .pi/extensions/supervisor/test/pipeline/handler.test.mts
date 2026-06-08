@@ -5,7 +5,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import type { PipelineAgentResult } from "../../config/types.ts";
+import type { PipelineAgentResult, PrCreationResult } from "../../config/types.ts";
 import { handlePostPipeline } from "../../pipeline/handler.ts";
 
 // ─── Call tracking ────────────────────────────────────────────────
@@ -461,5 +461,150 @@ describe("handlePostPipeline() — merge/cleanup ordering (Phase 1)", () => {
 		// No cleanup either since worktreePath is undefined
 		const gitCalls = calls.filter((c) => c.cmd === "git");
 		assert.equal(gitCalls.length, 0, "no cleanup when worktreePath is undefined");
+	});
+
+	// ─── Phase 5: Conditional Worktree Cleanup ───────────────────────
+
+	it("PR fails + isDebug=true → worktree preserved (cleanup skipped)", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				// handlePostPipelineMerge: checkPrConflicts
+				{ code: 0, stdout: prListResult(false), stderr: "" },
+			],
+			calls,
+		);
+		const ctx = createMockCtx(true);
+		const failedPr: PrCreationResult = { success: false, error: "Push failed" };
+
+		await handlePostPipeline(
+			42,
+			"Test issue",
+			"Done",
+			[mockAgentResult],
+			mockConfig as any,
+			pi,
+			ctx,
+			"/repo/../worktrees/worktree-git-issue-42-test",
+			"worktree-git-issue-42-test",
+			failedPr,
+			true, // isDebug = true → preserve worktree
+		);
+
+		// Cleanup should NOT be called
+		const cleanupCalls = calls.filter(
+			(c) => c.cmd === "git" && (c.args[0] === "worktree" || c.args[0] === "branch"),
+		);
+		assert.equal(cleanupCalls.length, 0, "no cleanup when PR fails in debug mode");
+	});
+
+	it("PR fails + isDebug=false → worktree cleaned up normally", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				// handlePostPipelineMerge: checkPrConflicts
+				{ code: 0, stdout: prListResult(false), stderr: "" },
+				// cleanup
+				{ code: 0, stdout: "", stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+			],
+			calls,
+		);
+		const ctx = createMockCtx(true);
+		const failedPr: PrCreationResult = { success: false, error: "Push failed" };
+
+		await handlePostPipeline(
+			42,
+			"Test issue",
+			"Done",
+			[mockAgentResult],
+			mockConfig as any,
+			pi,
+			ctx,
+			"/repo/../worktrees/worktree-git-issue-42-test",
+			"worktree-git-issue-42-test",
+			failedPr,
+			false, // isDebug = false → normal cleanup
+		);
+
+		// Cleanup SHOULD be called
+		const cleanupCalls = calls.filter(
+			(c) => c.cmd === "git" && (c.args[0] === "worktree" || c.args[0] === "branch"),
+		);
+		assert.ok(cleanupCalls.length > 0, "cleanup should run when not in debug mode");
+	});
+
+	it("PR succeeds + isDebug=true → worktree cleaned up normally", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				// handlePostPipelineMerge: checkPrConflicts
+				{ code: 0, stdout: prListResult(false), stderr: "" },
+				// cleanup
+				{ code: 0, stdout: "", stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+			],
+			calls,
+		);
+		const ctx = createMockCtx(true);
+		const successPr: PrCreationResult = { success: true, prNumber: 456 };
+
+		await handlePostPipeline(
+			42,
+			"Test issue",
+			"Done",
+			[mockAgentResult],
+			mockConfig as any,
+			pi,
+			ctx,
+			"/repo/../worktrees/worktree-git-issue-42-test",
+			"worktree-git-issue-42-test",
+			successPr,
+			true, // isDebug = true but PR succeeded → normal cleanup
+		);
+
+		// Cleanup SHOULD be called (PR succeeded, debug doesn't preserve)
+		const cleanupCalls = calls.filter(
+			(c) => c.cmd === "git" && (c.args[0] === "worktree" || c.args[0] === "branch"),
+		);
+		assert.ok(cleanupCalls.length > 0, "cleanup should run when PR succeeds even in debug mode");
+	});
+
+	it("PR result undefined + isDebug=true → worktree cleaned up normally", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				// handlePostPipelineMerge: checkPrConflicts
+				{ code: 0, stdout: prListResult(false), stderr: "" },
+				// cleanup
+				{ code: 0, stdout: "", stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+				{ code: 0, stdout: "", stderr: "" },
+			],
+			calls,
+		);
+		const ctx = createMockCtx(true);
+
+		await handlePostPipeline(
+			42,
+			"Test issue",
+			"Done",
+			[mockAgentResult],
+			mockConfig as any,
+			pi,
+			ctx,
+			"/repo/../worktrees/worktree-git-issue-42-test",
+			"worktree-git-issue-42-test",
+			undefined, // no prCreationResult
+			true, // isDebug = true but no PR failure → normal cleanup
+		);
+
+		// Cleanup SHOULD be called (no PR failure)
+		const cleanupCalls = calls.filter(
+			(c) => c.cmd === "git" && (c.args[0] === "worktree" || c.args[0] === "branch"),
+		);
+		assert.ok(cleanupCalls.length > 0, "cleanup should run when no PR failure even in debug mode");
 	});
 });

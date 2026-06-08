@@ -49,8 +49,12 @@ export function sendPipelineSummary(
 
 	if (effectiveStatus === "pr-failed") {
 		ctx.ui.notify("Pipeline complete (PR creation failed).", "warning");
-	} else {
+	} else if (effectiveStatus === "success") {
 		ctx.ui.notify("Pipeline complete.", "info");
+	} else if (effectiveStatus === "failed") {
+		ctx.ui.notify("Pipeline failed.", "error");
+	} else {
+		ctx.ui.notify("Pipeline stopped.", "warning");
 	}
 
 	if (effectiveStatus === "success") {

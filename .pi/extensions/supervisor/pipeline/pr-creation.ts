@@ -69,21 +69,48 @@ export async function createPrOnApproval(
 	const prTitle = `feat(#${issueNum}): ${issueTitle}`;
 	log.info("pr-creation", `PR title: ${prTitle}`);
 
-	// ─── Phase 2: Push branch (if worktree exists) ───────────────────
+	// ─── Phase 2: Push branch (if worktree exists) with retry ───────
+	// Timeout: 60s per attempt. Retry with exponential backoff (3 attempts).
+	const MAX_PUSH_RETRIES = 3;
+	const PUSH_RETRY_DELAYS_MS = [3000, 5000, 10000];
 	if (worktreePath) {
 		log.info("pr-creation", `Pushing ${headBranch} from worktree`);
-		try {
-			await pi.exec("git", ["push", "--force", config.remote!, headBranch], {
-				cwd: worktreePath,
-				timeout: 15000,
-			});
-			log.info("pr-creation", "Push OK");
-		} catch (pushErr: unknown) {
-			const pushMsg = pushErr instanceof Error ? pushErr.message : String(pushErr);
-			log.error("pr-creation", `Push failed: ${pushMsg}`);
-			ctx.ui.notify(`Branch push failed: ${pushMsg}`, "error");
-			// Surface push failure immediately (Bug 3 fix)
-			return { success: false, error: `Branch push failed: ${pushMsg}` };
+		let lastPushErr: unknown;
+		let pushSucceeded = false;
+		for (let attempt = 0; attempt < MAX_PUSH_RETRIES; attempt++) {
+			try {
+				if (attempt > 0) {
+					const delayMs = PUSH_RETRY_DELAYS_MS[attempt - 1] ?? 5000;
+					log.info(
+						"pr-creation",
+						`Push retry ${attempt + 1}/${MAX_PUSH_RETRIES} after ${delayMs}ms`,
+					);
+					await new Promise((resolve) => setTimeout(resolve, delayMs));
+				}
+				await pi.exec("git", ["push", "--force", config.remote!, headBranch], {
+					cwd: worktreePath,
+					timeout: 60000,
+				});
+				log.info("pr-creation", "Push OK");
+				pushSucceeded = true;
+				break;
+			} catch (pushErr: unknown) {
+				lastPushErr = pushErr;
+				const pushMsg = pushErr instanceof Error ? pushErr.message : String(pushErr);
+				log.warn(
+					"pr-creation",
+					`Push attempt ${attempt + 1}/${MAX_PUSH_RETRIES} failed: ${pushMsg}`,
+				);
+			}
+		}
+		if (!pushSucceeded) {
+			const pushMsg = lastPushErr instanceof Error ? lastPushErr.message : String(lastPushErr);
+			log.error("pr-creation", `All ${MAX_PUSH_RETRIES} push attempts failed: ${pushMsg}`);
+			ctx.ui.notify(`Branch push failed after ${MAX_PUSH_RETRIES} attempts: ${pushMsg}`, "error");
+			return {
+				success: false,
+				error: `Branch push failed after ${MAX_PUSH_RETRIES} attempts: ${pushMsg}`,
+			};
 		}
 	}
 

@@ -82,14 +82,30 @@ describe("commitAndPush()", () => {
 		assert.deepEqual(calls[2].args, ["push", "origin", "feature"]);
 	});
 
-	it("resolves successfully when git commit returns 'nothing to commit' (no changes)", async () => {
+	it("resolves successfully when git commit returns 'nothing to commit' — calls pushBranch", async () => {
 		const { pi, calls } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 1, stdout: "", stderr: "nothing to commit" },
+			{ code: 0, stdout: "", stderr: "" },
 		]);
 		// Should resolve, not reject — pipeline should continue
 		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
-		assert.equal(calls.length, 2); // add + commit, no push on nothing-to-commit
+		// pushBranch is called even when nothing to commit (branch may not exist on remote)
+		assert.equal(calls.length, 3); // add + commit + push
+		assert.equal(calls[2].cmd, "git");
+		assert.deepEqual(calls[2].args, ["push", "origin", "feature"]);
+	});
+
+	it("does not throw when nothing to commit and push succeeds", async () => {
+		const { pi, calls } = createMockPi([
+			{ code: 0, stdout: "", stderr: "" },
+			{ code: 1, stdout: "", stderr: "nothing to commit" },
+			{ code: 0, stdout: "Everything up-to-date", stderr: "" },
+		]);
+		await assert.doesNotReject(() =>
+			commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg"),
+		);
+		assert.equal(calls.length, 3);
 	});
 
 	it("throws when git add fails", async () => {
@@ -111,12 +127,16 @@ describe("commitAndPush()", () => {
 		);
 	});
 
-	it("does not push when nothing to commit (short-circuits before push)", async () => {
+	it("calls pushBranch even when nothing to commit (no short-circuit)", async () => {
 		const { pi, calls } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 1, stdout: "", stderr: "nothing to commit" },
+			{ code: 0, stdout: "Everything up-to-date", stderr: "" },
 		]);
 		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
-		assert.equal(calls.length, 2); // add + commit, no push — resolved, not rejected
+		// Should still call push — branch may not exist on remote yet
+		assert.equal(calls.length, 3, "should call push even when nothing to commit");
+		assert.equal(calls[2].cmd, "git");
+		assert.deepEqual(calls[2].args, ["push", "origin", "feature"]);
 	});
 });
