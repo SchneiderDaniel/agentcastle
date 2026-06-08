@@ -129,6 +129,50 @@ function makeMigrationSnippet(overrides?: Partial<MigrationSnippet>): MigrationS
 	};
 }
 
+// ── Test helpers ──
+
+/** Create a test pipeline with mock pi and ctx, supporting overrides for both */
+function createTestPipeline(
+	ctxOverrides?: Partial<PipelineContext>,
+	piOverrides?: Partial<ExtensionAPI>,
+): { pi: ExtensionAPI; ctx: PipelineContext; pipeline: ChangelogPipeline } {
+	const pi = createMockPi(piOverrides);
+	const ctx = createMockCtx(ctxOverrides);
+	const pipeline = new ChangelogPipeline(pi, ctx);
+	return { pi, ctx, pipeline };
+}
+
+/**
+ * Wraps describe() with temp directory creation and automatic cleanup.
+ * Provides `makeTempCwd` to the callback body.
+ */
+function describeWithCleanup(
+	name: string,
+	fn: (helpers: { makeTempCwd: (dirName: string) => string }) => void,
+): void {
+	describe(name, () => {
+		const tmpDirs: string[] = [];
+
+		after(() => {
+			for (const d of tmpDirs) {
+				try {
+					fs.rmSync(d, { recursive: true });
+				} catch {
+					/* ok */
+				}
+			}
+		});
+
+		fn({
+			makeTempCwd(dirName: string): string {
+				const dir = fs.mkdtempSync(path.join(os.tmpdir(), `pipeline-test-${dirName}-`));
+				tmpDirs.push(dir);
+				return dir;
+			},
+		});
+	});
+}
+
 // ── Fixtures ──
 
 const MINIMAL_CHANGELOG = `## [0.74.0] - 2026-05-01
@@ -171,33 +215,13 @@ const CHANGELOG_NO_CHANGES = `## [0.74.0] - 2026-05-01
 
 // ── Phase 0: validatePhase ──
 
-describe("ChangelogPipeline — Phase 0: validatePhase", () => {
-	const tmpDirs: string[] = [];
-
-	after(() => {
-		for (const d of tmpDirs) {
-			try {
-				fs.rmSync(d, { recursive: true });
-			} catch {
-				/* ok */
-			}
-		}
-	});
-
-	function makeTempCwd(dirName: string): string {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), `pipeline-test-${dirName}-`));
-		tmpDirs.push(dir);
-		return dir;
-	}
-
+describeWithCleanup("ChangelogPipeline — Phase 0: validatePhase", ({ makeTempCwd }) => {
 	it("handles missing changelog file gracefully", () => {
 		// PI_CHANGELOG_PATH is a hardcoded absolute path; check actual existence
 		const changelogExists = fs.existsSync(PI_CHANGELOG_PATH);
 		if (!changelogExists) {
 			const cwd = makeTempCwd("no-changelog");
-			const pi = createMockPi();
-			const ctx = createMockCtx({ cwd });
-			const pipeline = new ChangelogPipeline(pi, ctx);
+			const { pi, ctx, pipeline } = createTestPipeline({ cwd });
 
 			const result = pipeline.validatePhase();
 
@@ -205,9 +229,7 @@ describe("ChangelogPipeline — Phase 0: validatePhase", () => {
 		} else {
 			// Can't test file-not-found when changelog exists on this system
 			const cwd = makeTempCwd("no-changelog-alt");
-			const pi = createMockPi();
-			const ctx = createMockCtx({ cwd });
-			const pipeline = new ChangelogPipeline(pi, ctx);
+			const { pi, ctx, pipeline } = createTestPipeline({ cwd });
 
 			const result = pipeline.validatePhase();
 			assert.ok(result !== null, "changelog content should be returned");
@@ -222,9 +244,7 @@ describe("ChangelogPipeline — Phase 0: validatePhase", () => {
 		fs.mkdirSync(changelogDir, { recursive: true });
 		fs.writeFileSync(PI_CHANGELOG_PATH, MINIMAL_CHANGELOG, "utf-8");
 
-		const pi = createMockPi();
-		const ctx = createMockCtx({ cwd });
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline({ cwd });
 
 		const result = pipeline.validatePhase();
 
@@ -241,9 +261,7 @@ describe("ChangelogPipeline — Phase 0: validatePhase", () => {
 		fs.chmodSync(PI_CHANGELOG_PATH, 0o000);
 
 		try {
-			const pi = createMockPi();
-			const ctx = createMockCtx({ cwd });
-			const pipeline = new ChangelogPipeline(pi, ctx);
+			const { pi, ctx, pipeline } = createTestPipeline({ cwd });
 
 			const result = pipeline.validatePhase();
 
@@ -263,9 +281,7 @@ describe("ChangelogPipeline — Phase 0: validatePhase", () => {
 
 describe("ChangelogPipeline — Phase 1: parsePhase", () => {
 	it("parses changelog and extracts entries", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const result = pipeline.parsePhase(MINIMAL_CHANGELOG);
 
@@ -275,9 +291,7 @@ describe("ChangelogPipeline — Phase 1: parsePhase", () => {
 	});
 
 	it("collects affected API patterns from changelog entries", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const result = pipeline.parsePhase(MINIMAL_CHANGELOG);
 
@@ -289,9 +303,7 @@ describe("ChangelogPipeline — Phase 1: parsePhase", () => {
 	});
 
 	it("handles changelog with no API-visible changes (empty entries)", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const result = pipeline.parsePhase(CHANGELOG_NO_CHANGES);
 
@@ -304,9 +316,7 @@ describe("ChangelogPipeline — Phase 1: parsePhase", () => {
 	});
 
 	it("detects breaking changes from Deprecated and Removed categories", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const result = pipeline.parsePhase(CHANGELOG_WITH_BREAKING);
 
@@ -315,9 +325,7 @@ describe("ChangelogPipeline — Phase 1: parsePhase", () => {
 	});
 
 	it("handles empty changelog gracefully", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const result = pipeline.parsePhase("");
 
@@ -330,9 +338,7 @@ describe("ChangelogPipeline — Phase 1: parsePhase", () => {
 
 describe("ChangelogPipeline — Phase 2: scanPhase", () => {
 	it("scans extensions and returns grouped findings", async () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const entries: ChangeEntry[] = [makeChangeEntry()];
 		const patterns = new Set<string>(["pi.on", "pi.registerCommand", "pi.exec"]);
@@ -354,9 +360,7 @@ describe("ChangelogPipeline — Phase 2: scanPhase", () => {
 
 describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	it("cross-references findings and filters non-applicable", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const entries: ChangeEntry[] = [makeChangeEntry()];
 		const findingsByExtension = new Map<string, ASTFinding[]>();
@@ -375,9 +379,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("does not return manifestCache from crossRefPhase", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const entries: ChangeEntry[] = [makeChangeEntry()];
 		const findingsByExtension = new Map<string, ASTFinding[]>();
@@ -439,9 +441,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("preserves findings without matching changelog entry (not auto-filtered)", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		// Entry with a different API name than the finding.
 		// The crossRefPhase does NOT auto-exclude findings that lack a matching entry
@@ -466,9 +466,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("generates snippets for runtime-call findings", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const entries: ChangeEntry[] = [
 			makeChangeEntry({
@@ -497,9 +495,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("computes impact scores per extension", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const entries: ChangeEntry[] = [makeChangeEntry()];
 		const findingsByExtension = new Map<string, ASTFinding[]>();
@@ -525,9 +521,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("handles empty findings map gracefully", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const entries: ChangeEntry[] = [makeChangeEntry()];
 		const findingsByExtension = new Map<string, ASTFinding[]>();
@@ -543,9 +537,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("excludes not-applicable findings from impact score (bug fix)", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		// 2 applicable (1 breaking, 1 non-breaking) + 1 non-applicable (isBreaking=true)
 		// The non-applicable finding is created by providing a structured change entry
@@ -629,9 +621,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("all findings not-applicable produces empty scores and empty relevant findings", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const entry = makeChangeEntry({
 			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
@@ -672,9 +662,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("single not-applicable breaking finding produces no score entry", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const entry = makeChangeEntry({
 			description: "Deprecated `pi.on(tool_call)` in favor of `pi.on(tool_before_call)`",
@@ -710,9 +698,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 	});
 
 	it("all applicable findings still get correct score (regression guard)", () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		// Findings with matching entries so they're all applicable
 		// Default makeChangeEntry() has isBreaking: false, apiNames: ["pi.on"]
@@ -762,7 +748,7 @@ describe("ChangelogPipeline — Phase 2.5: crossRefPhase", () => {
 describe("ChangelogPipeline — Phase 3: issuePhase", () => {
 	it("handles unauthenticated gh gracefully", async () => {
 		// Mock exec to simulate gh auth failure
-		const pi = createMockPi({
+		const { pi, ctx, pipeline } = createTestPipeline(undefined, {
 			exec: mock.fn(async (_cmd: string, _args: string[]) =>
 				Promise.resolve({
 					stdout: "",
@@ -772,8 +758,6 @@ describe("ChangelogPipeline — Phase 3: issuePhase", () => {
 				}),
 			) as ExtensionAPI["exec"],
 		});
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
 
 		const findingsByExtension = new Map<string, ASTFinding[]>();
 		findingsByExtension.set("test-ext", [makeASTFinding()]);
@@ -793,9 +777,7 @@ describe("ChangelogPipeline — Phase 3: issuePhase", () => {
 	});
 
 	it("handles empty relevant findings (skips issue creation)", async () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline();
 
 		const findingsByExtension = new Map<string, ASTFinding[]>();
 		const snippetsByExtension = new Map<string, MigrationSnippet[]>();
@@ -813,19 +795,7 @@ describe("ChangelogPipeline — Phase 3: issuePhase", () => {
 
 // ── resolveAstGrepPath ──
 
-describe("resolveAstGrepPath", () => {
-	const tmpDirs: string[] = [];
-
-	after(() => {
-		for (const d of tmpDirs) {
-			try {
-				fs.rmSync(d, { recursive: true });
-			} catch {
-				/* ok */
-			}
-		}
-	});
-
+describeWithCleanup("resolveAstGrepPath", () => {
 	it("returns existing ast-grep binary path", () => {
 		const result = resolveAstGrepPath();
 		// Should return a non-empty string
@@ -877,8 +847,7 @@ describe("resolveAstGrepPath", () => {
 
 describe("runPipeline convenience function", () => {
 	it("creates pipeline and runs it, returns report", async () => {
-		const pi = createMockPi();
-		const ctx = createMockCtx();
+		const { pi, ctx } = createTestPipeline();
 
 		const report = await runPipeline(pi, ctx);
 
@@ -919,10 +888,7 @@ describe("ChangelogPipeline — full pipeline integration (failure paths)", () =
 		if (!changelogExists) {
 			const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-int-"));
 			tmpDirs.push(cwd);
-			const pi = createMockPi();
-			const ctx = createMockCtx({ cwd });
-
-			const pipeline = new ChangelogPipeline(pi, ctx);
+			const { pi, ctx, pipeline } = createTestPipeline({ cwd });
 			const report = await pipeline.run();
 
 			assert.ok(report, "should return report even on failure");
@@ -934,10 +900,7 @@ describe("ChangelogPipeline — full pipeline integration (failure paths)", () =
 			// Changelog exists: test the happy path instead
 			const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-int-exists-"));
 			tmpDirs.push(cwd);
-			const pi = createMockPi();
-			const ctx = createMockCtx({ cwd });
-
-			const pipeline = new ChangelogPipeline(pi, ctx);
+			const { pi, ctx, pipeline } = createTestPipeline({ cwd });
 			const report = await pipeline.run();
 
 			assert.ok(report, "should return a report object");
@@ -950,14 +913,14 @@ describe("ChangelogPipeline — full pipeline integration (failure paths)", () =
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-int-msg-"));
 		tmpDirs.push(cwd);
 		let userMessageSent = false;
-		const pi = createMockPi({
-			sendUserMessage: mock.fn((_content: unknown) => {
-				userMessageSent = true;
-			}) as ExtensionAPI["sendUserMessage"],
-		});
-		const ctx = createMockCtx({ cwd });
-
-		const pipeline = new ChangelogPipeline(pi, ctx);
+		const { pi, ctx, pipeline } = createTestPipeline(
+			{ cwd },
+			{
+				sendUserMessage: mock.fn((_content: unknown) => {
+					userMessageSent = true;
+				}) as ExtensionAPI["sendUserMessage"],
+			},
+		);
 		await pipeline.run();
 
 		// When changelog exists, the pipeline proceeds further; still should not throw
