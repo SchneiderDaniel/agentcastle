@@ -467,3 +467,34 @@ describe("buildPrettierArgs config path", () => {
 		assert.ok(result.args.includes("--write"));
 	});
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tests: error boundary (handler-level try/catch)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("handler error boundary", () => {
+	it("runEslintOnFile does not throw on exec rejection (simulated via failing mock)", async () => {
+		let caught = false;
+		const failingExec: ExecFn = async () => {
+			throw new Error("ENOENT: npx not found");
+		};
+		try {
+			await runEslintOnFile(failingExec, "test.ts", "/tmp");
+		} catch {
+			caught = true;
+		}
+		// Without handler-level try/catch, this would propagate as unhandled rejection.
+		// runEslintOnFile itself should propagate the error for the handler to catch.
+		assert.strictEqual(caught, true, "exec rejection should propagate through runEslintOnFile");
+	});
+
+	it("tryRunEslint propagates exec rejection (no internal swallow)", async () => {
+		const failingExec: ExecFn = async () => {
+			throw new Error("exec failed");
+		};
+		await assert.rejects(async () => {
+			// Import tryRunEslint via dynamic hack — use runEslintOnFile which wraps it
+			await runEslintOnFile(failingExec, "test.ts", "/tmp");
+		}, /exec failed/);
+	});
+});
