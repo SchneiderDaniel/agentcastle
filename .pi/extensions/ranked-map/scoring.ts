@@ -157,11 +157,10 @@ export function rankFiles(
 	symbolEntries: Record<string, SymbolEntry[]>,
 	fileSizeScores?: Record<string, number>,
 ): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
-	const allFiles = new Set([
-		...Object.keys(keywordScores),
-		...Object.keys(recencyScores),
-		...Object.keys(symbolEntries),
-	]);
+	// Only include files present in the ctags symbol index.
+	// Files from keyword search or git recency not in ctags index
+	// would show "(no symbols)" in output — filter them out.
+	const allFiles = new Set([...Object.keys(symbolEntries)]);
 
 	type FileScore = { path: string; score: number; symbols: SymbolEntry[] };
 	const scored: FileScore[] = [];

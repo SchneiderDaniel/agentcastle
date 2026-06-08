@@ -2007,7 +2007,7 @@ describe("impact-scorer", () => {
 // Phase 8: manifest-reader.ts — Extension manifest parsing
 // ═══════════════════════════════════════════════════════════════════════
 
-import { readManifest, type ExtensionManifest } from "../manifest-reader.ts";
+import { readManifest, tryReadManifestFile, type ExtensionManifest } from "../manifest-reader.ts";
 
 describe("manifest-reader", () => {
 	let tmpDir: string;
