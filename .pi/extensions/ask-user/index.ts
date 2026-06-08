@@ -15,15 +15,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { QuestionParams, QnaReadParams } from "./types.ts";
 import {
-	migrateQnaFromCsv,
+	migrateIfCsvExists,
 	listQnaEntries,
 	getQnaEntry,
 	queryQnaEntries,
 	readQnaEntries,
 } from "./jsonl-logger.ts";
 import { QuestionHandler } from "./question-handler.ts";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 // ---------------------------------------------------------------------------
 // Utility: format entries as markdown table
@@ -62,19 +60,7 @@ export default function askUser(pi: ExtensionAPI): void {
 	// when CSV has many rows.
 	pi.on("session_start", async (_event, ctx) => {
 		const projectDir = ctx.sessionManager.getCwd();
-		const csvPath = path.join(projectDir, ".pi", "context", "qna.csv");
-		if (fs.existsSync(csvPath)) {
-			try {
-				const result = await migrateQnaFromCsv(projectDir);
-				if (result.migrated > 0 || result.skipped > 0) {
-					console.warn(
-						`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
-					);
-				}
-			} catch (err) {
-				console.warn(`Migration warning: ${(err as Error).message}`);
-			}
-		}
+		await migrateIfCsvExists(projectDir);
 	});
 
 	// ── ask_user tool (unchanged except storage backend) ──────────────

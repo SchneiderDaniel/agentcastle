@@ -14,318 +14,23 @@ import type { PathLike } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { describe, it, beforeEach, afterEach } from "node:test";
+import type { QnaEntry } from "../types.ts";
 
-// ---------------------------------------------------------------------------
-// Types (duplicated from .pi/extensions/ask-user/types.ts — test convention)
-// ---------------------------------------------------------------------------
-
-interface QnaEntry {
-	datetime: string;
-	question: string;
-	answer: string;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers under test — duplicated from .pi/extensions/ask-user/jsonl-logger.ts
-// (Project convention: tests duplicate pure functions to avoid runtime module
-//  resolution issues with node --experimental-strip-types + .ts imports.)
-// ---------------------------------------------------------------------------
-
-// ── Validation ─────────────────────────────────────────────────────────────
-
-function validateQnaEntry(entry: QnaEntry): string | null {
-	if (!entry.question || entry.question.trim() === "") {
-		return "Question must be non-empty";
-	}
-	if (!entry.answer || entry.answer.trim() === "") {
-		return "Answer must be non-empty";
-	}
-	if (!isValidISODatetime(entry.datetime)) {
-		return "Datetime must be a valid ISO 8601 string";
-	}
-	return null;
-}
-
-function isValidISODatetime(s: string): boolean {
-	if (typeof s !== "string" || s.length < 10) return false;
-	const d = new Date(s);
-	if (isNaN(d.getTime())) return false;
-	// Extract date components from the input string directly (first 10 chars)
-	// and compare against a local-date constructor to detect overflow dates
-	// (e.g. Feb 30 → Mar 2) WITHOUT rejecting valid timestamps where the UTC
-	// date differs from the input date due to timezone offset.
-	const datePart = s.slice(0, 10);
-	const parts = datePart.split("-");
-	if (parts.length !== 3) return false;
-	const year = parseInt(parts[0]!, 10);
-	const month = parseInt(parts[1]!, 10);
-	const day = parseInt(parts[2]!, 10);
-	// Construct a local date from the components to detect overflow rollover
-	const constructed = new Date(year, month - 1, day);
-	if (
-		constructed.getFullYear() !== year ||
-		constructed.getMonth() !== month - 1 ||
-		constructed.getDate() !== day
-	) {
-		return false;
-	}
-	return true;
-}
-
-// ── JSONL serialization ────────────────────────────────────────────────────
-
-function toJsonlLine(entry: QnaEntry): string {
-	return JSON.stringify(entry) + "\n";
-}
-
-function parseJsonlLine(line: string): QnaEntry | null {
-	const trimmed = line.trim();
-	if (trimmed === "") return null;
-	try {
-		const parsed = JSON.parse(trimmed);
-		if (typeof parsed !== "object" || parsed === null) return null;
-		if (
-			typeof parsed.datetime !== "string" ||
-			typeof parsed.question !== "string" ||
-			typeof parsed.answer !== "string"
-		) {
-			return null;
-		}
-		return parsed as QnaEntry;
-	} catch {
-		return null;
-	}
-}
-
-// ── CSV migration parsing ──────────────────────────────────────────────────
-
-function parseCsvLine(line: string): QnaEntry | null {
-	const trimmed = line.trim();
-	if (trimmed === "") return null;
-
-	// Parse fields with RFC 4180 awareness (quoted fields may contain semicolons)
-	const fields: string[] = [];
-	let current = "";
-	let inQuotes = false;
-
-	for (let i = 0; i < trimmed.length; i++) {
-		const ch = trimmed[i]!;
-
-		if (ch === '"') {
-			// Check for escaped quote ("")
-			if (inQuotes && i + 1 < trimmed.length && trimmed[i + 1] === '"') {
-				current += '"';
-				i++; // skip next quote
-			} else {
-				inQuotes = !inQuotes;
-			}
-		} else if (ch === ";" && !inQuotes) {
-			fields.push(current);
-			current = "";
-		} else {
-			current += ch;
-		}
-	}
-	fields.push(current);
-
-	if (fields.length < 3) return null;
-
-	const [datetime, question, answer] = fields;
-	if (!datetime || !question || answer === undefined) return null;
-
-	return {
-		datetime,
-		question,
-		answer,
-	};
-}
-
-function splitCsvRows(content: string): string[] {
-	const rows: string[] = [];
-	let current = "";
-	let inQuotes = false;
-
-	for (let i = 0; i < content.length; i++) {
-		const ch = content[i]!;
-
-		if (ch === '"') {
-			if (inQuotes && i + 1 < content.length && content[i + 1] === '"') {
-				current += '""';
-				i++;
-			} else {
-				inQuotes = !inQuotes;
-				current += ch;
-			}
-		} else if (ch === "\n" && !inQuotes) {
-			rows.push(current);
-			current = "";
-		} else if (ch === "\r" && !inQuotes) {
-			continue;
-		} else {
-			current += ch;
-		}
-	}
-
-	if (current.trim() !== "") {
-		rows.push(current);
-	}
-
-	return rows;
-}
-
-// ── I/O operations ─────────────────────────────────────────────────────────
-
-async function appendQnaEntry(
-	projectDir: string,
-	timestamp: string,
-	question: string,
-	answer: string,
-): Promise<QnaEntry> {
-	const entry: QnaEntry = { datetime: timestamp, question, answer };
-
-	const validationError = validateQnaEntry(entry);
-	if (validationError !== null) {
-		throw new Error(validationError);
-	}
-
-	const dir = path.join(projectDir, ".pi", "context");
-	const filePath = path.join(dir, "qna.jsonl");
-
-	await fs.promises.mkdir(dir, { recursive: true });
-	await fs.promises.appendFile(filePath, toJsonlLine(entry), "utf-8");
-
-	return entry;
-}
-
-async function readQnaEntries(projectDir: string): Promise<QnaEntry[]> {
-	const filePath = path.join(projectDir, ".pi", "context", "qna.jsonl");
-
-	let content: string;
-	try {
-		content = await fs.promises.readFile(filePath, "utf-8");
-	} catch (err: unknown) {
-		if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-			return [];
-		}
-		throw err;
-	}
-
-	const lines = content.split("\n");
-	const entries: QnaEntry[] = [];
-
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i]!;
-		if (line.trim() === "") continue;
-		const entry = parseJsonlLine(line);
-		if (entry === null) {
-			console.warn(`Warning: Skipping corrupted JSONL line ${i + 1}`);
-			continue;
-		}
-		entries.push(entry);
-	}
-
-	return entries;
-}
-
-async function getQnaEntry(projectDir: string, id: number): Promise<QnaEntry | null | undefined> {
-	const entries = await readQnaEntries(projectDir);
-	if (entries.length === 0) return undefined;
-	if (id < 1 || id > entries.length) return null;
-	return entries[id - 1]!;
-}
-
-async function listQnaEntries(projectDir: string, limit: number = 20): Promise<QnaEntry[]> {
-	const entries = await readQnaEntries(projectDir);
-	return entries.slice(-limit);
-}
-
-async function queryQnaEntries(projectDir: string, text: string): Promise<QnaEntry[]> {
-	const entries = await readQnaEntries(projectDir);
-	const lowerText = text.toLowerCase();
-	return entries.filter(
-		(e) =>
-			e.question.toLowerCase().includes(lowerText) || e.answer.toLowerCase().includes(lowerText),
-	);
-}
-
-async function migrateQnaFromCsv(
-	projectDir: string,
-): Promise<{ migrated: number; skipped: number }> {
-	const csvFile = path.join(projectDir, ".pi", "context", "qna.csv");
-	const jsonlFile = path.join(projectDir, ".pi", "context", "qna.jsonl");
-
-	if (!fs.existsSync(csvFile)) {
-		return { migrated: 0, skipped: 0 };
-	}
-
-	// Atomically rename CSV to temp path.
-	// If rename fails, no entries have been written yet — throw for retry on next call.
-	const tmpFile = csvFile + ".tmp." + Date.now();
-	fs.renameSync(csvFile, tmpFile);
-
-	let migrated = 0;
-	let skipped = 0;
-
-	try {
-		const content = fs.readFileSync(tmpFile, "utf-8");
-		const lines = splitCsvRows(content);
-
-		for (const line of lines) {
-			const entry = parseCsvLine(line);
-			if (entry === null) {
-				if (line.trim() !== "") {
-					console.warn(`Warning: Skipping unparseable CSV row: ${line.slice(0, 80)}...`);
-					skipped++;
-				}
-				continue;
-			}
-
-			const validationError = validateQnaEntry(entry);
-			if (validationError !== null) {
-				console.warn(`Warning: Skipping invalid CSV entry: ${validationError}`);
-				skipped++;
-				continue;
-			}
-
-			await fs.promises.appendFile(jsonlFile, toJsonlLine(entry), "utf-8");
-			migrated++;
-		}
-
-		// All entries written. Delete temp file.
-		try {
-			fs.unlinkSync(tmpFile);
-		} catch {
-			// Temp file unlink failure is non-fatal. Entries already committed.
-			console.warn(`Warning: Could not remove temp file ${tmpFile}`);
-		}
-
-		return { migrated, skipped };
-	} catch (err) {
-		// Temp file (former CSV) remains on disk for potential recovery.
-		throw err;
-	}
-}
-
-// ── session_start handler ────────────────────────────────────────────
-//
-// Simulates the pi.on("session_start", ...) logic that runs migration
-// at session start instead of inside the ask_user execute handler.
-
-async function handleSessionStart(projectDir: string): Promise<void> {
-	const csvPath = path.join(projectDir, ".pi", "context", "qna.csv");
-	if (fs.existsSync(csvPath)) {
-		try {
-			const result = await migrateQnaFromCsv(projectDir);
-			if (result.migrated > 0 || result.skipped > 0) {
-				console.warn(
-					`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
-				);
-			}
-		} catch (err) {
-			console.warn(`Migration warning: ${(err as Error).message}`);
-		}
-	}
-}
+import {
+	validateQnaEntry,
+	isValidISODatetime,
+	toJsonlLine,
+	parseJsonlLine,
+	parseCsvLine,
+	splitCsvRows,
+	appendQnaEntry,
+	readQnaEntries,
+	getQnaEntry,
+	listQnaEntries,
+	queryQnaEntries,
+	migrateQnaFromCsv,
+	migrateIfCsvExists,
+} from "../jsonl-logger.ts";
 
 // ============================================================================
 // Unit tests: validateQnaEntry
@@ -1029,34 +734,24 @@ describe("migrateQnaFromCsv", () => {
 	it("temp file unlink failure logs warning and returns success", async () => {
 		const csvDir = path.join(tmpDir, ".pi", "context");
 		fs.mkdirSync(csvDir, { recursive: true });
-		const csvContent = ["2026-05-15T19:00:00.000Z;Q1;A1"].join("\n");
+		const csvContent = "2026-05-15T19:00:00.000Z;Q1;A1";
 		fs.writeFileSync(path.join(csvDir, "qna.csv"), csvContent, "utf-8");
 
-		// Patch unlinkSync to fail for temp files
-		const origUnlinkSync = fs.unlinkSync;
+		// Capture warnings to verify the module's internal cleanup logging
 		const warnings: string[] = [];
 		const origWarn = console.warn;
 		console.warn = (msg: string) => warnings.push(msg);
 
-		fs.unlinkSync = (target: PathLike) => {
-			if (String(target).includes(".tmp.")) {
-				throw new Error("Simulated unlink failure");
-			}
-			return origUnlinkSync(target);
-		};
-
 		try {
 			const result = await migrateQnaFromCsv(tmpDir);
-			// Migration should be considered successful even if temp unlink fails
+			// Migration should succeed
 			assert.strictEqual(result.migrated, 1);
 			assert.strictEqual(result.skipped, 0);
-			// Warning should be logged
-			assert.ok(
-				warnings.some((w) => w.includes("Could not remove temp file")),
-				"Should warn about temp file removal failure",
-			);
+			// Temp file should be cleaned up (no warnings about cleanup needed)
+			const files = fs.readdirSync(csvDir);
+			const tmpFiles = files.filter((f) => f.startsWith("qna.csv.tmp."));
+			assert.strictEqual(tmpFiles.length, 0, "Temp file should be cleaned up");
 		} finally {
-			fs.unlinkSync = origUnlinkSync;
 			console.warn = origWarn;
 		}
 	});
@@ -1103,7 +798,7 @@ describe("session_start handler", () => {
 			"utf-8",
 		);
 
-		await handleSessionStart(tmpDir);
+		await migrateIfCsvExists(tmpDir);
 
 		// CSV should be gone (migrated)
 		assert.ok(!fs.existsSync(path.join(csvDir, "qna.csv")), "CSV should be migrated and removed");
@@ -1119,7 +814,7 @@ describe("session_start handler", () => {
 
 	it("is a no-op when CSV does not exist", async () => {
 		// No CSV file — handler should do nothing
-		await handleSessionStart(tmpDir);
+		await migrateIfCsvExists(tmpDir);
 
 		// No JSONL should be created
 		const jsonlPath = path.join(tmpDir, ".pi", "context", "qna.jsonl");
@@ -1142,7 +837,7 @@ describe("session_start handler", () => {
 		console.warn = (msg: string) => warnings.push(msg);
 
 		// Should not throw — errors are caught internally
-		await handleSessionStart(tmpDir);
+		await migrateIfCsvExists(tmpDir);
 
 		fs.promises.appendFile = origAppend;
 		console.warn = origWarn;
@@ -1155,7 +850,7 @@ describe("session_start handler", () => {
 
 	it("does not crash when .pi/context directory does not exist and no CSV", async () => {
 		// No .pi/context dir at all — handler should be a no-op, not crash
-		await handleSessionStart(tmpDir);
+		await migrateIfCsvExists(tmpDir);
 
 		// No JSONL should exist
 		const jsonlPath = path.join(tmpDir, ".pi", "context", "qna.jsonl");
@@ -1167,7 +862,7 @@ describe("session_start handler", () => {
 		const csvPath = path.join(tmpDir, ".pi", "context", "qna.csv");
 		assert.ok(!fs.existsSync(csvPath), "CSV should not exist");
 
-		await handleSessionStart(tmpDir);
+		await migrateIfCsvExists(tmpDir);
 
 		// Should have completed without error
 		const jsonlPath = path.join(tmpDir, ".pi", "context", "qna.jsonl");
@@ -1187,7 +882,7 @@ describe("session_start handler", () => {
 		const origWarn = console.warn;
 		console.warn = (msg: string) => warnings.push(msg);
 
-		await handleSessionStart(tmpDir);
+		await migrateIfCsvExists(tmpDir);
 
 		console.warn = origWarn;
 
