@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { PI_CHANGELOG_PATH, API_PATTERNS, CHANGELOG_API_TO_PATTERN } from "./constants.ts";
+import { PI_CHANGELOG_PATH, API_PATTERNS, CHANGELOG_API_TO_PATTERN_LOWER } from "./constants.ts";
 import { parseChangelog, parseStructuredChange, type ChangeEntry } from "./changelog-parser.ts";
 import { scanExtensionsAST, type ASTFinding, type ExecFn as AstExecFn } from "./ast-scanner.ts";
 import { resolveRelevance } from "./change-resolver.ts";
@@ -179,7 +179,7 @@ export class ChangelogPipeline {
 		const affectedApiPatterns = new Set<string>();
 		for (const entry of entries) {
 			for (const apiName of entry.apiNames) {
-				const patterns = CHANGELOG_API_TO_PATTERN[apiName.toLowerCase()];
+				const patterns = CHANGELOG_API_TO_PATTERN_LOWER[apiName.toLowerCase()];
 				if (patterns) {
 					for (const p of patterns) affectedApiPatterns.add(p);
 				}

@@ -67,3 +67,11 @@ const _CHANGELOG_API_TO_PATTERN: Record<string, string[]> = {
 
 export const CHANGELOG_API_TO_PATTERN: Readonly<Record<string, readonly string[]>> =
 	Object.freeze(_CHANGELOG_API_TO_PATTERN);
+
+/** Lowercase-key map for case-insensitive lookup (fixes #600) */
+const _LOWER_CHANGELOG_API_TO_PATTERN: Record<string, readonly string[]> = {};
+for (const [key, val] of Object.entries(_CHANGELOG_API_TO_PATTERN)) {
+	_LOWER_CHANGELOG_API_TO_PATTERN[key.toLowerCase()] = val;
+}
+export const CHANGELOG_API_TO_PATTERN_LOWER: Readonly<Record<string, readonly string[]>> =
+	Object.freeze(_LOWER_CHANGELOG_API_TO_PATTERN);
