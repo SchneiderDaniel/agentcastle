@@ -38,6 +38,17 @@ describe("BashCommand.isSearch", () => {
 		assert.equal(new BashCommand("`rg`").isSearch(), true);
 	});
 
+	it("false for && chained with backtick grep in string arg", () => {
+		assert.equal(
+			new BashCommand("cd src && gh issue comment --body '`` `grep` ``'").isSearch(),
+			false,
+		);
+	});
+
+	it("false for && chained with backtick rg in string arg", () => {
+		assert.equal(new BashCommand("cd src && echo 'testing `rg` in body'").isSearch(), false);
+	});
+
 	it("false for grep with redirect", () => {
 		assert.equal(new BashCommand("grep foo > out.txt").isSearch(), true);
 	});
@@ -272,6 +283,18 @@ describe("BashCommand.detectMismatch", () => {
 		assert.equal(result, null);
 	});
 
+	it("cd ... && backtick grep in body → null (pass through)", () => {
+		const result = new BashCommand(
+			"cd /tmp && gh issue comment --body '`` `grep` ``'",
+		).detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("cd ... && backtick rg in body → null (pass through)", () => {
+		const result = new BashCommand("cd /tmp && echo 'testing `rg` in body'").detectMismatch();
+		assert.equal(result, null);
+	});
+
 	it("gh issue with cat in quoted arg → null (pass through)", () => {
 		const result = new BashCommand(`gh issue view 123 --title "cat file"`).detectMismatch();
 		assert.equal(result, null);
@@ -443,6 +466,13 @@ describe("BashCommand.suggestRedirection", () => {
 
 	it("&& chained grep (cd src && rg foo) → null", () => {
 		assert.equal(new BashCommand("cd src && rg foo").suggestRedirection(), null);
+	});
+
+	it("&& chained with backtick grep in string arg → null", () => {
+		assert.equal(
+			new BashCommand("cd src && gh issue comment --body '`` `grep` ``'").suggestRedirection(),
+			null,
+		);
 	});
 
 	it("semicolon chained grep (echo hi; grep foo) → null", () => {

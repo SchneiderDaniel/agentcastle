@@ -169,21 +169,21 @@ export class BashCommand {
 	 * the ripgrep_search tool instead.
 	 *
 	 * Logic matches harness-rules.ts isSearchInBash():
-	 *  - Backtick grep/rg → always search
-	 *  - Standalone grep/rg as first token → search
 	 *  - Piped, && chained, ; chained → not search (pass through)
+	 *  - Standalone grep/rg as first token → search
+	 *  - Backtick grep/rg → search (standalone only)
 	 */
 	isSearch(): boolean {
 		if (!this.raw) return false;
 
-		// Backtick patterns: `grep`, `rg` — these are always search
-		if (this.lower.includes("`grep") || this.lower.includes("`rg")) {
-			return true;
-		}
-
 		// Only standalone calls — complex pipelines pass through
 		if (!this.isStandalone()) {
 			return false;
+		}
+
+		// Backtick patterns: `grep`, `rg` — search for standalone commands
+		if (this.lower.includes("`grep") || this.lower.includes("`rg")) {
+			return true;
 		}
 
 		// For standalone commands, check first segment only
@@ -303,16 +303,15 @@ export class BashCommand {
 	private detectMismatchKind(): "search" | "file-read" | null {
 		if (!this.raw) return null;
 
-		// Backtick search patterns are always search
-		if (this.lower.includes("`grep") || this.lower.includes("`rg")) {
-			return "search";
-		}
-
 		if (this.segments.length === 0) return null;
 
 		// Search in bash (grep/rg as first token — standalone only, not piped)
 		// Redirect does NOT suppress search detection
 		if (this.isStandalone()) {
+			// Backtick patterns: `grep`, `rg` — search for standalone commands
+			if (this.lower.includes("`grep") || this.lower.includes("`rg")) {
+				return "search";
+			}
 			for (const seg of this.segments) {
 				if (seg.tokens.length >= 1) {
 					const first = seg.tokens[0];
