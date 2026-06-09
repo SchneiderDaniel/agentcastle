@@ -9,7 +9,12 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { generateBranchName, buildAgentTask } from "../agent/task.ts";
+import {
+	generateBranchName,
+	buildAgentTask,
+	truncateComment,
+	summarizeComments,
+} from "../agent/task.ts";
 import type { FilteredIssueData } from "../config/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -75,6 +80,223 @@ describe("generateBranchName", () => {
 	it("accepts custom prefix", () => {
 		const result = generateBranchName(5, "test", "custom-");
 		assert.strictEqual(result, "custom-5-test");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 1: truncateComment
+// ---------------------------------------------------------------------------
+
+describe("truncateComment", () => {
+	it("body ≤2000 chars → returned unchanged, no overflow note", () => {
+		const body = "short body";
+		const result = truncateComment(body);
+		assert.strictEqual(result, body);
+	});
+
+	it("body exactly 2000 chars → returned unchanged", () => {
+		const body = "x".repeat(2000);
+		const result = truncateComment(body);
+		assert.strictEqual(result, body);
+	});
+
+	it("body 2001 chars → truncated at 2000 with overflow note", () => {
+		const body = "x".repeat(2001);
+		const result = truncateComment(body);
+		assert.ok(result.endsWith("\n…[+1 more chars]"));
+		assert.strictEqual(result.split("\n")[0].length, 2000);
+	});
+
+	it("body 10000 chars → truncated at 2000 with correct overflow count", () => {
+		const body = "x".repeat(10000);
+		const result = truncateComment(body);
+		assert.ok(result.endsWith("\n…[+8000 more chars]"));
+	});
+
+	it("body empty string → returns empty string", () => {
+		const result = truncateComment("");
+		assert.strictEqual(result, "");
+	});
+
+	it("custom maxLength parameter truncates at custom boundary", () => {
+		const body = "x".repeat(100);
+		const result = truncateComment(body, 50);
+		assert.ok(result.endsWith("\n…[+50 more chars]"));
+	});
+
+	it("body shorter than custom maxLength → no truncation", () => {
+		const body = "short";
+		const result = truncateComment(body, 100);
+		assert.strictEqual(result, "short");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2: summarizeComments threshold change
+// ---------------------------------------------------------------------------
+
+describe("summarizeComments", () => {
+	it("0 comments → returns (no trusted comments)", () => {
+		const result = summarizeComments([]);
+		assert.strictEqual(result, "(no trusted comments)");
+	});
+
+	it("1 comment → full verbatim with header", () => {
+		const result = summarizeComments([{ author: "user1", body: "First comment body" }]);
+		assert.ok(result.includes("--- Comment #1 by @user1 ---"));
+		assert.ok(result.includes("First comment body"));
+		assert.ok(!result.includes("### Previous Comments"));
+	});
+
+	it("2 comments → both rendered verbatim (no summary bullets)", () => {
+		const result = summarizeComments([
+			{ author: "user1", body: "First comment" },
+			{ author: "user2", body: "Second comment" },
+		]);
+		assert.ok(result.includes("--- Comment #1 by @user1 ---"));
+		assert.ok(result.includes("First comment"));
+		assert.ok(result.includes("--- Comment #2 by @user2 ---"));
+		assert.ok(result.includes("Second comment"));
+		assert.ok(!result.includes("### Previous Comments"));
+	});
+
+	it("3 comments → all three verbatim", () => {
+		const result = summarizeComments([
+			{ author: "a", body: "Body A" },
+			{ author: "b", body: "Body B" },
+			{ author: "c", body: "Body C" },
+		]);
+		assert.ok(result.includes("--- Comment #1 by @a ---"));
+		assert.ok(result.includes("--- Comment #2 by @b ---"));
+		assert.ok(result.includes("--- Comment #3 by @c ---"));
+		assert.ok(!result.includes("### Previous Comments"));
+	});
+
+	it("7 comments → all seven verbatim (boundary: exactly at threshold)", () => {
+		const comments = Array.from({ length: 7 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: `Comment body ${i + 1}`,
+		}));
+		const result = summarizeComments(comments);
+		for (let i = 0; i < 7; i++) {
+			assert.ok(result.includes(`--- Comment #${i + 1} by @user${i + 1} ---`));
+		}
+		assert.ok(result.includes("Comment body 3"));
+		assert.ok(!result.includes("### Previous Comments"));
+	});
+
+	it("8 comments → first 7 summarized as bullets, 8th full (first above threshold)", () => {
+		const comments = Array.from({ length: 8 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: `Comment body ${i + 1}`,
+		}));
+		const result = summarizeComments(comments);
+		// Has summary block
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		// First 7 summarized as bullets
+		for (let i = 0; i < 7; i++) {
+			assert.ok(result.includes(`- @user${i + 1}:`));
+		}
+		// Latest comment is full
+		assert.ok(result.includes("--- Comment #8 by @user8 ---"));
+		assert.ok(result.includes("Comment body 8"));
+	});
+
+	it("9+ comments → earlier N-1 summarized as bullets, latest full", () => {
+		const comments = Array.from({ length: 10 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: `Comment body ${i + 1}`,
+		}));
+		const result = summarizeComments(comments);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		// First 9 summarized as bullets
+		for (let i = 0; i < 9; i++) {
+			assert.ok(result.includes(`- @user${i + 1}:`));
+		}
+		// 10th comment is full
+		assert.ok(result.includes("--- Comment #10 by @user10 ---"));
+		assert.ok(result.includes("Comment body 10"));
+	});
+
+	it("8 comments with bodies >2000 chars → earlier comments truncated by truncateComment before bullet extraction, latest truncated", () => {
+		const longBody = "x".repeat(3000);
+		const comments = Array.from({ length: 8 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: i < 7 ? longBody : "Latest comment",
+		}));
+		const result = summarizeComments(comments);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		// Bullets exist for first 7 comments
+		for (let i = 0; i < 7; i++) {
+			assert.ok(result.includes(`- @user${i + 1}:`));
+		}
+		// Latest comment is shown in full
+		assert.ok(result.includes("--- Comment #8 by @user8 ---"));
+		assert.ok(result.includes("Latest comment"));
+	});
+
+	it("8 comments where earlier comments have --- lines → firstLine extraction skips them", () => {
+		const comments = Array.from({ length: 8 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: i < 7 ? `--- old marker ---\nActual meaningful line ${i + 1}` : "Latest comment",
+		}));
+		const result = summarizeComments(comments);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		for (let i = 0; i < 7; i++) {
+			assert.ok(result.includes(`- @user${i + 1}: Actual meaningful line ${i + 1}`));
+		}
+	});
+
+	it("8 comments where earlier comment body is only --- lines → falls back to full preview", () => {
+		const comments = Array.from({ length: 8 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: i < 7 ? "---" : "Latest comment",
+		}));
+		const result = summarizeComments(comments);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		for (let i = 0; i < 7; i++) {
+			assert.ok(result.includes(`- @user${i + 1}: ---`));
+		}
+	});
+
+	it("8 comments where author name is empty → rendered as @ in bullet", () => {
+		const comments = Array.from({ length: 8 }, (_, i) => ({
+			author: i < 7 ? "" : "user8",
+			body: `Body ${i + 1}`,
+		}));
+		const result = summarizeComments(comments);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		for (let i = 0; i < 7; i++) {
+			assert.ok(result.includes("- @:"));
+		}
+	});
+
+	it("8 comments where bullet content exactly 200 chars → not truncated further", () => {
+		const exact200 = "a".repeat(200);
+		const comments = Array.from({ length: 8 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: i < 7 ? exact200 : "Latest comment",
+		}));
+		const result = summarizeComments(comments);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		for (let i = 0; i < 7; i++) {
+			assert.ok(result.includes(`- @user${i + 1}: ${exact200}`));
+		}
+	});
+
+	it("8 comments where bullet content >200 chars → sliced to 200 chars", () => {
+		const longLine = "a".repeat(300);
+		const comments = Array.from({ length: 8 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: i < 7 ? longLine : "Latest comment",
+		}));
+		const result = summarizeComments(comments);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		for (let i = 0; i < 7; i++) {
+			const expectedSlice = "a".repeat(200);
+			assert.ok(result.includes(`- @user${i + 1}: ${expectedSlice}`));
+		}
+		assert.ok(!result.includes("a".repeat(201)));
 	});
 });
 

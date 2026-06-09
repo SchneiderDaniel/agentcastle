@@ -77,7 +77,7 @@ The pipeline extracts it automatically.
 /**
  * Truncate a comment body to `maxLength` chars with an overflow note.
  */
-function truncateComment(body: string, maxLength: number = MAX_COMMENT_CHARS): string {
+export function truncateComment(body: string, maxLength: number = MAX_COMMENT_CHARS): string {
 	if (body.length <= maxLength) return body;
 	const overflow = body.length - maxLength;
 	return body.slice(0, maxLength) + `\n…[+${overflow} more chars]`;
@@ -85,20 +85,24 @@ function truncateComment(body: string, maxLength: number = MAX_COMMENT_CHARS): s
 
 /**
  * Summarize a list of trusted comments.
- * When >1 comment: first n-1 are summarized into bullet list, latest is in full.
- * When ≤1 comment: passes through verbatim.
+ * When >7 comments: first n-1 are summarized into bullet list, latest is in full.
+ * When ≤7 comments: renders all verbatim.
  * Comments >2000 chars are truncated with overflow note.
  */
 export function summarizeComments(comments: Array<{ author: string; body: string }>): string {
 	if (comments.length === 0) return "(no trusted comments)";
 
-	if (comments.length === 1) {
-		const c = comments[0];
-		const body = truncateComment(c.body);
-		return `--- Comment #1 by @${c.author} ---\n${body}`;
+	if (comments.length <= 7) {
+		// 1-7 comments: render all verbatim
+		return comments
+			.map((c, i) => {
+				const body = truncateComment(c.body);
+				return `--- Comment #${i + 1} by @${c.author} ---\n${body}`;
+			})
+			.join("\n\n");
 	}
 
-	// >1 comment: summarize all but the latest
+	// >7 comments: summarize all but the latest
 	const latest = comments[comments.length - 1];
 	const earlier = comments.slice(0, -1);
 
