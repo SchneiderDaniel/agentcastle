@@ -102,7 +102,7 @@ function normalizeDirectory(dir: string): string {
 
 /** Build a cache key from query and directory (normalizes the directory). */
 export function buildCacheKey(query: string, directory: string): string {
-	return `${query}::${normalizeDirectory(directory)}`;
+	return JSON.stringify({ query, directory: normalizeDirectory(directory) });
 }
 
 /** Look up a cached search result. Returns undefined on miss. */

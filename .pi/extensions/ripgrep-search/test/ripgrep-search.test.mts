@@ -711,6 +711,106 @@ describe("cache module", () => {
 		});
 	});
 
+	// ── buildCacheKey (format + collision resistance) ──
+
+	describe("buildCacheKey", () => {
+		it("returns valid JSON containing query and directory", () => {
+			const key = buildCacheKey("foo", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "foo");
+			assert.strictEqual(parsed.directory, "src");
+		});
+
+		it("different inputs with :: produce different keys (collision guard)", () => {
+			const key1 = buildCacheKey("a::b", "src");
+			const key2 = buildCacheKey("a", "b::src");
+			assert.notStrictEqual(key1, key2);
+		});
+
+		it("same inputs produce identical keys (determinism)", () => {
+			const key1 = buildCacheKey("a::b", "src");
+			const key2 = buildCacheKey("a::b", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it('normalizes "./src" and "src" to same key', () => {
+			const key1 = buildCacheKey("foo", "./src");
+			const key2 = buildCacheKey("foo", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it("handles query with double quotes", () => {
+			const key = buildCacheKey('hello"world', "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, 'hello"world');
+		});
+
+		it("handles query with backslash", () => {
+			const key = buildCacheKey("a\\b", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "a\\b");
+		});
+
+		it("handles query with null byte", () => {
+			const key = buildCacheKey("a\x00b", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "a\x00b");
+		});
+
+		it("handles query with emoji", () => {
+			const key = buildCacheKey("🔥", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "🔥");
+		});
+
+		it("handles empty query string", () => {
+			const key = buildCacheKey("", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "");
+			assert.strictEqual(parsed.directory, "src");
+		});
+
+		it("handles very long query string", () => {
+			const longQuery = "x".repeat(10000);
+			const key = buildCacheKey(longQuery, "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, longQuery);
+			assert.strictEqual(parsed.directory, "src");
+		});
+
+		it("normalizes './src/' and 'src' to same key (combined normalization)", () => {
+			const key1 = buildCacheKey("foo", "./src/");
+			const key2 = buildCacheKey("foo", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it('empty directory normalized to "."', () => {
+			const key1 = buildCacheKey("foo", "");
+			const key2 = buildCacheKey("foo", ".");
+			assert.strictEqual(key1, key2);
+		});
+
+		it("cache hit still works via new key format", () => {
+			setCachedResult("a::b", "src", {
+				result: { total_returned: 1, results: [{ file: "a.ts", line: 1, column: 1, text: "x" }] },
+				rawStdout: "a.ts:1:1:x",
+			});
+			const cached = getCachedResult("a::b", "src");
+			assert.ok(cached !== undefined, "Should find cached entry");
+			assert.strictEqual(cached!.result.total_returned, 1);
+		});
+
+		it("no false cache hit when :: in query collides with :: in directory", () => {
+			setCachedResult("a::b", "src", {
+				result: { total_returned: 1, results: [{ file: "a.ts", line: 1, column: 1, text: "x" }] },
+				rawStdout: "a.ts:1:1:x",
+			});
+			// This should be a different key, so getCachedResult must return undefined
+			const cached = getCachedResult("a", "b::src");
+			assert.strictEqual(cached, undefined);
+		});
+	});
+
 	// ── Path normalization ──
 
 	describe("path normalization", () => {
