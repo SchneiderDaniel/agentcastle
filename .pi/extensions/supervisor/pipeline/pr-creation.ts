@@ -17,6 +17,7 @@ import { createPullRequest, checkPrConflicts } from "../github/pr.ts";
 import { gh } from "../github/gh-client.ts";
 import { buildPipelineSummary } from "../pipeline/output.ts";
 import { getDebugLogger } from "../config/debug.ts";
+import type { ErrorCollector } from "./error-collector.ts";
 
 /**
  * Maximum number of retry attempts for gh pr create.
@@ -47,6 +48,7 @@ export async function createPrOnApproval(
 	agentResults: PipelineAgentResult[],
 	worktreePath: string | undefined,
 	worktreeBranch: string | undefined,
+	collector?: ErrorCollector,
 ): Promise<PrCreationResult> {
 	const log = getDebugLogger();
 	const headBranch =

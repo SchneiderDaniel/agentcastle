@@ -1,5 +1,5 @@
 // ─── Pipeline Helpers ────────────────────────────────────────────
-// Extracted from handler.ts with injected ExecFn/NotifyFn dependencies.
+// Extracted from handler.ts with injected ExecFn/NotifyFn/ErrorCollector dependencies.
 // Independently unit-testable: no direct pi/ctx dependency.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -18,6 +18,7 @@ import {
 	checkBlockedByDependencies,
 } from "../github/index.ts";
 import { parseAgentFile } from "../agent/loader.ts";
+import type { ErrorCollector } from "./error-collector.ts";
 
 // ─── Dependency Injection Interfaces ──────────────────────────────
 
@@ -52,6 +53,7 @@ export async function fetchIssue(
 	notify: NotifyFn,
 	config: SupervisorConfig,
 	issueNum: number,
+	collector?: ErrorCollector,
 ): Promise<Record<string, unknown> | null> {
 	try {
 		return await exec("gh", [
@@ -64,7 +66,9 @@ export async function fetchIssue(
 			"number,title,body,author,comments",
 		]).then((r) => JSON.parse(r.stdout || "{}"));
 	} catch {
-		notify.error(`Issue #${issueNum} not found in ${config.repo}`);
+		const msg = `Issue #${issueNum} not found in ${config.repo}`;
+		notify.error(msg);
+		collector?.push("helpers", "error", msg);
 		return null;
 	}
 }
@@ -83,6 +87,7 @@ export async function readProjectBoard(
 	notify: NotifyFn,
 	config: SupervisorConfig,
 	_issueNum: number,
+	collector?: ErrorCollector,
 ): Promise<ProjectBoardResult> {
 	const pi = execAsPi(exec);
 	try {
@@ -93,18 +98,21 @@ export async function readProjectBoard(
 		const statusField =
 			fields.find((f) => f.name.toLowerCase() === config.statusField?.toLowerCase()) || null;
 		if (!statusField) {
-			notify.error(
-				`Status field '${config.statusField}' not found. Fields: ${fields.map((f) => f.name).join(", ")}`,
-			);
+			const msg = `Status field '${config.statusField}' not found. Fields: ${fields.map((f) => f.name).join(", ")}`;
+			notify.error(msg);
+			collector?.push("helpers", "error", msg);
 			return { fields: null, items: [], projectId: "", statusField: null };
 		}
 		return { fields, items, projectId, statusField };
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
 		if (msg.includes("missing required scopes")) {
-			notify.error("GitHub token missing 'project' scope. Run: gh auth refresh -s project");
+			const scopeMsg = "GitHub token missing 'project' scope. Run: gh auth refresh -s project";
+			notify.error(scopeMsg);
+			collector?.push("helpers", "error", scopeMsg);
 		} else {
 			notify.error(`Failed to read project board: ${msg}`);
+			collector?.push("helpers", "error", `Failed to read project board: ${msg}`);
 		}
 		return { fields: null, items: [], projectId: "", statusField: null };
 	}
@@ -117,6 +125,7 @@ export async function checkDependencies(
 	notify: NotifyFn,
 	config: SupervisorConfig,
 	issueNum: number,
+	collector?: ErrorCollector,
 ): Promise<boolean> {
 	const pi = execAsPi(exec);
 	try {
@@ -125,15 +134,16 @@ export async function checkDependencies(
 			const lines = depsResult.blockers.map(
 				(b) => `${b.type === "pullrequest" ? "!" : "#"}${b.number}: ${b.title} (open)`,
 			);
-			notify.error(
-				`Issue #${issueNum} is blocked by unresolved dependencies:\n${lines.join("\n")}`,
-			);
+			const msg = `Issue #${issueNum} is blocked by unresolved dependencies:\n${lines.join("\n")}`;
+			notify.error(msg);
+			collector?.push("helpers", "error", msg);
 			return false;
 		}
 		return true;
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
 		notify.error(`Dependency check failed: ${msg}`);
+		collector?.push("helpers", "error", `Dependency check failed: ${msg}`);
 		return false;
 	}
 }
@@ -145,6 +155,7 @@ export async function fetchFreshIssueData(
 	config: SupervisorConfig,
 	issueNum: number,
 	fallbackData: Record<string, unknown>,
+	collector?: ErrorCollector,
 ): Promise<FilteredIssueData> {
 	try {
 		const raw = await exec("gh", [
@@ -158,6 +169,11 @@ export async function fetchFreshIssueData(
 		]);
 		return filterIssueData(JSON.parse(raw.stdout || "{}"), config.codeowners);
 	} catch {
+		collector?.push(
+			"helpers",
+			"warn",
+			`Failed to fetch fresh data for issue #${issueNum}, using cached data`,
+		);
 		return filterIssueData(fallbackData, config.codeowners);
 	}
 }
@@ -169,18 +185,23 @@ export async function loadAgentFile(
 	notify: NotifyFn,
 	cwd: string,
 	agentName: string,
+	collector?: ErrorCollector,
 ): Promise<ParsedAgent | null> {
 	const agentPath = `.pi/extensions/supervisor/agents/${agentName}.md`;
 	try {
 		await exec("test", ["-f", agentPath], { cwd });
 	} catch {
-		notify.error(`Agent file not found: ${agentPath}`);
+		const msg = `Agent file not found: ${agentPath}`;
+		notify.error(msg);
+		collector?.push("helpers", "error", msg);
 		return null;
 	}
 	try {
 		return parseAgentFile(agentPath);
 	} catch (err: unknown) {
-		notify.error(`Failed to parse agent: ${err instanceof Error ? err.message : String(err)}`);
+		const msg = `Failed to parse agent: ${err instanceof Error ? err.message : String(err)}`;
+		notify.error(msg);
+		collector?.push("helpers", "error", msg);
 		return null;
 	}
 }

@@ -36,6 +36,7 @@ import type { WatchdogHandle } from "../config/watchdog.ts";
 import { createInstrumenter } from "../config/instrumentation.ts";
 import type { InstrumenterHandle } from "../config/instrumentation.ts";
 import { getDebugLogger } from "../config/debug.ts";
+import { getErrorCollector } from "../pipeline/error-collector.ts";
 
 // ─── Main: runAgentInProcess ────────────────────────────────────────
 
@@ -190,7 +191,11 @@ export async function runAgentInProcess(
 					`Watchdog timeout — no events for ${elapsedSec}s, aborting ${agentName}`,
 				);
 				const msg = `[supervisor] No events for ${elapsedSec}s — agent may be stuck`;
-				console.error(msg);
+				getErrorCollector().push(
+					"session-runner",
+					"warn",
+					`No events for ${elapsedSec}s — agent may be stuck`,
+				);
 				ctx.ui.notify(`No agent events for ${elapsedSec}s — aborting stuck session`, "warning");
 				try {
 					await session!.abort();
@@ -222,7 +227,11 @@ export async function runAgentInProcess(
 				);
 			} catch (renderErr: unknown) {
 				const msg = renderErr instanceof Error ? renderErr.message : String(renderErr);
-				console.error(`[supervisor] widget render error for ${agentName}: ${msg}`);
+				getErrorCollector().push(
+					"session-runner",
+					"warn",
+					`widget render error for ${agentName}: ${msg}`,
+				);
 			}
 		};
 
@@ -240,7 +249,11 @@ export async function runAgentInProcess(
 				if (!flushTimer) flushWidget();
 			} catch (hbErr: unknown) {
 				const msg = hbErr instanceof Error ? hbErr.message : String(hbErr);
-				console.error(`[supervisor] heartbeat error for ${agentName}: ${msg}`);
+				getErrorCollector().push(
+					"session-runner",
+					"warn",
+					`heartbeat error for ${agentName}: ${msg}`,
+				);
 			}
 		}, 2000);
 

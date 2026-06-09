@@ -5,6 +5,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { resolve as resolvePath } from "node:path";
 import { getDebugLogger } from "../config/debug.ts";
+import { getErrorCollector } from "./error-collector.ts";
 
 // ─── Create Worktree ─────────────────────────────────────────────
 
@@ -75,6 +76,11 @@ export async function installWorktreeDeps(pi: ExtensionAPI, worktreePath: string
 		log.info("worktree", "npm ci OK");
 	} catch {
 		log.warn("worktree", "npm ci failed — non-fatal");
+		getErrorCollector().push(
+			"worktree",
+			"warn",
+			`npm ci failed at ${worktreePath} — continuing with potentially missing dependencies`,
+		);
 	}
 }
 
@@ -97,13 +103,13 @@ export async function cleanupWorktree(
 		log.info("worktree", "Worktree removed");
 	} catch {
 		log.warn("worktree", `Failed to remove worktree at ${worktreePath}`);
-		console.warn(`[supervisor] Failed to remove worktree at ${worktreePath}`);
+		getErrorCollector().push("worktree", "warn", `Failed to remove worktree at ${worktreePath}`);
 	}
 	try {
 		await pi.exec("git", ["branch", "-D", worktreeBranch], { cwd, timeout: 10000 });
 		log.info("worktree", `Branch ${worktreeBranch} deleted`);
 	} catch {
 		log.warn("worktree", `Failed to delete branch ${worktreeBranch}`);
-		console.warn(`[supervisor] Failed to delete branch ${worktreeBranch}`);
+		getErrorCollector().push("worktree", "warn", `Failed to delete branch ${worktreeBranch}`);
 	}
 }

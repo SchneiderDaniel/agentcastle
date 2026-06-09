@@ -24,6 +24,7 @@ import { handlePostPipelineMerge } from "../pipeline/merge.ts";
 import { createWorktree, installWorktreeDeps, cleanupWorktree } from "./worktree.ts";
 import { createPrOnApproval } from "./pr-creation.ts";
 import { sendPipelineSummary, sendAgentResultMessage, sendPipelineError } from "./notifications.ts";
+import { ErrorCollector, setErrorCollector, getErrorCollector } from "./error-collector.ts";
 import {
 	MAX_PIPELINE_LOOPS,
 	createStageState,
@@ -102,6 +103,7 @@ export async function handleSupervisorCommand(
 	let worktreePath: string | undefined;
 	let worktreeBranch: string | undefined;
 	let prCreationResult: PrCreationResult | undefined;
+	let collector: ErrorCollector;
 
 	// Build ExecFn and NotifyFn from pi/ctx for helpers
 	const exec: ExecFn = (cmd, args, opts) => pi.exec(cmd, args, opts);
@@ -109,6 +111,10 @@ export async function handleSupervisorCommand(
 		info: (msg) => ctx.ui.notify(msg, "info"),
 		error: (msg) => ctx.ui.notify(msg, "error"),
 	};
+
+	// Create ErrorCollector for this pipeline run
+	collector = new ErrorCollector();
+	setErrorCollector(collector);
 
 	try {
 		config = loadConfig();
@@ -120,7 +126,7 @@ export async function handleSupervisorCommand(
 
 		// Fetch issue
 		ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
-		const issueData = await fetchIssue(exec, notify, config, issueNum);
+		const issueData = await fetchIssue(exec, notify, config, issueNum, collector);
 		if (!issueData) return;
 		issueTitle = (issueData?.title as string) || `Issue #${issueNum}`;
 
@@ -145,6 +151,7 @@ export async function handleSupervisorCommand(
 			notify,
 			config,
 			issueNum,
+			collector,
 		);
 		if (!fields || !statusField) {
 			getDebugLogger().error("handler", "Project board read failed", {
@@ -171,7 +178,7 @@ export async function handleSupervisorCommand(
 
 		// Dependency gate
 		ctx.ui.setStatus("supervisor", "Checking dependencies...");
-		if (!(await checkDependencies(exec, notify, config, issueNum))) {
+		if (!(await checkDependencies(exec, notify, config, issueNum, collector))) {
 			getDebugLogger().warn("handler", "Dependency check blocked", { issueNum });
 			return;
 		}
@@ -229,7 +236,13 @@ export async function handleSupervisorCommand(
 			}
 
 			// Fetch fresh issue data for this iteration
-			const loopFilteredData = await fetchFreshIssueData(exec, config, issueNum, issueData);
+			const loopFilteredData = await fetchFreshIssueData(
+				exec,
+				config,
+				issueNum,
+				issueData,
+				collector,
+			);
 
 			// Rejection limit check
 			if (isRejectionLimitReached(loopFilteredData.comments, step.maxRejections)) {
@@ -272,7 +285,7 @@ export async function handleSupervisorCommand(
 			}
 
 			// Load agent
-			const agent = await loadAgentFileHelper(exec, notify, ctx.cwd, agentName);
+			const agent = await loadAgentFileHelper(exec, notify, ctx.cwd, agentName, collector);
 			if (!agent) {
 				stopReason = `Agent file not found: ${agentName}`;
 				getDebugLogger().error("handler", "Agent file not found", { agentName });
@@ -405,6 +418,7 @@ export async function handleSupervisorCommand(
 					worktreePath,
 					worktreeBranch,
 					issueTitle,
+					collector,
 				);
 				if (!continuePipeline) {
 					stopReason = `commitAndPush failed for ${agentName}`;
@@ -438,6 +452,7 @@ export async function handleSupervisorCommand(
 					agentResults,
 					worktreePath,
 					worktreeBranch,
+					collector,
 				);
 				if (prCreationResult && !prCreationResult.success) {
 					getDebugLogger().warn("handler", "PR creation failed", {
@@ -500,6 +515,7 @@ export async function handleSupervisorCommand(
 						worktreePath!,
 						pi,
 						ctx,
+						collector,
 					);
 					effectiveNextStatus = auditResult.nextStatus;
 					getDebugLogger().info("handler", "Pre-transition hook result", {
@@ -507,12 +523,11 @@ export async function handleSupervisorCommand(
 						note: auditResult.note,
 					});
 				} catch (auditErr: unknown) {
-					ctx.ui.notify(
-						`Pre-audit error: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`,
-						"warning",
-					);
+					const auditMsg = auditErr instanceof Error ? auditErr.message : String(auditErr);
+					ctx.ui.notify(`Pre-audit error: ${auditMsg}`, "warning");
+					collector?.push("handler", "warn", `Pre-transition hook error: ${auditMsg}`);
 					getDebugLogger().error("handler", "Pre-transition hook error", {
-						error: auditErr instanceof Error ? auditErr.message : String(auditErr),
+						error: auditMsg,
 					});
 				}
 			}
@@ -534,10 +549,12 @@ export async function handleSupervisorCommand(
 					to: loopStatus,
 				});
 			} catch (err: unknown) {
-				stopReason = `Failed to update status: ${err instanceof Error ? err.message : String(err)}`;
+				const errMsg = err instanceof Error ? err.message : String(err);
+				stopReason = `Failed to update status: ${errMsg}`;
 				ctx.ui.notify(stopReason, "error");
+				collector?.push("handler", "error", `Status transition failed: ${errMsg}`);
 				getDebugLogger().error("handler", "Status transition failed", {
-					error: err instanceof Error ? err.message : String(err),
+					error: errMsg,
 				});
 				break;
 			}
@@ -558,6 +575,7 @@ export async function handleSupervisorCommand(
 			worktreeBranch,
 			prCreationResult,
 			isDebug,
+			collector,
 		);
 
 		// Completion notification
@@ -580,6 +598,7 @@ export async function handleSupervisorCommand(
 				config,
 				stopReason,
 				prCreationResult,
+				collector,
 			);
 			getDebugLogger().info("handler", "Pipeline finished", {
 				overallStatus,
@@ -593,6 +612,7 @@ export async function handleSupervisorCommand(
 	} catch (err: unknown) {
 		const errMsg = err instanceof Error ? err.message : String(err);
 		getDebugLogger().error("handler", "Pipeline threw unhandled error", { error: errMsg });
+		collector?.push("handler", "error", `Pipeline threw unhandled error: ${errMsg}`);
 		// Also cleanup on error
 		if (worktreePath && worktreeBranch) {
 			await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
@@ -626,6 +646,7 @@ export async function handlePostPipeline(
 	worktreeBranch: string | undefined,
 	prCreationResult?: PrCreationResult,
 	isDebug?: boolean,
+	collector?: ErrorCollector,
 ): Promise<void> {
 	try {
 		// Step 1: Post-pipeline merge resolution — needs worktree to exist
@@ -638,6 +659,7 @@ export async function handlePostPipeline(
 				pi,
 				ctx,
 				worktreePath,
+				collector,
 			);
 		}
 	} finally {
