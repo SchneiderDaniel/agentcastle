@@ -27,9 +27,9 @@ Do nothing else.
 
 ### 2. Query Planning (Narrow Scope)
 
-Extract the core topic from the issue title and body. Formulate at most 2-3 search queries that directly target the specific technology, library, or pattern in the issue. Do not search broadly — narrow to what the issue actually needs. Prefer queries with high probability of direct relevance.
+Extract the core topic from the issue title and body. Formulate at most 1 narrowly-scoped search query that directly targets the specific technology, library, or pattern in the issue. Do not search broadly — narrow to what the issue actually needs. Prefer queries with high probability of direct relevance.
 
-If the core topic is too broad to formulate narrow queries, stop here and output a "no relevant results" finding instead of broadening the search.
+If the core topic is too broad to formulate a narrow query, stop here and output a "no relevant results" finding instead of broadening the search.
 
 Good queries focus on:
 - **Best practices** for the exact pattern/library in the issue
@@ -38,23 +38,23 @@ Good queries focus on:
 
 Omit any search angle that would require loose interpretation to connect back to the issue.
 
-### 3. Web Search + Web Crawl (at most 2-3 sources)
+### 3. Web Search + Crawl
 
-For each query, use `web_search` to discover URLs. Keep `--maxResults 3` or fewer — ignore low-ranking results. Then use `web_crawl` on promising URLs.
+Run your 1 query with `web_search` (`--maxResults 5`). For each result, evaluate the snippet for relevance to the issue topic. **If snippet proves relevance, crawl the page** — your job is to extract the core information so downstream agents never need to crawl.
 
-**Relevance gate**: Before crawling a result, evaluate its snippet. If it does not have a direct, unambiguous connection to the issue topic, discard it. Do not crawl irrelevant pages. It is better to have 0 sources than weak matches.
+Crawl at most 1-2 pages total. Hard cap total crawled content at ~75K tokens — if a page is longer, extract the relevant section and stop. If budget exceeded, stop crawling and synthesize what you have.
 
-Consult at most 2-3 distinct web sources. Prioritize official docs, high-star GitHub repos, and authoritative community resources.
+Record URL of every crawled page — every finding must link back to its source.
 
-Record the URL of every crawled page — every finding must link back to its source.
+### 4. Crawl Budget Enforcement
 
-### 4. Context-Window Management
+Track total crawled content tokens. Hard stop at ~75K tokens — do not crawl additional pages beyond this budget. If a single page exceeds 75K tokens, extract only the relevant section (skip navigation, boilerplate, ads).
 
-Crawl results can exceed context. If needed: keep only 3-5 most recent sources in full, summarize older sources to ~3-5 bullet points each before dropping. Preserve source URLs and key claims from all sources.
+Synthesize what you have within budget. The downstream agents depend on your extraction — capture the necessary facts from each source you crawl.
 
 ### 5. Synthesis
 
-Synthesize crawled content into findings. For each potential finding, ask: "Is this directly relevant to the issue topic?" If the connection requires explanation or stretch logic, discard it.
+Synthesize findings from crawled content. You are the only agent that crawls — other agents never access the web. Extract the relevant facts, version info, best practices, and pitfalls from each source you crawl. For each potential finding, ask: "Is this directly relevant to the issue topic?" If the connection requires explanation or stretch logic, discard it.
 
 Categorize into these sections (omit any section with no findings):
 
