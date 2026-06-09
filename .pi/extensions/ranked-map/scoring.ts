@@ -1,21 +1,24 @@
 /**
- * ranked-map — Keyword scoring, recency scoring, and file ranking
+ * ranked-map — Keyword scoring, recency scoring, commit count scoring, and file ranking
  *
  * Pure module — no pi SDK imports.
- * Computes keyword relevance scores, recency decay scores, and combines
- * them into ranked file list with token budget enforcement.
+ * Computes keyword relevance scores (binary and frequency-weighted),
+ * recency decay scores, commit count scores, and combines them into
+ * ranked file list with token budget enforcement.
  */
 
 import type { SymbolEntry, RankedFileScore } from "./types.ts";
 import { estimateTokens, formatSymbols } from "./format.ts";
 
 /**
- * Compute keyword relevance scores per file using Jaccard overlap.
+ * Compute keyword relevance scores per file using binary (Jaccard overlap) matching.
  *
  * For each file, score = matchedTerms / queryTerms (fraction of query terms present in file).
  * Returns 0 for files with no matches.
+ *
+ * This is the original scoring method. Use computeKeywordScores for frequency-weighted.
  */
-export function computeKeywordScores(
+export function computeBinaryKeywordScores(
 	fileTermMatches: Record<string, string[]>,
 	queryTerms: string[],
 ): Record<string, number> {
@@ -24,6 +27,82 @@ export function computeKeywordScores(
 
 	for (const [file, matched] of Object.entries(fileTermMatches)) {
 		scores[file] = totalTerms > 0 ? matched.length / totalTerms : 0;
+	}
+
+	return scores;
+}
+
+/**
+ * Compute keyword relevance scores per file using frequency-weighted matching.
+ *
+ * Uses rg --count-matches output: each file gets a total match count across all
+ * expanded query terms. Score = min(1.0, count * scalingFactor).
+ *
+ * This penalizes files that merely mention a term once vs files where terms are
+ * central (multiple occurrences).
+ *
+ * @param fileCounts - Map of file path → total match count across all expanded terms
+ * @param scalingFactor - Multiplier applied to count before capping at 1.0 (default 0.2)
+ * @returns Map of file path → keyword score (0 to 1)
+ */
+export function computeKeywordScores(
+	fileCounts: Record<string, number>,
+	scalingFactor: number = 0.2,
+): Record<string, number> {
+	const scores: Record<string, number> = {};
+
+	for (const [file, count] of Object.entries(fileCounts)) {
+		const effectiveCount = Math.max(0, count);
+		if (effectiveCount === 0) {
+			scores[file] = 0;
+		} else {
+			const raw = Math.min(1.0, effectiveCount * scalingFactor);
+			scores[file] = Math.round(raw * 100) / 100;
+		}
+	}
+
+	return scores;
+}
+
+/**
+ * Compute commit count scores for files.
+ *
+ * Files with more git commits over the recency window have more developer
+ * attention and are likely more important.
+ *
+ * Score = min(1.0, commitCount / maxCommitCount)
+ * - File with most commits → score 1.0
+ * - File with 0 commits → score 0.0
+ * - All files same count → all get 1.0
+ * - Single file → score 1.0
+ *
+ * @param commitCounts - Map of file path → commit count
+ * @returns Map of file path → commit count score (0 to 1)
+ */
+export function computeCommitCountScores(
+	commitCounts: Record<string, number>,
+): Record<string, number> {
+	const scores: Record<string, number> = {};
+	const counts = Object.values(commitCounts).filter((c) => c > 0);
+
+	if (counts.length === 0) {
+		// All zero or empty — all scores 0
+		for (const file of Object.keys(commitCounts)) {
+			scores[file] = 0;
+		}
+		return scores;
+	}
+
+	const maxCount = Math.max(...counts);
+
+	for (const [file, count] of Object.entries(commitCounts)) {
+		const effectiveCount = Math.max(0, count);
+		if (effectiveCount === 0) {
+			scores[file] = 0;
+		} else {
+			const raw = Math.min(1.0, effectiveCount / maxCount);
+			scores[file] = Math.round(raw * 100) / 100;
+		}
 	}
 
 	return scores;
@@ -140,7 +219,7 @@ export function applyTestFilePenalty(files: { path: string; score: number }[]): 
 }
 
 /**
- * Rank files by combined score (weighted sum of keyword + recency + fileSize),
+ * Rank files by combined score (weighted sum of keyword + recency + fileSize + commitCount),
  * sort descending, and fill within token budget (greedy).
  *
  * Test files (.test., .spec., /test/) receive a 0.5x score penalty
@@ -148,14 +227,17 @@ export function applyTestFilePenalty(files: { path: string; score: number }[]): 
  *
  * @param fileSizeScores - Optional file size scores from computeFileSizeScores.
  *                         When omitted, fileSize weight contributes 0 to the score.
+ * @param commitCountScores - Optional commit count scores from computeCommitCountScores.
+ *                            When omitted, commitCount weight contributes 0 to the score.
  */
 export function rankFiles(
 	keywordScores: Record<string, number>,
 	recencyScores: Record<string, number>,
-	weights: { keyword: number; recency: number; fileSize?: number },
+	weights: { keyword: number; recency: number; fileSize?: number; commitCount?: number },
 	tokenBudget: number,
 	symbolEntries: Record<string, SymbolEntry[]>,
 	fileSizeScores?: Record<string, number>,
+	commitCountScores?: Record<string, number>,
 ): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
 	// Only include files present in the ctags symbol index.
 	// Files from keyword search or git recency not in ctags index
@@ -169,9 +251,11 @@ export function rankFiles(
 		const kw = keywordScores[file] ?? 0;
 		const rec = recencyScores[file] ?? 0;
 		const fs = fileSizeScores?.[file] ?? 0;
+		const cc = commitCountScores?.[file] ?? 0;
 		const fsWeight = weights.fileSize ?? 0;
+		const ccWeight = weights.commitCount ?? 0;
 		const syms = symbolEntries[file] ?? [];
-		const score = kw * weights.keyword + rec * weights.recency + fs * fsWeight;
+		const score = kw * weights.keyword + rec * weights.recency + fs * fsWeight + cc * ccWeight;
 		scored.push({ path: file, score: Math.round(score * 100) / 100, symbols: syms });
 	}
 

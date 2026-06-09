@@ -15,7 +15,8 @@ export const DEFAULT_CONFIG: RankedMapConfig = {
 	recencyWindowDays: 30,
 	cacheTtlHours: 24,
 	autoThreshold: 20000,
-	weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
+	frequencyScalingFactor: 0.2,
+	weights: { keyword: 0.65, recency: 0.2, fileSize: 0.1, commitCount: 0.05 },
 };
 
 /** Maximum allowed recency window in days. */
@@ -75,7 +76,25 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 
 		let kwWeight = DEFAULT_CONFIG.weights.keyword;
 		let recWeight = DEFAULT_CONFIG.weights.recency;
-		let fsWeight: number = DEFAULT_CONFIG.weights.fileSize ?? 0;
+		let fsWeight: number = DEFAULT_CONFIG.weights.fileSize ?? 0.1;
+		let ccWeight: number = DEFAULT_CONFIG.weights.commitCount ?? 0.05;
+
+		let frequencyScalingFactor = DEFAULT_CONFIG.frequencyScalingFactor ?? 0.2;
+		let synonyms: Record<string, string[]> | undefined;
+
+		// Parse frequencyScalingFactor
+		if (
+			typeof rm.frequencyScalingFactor === "number" &&
+			Number.isFinite(rm.frequencyScalingFactor) &&
+			rm.frequencyScalingFactor > 0
+		) {
+			frequencyScalingFactor = rm.frequencyScalingFactor;
+		}
+
+		// Parse synonyms
+		if (rm.synonyms && typeof rm.synonyms === "object" && !Array.isArray(rm.synonyms)) {
+			synonyms = rm.synonyms as Record<string, string[]>;
+		}
 
 		if (rm.weights && typeof rm.weights === "object") {
 			const w = rm.weights;
@@ -111,18 +130,37 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 					fsWeight = w.fileSize;
 				} else {
 					// Present but invalid — fall back to default
-					fsWeight = DEFAULT_CONFIG.weights.fileSize ?? 0.2;
+					fsWeight = DEFAULT_CONFIG.weights.fileSize ?? 0.1;
 				}
 			} else {
 				// Not present in weights object — default to 0
 				fsWeight = 0;
 			}
 
-			const sum = kwWeight + recWeight + fsWeight;
+			// Parse commitCount weight
+			if ("commitCount" in w) {
+				if (
+					typeof w.commitCount === "number" &&
+					Number.isFinite(w.commitCount) &&
+					w.commitCount >= 0 &&
+					w.commitCount <= 1
+				) {
+					ccWeight = w.commitCount;
+				} else {
+					// Present but invalid — fall back to default
+					ccWeight = DEFAULT_CONFIG.weights.commitCount ?? 0.05;
+				}
+			} else {
+				// Not present in weights object — default to 0
+				ccWeight = 0;
+			}
+
+			const sum = kwWeight + recWeight + fsWeight + ccWeight;
 			if (sum > 1) {
 				kwWeight = kwWeight / sum;
 				recWeight = recWeight / sum;
 				fsWeight = fsWeight / sum;
+				ccWeight = ccWeight / sum;
 			}
 		}
 
@@ -131,7 +169,9 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			recencyWindowDays,
 			cacheTtlHours,
 			autoThreshold,
-			weights: { keyword: kwWeight, recency: recWeight, fileSize: fsWeight },
+			frequencyScalingFactor,
+			synonyms,
+			weights: { keyword: kwWeight, recency: recWeight, fileSize: fsWeight, commitCount: ccWeight },
 		};
 	} catch {
 		return { ...DEFAULT_CONFIG };

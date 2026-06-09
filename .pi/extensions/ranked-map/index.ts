@@ -10,18 +10,19 @@ export default function rankedMap(pi: ExtensionAPI): void {
 		label: "Ranked Repo Map",
 		description:
 			"Codebase symbol index with auto-mode detection. " +
-			"With a query: ranks files by keyword overlap (ripgrep) + git recency scoring. " +
+			"With a query: ranks files by frequency-weighted keyword matching (ripgrep --count-matches) + git recency + commit count. " +
 			"Without query on repos ≤ autoThreshold (default 20K symbols): returns all symbols sorted by path (full dump). " +
 			"Without query on larger repos: ranks by recency only. " +
 			"Output: JSON with files array (path, score, symbols, preview), total_tokens, budget, truncated, mode. " +
 			"Replaces the old map_codebase tool — call ranked_map with or without a query for all use cases.",
 		promptSnippet:
-			"Codebase symbol map with auto-mode: query → ranked, no query + small repo → full dump, no query + large repo → recency-ranked",
+			"Codebase symbol map with auto-mode: query → ranked (frequency-weighted keyword + recency + commit count), no query + small repo → full dump, no query + large repo → recency-ranked",
 		promptGuidelines: [
 			"ranked_map replaces map_codebase — use it for all codebase browsing. Auto-mode: pass `query` for ranked results, omit for full dump (small repos) or recency-ranked (large repos).",
-			"Pass a `query` describing what you're looking for (e.g. 'login auth token') to rank by keyword relevance. Without query, the tool auto-selects full dump or recency-ranked based on repo size.",
+			"Pass a `query` describing what you're looking for (e.g. 'login auth token') to rank by keyword relevance. Query terms are automatically expanded (e.g. 'authentication' also matches 'auth', 'authenticate'). Supports optional synonym mapping via config.",
 			"Set `tokenBudget` to control output size (default 4096 tokens). Smaller budget = fewer files = faster response.",
 			"Configure autoThreshold in .pi/settings.json rankedMap.autoThreshold (default 20000). Set to 0 for always-ranked.",
+			"Scoring weights (keyword/recency/fileSize/commitCount) are configurable in .pi/settings.json rankedMap.weights. Default: 0.65/0.2/0.1/0.05.",
 			"The tool is on-demand (not auto-injected). Call it when you need codebase context, not every turn.",
 		],
 		parameters: Type.Object({

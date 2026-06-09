@@ -30,10 +30,12 @@ import {
 	computeKeywordScores,
 	computeRecencyScores,
 	computeFileSizeScores,
+	computeCommitCountScores,
 	rankFiles,
 } from "./scoring.ts";
-import { runKeywordSearch } from "./search.ts";
-import { runGitRecency, getGitHead, discoverSubmodules } from "./git.ts";
+import { runFrequencySearch } from "./search.ts";
+import { runGitRecency, runGitCommitCount, getGitHead, discoverSubmodules } from "./git.ts";
+import { expandQuery } from "./expand.ts";
 import { buildPiignoreExcludes, buildIgnoreExcludes, discoverIgnoreFiles } from "./piignore.ts";
 
 /** Result shape for the rank method — extends dumpAllFiles/rankFiles result with mode. */
@@ -192,16 +194,31 @@ export class RankedMapEngine {
 
 		// Ranked mode: compute keyword scores (if query) and recency scores
 		let keywordScores: Record<string, number> = {};
+		let commitCountScores: Record<string, number> | undefined;
 		const hasQuery = query.trim().length > 0;
 		if (hasQuery) {
-			const { fileMatches, terms } = await runKeywordSearch(
+			// Query term expansion: expand natural language terms to code variants
+			const expandedTerms = expandQuery(query, this.config.synonyms);
+			const { fileCounts } = await runFrequencySearch(
 				this.exec,
-				query,
+				expandedTerms,
 				targetDir,
 				this.cwd,
 				signal,
 			);
-			keywordScores = computeKeywordScores(fileMatches, terms);
+			keywordScores = computeKeywordScores(fileCounts, this.config.frequencyScalingFactor ?? 0.2);
+
+			// Compute git commit count scores (only when query present)
+			// Commit count is irrelevant in recency-only mode
+			const submodules = await discoverSubmodules(this.exec, this.cwd, signal);
+			const commitCounts = await runGitCommitCount(
+				this.exec,
+				this.config.recencyWindowDays,
+				this.cwd,
+				signal,
+				submodules,
+			);
+			commitCountScores = computeCommitCountScores(commitCounts);
 		}
 
 		// Discover submodules and pass them to runGitRecency for submodule-aware recency
@@ -236,6 +253,7 @@ export class RankedMapEngine {
 			budget,
 			index.symbols,
 			fileSizeScores,
+			commitCountScores,
 		);
 
 		// In recency-only mode (no query), inject structural overview files

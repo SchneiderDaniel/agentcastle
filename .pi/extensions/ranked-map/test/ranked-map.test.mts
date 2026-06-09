@@ -62,7 +62,12 @@ import {
 } from "../format.ts";
 
 // Scoring
-import { computeKeywordScores, computeRecencyScores, rankFiles } from "../scoring.ts";
+import {
+	computeKeywordScores,
+	computeBinaryKeywordScores,
+	computeRecencyScores,
+	rankFiles,
+} from "../scoring.ts";
 
 // Adapters
 import { runKeywordSearch } from "../search.ts";
@@ -341,9 +346,10 @@ describe("loadRankedMapConfig", () => {
 			assert.strictEqual(result.tokenBudget, 4096);
 			assert.strictEqual(result.recencyWindowDays, 30);
 			assert.strictEqual(result.cacheTtlHours, 24);
-			assert.strictEqual(result.weights.keyword, 0.5);
-			assert.strictEqual(result.weights.recency, 0.3);
-			assert.strictEqual(result.weights.fileSize, 0.2);
+			assert.strictEqual(result.weights.keyword, 0.65);
+			assert.strictEqual(result.weights.recency, 0.2);
+			assert.strictEqual(result.weights.fileSize, 0.1);
+			assert.strictEqual(result.weights.commitCount, 0.05);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -355,7 +361,10 @@ describe("loadRankedMapConfig", () => {
 			writeFileSync(join(dir, ".pi", "settings.json"), JSON.stringify({ theme: "dark" }));
 			const result = loadRankedMapConfig(dir);
 			assert.strictEqual(result.tokenBudget, 4096);
-			assert.strictEqual(result.weights.fileSize, 0.2);
+			assert.strictEqual(result.weights.keyword, 0.65);
+			assert.strictEqual(result.weights.recency, 0.2);
+			assert.strictEqual(result.weights.fileSize, 0.1);
+			assert.strictEqual(result.weights.commitCount, 0.05);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -484,7 +493,7 @@ describe("loadRankedMapConfig", () => {
 				JSON.stringify({ rankedMap: { weights: { keyword: -0.1, recency: 0.3 } } }),
 			);
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.weights.keyword, 0.5);
+			assert.strictEqual(result.weights.keyword, 0.65);
 			assert.strictEqual(result.weights.recency, 0.3);
 		} finally {
 			cleanupDir(dir);
@@ -515,9 +524,11 @@ describe("loadRankedMapConfig", () => {
 			assert.strictEqual(result.recencyWindowDays, 30); // default
 			assert.strictEqual(result.cacheTtlHours, 24); // default
 			assert.strictEqual(result.autoThreshold, 20000); // default
-			assert.strictEqual(result.weights.keyword, 0.5); // default
-			assert.strictEqual(result.weights.recency, 0.3); // default
-			assert.strictEqual(result.weights.fileSize, 0.2); // default
+			// No weights specified: use all defaults
+			assert.strictEqual(result.weights.keyword, 0.65);
+			assert.strictEqual(result.weights.recency, 0.2);
+			assert.strictEqual(result.weights.fileSize, 0.1);
+			assert.strictEqual(result.weights.commitCount, 0.05);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -619,7 +630,7 @@ describe("loadRankedMapConfig", () => {
 			const result = loadRankedMapConfig(dir);
 			assert.strictEqual(result.weights.keyword, 0.5);
 			assert.strictEqual(result.weights.recency, 0.3);
-			assert.strictEqual(result.weights.fileSize, 0.2);
+			assert.strictEqual(result.weights.fileSize, 0.1);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -633,7 +644,7 @@ describe("loadRankedMapConfig", () => {
 				JSON.stringify({ rankedMap: { weights: { keyword: 0.5, recency: 0.3, fileSize: 1.5 } } }),
 			);
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.weights.fileSize, 0.2);
+			assert.strictEqual(result.weights.fileSize, 0.1);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -647,7 +658,7 @@ describe("loadRankedMapConfig", () => {
 				JSON.stringify({ rankedMap: { weights: { keyword: 0.5, recency: 0.3, fileSize: "abc" } } }),
 			);
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.weights.fileSize, 0.2);
+			assert.strictEqual(result.weights.fileSize, 0.1);
 		} finally {
 			cleanupDir(dir);
 		}
@@ -678,8 +689,9 @@ describe("loadRankedMapConfig", () => {
 				JSON.stringify({ rankedMap: { weights: { fileSize: 0.1 } } }),
 			);
 			const result = loadRankedMapConfig(dir);
-			assert.strictEqual(result.weights.keyword, 0.5);
-			assert.strictEqual(result.weights.recency, 0.3);
+			// keyword and recency default when not in weights object
+			assert.strictEqual(result.weights.keyword, 0.65);
+			assert.strictEqual(result.weights.recency, 0.2);
 			assert.strictEqual(result.weights.fileSize, 0.1);
 		} finally {
 			cleanupDir(dir);
@@ -725,14 +737,15 @@ describe("DEFAULT_CONFIG", () => {
 		assert.strictEqual(DEFAULT_CONFIG.recencyWindowDays, 30);
 		assert.strictEqual(DEFAULT_CONFIG.cacheTtlHours, 24);
 		assert.strictEqual(DEFAULT_CONFIG.autoThreshold, 20000);
-		assert.strictEqual(DEFAULT_CONFIG.weights.keyword, 0.5);
-		assert.strictEqual(DEFAULT_CONFIG.weights.recency, 0.3);
-		assert.strictEqual(DEFAULT_CONFIG.weights.fileSize, 0.2);
+		assert.strictEqual(DEFAULT_CONFIG.weights.keyword, 0.65);
+		assert.strictEqual(DEFAULT_CONFIG.weights.recency, 0.2);
+		assert.strictEqual(DEFAULT_CONFIG.weights.fileSize, 0.1);
+		assert.strictEqual(DEFAULT_CONFIG.weights.commitCount, 0.05);
 	});
 
 	it("default weights sum to exactly 1.0", () => {
-		const { keyword, recency, fileSize } = DEFAULT_CONFIG.weights;
-		assert.strictEqual(keyword + recency + (fileSize ?? 0), 1.0);
+		const { keyword, recency, fileSize, commitCount } = DEFAULT_CONFIG.weights;
+		assert.strictEqual(keyword + recency + (fileSize ?? 0) + (commitCount ?? 0), 1.0);
 	});
 
 	it("MAX_RECENCY_WINDOW_DAYS is 365", () => {
@@ -1583,7 +1596,7 @@ describe("loadCachedIndex — targetDir validation", () => {
 // Phase 3: Keyword Scoring
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("computeKeywordScores", () => {
+describe("computeBinaryKeywordScores (backward compat)", () => {
 	it("single keyword matches 2 of 5 files → scores 1.0 for matches, 0 for non-matches", () => {
 		const fileMatches: Record<string, string[]> = {
 			"a.ts": ["auth"],
@@ -1592,7 +1605,7 @@ describe("computeKeywordScores", () => {
 			"d.ts": [],
 			"e.ts": [],
 		};
-		const scores = computeKeywordScores(fileMatches, ["auth"]);
+		const scores = computeBinaryKeywordScores(fileMatches, ["auth"]);
 		assert.strictEqual(scores["a.ts"], 1.0);
 		assert.strictEqual(scores["b.ts"], 1.0);
 		assert.strictEqual(scores["c.ts"], 0);
@@ -1606,7 +1619,7 @@ describe("computeKeywordScores", () => {
 			"b.ts": ["token"],
 			"c.ts": ["login", "auth", "token"],
 		};
-		const scores = computeKeywordScores(fileMatches, ["login", "auth", "token"]);
+		const scores = computeBinaryKeywordScores(fileMatches, ["login", "auth", "token"]);
 		assert.strictEqual(scores["a.ts"], 2 / 3);
 		assert.strictEqual(scores["b.ts"], 1 / 3);
 		assert.strictEqual(scores["c.ts"], 1.0);
@@ -1614,14 +1627,14 @@ describe("computeKeywordScores", () => {
 
 	it("empty query string → all scores 0", () => {
 		const fileMatches: Record<string, string[]> = { "a.ts": ["auth"], "b.ts": ["login"] };
-		const scores = computeKeywordScores(fileMatches, []);
+		const scores = computeBinaryKeywordScores(fileMatches, []);
 		assert.strictEqual(scores["a.ts"], 0);
 		assert.strictEqual(scores["b.ts"], 0);
 	});
 
 	it("no files match → all scores 0", () => {
 		const fileMatches: Record<string, string[]> = { "a.ts": [], "b.ts": [], "c.ts": [] };
-		const scores = computeKeywordScores(fileMatches, ["auth", "token"]);
+		const scores = computeBinaryKeywordScores(fileMatches, ["auth", "token"]);
 		assert.strictEqual(scores["a.ts"], 0);
 		assert.strictEqual(scores["b.ts"], 0);
 		assert.strictEqual(scores["c.ts"], 0);
@@ -1632,23 +1645,23 @@ describe("computeKeywordScores", () => {
 			"a.ts": ["auth", "login"],
 			"b.ts": ["auth", "login"],
 		};
-		const scores = computeKeywordScores(fileMatches, ["auth", "login"]);
+		const scores = computeBinaryKeywordScores(fileMatches, ["auth", "login"]);
 		assert.strictEqual(scores["a.ts"], 1.0);
 		assert.strictEqual(scores["b.ts"], 1.0);
 	});
 
 	it("single file, single term, file matches → score 1.0", () => {
-		const scores = computeKeywordScores({ "a.ts": ["auth"] }, ["auth"]);
+		const scores = computeBinaryKeywordScores({ "a.ts": ["auth"] }, ["auth"]);
 		assert.strictEqual(scores["a.ts"], 1.0);
 	});
 
 	it("empty files array → empty map", () => {
-		const scores = computeKeywordScores({}, ["auth"]);
+		const scores = computeBinaryKeywordScores({}, ["auth"]);
 		assert.strictEqual(Object.keys(scores).length, 0);
 	});
 
 	it("partial match: file matches 1 of 3 terms", () => {
-		const scores = computeKeywordScores({ "a.ts": ["login"] }, ["login", "auth", "token"]);
+		const scores = computeBinaryKeywordScores({ "a.ts": ["login"] }, ["login", "auth", "token"]);
 		assert.strictEqual(scores["a.ts"], 1 / 3);
 	});
 });
@@ -2460,7 +2473,7 @@ describe("integration: real tools", () => {
 	);
 
 	it(
-		"full pipeline: buildSymbolIndex → computeKeywordScores → computeRecencyScores → rankFiles → formatOutput produces valid shape",
+		"full pipeline: buildSymbolIndex → computeBinaryKeywordScores → computeRecencyScores → rankFiles → formatOutput produces valid shape",
 		{ skip: !hasCtags || !hasCtagsJson ? ctagsSkip : false },
 		() => {
 			const sampleDir = resolve(".pi/extensions/ranked-map/test/fixtures/ctags-sample");
@@ -2485,7 +2498,7 @@ describe("integration: real tools", () => {
 				const matched = queryTerms.filter((t) => content.toLowerCase().includes(t.toLowerCase()));
 				fileMatches[f] = matched;
 			}
-			const kwScores = computeKeywordScores(fileMatches, queryTerms);
+			const kwScores = computeBinaryKeywordScores(fileMatches, queryTerms);
 
 			const recScores: Record<string, string> = {};
 			for (const f of allFiles) {

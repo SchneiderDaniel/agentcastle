@@ -24,7 +24,16 @@ export interface RankedMapConfig {
 	recencyWindowDays: number;
 	cacheTtlHours: number;
 	autoThreshold: number;
-	weights: { keyword: number; recency: number; fileSize?: number };
+	/** Optional synonym map for query term expansion. */
+	synonyms?: Record<string, string[]>;
+	/** Frequency scaling factor for keyword scoring (default 0.2). */
+	frequencyScalingFactor?: number;
+	weights: {
+		keyword: number;
+		recency: number;
+		fileSize?: number;
+		commitCount?: number;
+	};
 }
 
 /** On-disk cache format for symbol index. */
