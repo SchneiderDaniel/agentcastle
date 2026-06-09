@@ -79,6 +79,11 @@ export async function runTscAndLspAudit(
 				);
 			}
 
+			if (ciResult.status === "unconfigured") {
+				// No CI configured — proceed silently
+				getDebugLogger().info("pipeline-audit", ciResult.message);
+			}
+
 			if (ciResult.status === "error") {
 				ctx.ui.notify(
 					`CI check polling issue: ${ciResult.message}. Proceeding to audit.`,

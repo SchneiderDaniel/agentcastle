@@ -11,7 +11,7 @@ export interface CiCheckInfo {
 }
 
 export interface CiPollResult {
-	status: "passing" | "failing" | "pending" | "error";
+	status: "passing" | "failing" | "pending" | "error" | "unconfigured";
 	checks: CiCheckInfo[];
 	message: string;
 }
@@ -130,11 +130,11 @@ export async function pollCiChecks(
 
 			const raw = (result.stdout || "").trim();
 			if (!raw) {
-				// No check runs at all — fail-open
+				// No check runs at all — not an error, just unconfigured
 				return {
-					status: "error",
+					status: "unconfigured",
 					checks: [],
-					message: "No check runs found on this commit. Proceeding without CI gating.",
+					message: "No CI checks configured for this repo. Skipping CI gating.",
 				};
 			}
 
