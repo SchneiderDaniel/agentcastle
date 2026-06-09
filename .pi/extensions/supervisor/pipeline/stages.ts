@@ -61,7 +61,7 @@ export function createStageState(initialStatus: string): StageState {
 // ─── Built-in: Backlog ────────────────────────────────────────────
 
 /**
- * Handle Backlog → Architecture transition.
+ * Handle Backlog → Research transition.
  * Returns new status on success, throws with a message on failure.
  */
 export async function handleBacklogTransition(
@@ -71,9 +71,9 @@ export async function handleBacklogTransition(
 	itemId: string,
 	projectId: string,
 ): Promise<string> {
-	const optId = findStatusOption(fields, statusFieldId, "Architecture");
+	const optId = findStatusOption(fields, statusFieldId, "Research");
 	if (!optId) {
-		throw new Error("Cannot find 'Architecture' status option");
+		throw new Error("Cannot find 'Research' status option");
 	}
 	try {
 		await setItemStatus(pi, itemId, projectId, statusFieldId, optId);
@@ -81,7 +81,7 @@ export async function handleBacklogTransition(
 		const msg = err instanceof Error ? err.message : String(err);
 		throw new Error(`Failed to set status: ${msg}`);
 	}
-	return "Architecture";
+	return "Research";
 }
 
 // ─── Built-in: Done ───────────────────────────────────────────────

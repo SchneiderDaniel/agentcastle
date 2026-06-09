@@ -22,25 +22,25 @@ export interface WorkflowStep {
 }
 
 export const WORKFLOW: WorkflowStep[] = [
-	// Built-in: Backlog → Architecture
+	// Built-in: Backlog → Research
 	{ status: "Backlog", builtIn: "backlog" },
 
-	// Architecture → Research (linear forward)
-	{
-		status: "Architecture",
-		agentName: "architect",
-		markerMap: { ARCHITECTURE_COMPLETE: "Research" },
-	},
-
-	// Research → TestDesign (or loop back to Architecture)
+	// Research → Architecture (linear forward)
 	{
 		status: "Research",
 		agentName: "researcher",
+		markerMap: { RESEARCH_COMPLETE: "Architecture" },
+	},
+
+	// Architecture → TestDesign (or loop back to Research)
+	{
+		status: "Architecture",
+		agentName: "architect",
 		markerMap: {
-			RESEARCH_COMPLETE: "TestDesign",
-			FEEDBACK_ARCHITECTURE: "Architecture",
+			ARCHITECTURE_COMPLETE: "TestDesign",
+			FEEDBACK_RESEARCH: "Research",
 		},
-		canLoopBackTo: ["Architecture"],
+		canLoopBackTo: ["Research"],
 	},
 
 	// TestDesign → Implementation

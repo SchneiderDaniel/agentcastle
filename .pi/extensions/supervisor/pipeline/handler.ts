@@ -222,7 +222,7 @@ export async function handleSupervisorCommand(
 				break;
 			}
 
-			// Built-in: Backlog → Architecture
+			// Built-in: Backlog → Research
 			if (step.builtIn === "backlog") {
 				loopStatus = await handleBacklogTransition(
 					pi,
@@ -231,8 +231,8 @@ export async function handleSupervisorCommand(
 					loopItem.id,
 					projectId,
 				);
-				ctx.ui.notify(`Issue #${issueNum} moved: Backlog → Architecture`, "info");
-				getDebugLogger().info("handler", "Backlog → Architecture");
+				ctx.ui.notify(`Issue #${issueNum} moved: Backlog → Research`, "info");
+				getDebugLogger().info("handler", "Backlog → Research");
 				continue;
 			}
 
@@ -317,6 +317,13 @@ export async function handleSupervisorCommand(
 				agentName === "auditor"
 					? (buildDuplicateCodeContext(stageState.duplicateCodeResult) ?? undefined)
 					: undefined;
+			// Extract research findings from issue comments for architect
+			const researchFindings: string | undefined =
+				agentName === "architect"
+					? loopFilteredData.comments
+							.map((c) => c.body)
+							.find((body) => /##\s*Research\s*Findings/i.test(body))
+					: undefined;
 			const task = buildAgentTask(
 				agentName,
 				issueNum,
@@ -338,6 +345,7 @@ export async function handleSupervisorCommand(
 						)
 					: undefined,
 				dupContext,
+				researchFindings,
 			);
 
 			getDebugLogger().info("handler", `Dispatching agent ${agentName}`, {

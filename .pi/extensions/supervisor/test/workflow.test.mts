@@ -22,54 +22,50 @@ describe("resolveNextStatus", () => {
 		assert.strictEqual(result, null);
 	});
 
-	it("returns matching status when marker found", () => {
+	it("returns matching status when marker found (Architecture → TestDesign)", () => {
 		const step: WorkflowStep = {
 			status: "Architecture",
 			agentName: "architect",
-			markerMap: { ARCHITECTURE_COMPLETE: "Research" },
+			markerMap: { ARCHITECTURE_COMPLETE: "TestDesign" },
 		};
 		const result = resolveNextStatus(step, "some output ARCHITECTURE_COMPLETE more text");
-		assert.strictEqual(result, "Research");
+		assert.strictEqual(result, "TestDesign");
 	});
 
 	it("returns null when no marker matches", () => {
 		const step: WorkflowStep = {
 			status: "Architecture",
 			agentName: "architect",
-			markerMap: { ARCHITECTURE_COMPLETE: "Research" },
+			markerMap: { ARCHITECTURE_COMPLETE: "TestDesign" },
 		};
 		const result = resolveNextStatus(step, "some random output with no marker");
 		assert.strictEqual(result, null);
 	});
 
-	it("last occurring marker wins when multiple exist", () => {
+	it("last occurring marker wins when multiple exist (Architecture feedback loop)", () => {
 		const step: WorkflowStep = {
-			status: "Research",
-			agentName: "researcher",
+			status: "Architecture",
+			agentName: "architect",
 			markerMap: {
-				RESEARCH_COMPLETE: "TestDesign",
-				FEEDBACK_ARCHITECTURE: "Architecture",
+				ARCHITECTURE_COMPLETE: "TestDesign",
+				FEEDBACK_RESEARCH: "Research",
 			},
 		};
-		const result = resolveNextStatus(
-			step,
-			"RESEARCH_COMPLETE\nsome findings\nFEEDBACK_ARCHITECTURE",
-		);
-		// FEEDBACK_ARCHITECTURE appears last → Architecture
-		assert.strictEqual(result, "Architecture");
+		const result = resolveNextStatus(step, "ARCHITECTURE_COMPLETE\nsome design\nFEEDBACK_RESEARCH");
+		// FEEDBACK_RESEARCH appears last → Research
+		assert.strictEqual(result, "Research");
 	});
 
-	it("RESEARCH_COMPLETE alone (no feedback) → TestDesign", () => {
+	it("RESEARCH_COMPLETE alone (no feedback) → Architecture", () => {
 		const step: WorkflowStep = {
 			status: "Research",
 			agentName: "researcher",
 			markerMap: {
-				RESEARCH_COMPLETE: "TestDesign",
-				FEEDBACK_ARCHITECTURE: "Architecture",
+				RESEARCH_COMPLETE: "Architecture",
 			},
 		};
 		const result = resolveNextStatus(step, "RESEARCH_COMPLETE no feedback needed");
-		assert.strictEqual(result, "TestDesign");
+		assert.strictEqual(result, "Architecture");
 	});
 
 	it("auditor reject appears after approve → Implementation", () => {
@@ -105,7 +101,7 @@ describe("resolveNextStatus", () => {
 		const step: WorkflowStep = {
 			status: "Architecture",
 			agentName: "architect",
-			markerMap: { ARCHITECTURE_COMPLETE: "Research" },
+			markerMap: { ARCHITECTURE_COMPLETE: "TestDesign" },
 		};
 		const result = resolveNextStatus(step, "architecture_complete");
 		assert.strictEqual(result, null);
@@ -125,7 +121,7 @@ describe("resolveNextStatus", () => {
 		const step: WorkflowStep = {
 			status: "Architecture",
 			agentName: "architect",
-			markerMap: { ARCHITECTURE_COMPLETE: "Research" },
+			markerMap: { ARCHITECTURE_COMPLETE: "TestDesign" },
 		};
 		const result = resolveNextStatus(step, "");
 		assert.strictEqual(result, null);
