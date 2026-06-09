@@ -254,6 +254,8 @@ export class RankedMapEngine {
 			index.symbols,
 			fileSizeScores,
 			commitCountScores,
+			this.config.testFilePenalties,
+			hasQuery ? query.split(/\s+/).filter(Boolean) : undefined,
 		);
 
 		// In recency-only mode (no query), inject structural overview files

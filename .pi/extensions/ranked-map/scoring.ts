@@ -209,12 +209,42 @@ export function isTestFile(path: string): boolean {
 
 /**
  * Apply penalty to scores of test files in-place.
+ *
+ * @param pathOverrides - Optional per-directory prefix penalty overrides (e.g. { ".pi/": 0.7 })
+ * @param queryTerms - Optional query terms; if any term matches the file path, penalty is capped at min 0.7
  */
-export function applyTestFilePenalty(files: { path: string; score: number }[]): void {
+export function applyTestFilePenalty(
+	files: { path: string; score: number }[],
+	pathOverrides?: Record<string, number>,
+	queryTerms?: string[],
+): void {
 	for (const f of files) {
-		if (isTestFile(f.path)) {
-			f.score = Math.round(f.score * TEST_FILE_PENALTY * 100) / 100;
+		if (!isTestFile(f.path)) continue;
+		let penalty = TEST_FILE_PENALTY; // default 0.5
+
+		// Check path overrides first
+		if (pathOverrides) {
+			for (const [prefix, factor] of Object.entries(pathOverrides)) {
+				if (f.path.startsWith(prefix)) {
+					penalty = factor;
+					break;
+				}
+			}
 		}
+
+		// If query terms match the file path, apply a lighter touch
+		if (queryTerms) {
+			const pathLower = f.path.toLowerCase();
+			for (const term of queryTerms) {
+				const clean = term.replace(/[()|\\]/g, "").toLowerCase();
+				if (pathLower.includes(clean)) {
+					penalty = Math.max(0.7, penalty); // cap at 0.7 min
+					break;
+				}
+			}
+		}
+
+		f.score = Math.round(f.score * penalty * 100) / 100;
 	}
 }
 
@@ -238,6 +268,8 @@ export function rankFiles(
 	symbolEntries: Record<string, SymbolEntry[]>,
 	fileSizeScores?: Record<string, number>,
 	commitCountScores?: Record<string, number>,
+	testFilePenalties?: Record<string, number>,
+	queryTerms?: string[],
 ): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
 	// Only include files present in the ctags symbol index.
 	// Files from keyword search or git recency not in ctags index
@@ -259,8 +291,8 @@ export function rankFiles(
 		scored.push({ path: file, score: Math.round(score * 100) / 100, symbols: syms });
 	}
 
-	// Apply test-file penalty before sorting
-	applyTestFilePenalty(scored);
+	// Apply test-file penalty before sorting (with optional path overrides and query terms)
+	applyTestFilePenalty(scored, testFilePenalties, queryTerms);
 
 	// Sort descending by score, tie-break by path alphabetically
 	scored.sort((a, b) => {

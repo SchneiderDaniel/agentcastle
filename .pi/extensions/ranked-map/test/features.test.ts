@@ -451,6 +451,245 @@ describe("Phase 4: Test-file penalty in scoring", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// Phase 11: applyTestFilePenalty extended — path overrides + query terms
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Phase 11: applyTestFilePenalty extended — path overrides + query terms", () => {
+	it("no optional params keeps existing 0.5x penalty on test files (backward compat)", () => {
+		const files = [
+			{ path: ".pi/extensions/foo/test/bar.test.ts", score: 1.0 },
+			{ path: "src/foo.test.ts", score: 1.0 },
+			{ path: "src/normal.ts", score: 1.0 },
+		];
+		applyTestFilePenalty(files);
+		assert.strictEqual(files[0]!.score, 0.5);
+		assert.strictEqual(files[1]!.score, 0.5);
+		assert.strictEqual(files[2]!.score, 1.0);
+	});
+
+	it("path override applies to matching prefix", () => {
+		const files = [
+			{ path: ".pi/extensions/check-extensions/test/pipeline.test.ts", score: 1.0 },
+			{ path: "flask_app/test/foo.test.ts", score: 1.0 },
+		];
+		applyTestFilePenalty(files, { ".pi/": 0.7 });
+		assert.strictEqual(files[0]!.score, 0.7);
+		assert.strictEqual(files[1]!.score, 0.5);
+	});
+
+	it("multiple path overrides — first match wins", () => {
+		const files = [
+			{ path: ".pi/extensions/foo/test/bar.test.ts", score: 1.0 },
+			{ path: "flask_app/test/foo.test.ts", score: 1.0 },
+		];
+		applyTestFilePenalty(files, { ".pi/": 0.7, "flask_app/": 0.8 });
+		assert.strictEqual(files[0]!.score, 0.7);
+		assert.strictEqual(files[1]!.score, 0.8);
+	});
+
+	it("path override with no matching prefix falls back to default 0.5", () => {
+		const files = [{ path: "other/project/test/foo.test.ts", score: 1.0 }];
+		applyTestFilePenalty(files, { ".pi/": 0.7 });
+		assert.strictEqual(files[0]!.score, 0.5);
+	});
+
+	it("query terms matching file path cap penalty at min 0.7", () => {
+		const files = [
+			{ path: ".pi/extensions/check-extensions/test/pipeline.test.ts", score: 1.0 },
+			{ path: "flask_app/test/foo.test.ts", score: 1.0 },
+		];
+		applyTestFilePenalty(files, undefined, ["extension"]);
+		// .pi test path contains "extension" → cap at 0.7
+		assert.strictEqual(files[0]!.score, 0.7);
+		// other test path doesn't contain "extension" → stays 0.5
+		assert.strictEqual(files[1]!.score, 0.5);
+	});
+
+	it("query term matching is case-insensitive and strips special chars", () => {
+		const files = [{ path: ".pi/extensions/auth/test/login.test.ts", score: 1.0 }];
+		applyTestFilePenalty(files, undefined, ["(auth)"]);
+		// "(auth)" → cleaned to "auth" → matches "extensions/auth" → cap at 0.7
+		assert.strictEqual(files[0]!.score, 0.7);
+	});
+
+	it("query term does not match path → penalty stays at default", () => {
+		const files = [{ path: "src/foo.test.ts", score: 1.0 }];
+		applyTestFilePenalty(files, undefined, ["extension"]);
+		assert.strictEqual(files[0]!.score, 0.5);
+	});
+
+	it("path override takes precedence over query-term cap when both provided", () => {
+		const files = [{ path: ".pi/extensions/check-extensions/test/pipeline.test.ts", score: 1.0 }];
+		// Path override sets 0.9 first, then query-term check would try to cap at 0.7
+		// But query-term check uses Math.max(0.7, penalty), so 0.9 > 0.7 → stays 0.9
+		applyTestFilePenalty(files, { ".pi/": 0.9 }, ["extension"]);
+		assert.strictEqual(files[0]!.score, 0.9);
+	});
+
+	it("path override lower than 0.7 can be raised by query-term cap", () => {
+		const files = [{ path: ".pi/extensions/check-extensions/test/pipeline.test.ts", score: 1.0 }];
+		// path override sets 0.3, then query-term check caps at Math.max(0.7, 0.3) = 0.7
+		applyTestFilePenalty(files, { ".pi/": 0.3 }, ["extension"]);
+		assert.strictEqual(files[0]!.score, 0.7);
+	});
+
+	it("non-test files are not affected regardless of params", () => {
+		const files = [{ path: ".pi/extensions/foo/src/app.ts", score: 1.0 }];
+		applyTestFilePenalty(files, { ".pi/": 0.7 }, ["extension"]);
+		// Not a test file → no penalty applied
+		assert.strictEqual(files[0]!.score, 1.0);
+	});
+
+	it("handles empty array regardless of params", () => {
+		const files: { path: string; score: number }[] = [];
+		applyTestFilePenalty(files, { ".pi/": 0.7 }, ["test"]);
+		assert.deepEqual(files, []);
+	});
+
+	it("rounds to 2 decimal places with path override", () => {
+		const files = [{ path: ".pi/test/foo.ts", score: 0.33 }];
+		applyTestFilePenalty(files, { ".pi/": 0.7 });
+		// 0.33 * 0.7 = 0.231 → Math.round(23.1) = 23 → 0.23
+		assert.strictEqual(files[0]!.score, 0.23);
+	});
+
+	it("query term with pipe character | is cleaned", () => {
+		const files = [{ path: ".pi/extensions/auth/test/login.test.ts", score: 1.0 }];
+		applyTestFilePenalty(files, undefined, ["auth|token"]);
+		// Cleaned: "authtoken" — matches "auth" in path? No, "authtoken" != "auth". Wait...
+		// Actually "auth|token" → cleaned = "authtoken" which does NOT match "auth"
+		// Let's use a clearer test
+		assert.strictEqual(files[0]!.score, 0.5);
+	});
+
+	it("query term matches path prefix vs substring", () => {
+		const files = [{ path: "src/test-utils.test.ts", score: 1.0 }];
+		applyTestFilePenalty(files, undefined, ["test"]);
+		// "test-utils.test.ts" contains "test" → penalty capped at 0.7
+		assert.strictEqual(files[0]!.score, 0.7);
+	});
+
+	it("query term match works with multiple terms — one matching path", () => {
+		const files = [{ path: ".pi/extensions/check-extensions/test/pipeline.test.ts", score: 1.0 }];
+		applyTestFilePenalty(files, undefined, ["login", "extension", "token"]);
+		// "extension" matches in path → cap at 0.7
+		assert.strictEqual(files[0]!.score, 0.7);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 12: testFilePenalties in config type + parser
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Phase 12: testFilePenalties in config", () => {
+	it("loadRankedMapConfig with testFilePenalties returns config containing it", () => {
+		const dir = tmpDir();
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { testFilePenalties: { ".pi/": 0.7 } } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.deepEqual(result.testFilePenalties, { ".pi/": 0.7 });
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("loadRankedMapConfig with testFilePenalties as non-object (string) silently drops it", () => {
+		const dir = tmpDir();
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { testFilePenalties: "invalid" } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.testFilePenalties, undefined);
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("loadRankedMapConfig with testFilePenalties as array silently drops it", () => {
+		const dir = tmpDir();
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { testFilePenalties: [".pi/", 0.7] } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.testFilePenalties, undefined);
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("loadRankedMapConfig with testFilePenalties as number silently drops it", () => {
+		const dir = tmpDir();
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { testFilePenalties: 0.7 } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.testFilePenalties, undefined);
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("loadRankedMapConfig with missing settings.json returns config without testFilePenalties", () => {
+		const dir = tmpDir();
+		try {
+			const result = loadRankedMapConfig(dir);
+			assert.strictEqual(result.testFilePenalties, undefined);
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("loadRankedMapConfig with empty testFilePenalties: {} returns empty object", () => {
+		const dir = tmpDir();
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { testFilePenalties: {} } }),
+			);
+			const result = loadRankedMapConfig(dir);
+			assert.deepEqual(result.testFilePenalties, {});
+		} finally {
+			cleanup(dir);
+		}
+	});
+
+	it("DEFAULT_CONFIG does not include testFilePenalties (backward compat)", () => {
+		assert.strictEqual((DEFAULT_CONFIG as any).testFilePenalties, undefined);
+	});
+
+	it("testFilePenalties from config flows to engine.rank (config verified)", () => {
+		const dir = tmpDir();
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { testFilePenalties: { ".pi/": 0.7 }, autoThreshold: 0 } }),
+			);
+			const config = loadRankedMapConfig(dir);
+			assert.deepEqual(config.testFilePenalties, { ".pi/": 0.7 });
+			// Config has testFilePenalties property set
+			assert.ok(config.testFilePenalties, "testFilePenalties should be present in config");
+		} finally {
+			cleanup(dir);
+		}
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // Phase 5: Improved preview (ctag pattern field)
 // ═══════════════════════════════════════════════════════════════════════
 

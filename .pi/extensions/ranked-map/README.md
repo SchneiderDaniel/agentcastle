@@ -11,7 +11,7 @@
   - Structural overview in recency-only mode — one file per top-level directory ensures broad repo awareness
 - **Configurable token budget** — Default 4096 tokens, adjustable per call
 - **Caching** — Symbol index cached to `.pi/cache/ranked-map-index.json` keyed by git HEAD, config hash, and target directory (config changes or different directory scope invalidate the cache)
-- **Test-file penalty** — Test files (`.test.`, `.spec.`, `/test/`) receive 0.5x score penalty to favor source files
+- **Configurable test-file penalty** — Test files (`.test.`, `.spec.`, `/test/`) default to 0.5x score penalty; per-directory overrides configurable via `testFilePenalties` in settings (e.g. `{ ".pi/": 0.7 }`). Query terms matching file paths automatically cap penalty at 0.7x
 - **.piignore integration** — Patterns from `.piignore` are automatically added as ctags excludes
 - **Improved previews** — Shows ctag definition lines (from pattern field) instead of first 5 comment/import lines
 - **Submodule-aware recency scoring** — Discovers git submodules (via `git submodule status` or `.gitmodules` fallback) and runs `git log` inside each initialized submodule, merging file recency dates with the submodule path prefix (e.g. `flask_blogs/src/file.py`). Uninitialized submodules are skipped gracefully
@@ -76,6 +76,9 @@ In `.pi/settings.json`:
 		"tokenBudget": 4096,
 		"autoThreshold": 20000,
 		"recencyWindowDays": 90,
+		"testFilePenalties": {
+			".pi/": 0.7
+		},
 		"weights": {
 			"keyword": 0.6,
 			"recency": 0.3,
@@ -88,6 +91,7 @@ In `.pi/settings.json`:
 - `tokenBudget` — Max tokens per response (default 4096)
 - `autoThreshold` — Symbol count threshold for auto-mode (default 20000). Set to 0 for always-ranked
 - `recencyWindowDays` — How many days back to track git activity (default 90)
+- `testFilePenalties` — Optional per-directory prefix penalty overrides for test files (e.g. `{ ".pi/": 0.7 }`). Prefixes are matched against file path start — first match wins. Falls back to default 0.5x for paths not matching any prefix. Query terms that match the file path automatically cap the penalty at 0.7x minimum, providing a lighter touch for relevant test files
 - `weights` — Scoring weights: keyword relevance, git recency, file size penalty
 
 ### .piignore integration
