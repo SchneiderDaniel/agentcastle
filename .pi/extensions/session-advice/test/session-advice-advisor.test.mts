@@ -45,6 +45,50 @@ function structuralSearchEntry(turnIndex: number): SessionEntry {
 	return { type: "tool_use", toolName: "structural_search", args: {}, text: "", turnIndex };
 }
 
+// Phase 2 discovery tool helpers
+function ripgrepSearchEntry(turnIndex: number): SessionEntry {
+	return {
+		type: "tool_use",
+		toolName: "ripgrep_search",
+		args: { query: "test" },
+		text: "",
+		turnIndex,
+	};
+}
+
+function rankedMapEntry(turnIndex: number): SessionEntry {
+	return { type: "tool_use", toolName: "ranked_map", args: { query: "test" }, text: "", turnIndex };
+}
+
+function webSearchEntry(turnIndex: number): SessionEntry {
+	return { type: "tool_use", toolName: "web_search", args: { query: "test" }, text: "", turnIndex };
+}
+
+function webCrawlEntry(turnIndex: number): SessionEntry {
+	return {
+		type: "tool_use",
+		toolName: "web_crawl",
+		args: { url: "https://example.com" },
+		text: "",
+		turnIndex,
+	};
+}
+
+function askUserEntry(turnIndex: number): SessionEntry {
+	return {
+		type: "tool_use",
+		toolName: "ask_user",
+		args: { question: "test" },
+		text: "",
+		turnIndex,
+	};
+}
+
+/** Non-discovery bash (build/test commands, not search/read). */
+function nonDiscoveryBashEntry(cmd: string, turnIndex: number): SessionEntry {
+	return { type: "tool_use", toolName: "bash", args: { command: cmd }, text: cmd, turnIndex };
+}
+
 function readToolError(turnIndex: number): SessionEntry {
 	return {
 		type: "tool_result",
@@ -183,31 +227,357 @@ describe("detectErrorLoop", () => {
 	});
 });
 
-describe("detectTurnInefficiency", () => {
-	it("does NOT fire for 8 tool calls with changes (16 entries) — false positive guard", () => {
-		const entries: SessionEntry[] = [];
-		for (let i = 0; i < 8; i++) {
-			entries.push(...toolCallPair("read", i, { path: "/src/file.ts" }));
+// ── D7 test helpers ──
+
+/**
+ * Generate N tool_use entries (without tool_result pairs) for a single turn.
+ * Used to reach the >=15 tool call threshold without doubling entries.
+ */
+function nReadEntries(n: number, path: string, turnIndex: number): SessionEntry[] {
+	const result: SessionEntry[] = [];
+	for (let i = 0; i < n; i++) {
+		result.push(readEntry(path, turnIndex));
+	}
+	return result;
+}
+
+/**
+ * Build a scenario: some reads in turn 0, then 15 purely-repeat calls in target turn.
+ * Returns entries where target turn has 15 tool_use calls, all on the given path,
+ * with zero file-change tools and zero discovery tools.
+ */
+function buildNoDiscoveryTurn(
+	priorReads: string[],
+	targetTurn: number,
+	repeatPath: string,
+): SessionEntry[] {
+	const entries: SessionEntry[] = [];
+	for (const p of priorReads) {
+		entries.push(readEntry(p, 0));
+	}
+	// 15 read calls on repeatPath in targetTurn — no novel files, no discovery tools
+	for (let i = 0; i < 15; i++) {
+		entries.push(readEntry(repeatPath, targetTurn));
+	}
+	return entries;
+}
+
+describe("detectTurnInefficiency — Phase 1: Fix novelty detection (Bug 1)", () => {
+	it("Turn 2 reads novel file B (never seen before) → B is novel, D7 does NOT flag", () => {
+		// Turn 0: read file A. Turn 2: 15 reads of file A + 1 read of new file B (novel)
+		const entries: SessionEntry[] = [readEntry("/repo/fileA.ts", 0)];
+		// 15 reads of file A in turn 2 (non-novel) + 1 read of file B (novel)
+		for (let i = 0; i < 15; i++) {
+			entries.push(readEntry("/repo/fileA.ts", 2));
 		}
+		entries.push(readEntry("/repo/fileB.ts", 2)); // novel!
+
 		const data = makeSession(entries);
 		const signals = analyzeSession(data);
 		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
-		assert.strictEqual(
-			inefficient.length,
-			0,
-			"8 tool calls with no file changes should not fire (below threshold)",
-		);
+		assert.strictEqual(inefficient.length, 0, "novel file read should prevent flagging");
 	});
 
-	it("fires for 4+ tool calls in a turn with 0 file changes", () => {
+	it("Turn 2 re-reads only file A (already seen) → no novelty, flags when ≥15 calls", () => {
+		const entries: SessionEntry[] = [readEntry("/repo/fileA.ts", 0)];
+		for (let i = 0; i < 15; i++) {
+			entries.push(readEntry("/repo/fileA.ts", 2));
+		}
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 1, "no novel file, only repeats → should flag");
+	});
+
+	it("Turn 1 reads new file W after Turn 0 read X, Y, Z → W is novel, D7 does NOT flag", () => {
 		const entries: SessionEntry[] = [];
-		for (let i = 0; i < 4; i++) {
-			entries.push(...toolCallPair("read", 0, { path: "/src/file.ts" }));
+		// Turn 0: read X, Y, Z
+		entries.push(readEntry("/repo/X.ts", 0));
+		entries.push(readEntry("/repo/Y.ts", 0));
+		entries.push(readEntry("/repo/Z.ts", 0));
+		// Turn 1: 15 reads of X + 1 read of W (novel)
+		for (let i = 0; i < 15; i++) {
+			entries.push(readEntry("/repo/X.ts", 1));
+		}
+		entries.push(readEntry("/repo/W.ts", 1)); // novel!
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "novel file W should prevent flagging");
+	});
+
+	it("Old bug verification: allReadFiles was pre-built — verify file W correctly counted as novel in Turn 1 (bug GONE)", () => {
+		// Same setup as above but we explicitly verify the turn-inefficiency count is 0
+		// In the old buggy code, allReadFiles would contain ALL file reads before the loop,
+		// so file W would NOT be considered novel in Turn 1, causing a false flag.
+		const entries: SessionEntry[] = [];
+		entries.push(readEntry("/repo/X.ts", 0));
+		entries.push(readEntry("/repo/Y.ts", 0));
+		entries.push(readEntry("/repo/Z.ts", 0));
+		// Turn 1: 15 reads of X + 1 read of W (should be novel — bug was that W wasn't counted as novel)
+		for (let i = 0; i < 15; i++) {
+			entries.push(readEntry("/repo/X.ts", 1));
+		}
+		entries.push(readEntry("/repo/W.ts", 1));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		// In old code: allReadFiles = {X, Y, Z, X(15x), W}, so W is !allReadFiles.has(W) = false → not novel → flags
+		// Fixed code: allReadFiles built incrementally, at start of Turn 1 only {X, Y, Z} → W IS novel → no flag
+		assert.strictEqual(inefficient.length, 0, "W correctly counted as novel — old bug is fixed");
+	});
+
+	it("Turn 0 reads file A, Turn 2 reads file B (skip Turn 1) → B is novel, D7 does NOT flag", () => {
+		const entries: SessionEntry[] = [readEntry("/repo/fileA.ts", 0)];
+		for (let i = 0; i < 15; i++) {
+			entries.push(readEntry("/repo/fileB.ts", 2)); // novel!
+		}
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "file B never seen before → novel, no flag");
+	});
+});
+
+describe("detectTurnInefficiency — Phase 2: Expand legitimate discovery tools (Bug 2)", () => {
+	it("uses ripgrep_search → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		// 14 non-discovery reads + 1 ripgrep_search = 15 tool calls, 0 file changes
+		for (let i = 0; i < 14; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(ripgrepSearchEntry(0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "ripgrep_search is legitimate discovery");
+	});
+
+	it("uses structural_search → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 14; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(structuralSearchEntry(0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "structural_search is legitimate discovery");
+	});
+
+	it("uses ranked_map → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 14; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(rankedMapEntry(0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "ranked_map is legitimate discovery");
+	});
+
+	it("uses web_search → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 14; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(webSearchEntry(0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "web_search is legitimate discovery");
+	});
+
+	it("uses web_crawl → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 14; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(webCrawlEntry(0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "web_crawl is legitimate discovery");
+	});
+
+	it("uses bash (non-grep, non-cat) → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 14; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(nonDiscoveryBashEntry("npm test", 0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "non-search bash is legitimate discovery");
+	});
+
+	it("uses ask_user → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 14; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(askUserEntry(0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "ask_user is legitimate discovery");
+	});
+
+	it("multiple discovery tools combined → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 12; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(ripgrepSearchEntry(0));
+		entries.push(structuralSearchEntry(0));
+		entries.push(rankedMapEntry(0));
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "multiple discovery tools prevent flagging");
+	});
+});
+
+describe("detectTurnInefficiency — Phase 3: Threshold changes (Bug 3)", () => {
+	it("14 tool calls, 0 file changes, 0 discovery → NOT flagged (below threshold)", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 14; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "14 tool calls below threshold of 15");
+	});
+
+	it("15 tool calls, 0 file changes, 0 discovery → flagged", () => {
+		// Turn 0 reads file first. Turn 1 re-reads it 15x — no novel files, no discovery tools.
+		const entries: SessionEntry[] = [readEntry("/repo/file.ts", 0)];
+		for (let i = 0; i < 15; i++) {
+			entries.push(readEntry("/repo/file.ts", 1));
+		}
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 1, "15 tool calls with no discovery should flag");
+	});
+
+	it("15 tool calls, 0 file changes, novel file read → NOT flagged (discovery)", () => {
+		const entries: SessionEntry[] = [];
+		// Turn 0: read file A. Turn 1: 15 calls + novel file B
+		entries.push(readEntry("/repo/fileA.ts", 0));
+		for (let i = 0; i < 15; i++) {
+			entries.push(readEntry("/repo/fileB.ts", 1)); // novel + 14 non-novel reads
+		}
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "novel file read is discovery, prevents flagging");
+	});
+
+	it("30 tool calls, file change present → NOT flagged (file change exempts turn)", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 30; i++) {
+			entries.push(readEntry("/repo/file.ts", 0));
+		}
+		entries.push(writeEntry("/repo/file.ts", 0)); // file change in same turn
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "file change exempts turn");
+	});
+
+	it("15+ tool calls across 2 turns, each below threshold → neither flags", () => {
+		const entries: SessionEntry[] = [];
+		for (let i = 0; i < 8; i++) {
+			entries.push(readEntry("/repo/fileA.ts", 0));
+		}
+		for (let i = 0; i < 8; i++) {
+			entries.push(readEntry("/repo/fileB.ts", 1));
+		}
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "both turns below threshold");
+	});
+
+	it("15 tool calls with discovery bash + novel read → NOT flagged", () => {
+		const entries: SessionEntry[] = [];
+		entries.push(readEntry("/repo/known.ts", 0));
+		for (let i = 0; i < 13; i++) {
+			entries.push(readEntry("/repo/known.ts", 1));
+		}
+		entries.push(nonDiscoveryBashEntry("npm run build", 1));
+		entries.push(readEntry("/repo/novel.ts", 1)); // novel!
+
+		const data = makeSession(entries);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "bash discovery + novel read prevents flagging");
+	});
+});
+
+// ── Legacy regression tests ──
+
+describe("detectTurnInefficiency — legacy regression guards", () => {
+	it("empty session → no crash, no signal", () => {
+		const data = makeSession([]);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0);
+	});
+
+	it("single turn below threshold → no signal", () => {
+		const data = makeSession([readEntry("/src/file.ts", 0)]);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0);
+	});
+
+	it("turn with only file changes (write) → no signal", () => {
+		const data = makeSession([
+			writeEntry("/repo/src/app.ts", 0),
+			writeEntry("/repo/src/utils.ts", 0),
+			writeEntry("/repo/src/main.ts", 0),
+		]);
+		const signals = analyzeSession(data);
+		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
+		assert.strictEqual(inefficient.length, 0, "file changes should exempt turn");
+	});
+
+	it("signal has correct structure (signal, wastedTokens, context)", () => {
+		// Turn 0 reads file. Turn 1 re-reads it 15x — no discovery, triggers flag.
+		const entries: SessionEntry[] = [readEntry("/repo/file.ts", 0)];
+		for (let i = 0; i < 15; i++) {
+			entries.push(readEntry("/repo/file.ts", 1));
 		}
 		const data = makeSession(entries);
 		const signals = analyzeSession(data);
 		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
-		assert.ok(inefficient.length >= 0, "turn with 4+ calls and no changes may or may not flag");
+		assert.strictEqual(inefficient.length, 1);
+		assert.ok(inefficient[0].wastedTokens > 0, "should have non-zero wasted tokens");
+		assert.ok(inefficient[0].context.turnRange, "should have turnRange context");
+		assert.strictEqual(inefficient[0].context.turnRange![0], 1);
+		assert.strictEqual(inefficient[0].context.turnRange![1], 1);
 	});
 });
 
