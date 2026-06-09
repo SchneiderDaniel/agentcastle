@@ -1337,6 +1337,220 @@ describe("error propagation (adapter)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// AbortSignal propagation tests
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("AbortSignal propagation", () => {
+	let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	let execCalls: Array<{ command: string; args: string[]; options?: any }>;
+
+	beforeEach(() => {
+		clearResultCache();
+		execCalls = [];
+		capturedExecute = undefined;
+	});
+
+	function makeScanExec(stdout: string, code = 0) {
+		return async (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version") {
+				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "test" && args[0] === "-f") {
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			}
+			if (cmd === "cat") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			return { stdout, stderr: "", code, killed: false };
+		};
+	}
+
+	function makePi(execFn?: (cmd: string, args: string[], opts?: any) => any) {
+		const defaultExec = async (cmd: string, args: string[], opts?: any) => {
+			execCalls.push({ command: cmd, args, options: opts });
+			return execFn ? execFn(cmd, args, opts) : { stdout: "", stderr: "", code: 1, killed: false };
+		};
+		return {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: defaultExec,
+			on: () => {},
+		};
+	}
+
+	it("signal is forwarded to pi.exec options", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const controller = new AbortController();
+
+		await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			controller.signal,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const scanCall = execCalls.find((c) => c.args[0] === "scan");
+		assert.ok(scanCall, "should have a scan exec call");
+		assert.strictEqual(
+			scanCall!.options.signal,
+			controller.signal,
+			"signal should be forwarded to pi.exec options",
+		);
+	});
+
+	it("undefined signal passes undefined option and works normally", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const result = await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const scanCall = execCalls.find((c) => c.args[0] === "scan");
+		assert.ok(scanCall, "should have a scan exec call");
+		// signal may be undefined or absent
+		assert.ok(
+			scanCall!.options.signal === undefined || !("signal" in scanCall!.options),
+			"signal should be undefined or absent when no signal passed",
+		);
+		// Should return normal results
+		assert.strictEqual(result.isError, undefined);
+	});
+
+	it("pre-aborted signal causes immediate rejection via pi.exec", async () => {
+		let capturedOpts: any = null;
+		const pi = makePi((_cmd: string, _args: string[], opts?: any) => {
+			capturedOpts = opts;
+			// If signal is pre-aborted, pi.exec would reject with AbortError
+			if (opts?.signal?.aborted) {
+				const err = new Error("The operation was aborted");
+				(err as any).name = "AbortError";
+				return Promise.reject(err);
+			}
+			return { stdout: TWO_MATCHES, stderr: "", code: 0, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		const controller = new AbortController();
+		controller.abort();
+
+		await assert.rejects(
+			async () => {
+				await capturedExecute!(
+					"id1",
+					{ pattern: "console.log($A)", language: "ts" },
+					controller.signal,
+					undefined,
+					{ cwd: "/tmp" },
+				);
+			},
+			{ name: "AbortError" },
+			"pre-aborted signal should cause execute to reject with AbortError",
+		);
+	});
+
+	it("signal aborted mid-execution causes prompt rejection", async () => {
+		// Mock pi.exec returns a promise that rejects when signal fires
+		// For non-scan calls (binary detection, file checks), resolve normally
+		const pi = makePi((cmd: string, _args: string[], opts?: any) => {
+			if (cmd === "ast-grep" || cmd === "test" || cmd === "cat") {
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			}
+			// Scan call — return a promise that rejects when signal fires
+			return new Promise<any>((_resolve, reject) => {
+				if (opts?.signal) {
+					if (opts.signal.aborted) {
+						const err = new Error("The operation was aborted");
+						(err as any).name = "AbortError";
+						reject(err);
+						return;
+					}
+					opts.signal.addEventListener(
+						"abort",
+						() => {
+							const err = new Error("The operation was aborted");
+							(err as any).name = "AbortError";
+							reject(err);
+						},
+						{ once: true },
+					);
+				}
+			});
+		});
+		structuralAnalyzer(pi as any);
+
+		const controller = new AbortController();
+
+		const executePromise = capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			controller.signal,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		// Abort mid-execution
+		controller.abort();
+
+		await assert.rejects(
+			async () => {
+				await executePromise;
+			},
+			{ name: "AbortError" },
+			"signal aborted mid-execution should cause execute to reject with AbortError",
+		);
+	});
+
+	it("signal is not stored in cache key — caching unaffected", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const controller = new AbortController();
+
+		// First call with signal — populates cache
+		await capturedExecute!(
+			"id1",
+			{ pattern: "console.log($A)", language: "ts" },
+			controller.signal,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const scanCalls1 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls1.length, 1, "first call should exec scan");
+
+		execCalls.length = 0;
+
+		// Second call without signal — should be cache hit (same pattern+language+cwd)
+		await capturedExecute!(
+			"id2",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+
+		const scanCalls2 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(
+			scanCalls2.length,
+			0,
+			"second call without signal should be cache hit (signal not part of cache key)",
+		);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // interpretSgExecResult pure function tests
 // ═══════════════════════════════════════════════════════════════════════
 
