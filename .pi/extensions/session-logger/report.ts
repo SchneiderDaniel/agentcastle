@@ -15,6 +15,52 @@ import type { ParsedSessionStats } from "./renderer.ts";
 import type { Metadata } from "./types.ts";
 
 /**
+ * Build a Metadata object from parsed session stats, optionally merging
+ * in-memory timing data from a StatsSnapshot.
+ *
+ * When a snapshot is provided, call/error counts come from the parsed JSONL
+ * (source of truth) while totalDurationMs is overwritten from the computed
+ * in-memory stats (more accurate timing). Tools present in the snapshot but
+ * missing from parsed are added with full stats from the computed snapshot.
+ *
+ * Pure function — no side effects, no file I/O.
+ */
+export function buildMetadata(parsed: ParsedSessionStats, snapshot?: StatsSnapshot): Metadata {
+	// Build tool stats — prefer in-memory timing when snapshot is available.
+	// Parsed stats are source of truth for call/error counts (message replay).
+	// In-memory stats provide accurate totalDurationMs.
+	let toolStats = parsed.toolStats;
+	if (snapshot) {
+		const computedStats = computeToolStats(snapshot.toolExecutions);
+		const merged = { ...parsed.toolStats };
+		for (const [toolName, stats] of Object.entries(computedStats)) {
+			if (merged[toolName]) {
+				// Keep parsed call/error counts, override duration from memory
+				merged[toolName].totalDurationMs = stats.totalDurationMs;
+			} else {
+				// Tool exists in memory but not in JSONL — add it
+				merged[toolName] = stats;
+			}
+		}
+		toolStats = merged;
+	}
+
+	return {
+		sessionId: parsed.sessionId,
+		name: undefined,
+		messages: parsed.entryCount,
+		tokens: parsed.tokens,
+		cost: parsed.cost,
+		compactions: parsed.compactions,
+		modelChanges: parsed.modelChanges,
+		thinkingChanges: parsed.thinkingChanges,
+		perTurnTokens: parsed.perTurnTokens,
+		toolStats,
+		fileModifications: parsed.fileModifications,
+	};
+}
+
+/**
  * Generate metadata.json and .md report for a session file if they're missing.
  * Called from session_shutdown (primary) and session_start (recovery).
  */
@@ -45,38 +91,7 @@ export async function generateMissingReports(
 
 	if (!parsed) return;
 
-	// Build tool stats — prefer in-memory timing when snapshot is available.
-	// Parsed stats are source of truth for call/error counts (message replay).
-	// In-memory stats provide accurate totalDurationMs.
-	let toolStats = parsed.toolStats;
-	if (snapshot) {
-		const computedStats = computeToolStats(snapshot.toolExecutions);
-		const merged = { ...parsed.toolStats };
-		for (const [toolName, stats] of Object.entries(computedStats)) {
-			if (merged[toolName]) {
-				// Keep parsed call/error counts, override duration from memory
-				merged[toolName].totalDurationMs = stats.totalDurationMs;
-			} else {
-				// Tool exists in memory but not in JSONL — add it
-				merged[toolName] = stats;
-			}
-		}
-		toolStats = merged;
-	}
-
-	const meta: Metadata = {
-		sessionId: parsed.sessionId,
-		name: undefined,
-		messages: parsed.entryCount,
-		tokens: parsed.tokens,
-		cost: parsed.cost,
-		compactions: parsed.compactions,
-		modelChanges: parsed.modelChanges,
-		thinkingChanges: parsed.thinkingChanges,
-		perTurnTokens: parsed.perTurnTokens,
-		toolStats,
-		fileModifications: parsed.fileModifications,
-	};
+	const meta = buildMetadata(parsed, snapshot);
 
 	// Write metadata if missing
 	if (!fs.existsSync(metaPath)) {
