@@ -14,6 +14,8 @@ import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-deci
 import { pollCiChecks } from "../checks/ci-gating.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
 import { runPackageSafetyAudit } from "../checks/package-safety.ts";
+import { postIssueComment } from "../github/index.ts";
+import { runTddGate } from "../checks/tdd-gate.ts";
 
 /**
  * Run TSC checkpoint, LSP pre-audit, and duplicate code check during
@@ -147,7 +149,70 @@ export async function runTscAndLspAudit(
 			});
 		}
 
-		// Step 3: TSC checkpoint (Tier 2)
+		// Step 3: TDD gate — deterministic test-first verification
+		// Blocks transition if tests weren't written first or test-fail-first fails.
+		// Runs after package safety check, before TSC/LSP.
+		ctx.ui.setStatus("supervisor", "Running TDD gate...");
+		getDebugLogger().info("pipeline-audit", "Running TDD gate", { worktreePath });
+		try {
+			const tddResult = await runTddGate(execFn, worktreePath, config.defaultBranch || "main");
+
+			if (tddResult.status === "failed") {
+				const failedCheckNames = tddResult.checks
+					.filter((c) => !c.passed)
+					.map((c) => c.name)
+					.join(", ");
+				const msg = `TDD gate failed: ${failedCheckNames}. ${tddResult.rejectionReason || ""}`;
+				ctx.ui.notify(`TDD gate: ${msg} — returning to Implementation.`, "warning");
+				getDebugLogger().info("pipeline-audit", "TDD gate failed", {
+					failedChecks: failedCheckNames,
+					rejectionReason: tddResult.rejectionReason,
+				});
+				// Post issue comment with TDD failure details for developer feedback
+				try {
+					const commentLines = [
+						"## 🔴 TDD Gate — Implementation Rejected",
+						"",
+						"The deterministic TDD gate verified the changes and found issues:",
+						"",
+					];
+					for (const check of tddResult.checks) {
+						const icon = check.passed ? "✅" : "❌";
+						commentLines.push(
+							`${icon} **${check.name}**${check.detail ? ": " + check.detail : ""}`,
+						);
+					}
+					commentLines.push(
+						"",
+						"Please write tests following the **Test First** approach: write the test, watch it fail, then write the code.",
+					);
+					await postIssueComment(pi, issueNum, config.repo, commentLines.join("\n"));
+				} catch {
+					// Comment posting is best-effort
+				}
+				return { nextStatus: "Implementation", note: msg };
+			}
+
+			if (tddResult.status === "error") {
+				ctx.ui.notify(
+					`TDD gate error: ${tddResult.rejectionReason || "unknown error"}. Proceeding to audit.`,
+					"info",
+				);
+				getDebugLogger().warn("pipeline-audit", "TDD gate error", {
+					rejectionReason: tddResult.rejectionReason,
+				});
+				// Non-blocking on error — proceed to audit
+			} else {
+				ctx.ui.notify("TDD gate passed — TDD cycle confirmed.", "info");
+				getDebugLogger().info("pipeline-audit", "TDD gate passed");
+			}
+		} catch (tddErr: unknown) {
+			const tddMsg = tddErr instanceof Error ? tddErr.message : String(tddErr);
+			ctx.ui.notify(`TDD gate threw: ${tddMsg}. Proceeding to audit.`, "warning");
+			getDebugLogger().warn("pipeline-audit", "TDD gate threw", { error: tddMsg });
+		}
+
+		// Step 4: TSC checkpoint (Tier 2)
 		const runTscCheckpointFn = await getRunTscCheckpoint();
 
 		if (runTscCheckpointFn) {
@@ -175,7 +240,7 @@ export async function runTscAndLspAudit(
 			}
 		}
 
-		// Step 3: LSP pre-audit (Tier 3)
+		// Step 5: LSP pre-audit (Tier 3)
 		const result = await runLspPreAudit(issueNum, issueTitle, config, pi, ctx, worktreePath);
 		getDebugLogger().info("pipeline-audit", "LSP pre-audit result", {
 			nextStatus: result.nextStatus,
