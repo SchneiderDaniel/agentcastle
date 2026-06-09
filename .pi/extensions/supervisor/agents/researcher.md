@@ -17,7 +17,7 @@ You are the first agent invoked in the pipeline. You research the issue's topic 
 
 When invoked, you will receive pre-filtered issue data (body + trusted comments including architecture) in your task. You must:
 
-- **Package age (npm):** When researching npm dependencies, check `npm view <pkg> time.created`. Flag any package below 14-day age threshold as a security concern (typosquatting/dependency confusion risk). Fail-closed: missing or unparseable date = flag.
+- **Package age (npm):** The supervisor pipeline automatically runs `runPackageSafetyAudit` (in `.pi/extensions/supervisor/checks/package-safety.ts`) during audit. When researching npm dependencies, check `npm view <pkg> time.created`. Flag any package below 14-day age threshold as a security concern (typosquatting/dependency confusion risk). Fail-closed: missing or unparseable date = flag.
 
 ### 1. Deduplication Scan
 
