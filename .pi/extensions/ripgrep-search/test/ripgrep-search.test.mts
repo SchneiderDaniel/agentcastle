@@ -665,6 +665,264 @@ describe("temp dir tracking", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// verifyDirectory — path containment guard
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("verifyDirectory", () => {
+	function setupTmpDir(): string {
+		const dir = mkdtempSync(join(tmpdir(), "ripgrep-verify-"));
+		// Create subdirectories inside the temp dir
+		mkdirSync(join(dir, "subdir"), { recursive: true });
+		mkdirSync(join(dir, "a", "b", "c"), { recursive: true });
+		return dir;
+	}
+
+	function cleanupTmpDir(dir: string) {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			/* ignore */
+		}
+	}
+
+	// ── Tests for directories INSIDE cwd (should pass) ──
+
+	describe("valid directories (inside cwd)", () => {
+		it('returns { ok: true, resolvedDir } for directory inside cwd (e.g. "subdir/")', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "subdir");
+				assert.ok(result.ok);
+				if (result.ok) {
+					assert.strictEqual(result.resolvedDir, resolve(dir, "subdir"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('returns { ok: true, resolvedDir } for directory "." (current dir)', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, ".");
+				assert.ok(result.ok);
+				if (result.ok) {
+					assert.strictEqual(result.resolvedDir, resolve(dir));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it("returns { ok: true, resolvedDir } for directory equal to cwd itself", async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, dir);
+				assert.ok(result.ok);
+				if (result.ok) {
+					assert.strictEqual(result.resolvedDir, resolve(dir));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('returns { ok: true, resolvedDir } for "subdir/.." (normalizes to cwd)', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "subdir/..");
+				assert.ok(result.ok);
+				if (result.ok) {
+					assert.strictEqual(result.resolvedDir, resolve(dir));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('returns { ok: true, resolvedDir } for nested subdirectory "a/b/c" inside cwd', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "a/b/c");
+				assert.ok(result.ok);
+				if (result.ok) {
+					assert.strictEqual(result.resolvedDir, resolve(dir, "a", "b", "c"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it("returns { ok: true, resolvedDir } for empty string (resolves to cwd)", async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "");
+				assert.ok(result.ok);
+				if (result.ok) {
+					assert.strictEqual(result.resolvedDir, resolve(dir));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+	});
+
+	// ── Tests for directories OUTSIDE cwd (should reject) ──
+
+	describe("path traversal (outside cwd)", () => {
+		it('rejects "../../etc" with error containing "Directory traversal detected" and the original directory value', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "../../etc");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(
+						result.response.content[0]?.text?.includes("Directory traversal detected"),
+						"Should mention 'Directory traversal detected'",
+					);
+					assert.ok(
+						result.response.content[0]?.text?.includes("../../etc"),
+						"Should include the original directory value",
+					);
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('rejects ".." with traversal message (parent of cwd)', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "..");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('rejects "../../../../tmp" (deep traversal) with traversal message', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "../../../../tmp");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('rejects "subdir/../../../../etc" (nested traversal) with traversal message', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "subdir/../../../../etc");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('rejects root "/" with traversal message (unless cwd is /, which is impossible in practice)', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "/");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('rejects "../sibling/../etc" (cross-directory traversal) with traversal message', async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "../sibling/../etc");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+	});
+
+	// ── Existing behavior preservation ──
+
+	describe("existing error behavior preserved", () => {
+		it("ENOENT: non-existent dir returns { ok: false, response } with 'not found' message", async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "nonexistent_dir_xyz");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(
+						result.response.content[0]?.text?.includes("not found"),
+						"Should mention 'not found'",
+					);
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it("ENOTDIR: directory pointing to a file returns { ok: false, response } with 'is a file' message", async () => {
+			const dir = setupTmpDir();
+			try {
+				// Create a file inside the temp dir
+				writeFileSync(join(dir, "afile.txt"), "content");
+				const result = await verifyDirectory(dir, "afile.txt");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(
+						result.response.content[0]?.text?.includes("is a file"),
+						"Should mention 'is a file'",
+					);
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it("ENOTDIR: directory pointing to a file via relative path returns { ok: false, response } with 'is a file' message", async () => {
+			const dir = setupTmpDir();
+			try {
+				writeFileSync(join(dir, "bfile.txt"), "content");
+				const result = await verifyDirectory(dir, "./bfile.txt");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(result.response.content[0]?.text?.includes("is a file"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it("nonexistent dir inside cwd returns not-found error", async () => {
+			const dir = setupTmpDir();
+			try {
+				const result = await verifyDirectory(dir, "subdir/nonexistent_child");
+				assert.ok(!result.ok);
+				if (!result.ok) {
+					assert.ok(result.response.content[0]?.text?.includes("not found"));
+				}
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // Integration test (requires rg binary installed)
 // ═══════════════════════════════════════════════════════════════════════
 
