@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, beforeEach, afterEach } from "node:test";
 import { computeToolStats } from "../stats.ts";
+import { buildMetadata } from "../report.ts";
 import type { ToolExecution } from "../stats.ts";
 import { parseSessionStats } from "../renderer.ts";
 import type { Metadata } from "../types.ts";
@@ -213,32 +214,21 @@ describe("tool stats merge logic (snapshot integration)", () => {
 		const parsed = parseSessionStats(jsonlFile);
 		if (!parsed) throw new Error("Failed to parse JSONL");
 
-		// Merge: prefer in-memory duration, keep parsed call/error counts
-		let toolStats = parsed.toolStats;
-		const computedStats = computeToolStats(toolExecutions);
-		const merged = { ...parsed.toolStats };
-		for (const [toolName, stats] of Object.entries(computedStats)) {
-			if (merged[toolName]) {
-				merged[toolName].totalDurationMs = stats.totalDurationMs;
-			} else {
-				merged[toolName] = stats;
-			}
-		}
-		toolStats = merged;
-
-		const meta: Metadata = {
-			sessionId: parsed.sessionId,
-			name: undefined,
-			messages: parsed.entryCount,
-			tokens: parsed.tokens,
-			cost: parsed.cost,
-			compactions: parsed.compactions,
-			modelChanges: parsed.modelChanges,
-			thinkingChanges: parsed.thinkingChanges,
-			perTurnTokens: parsed.perTurnTokens,
-			toolStats,
-			fileModifications: parsed.fileModifications,
+		// Use extracted buildMetadata — same logic as generateMissingReports
+		const snapshot = {
+			totalInputTokens: 0,
+			totalOutputTokens: 0,
+			totalCacheRead: 0,
+			totalCacheWrite: 0,
+			totalCost: 0,
+			modelChanges: [],
+			thinkingChanges: [],
+			compactionCount: 0,
+			toolExecutions,
+			perTurnTokens: [],
+			fileModifications: [],
 		};
+		const meta = buildMetadata(parsed, snapshot);
 
 		const metaPath = path.join(sessionsDir, `${sessionId}.metadata.json`);
 		fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));

@@ -5,7 +5,7 @@
  * Token estimation, mode selection, full dump, symbol formatting, output shaping.
  */
 
-import type { SymbolEntry, RankedFileScore, RankedMapResult } from "./types.ts";
+import type { SymbolEntry, RankedEntry, RankedFileScore, RankedMapResult } from "./types.ts";
 
 /**
  * Estimate tokens from text (~4 chars per token heuristic).
@@ -33,22 +33,29 @@ export function selectMode(
 }
 
 /**
- * Dump all symbols sorted by file path, filling greedily within token budget.
- * Each file gets score=0 and empty preview.
+ * Build output array from ranked entries under a token budget (greedy fill).
+ *
+ * Shared helper used by both dumpAllFiles() and rankFiles() to avoid
+ * duplicating the budget-checking logic.
+ *
+ * For each entry:
+ * 1. Format symbols via formatSymbols() and estimate tokens (+ PREVIEW_TOKEN_ESTIMATE).
+ * 2. If tokenBudget <= 0 → set truncated = true and break.
+ * 3. If adding entry would exceed budget (and totalTokens > 0) → set truncated = true and break.
+ * 4. Push entry with path, score, symbols (formatted), and empty preview.
+ * 5. Accumulate totalTokens.
  */
-export function dumpAllFiles(
-	symbols: Record<string, SymbolEntry[]>,
+export function buildOutputFromEntries(
+	entries: RankedEntry[],
 	tokenBudget: number,
 ): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
-	const filePaths = Object.keys(symbols).sort();
 	const files: RankedFileScore[] = [];
 	let totalTokens = 0;
 	let truncated = false;
 	const PREVIEW_TOKEN_ESTIMATE = 50;
 
-	for (const path of filePaths) {
-		const syms = symbols[path] ?? [];
-		const symText = formatSymbols(syms, path);
+	for (const entry of entries) {
+		const symText = formatSymbols(entry.symbols, entry.path);
 		const entryTokens = estimateTokens(symText) + PREVIEW_TOKEN_ESTIMATE;
 
 		if (tokenBudget <= 0) {
@@ -62,8 +69,8 @@ export function dumpAllFiles(
 		}
 
 		files.push({
-			path,
-			score: 0,
+			path: entry.path,
+			score: entry.score,
 			symbols: symText,
 			preview: "",
 		});
@@ -71,6 +78,20 @@ export function dumpAllFiles(
 	}
 
 	return { files, totalTokens, truncated };
+}
+
+/**
+ * Dump all symbols sorted by file path, filling greedily within token budget.
+ * Each file gets score=0 and empty preview. Delegates to buildOutputFromEntries().
+ */
+export function dumpAllFiles(
+	symbols: Record<string, SymbolEntry[]>,
+	tokenBudget: number,
+): { files: RankedFileScore[]; totalTokens: number; truncated: boolean } {
+	const entries: RankedEntry[] = Object.entries(symbols)
+		.sort(([a], [b]) => a.localeCompare(b))
+		.map(([path, syms]) => ({ path, score: 0, symbols: syms ?? [] }));
+	return buildOutputFromEntries(entries, tokenBudget);
 }
 
 /**

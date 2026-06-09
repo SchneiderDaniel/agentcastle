@@ -26,7 +26,7 @@ import type { RgMatch, RgResult, SearchConfig } from "../types.ts";
 import { loadSearchConfig, resolveBackend, ripgrepAvailable } from "../config.ts";
 import { buildRgArgs, buildGrepArgs } from "../args.ts";
 import { parseVimgrepOutput } from "../parse.ts";
-import { buildStructuredSummary } from "../index.ts";
+import { buildStructuredSummary, verifyDirectory } from "../index.ts";
 import {
 	validateQuery,
 	registerTempDir,
@@ -711,6 +711,106 @@ describe("cache module", () => {
 		});
 	});
 
+	// ── buildCacheKey (format + collision resistance) ──
+
+	describe("buildCacheKey", () => {
+		it("returns valid JSON containing query and directory", () => {
+			const key = buildCacheKey("foo", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "foo");
+			assert.strictEqual(parsed.directory, "src");
+		});
+
+		it("different inputs with :: produce different keys (collision guard)", () => {
+			const key1 = buildCacheKey("a::b", "src");
+			const key2 = buildCacheKey("a", "b::src");
+			assert.notStrictEqual(key1, key2);
+		});
+
+		it("same inputs produce identical keys (determinism)", () => {
+			const key1 = buildCacheKey("a::b", "src");
+			const key2 = buildCacheKey("a::b", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it('normalizes "./src" and "src" to same key', () => {
+			const key1 = buildCacheKey("foo", "./src");
+			const key2 = buildCacheKey("foo", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it("handles query with double quotes", () => {
+			const key = buildCacheKey('hello"world', "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, 'hello"world');
+		});
+
+		it("handles query with backslash", () => {
+			const key = buildCacheKey("a\\b", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "a\\b");
+		});
+
+		it("handles query with null byte", () => {
+			const key = buildCacheKey("a\x00b", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "a\x00b");
+		});
+
+		it("handles query with emoji", () => {
+			const key = buildCacheKey("🔥", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "🔥");
+		});
+
+		it("handles empty query string", () => {
+			const key = buildCacheKey("", "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, "");
+			assert.strictEqual(parsed.directory, "src");
+		});
+
+		it("handles very long query string", () => {
+			const longQuery = "x".repeat(10000);
+			const key = buildCacheKey(longQuery, "src");
+			const parsed = JSON.parse(key);
+			assert.strictEqual(parsed.query, longQuery);
+			assert.strictEqual(parsed.directory, "src");
+		});
+
+		it("normalizes './src/' and 'src' to same key (combined normalization)", () => {
+			const key1 = buildCacheKey("foo", "./src/");
+			const key2 = buildCacheKey("foo", "src");
+			assert.strictEqual(key1, key2);
+		});
+
+		it('empty directory normalized to "."', () => {
+			const key1 = buildCacheKey("foo", "");
+			const key2 = buildCacheKey("foo", ".");
+			assert.strictEqual(key1, key2);
+		});
+
+		it("cache hit still works via new key format", () => {
+			setCachedResult("a::b", "src", {
+				result: { total_returned: 1, results: [{ file: "a.ts", line: 1, column: 1, text: "x" }] },
+				rawStdout: "a.ts:1:1:x",
+			});
+			const cached = getCachedResult("a::b", "src");
+			assert.ok(cached !== undefined, "Should find cached entry");
+			assert.strictEqual(cached!.result.total_returned, 1);
+		});
+
+		it("no false cache hit when :: in query collides with :: in directory", () => {
+			setCachedResult("a::b", "src", {
+				result: { total_returned: 1, results: [{ file: "a.ts", line: 1, column: 1, text: "x" }] },
+				rawStdout: "a.ts:1:1:x",
+			});
+			// This should be a different key, so getCachedResult must return undefined
+			const cached = getCachedResult("a", "b::src");
+			assert.strictEqual(cached, undefined);
+		});
+	});
+
 	// ── Path normalization ──
 
 	describe("path normalization", () => {
@@ -978,6 +1078,177 @@ describe("buildStructuredSummary", () => {
 		// Check truncated indicator format (closing bracket is added by executor)
 		assert.ok(summary.text.includes("[Showing first 10 of 15 results across 1 file."));
 		assert.strictEqual(summary.details.truncated, true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// verifyDirectory
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("verifyDirectory", () => {
+	function setupTmpDir(): string {
+		const dir = mkdtempSync(join(tmpdir(), "ripgrep-vd-test-"));
+		mkdirSync(dir, { recursive: true });
+		return dir;
+	}
+
+	function cleanupTmpDir(dir: string) {
+		for (const d of [dir]) {
+			try {
+				rmSync(d, { recursive: true, force: true });
+			} catch {
+				/* ignore */
+			}
+		}
+	}
+
+	it("valid directory returns { ok: true, resolvedDir }", async () => {
+		const tmpDir = setupTmpDir();
+		try {
+			const result = await verifyDirectory(tmpDir, ".");
+			assert.ok(result.ok);
+			if (result.ok) {
+				assert.ok(result.resolvedDir.startsWith("/"), "resolvedDir should be absolute");
+			}
+		} finally {
+			cleanupTmpDir(tmpDir);
+		}
+	});
+
+	it("non-existent directory (ENOENT) returns { ok: false } with 'not found'", async () => {
+		const tmpDir = setupTmpDir();
+		try {
+			const result = await verifyDirectory(tmpDir, "does-not-exist-12345");
+			assert.ok(!result.ok);
+			if (!result.ok) {
+				assert.ok(
+					result.response.content[0]!.text.includes("not found"),
+					"Error should mention 'not found'",
+				);
+			}
+		} finally {
+			cleanupTmpDir(tmpDir);
+		}
+	});
+
+	it("file path instead of directory returns { ok: false } with 'is a file'", async () => {
+		const tmpDir = setupTmpDir();
+		try {
+			const filePath = join(tmpDir, "testfile.txt");
+			writeFileSync(filePath, "hello", "utf8");
+			const result = await verifyDirectory(tmpDir, "testfile.txt");
+			assert.ok(!result.ok);
+			if (!result.ok) {
+				assert.ok(
+					result.response.content[0]!.text.includes("is a file"),
+					"Error should mention 'is a file'",
+				);
+			}
+		} finally {
+			cleanupTmpDir(tmpDir);
+		}
+	});
+
+	it("permission-denied parent directory (EACCES) returns { ok: false } with error message", async () => {
+		const tmpDir = setupTmpDir();
+		try {
+			// Create parent/child where parent has no permissions
+			const parentDir = join(tmpDir, "noexec-parent");
+			const childDir = join(parentDir, "child");
+			mkdirSync(childDir, { recursive: true });
+			// Remove execute permission from parent so stat on child fails
+			const { chmodSync } = await import("node:fs");
+			chmodSync(parentDir, 0o000);
+			// stat on parentDir/child should fail with EACCES
+			const result = await verifyDirectory(tmpDir, "noexec-parent/child");
+			assert.ok(!result.ok, "EACCES should return ok: false");
+			if (!result.ok) {
+				const msg = result.response.content[0]!.text;
+				const hasErrorInfo =
+					msg.includes("EACCES") ||
+					msg.toLowerCase().includes("permission denied") ||
+					msg.toLowerCase().includes("access");
+				assert.ok(hasErrorInfo, `Message should mention error (got: "${msg}")`);
+			}
+		} finally {
+			// Reset permissions so cleanup can remove it
+			try {
+				const { chmodSync } = await import("node:fs");
+				chmodSync(join(tmpDir, "noexec-parent"), 0o755);
+			} catch {
+				/* ignore */
+			}
+			cleanupTmpDir(tmpDir);
+		}
+	});
+
+	it("circular symlink (ELOOP) returns { ok: false } with error message", async () => {
+		const tmpDir = setupTmpDir();
+		try {
+			const { symlinkSync } = await import("node:fs");
+			// Create a circular symlink chain: a/link -> ../b/link -> ../a/link
+			const dirA = join(tmpDir, "loop-a");
+			const dirB = join(tmpDir, "loop-b");
+			mkdirSync(dirA);
+			mkdirSync(dirB);
+			// a/link points to ../b/link  (relative symlink)
+			symlinkSync("../b/link", join(dirA, "link"));
+			// b/link points to ../a/link  (relative symlink — completes the circle)
+			symlinkSync("../a/link", join(dirB, "link"));
+			// stat on a/link should follow: a/link -> ../b/link -> ../a/link -> ... (ELOOP)
+			const result = await verifyDirectory(tmpDir, "loop-a/link");
+			assert.ok(!result.ok, "ELOOP should return ok: false");
+			if (!result.ok) {
+				assert.ok(result.response.content[0]!.text.length > 0, "Error message should not be empty");
+			}
+		} finally {
+			cleanupTmpDir(tmpDir);
+		}
+	});
+
+	it("error message includes directory name and error code/description for unknown stat errors", async () => {
+		const tmpDir = setupTmpDir();
+		try {
+			const parentDir = join(tmpDir, "msg-test-parent");
+			const childDir = join(parentDir, "child");
+			mkdirSync(childDir, { recursive: true });
+			const { chmodSync } = await import("node:fs");
+			chmodSync(parentDir, 0o000);
+			const result = await verifyDirectory(tmpDir, "msg-test-parent/child");
+			assert.ok(!result.ok);
+			if (!result.ok) {
+				const msg = result.response.content[0]!.text;
+				assert.ok(
+					msg.includes("EACCES") ||
+						msg.toLowerCase().includes("permission denied") ||
+						msg.toLowerCase().includes("access"),
+					`Message should include error info (got: "${msg}")`,
+				);
+				assert.ok(msg.includes("msg-test-parent/child"), "Message should include directory name");
+			}
+		} finally {
+			try {
+				const { chmodSync } = await import("node:fs");
+				chmodSync(join(tmpDir, "msg-test-parent"), 0o755);
+			} catch {
+				/* ignore */
+			}
+			cleanupTmpDir(tmpDir);
+		}
+	});
+
+	it("empty string directory resolves relative to cwd to the cwd itself", async () => {
+		const tmpDir = setupTmpDir();
+		try {
+			// resolve(cwd, "") === cwd, which is a valid directory
+			const result = await verifyDirectory(tmpDir, "");
+			assert.ok(result.ok, "Empty string resolves to cwd which is a valid directory");
+			if (result.ok) {
+				assert.strictEqual(result.resolvedDir, resolve(tmpDir, ""));
+			}
+		} finally {
+			cleanupTmpDir(tmpDir);
+		}
 	});
 });
 

@@ -64,7 +64,7 @@ export function buildSearchErrorText(
 	return errorText;
 }
 
-async function verifyDirectory(
+export async function verifyDirectory(
 	cwd: string,
 	directory: string,
 ): Promise<
@@ -97,7 +97,11 @@ async function verifyDirectory(
 		}
 		if (nodeErr.code === "ENOTDIR")
 			return { ok: false, response: errResponse(`"${directory}" is a file, not a directory.`) };
-		return { ok: true, resolvedDir };
+		const errorCode = nodeErr.code ? ` (${nodeErr.code})` : "";
+		return {
+			ok: false,
+			response: errResponse(`Failed to access directory "${directory}": ${err}${errorCode}`),
+		};
 	}
 }
 

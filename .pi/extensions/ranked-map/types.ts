@@ -62,6 +62,13 @@ export interface SymbolEntry {
 	pattern?: string;
 }
 
+/** Input entry for the shared buildOutputFromEntries helper. */
+export interface RankedEntry {
+	path: string;
+	score: number;
+	symbols: SymbolEntry[];
+}
+
 /** Scored file entry for tool output. */
 export interface RankedFileScore {
 	path: string;

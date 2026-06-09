@@ -7,8 +7,8 @@
  * ranked file list with token budget enforcement.
  */
 
-import type { SymbolEntry, RankedFileScore } from "./types.ts";
-import { estimateTokens, formatSymbols } from "./format.ts";
+import type { SymbolEntry, RankedEntry, RankedFileScore } from "./types.ts";
+import { buildOutputFromEntries, estimateTokens, formatSymbols } from "./format.ts";
 
 /**
  * Compute keyword relevance scores per file using binary (Jaccard overlap) matching.
@@ -300,34 +300,5 @@ export function rankFiles(
 		return a.path.localeCompare(b.path);
 	});
 
-	const files: RankedFileScore[] = [];
-	let totalTokens = 0;
-	let truncated = false;
-
-	const PREVIEW_TOKEN_ESTIMATE = 50;
-
-	for (const entry of scored) {
-		const symText = formatSymbols(entry.symbols, entry.path);
-		const entryTokens = estimateTokens(symText) + PREVIEW_TOKEN_ESTIMATE;
-
-		if (tokenBudget <= 0) {
-			truncated = true;
-			break;
-		}
-
-		if (totalTokens + entryTokens > tokenBudget && totalTokens > 0) {
-			truncated = true;
-			break;
-		}
-
-		files.push({
-			path: entry.path,
-			score: entry.score,
-			symbols: symText,
-			preview: "",
-		});
-		totalTokens += entryTokens;
-	}
-
-	return { files, totalTokens, truncated };
+	return buildOutputFromEntries(scored as RankedEntry[], tokenBudget);
 }
