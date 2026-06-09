@@ -234,6 +234,16 @@ describe("calculateNextStatus()", () => {
 		assert.equal(result.status, "Done");
 	});
 
+	it("auditor AUDIT_DECISION: REJECTED → Implementation (pipeline loops back, not stops)", () => {
+		// Auditor rejection should send back to Implementation, not stop the pipeline
+		const result = calculateNextStatus(
+			"auditor",
+			"some output",
+			"Some text\nAUDIT_DECISION: REJECTED\nmore text",
+		);
+		assert.equal(result.status, "Implementation");
+	});
+
 	it("falls back to textOutput when textOnly has no marker", () => {
 		const result = calculateNextStatus(
 			"architect",
@@ -832,12 +842,13 @@ describe("handlePostAgentSuccess()", () => {
 		assert.equal(success, false, "git push failure must return false — pipeline should stop");
 	});
 
-	it("developer commit returns 'nothing to commit' — returns true (no changes to commit, not an error)", async () => {
+	it("developer commit returns 'nothing to commit' — returns true (still pushes, branch may not exist on remote)", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi(
 			[
 				{ code: 0, stdout: "", stderr: "" }, // git add succeeds
-				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit → returns silently
+				{ code: 1, stdout: "", stderr: "nothing to commit, working tree clean" }, // git commit: nothing to commit
+				{ code: 0, stdout: "Everything up-to-date", stderr: "" }, // git push succeeds
 			],
 			calls,
 		);
@@ -867,8 +878,12 @@ describe("handlePostAgentSuccess()", () => {
 		);
 
 		assert.equal(success, true, "'nothing to commit' returns silently — pipeline continues");
-		// calls: git add, git commit, git diff (README check) — NO git push
-		assert.equal(calls.length, 3, "should call add + commit + diff, NO push");
+		// calls: git add, git commit, git push (branch may not exist on remote), git diff (README check)
+		assert.equal(calls.length, 4, "should call add + commit + push + diff");
+		// Verify push was called (fix #595: branch may not exist on remote yet)
+		const pushCall = calls[2];
+		assert.equal(pushCall.cmd, "git", "third call should be git");
+		assert.equal(pushCall.args[0], "push", "third call should be push");
 		// Verify the commit call happened
 		const commitCall = calls[1];
 		assert.ok(commitCall.args.includes("commit"), "second call should be commit");

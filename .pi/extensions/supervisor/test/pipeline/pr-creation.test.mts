@@ -177,7 +177,7 @@ describe("createPrOnApproval()", () => {
 		assert.equal(execCalls[0].args[2], "origin");
 		assert.equal(execCalls[0].args[3], "worktree-git-issue-42-test");
 		assert.equal(execCalls[0].opts.cwd, "/worktrees/wt-42");
-		assert.equal(execCalls[0].opts.timeout, 15000);
+		assert.equal(execCalls[0].opts.timeout, 60000);
 
 		// 2. gh api compare
 		assert.equal(execCalls[1].cmd, "gh");
@@ -632,9 +632,10 @@ describe("createPrOnApproval()", () => {
 		const notifyCalls: NotifyCall[] = [];
 		const pi = createMockPi(
 			[
-				// 1. git push --force FAILS
+				// 1-3. git push --force all 3 retry attempts FAIL
 				{ code: 1, stdout: "", stderr: "push failed: network error" },
-				// 2. gh pr list would follow but push failure should stop early
+				{ code: 1, stdout: "", stderr: "push failed: still down" },
+				{ code: 1, stdout: "", stderr: "push failed: timeout" },
 			],
 			execCalls,
 		);
@@ -658,6 +659,90 @@ describe("createPrOnApproval()", () => {
 		// Verify no gh calls were made after push failure
 		const ghCalls = execCalls.filter((c) => c.cmd === "gh");
 		assert.equal(ghCalls.length, 0, "should not attempt PR creation after push failure");
+	});
+
+	it("push retry: first push fails, retry succeeds after backoff", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		// First push fails, second succeeds
+		const pi = createMockPi(
+			[
+				// 1. git push --force attempt 1 FAILS
+				{ code: 1, stdout: "", stderr: "push failed: network error" },
+				// 2. git push --force attempt 2 succeeds
+				{ code: 0, stdout: "Everything up-to-date", stderr: "" },
+				// 3. gh pr list
+				{ code: 0, stdout: emptyPrListResponse(), stderr: "" },
+				// 4. gh pr create
+				{ code: 0, stdout: '{"number":456}', stderr: "" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, true, "should succeed after push retry");
+
+		// Verify two git push calls were made
+		const gitPushCalls = execCalls.filter((c) => c.cmd === "git" && c.args[0] === "push");
+		assert.equal(gitPushCalls.length, 2, "should retry push once after failure");
+
+		// Both pushes should have 60000 timeout
+		for (const pushCall of gitPushCalls) {
+			assert.equal(pushCall.opts.timeout, 60000, "push timeout should be 60000");
+		}
+	});
+
+	it("push retry: all 3 attempts exhausted → failure", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		// All 3 push attempts fail
+		const pi = createMockPi(
+			[
+				// 1. git push --force attempt 1 FAILS
+				{ code: 1, stdout: "", stderr: "push failed: error 1" },
+				// 2. git push --force attempt 2 FAILS
+				{ code: 1, stdout: "", stderr: "push failed: error 2" },
+				// 3. git push --force attempt 3 FAILS
+				{ code: 1, stdout: "", stderr: "push failed: error 3" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, false, "should fail after all push retries exhausted");
+		assert.ok(result.error, "should contain error message");
+
+		// Verify 3 git push calls were made
+		const gitPushCalls = execCalls.filter((c) => c.cmd === "git" && c.args[0] === "push");
+		assert.equal(gitPushCalls.length, 3, "should make 3 push attempts");
+
+		// Verify no gh calls
+		const ghCalls = execCalls.filter((c) => c.cmd === "gh");
+		assert.equal(ghCalls.length, 0, "should not attempt PR after push failure");
 	});
 
 	it("returns PrCreationResult with success=false when PR conflict check throws", async () => {

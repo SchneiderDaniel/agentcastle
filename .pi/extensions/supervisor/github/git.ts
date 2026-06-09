@@ -101,16 +101,17 @@ export async function commitAndPush(
 	if (commitResult.code !== 0) {
 		const output = (commitResult.stderr || "") + (commitResult.stdout || "");
 		if (output.includes("nothing to commit")) {
-			log.info("git", "Nothing to commit — no changes pushed");
-			return false;
+			log.info("git", "Nothing to commit — still pushing (branch may not exist on remote)");
+		} else {
+			log.warn("git", "git commit failed", {
+				cwd,
+				output: output.slice(0, 500),
+			});
+			throw new Error(`git commit failed: ${output.trim()}`);
 		}
-		log.warn("git", "git commit failed", {
-			cwd,
-			output: output.slice(0, 500),
-		});
-		throw new Error(`git commit failed: ${output.trim()}`);
+	} else {
+		log.info("git", "git commit OK");
 	}
-	log.info("git", "git commit OK");
 
 	await pushBranch(pi, cwd, remote, branch);
 	log.info("git", `commitAndPush complete: ${branch}`);
