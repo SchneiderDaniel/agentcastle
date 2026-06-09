@@ -331,6 +331,64 @@ describe("RankedMapEngine — rank", () => {
 		const result = await engine.rank(index, "", 1, ".", undefined);
 		assert.ok(result.truncated || result.files.length < 2, "should truncate with tiny budget");
 	});
+
+	it("applies applyPathBoost when query matches file path", async () => {
+		const exec = mockExec();
+		exec.mock.mockImplementation(async (cmd: string, args: string[], _opts?: any) => {
+			if (cmd === "git" && args[0] === "rev-parse") {
+				return { stdout: "abc123\n", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "git" && args[0] === "submodule") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "git" && (args[0] === "log" || args[0] === "-C")) {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			// rg --count-matches returns file with 1 match
+			if (cmd === "rg") {
+				return {
+					stdout: ".pi/extensions/foo.ts:1\n",
+					stderr: "",
+					code: 0,
+					killed: false,
+				};
+			}
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		});
+
+		const config: RankedMapConfig = {
+			...defaultConfig,
+			autoThreshold: 0,
+		};
+		const engine = new RankedMapEngine(config, exec, "/tmp");
+		const index: CachedIndex = {
+			head: "abc123",
+			builtAt: Date.now(),
+			symbols: {
+				".pi/extensions/foo.ts": [{ type: "function", name: "foo", line: 1 }],
+				"src/views.ts": [{ type: "function", name: "view", line: 1 }],
+			},
+		};
+
+		const result = await engine.rank(index, "extension", 50000, ".", undefined);
+
+		const extFile = result.files.find((f) => f.path === ".pi/extensions/foo.ts");
+		const viewFile = result.files.find((f) => f.path === "src/views.ts");
+
+		assert.ok(extFile, ".pi/extensions/foo.ts should be in results");
+		assert.ok(viewFile, "src/views.ts should be in results");
+
+		// extension keyword score = min(1.0, 1 * 0.2) = 0.2
+		// After applyPathBoost: path contains "extension" → 0.2 * 1.5 = 0.3
+		// After keyword weight (0.5): 0.3 * 0.5 = 0.15
+		assert.strictEqual(extFile!.score, 0.15);
+
+		// src/views.ts doesn't contain "extension" in path → no boost
+		// Keyword score stays 0.0 (no match from rg) or 0 if not in rg output
+		// Actually views.ts wasn't in rg output, so kw = 0
+		// Score = 0 * 0.5 = 0
+		assert.strictEqual(viewFile!.score, 0);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -444,8 +502,9 @@ describe("RankedMapEngine — rank with testFilePenalties config", () => {
 
 		const piTest = result.files.find((f) => f.path.startsWith(".pi/"));
 		assert.ok(piTest, ".pi test file should be in results");
-		// .pi test: kw = min(1.0, 3 * 0.2) = 0.6, score = 0.6 * 0.5 (kw weight) = 0.3, after override 0.7 → 0.21
-		assert.strictEqual(piTest!.score, 0.21);
+		// .pi test: kw = min(1.0, 3 * 0.2) = 0.6, after path boost (path matches "extension") = 0.9,
+		// score = 0.9 * 0.5 (kw weight) = 0.45, after override 0.7 → 0.315 → 0.32
+		assert.strictEqual(piTest!.score, 0.32);
 	});
 
 	it("config without testFilePenalties uses default 0.5x penalty (backward compat)", async () => {

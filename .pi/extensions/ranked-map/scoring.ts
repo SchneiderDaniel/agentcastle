@@ -184,6 +184,65 @@ export function computeFileSizeScores(fileSizes: Record<string, number>): Record
 }
 
 /**
+ * Apply path-aware keyword score boost.
+ *
+ * Files whose relative path contains any of the expanded query terms
+ * get their keyword score boosted by 1.5x (capped at 1.0).
+ * This elevates files that are semantically relevant by directory path.
+ *
+ * Expanded terms are regex alternation groups like "(extension|extensions|extens)".
+ * Each alternative is checked individually against the file path (case-insensitive).
+ * Files with score ≤ 0 are skipped (no boost for zero or negative scores).
+ *
+ * @param keywordScores - Map of file path → keyword score (0 to 1)
+ * @param expandedTerms - Array of expanded regex patterns, one per query term
+ * @returns New map with boosted scores, original input not mutated
+ */
+export function applyPathBoost(
+	keywordScores: Record<string, number>,
+	expandedTerms: string[],
+): Record<string, number> {
+	const boosted: Record<string, number> = {};
+
+	for (const [path, score] of Object.entries(keywordScores)) {
+		if (score <= 0) {
+			boosted[path] = score;
+			continue;
+		}
+
+		const pathLower = path.toLowerCase();
+		let matched = false;
+
+		for (const term of expandedTerms) {
+			if (!term) continue;
+
+			// Strip outer parens and split on | to get individual alternatives
+			const inner = term.startsWith("(") && term.endsWith(")") ? term.slice(1, -1) : term;
+			const alternatives = inner.split("|");
+
+			for (const alt of alternatives) {
+				const clean = alt.replace(/[()|\\]/g, "").toLowerCase();
+				if (!clean) continue;
+				if (pathLower.includes(clean)) {
+					matched = true;
+					break;
+				}
+			}
+			if (matched) break;
+		}
+
+		if (matched) {
+			const raw = Math.min(1.0, score * 1.5);
+			boosted[path] = Math.round(raw * 100) / 100;
+		} else {
+			boosted[path] = score;
+		}
+	}
+
+	return boosted;
+}
+
+/**
  * Apply test-file penalty to a set of ranked file scores.
  *
  * Files matching test patterns (.test., .spec., /test/) get their score

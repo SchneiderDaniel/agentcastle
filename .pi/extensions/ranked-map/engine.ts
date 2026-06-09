@@ -31,6 +31,7 @@ import {
 	computeRecencyScores,
 	computeFileSizeScores,
 	computeCommitCountScores,
+	applyPathBoost,
 	rankFiles,
 } from "./scoring.ts";
 import { runFrequencySearch } from "./search.ts";
@@ -207,6 +208,9 @@ export class RankedMapEngine {
 				signal,
 			);
 			keywordScores = computeKeywordScores(fileCounts, this.config.frequencyScalingFactor ?? 0.2);
+
+			// Apply path-aware boost: files whose path matches query terms get 1.5x
+			keywordScores = applyPathBoost(keywordScores, expandedTerms);
 
 			// Compute git commit count scores (only when query present)
 			// Commit count is irrelevant in recency-only mode
