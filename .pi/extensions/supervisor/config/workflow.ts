@@ -226,6 +226,7 @@ const KNOWN_AUDIT_DIMENSIONS = [
 	"code-quality",
 	"completeness",
 	"duplicate-code",
+	"research-incorporation",
 ] as const;
 
 /**

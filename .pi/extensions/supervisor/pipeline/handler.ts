@@ -31,7 +31,6 @@ import {
 	handleBacklogTransition,
 	isDoneStatus,
 	resolveAgentName,
-	isWorktreeAgent,
 	isRejectionLimitReached,
 	calculateNextStatus,
 	trackAuditScore,
@@ -187,6 +186,24 @@ export async function handleSupervisorCommand(
 		const stageState = createStageState(getItemStatusName(loopItem));
 		let { loopStatus } = stageState;
 
+		// Create worktree before loop — available for ALL agents (researcher, architect, developer, auditor).
+		// This ensures temp files (researcher JSON findings) go to worktree, not main repo,
+		// and worktree-sandbox extension activates for all agents.
+		worktreeBranch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+		getDebugLogger().info("handler", "Creating worktree", {
+			branch: worktreeBranch,
+			base: config.worktreeBase,
+		});
+		worktreePath = await createWorktree(
+			pi,
+			ctx.cwd,
+			config.worktreeBase!,
+			worktreeBranch,
+			config.defaultBranch!,
+		);
+		await installWorktreeDeps(pi, worktreePath);
+		getDebugLogger().info("handler", "Worktree ready", { worktreePath });
+
 		for (let i = 0; i < MAX_PIPELINE_LOOPS; i++) {
 			ctx.ui.notify(`Issue #${issueNum}: "${issueTitle}" — Status: ${loopStatus}`, "info");
 			getDebugLogger().info("handler", `Pipeline iteration ${i + 1}`, {
@@ -295,24 +312,6 @@ export async function handleSupervisorCommand(
 			ctx.ui.notify(`Dispatching ${agent.config.name}...`, "info");
 			const timeoutMs = resolveTimeoutMs(agentName, config.agentTimeoutsMin!);
 
-			// Worktree creation (once per pipeline run)
-			if (isWorktreeAgent(agentName) && !worktreePath) {
-				worktreeBranch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
-				getDebugLogger().info("handler", "Creating worktree", {
-					branch: worktreeBranch,
-					base: config.worktreeBase,
-				});
-				worktreePath = await createWorktree(
-					pi,
-					ctx.cwd,
-					config.worktreeBase!,
-					worktreeBranch,
-					config.defaultBranch!,
-				);
-				await installWorktreeDeps(pi, worktreePath);
-				getDebugLogger().info("handler", "Worktree ready", { worktreePath });
-			}
-
 			// Build task
 			const dupContext: string | undefined =
 				agentName === "auditor"
@@ -345,7 +344,7 @@ export async function handleSupervisorCommand(
 				model: agent.config.model,
 				timeoutMs,
 				taskLen: task.length,
-				cwdOverride: isWorktreeAgent(agentName) ? worktreePath : undefined,
+				cwdOverride: worktreePath,
 			});
 
 			// Execute agent
@@ -355,7 +354,7 @@ export async function handleSupervisorCommand(
 				ctx,
 				pi,
 				timeoutMs,
-				isWorktreeAgent(agentName) ? worktreePath : undefined,
+				worktreePath,
 				config.maxToolCalls,
 				config.agentTokenBudget,
 			);
