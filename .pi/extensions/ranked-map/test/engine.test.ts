@@ -400,6 +400,66 @@ describe("RankedMapEngine — format", () => {
 });
 
 // ---------------------------------------------------------------------------
+// rank — path-aware keyword boost integration
+// ---------------------------------------------------------------------------
+
+describe("RankedMapEngine — rank with path-aware keyword boost", () => {
+	it("engine.rank() with query 'extension' boosts .pi/extensions/ files", async () => {
+		const exec = mockExec();
+		exec.mock.mockImplementation(async (cmd: string, args: string[], _opts?: any) => {
+			if (cmd === "git" && args[0] === "rev-parse") {
+				return { stdout: "abc123\n", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "git" && args[0] === "submodule") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "git" && (args[0] === "log" || args[0] === "-C")) {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			// rg --count-matches: extension file has 3 matches, non-extension has 3 matches too
+			if (cmd === "rg") {
+				return {
+					stdout: ".pi/extensions/check-extensions/test/pipeline.test.ts:3\n" + "src/views.ts:3\n",
+					stderr: "",
+					code: 0,
+					killed: false,
+				};
+			}
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		});
+
+		const config: RankedMapConfig = {
+			...defaultConfig,
+			autoThreshold: 0,
+		};
+		const engine = new RankedMapEngine(config, exec, "/tmp");
+		const index = makeIndex();
+		// Both files have same content-match count (3), but .pi path matches "extension" query
+		index.symbols[".pi/extensions/check-extensions/test/pipeline.test.ts"] = [
+			{ type: "function", name: "testPipe", line: 1 },
+		];
+		index.symbols["src/views.ts"] = [{ type: "function", name: "view", line: 1 }];
+
+		const result = await engine.rank(index, "extension", 50000, ".", undefined);
+
+		const piFile = result.files.find((f) => f.path.startsWith(".pi/"));
+		const viewFile = result.files.find((f) => f.path.startsWith("src/"));
+
+		assert.ok(piFile, ".pi file should be in results");
+		assert.ok(viewFile, "src file should be in results");
+
+		// Both files had same rg match count (3), same keyword score before boost:
+		// kw = min(1.0, 3 * 0.2) = 0.6
+		// After path boost for .pi file: 0.6 * 1.5 = 0.9 (capped at 1.0)
+		// src/views.ts has no path match → stays 0.6
+		// .pi file should rank higher
+		const piIdx = result.files.indexOf(piFile);
+		const viewIdx = result.files.indexOf(viewFile);
+		assert.ok(piIdx < viewIdx, ".pi file should rank higher than src file with same content count");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // rank — config-driven testFilePenalties
 // ---------------------------------------------------------------------------
 
@@ -444,8 +504,9 @@ describe("RankedMapEngine — rank with testFilePenalties config", () => {
 
 		const piTest = result.files.find((f) => f.path.startsWith(".pi/"));
 		assert.ok(piTest, ".pi test file should be in results");
-		// .pi test: kw = min(1.0, 3 * 0.2) = 0.6, score = 0.6 * 0.5 (kw weight) = 0.3, after override 0.7 → 0.21
-		assert.strictEqual(piTest!.score, 0.21);
+		// .pi test: kw = min(1.0, 3 * 0.2) = 0.6, after path boost (1.5x) → 0.9.
+		// score = 0.9 * 0.5 (kw weight) = 0.45, after override 0.7 → 0.315 → 0.32
+		assert.strictEqual(piTest!.score, 0.32);
 	});
 
 	it("config without testFilePenalties uses default 0.5x penalty (backward compat)", async () => {
