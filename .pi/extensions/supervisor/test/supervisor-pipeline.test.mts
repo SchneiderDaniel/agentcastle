@@ -1,11 +1,10 @@
 /**
  * Tests for pipeline.ts — worktree creation before task construction (Phase 2)
  *
- * Phase 2a: Worktree created before buildAgentTask call
- * Phase 2b: buildAgentTask receives resolved worktreePath for auditor case
- * Phase 2c: agentCwd set to worktreePath for developer and auditor agents
- * Phase 2d: Architect agent does NOT get agentCwd = worktreePath
- * Phase 2e: Worktree creation is idempotent (once per pipeline run)
+ * Phase 2a: Worktree created before loop (available to ALL agents)
+ * Phase 2b: buildAgentTask receives resolved worktreePath
+ * Phase 2c: agentCwd set to worktreePath for all agents (researcher, architect, developer, auditor)
+ * Phase 2d: Worktree creation is idempotent (once per pipeline run)
  *
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/supervisor/test/supervisor-pipeline.test.mts
@@ -30,16 +29,22 @@ function readHandlerSource(): string {
 // Worktree creation before agent dispatch
 // ---------------------------------------------------------------------------
 
-describe("pipeline handler — worktree creation before buildAgentTask", () => {
-	it("worktree creation guarded by !worktreePath check", () => {
+describe("pipeline handler — worktree creation before loop", () => {
+	it("worktree created before for loop", () => {
 		const src = readHandlerSource();
-		assert.ok(src.includes("!worktreePath"), "Guard prevents duplicate worktree creation");
+		const loopIdx = src.indexOf("for (let i = 0; i < MAX_PIPELINE_LOOPS");
+		const beforeLoop = src.substring(0, loopIdx);
+		assert.ok(
+			beforeLoop.includes("createWorktree"),
+			"createWorktree called before the pipeline loop",
+		);
 	});
 
 	it("generateBranchName called in worktree creation section", () => {
 		const src = readHandlerSource();
-		const wtIdx = src.indexOf("!worktreePath");
-		const section = src.substring(wtIdx, wtIdx + 500);
+		const wtIdx = src.indexOf("Creating worktree");
+		assert.ok(wtIdx >= 0, "'Creating worktree' log message exists");
+		const section = src.substring(wtIdx - 100, wtIdx + 500);
 		assert.ok(section.includes("generateBranchName"), "generateBranchName in worktree section");
 	});
 
@@ -80,11 +85,11 @@ describe("pipeline handler — worktreePath passed to buildAgentTask", () => {
 // agentCwd for developer and auditor
 // ---------------------------------------------------------------------------
 
-describe("pipeline handler — agentCwd for developer/auditor", () => {
-	it("agentCwd uses isWorktreeAgent check", () => {
+describe("pipeline handler — agentCwd for all agents", () => {
+	it("agentCwd uses worktreePath directly", () => {
 		const src = readHandlerSource();
-		const idx = src.indexOf("isWorktreeAgent(agentName) ? worktreePath : undefined");
-		assert.ok(idx >= 0, "agentCwd uses isWorktreeAgent check");
+		const idx = src.indexOf("cwdOverride: worktreePath");
+		assert.ok(idx >= 0, "agentCwd uses worktreePath directly");
 	});
 
 	it("agentCwd passed to executeAgent", () => {
@@ -92,10 +97,7 @@ describe("pipeline handler — agentCwd for developer/auditor", () => {
 		const idx = src.indexOf("executeAgent(");
 		const endIdx = src.indexOf(");", idx);
 		const callSection = src.substring(idx, endIdx + 2);
-		assert.ok(
-			callSection.includes("isWorktreeAgent"),
-			"executeAgent uses isWorktreeAgent for agentCwd",
-		);
+		assert.ok(callSection.includes("worktreePath"), "executeAgent uses worktreePath for agentCwd");
 	});
 });
 
