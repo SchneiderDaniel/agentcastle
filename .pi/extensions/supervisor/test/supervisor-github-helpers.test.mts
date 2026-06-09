@@ -142,8 +142,10 @@ describe("commitAndPush", () => {
 // ---------------------------------------------------------------------------
 
 describe("createPullRequest", () => {
-	it("calls gh pr create with correct args including --json number", async () => {
-		const { pi, calls } = makeMockPi([{ code: 0, stdout: '{"number":123}' }]);
+	it("calls gh pr create with correct args without --json flag", async () => {
+		const { pi, calls } = makeMockPi([
+			{ code: 0, stdout: "https://github.com/owner/repo/pull/123" },
+		]);
 		const result = await createPullRequest(
 			pi as any,
 			"owner/repo",
@@ -164,27 +166,30 @@ describe("createPullRequest", () => {
 			"branch",
 			"--title",
 			"feat(#42): title",
-			"--json",
-			"number",
 		]);
+		assert.equal(calls[0].args.includes("--json"), false, "should NOT include --json flag");
 		assert.deepStrictEqual(result, { number: 123 });
 	});
 
 	it("includes --body-file flag when bodyFile provided", async () => {
-		const { pi, calls } = makeMockPi([{ code: 0, stdout: '{"number":456}' }]);
+		const { pi, calls } = makeMockPi([
+			{ code: 0, stdout: "https://github.com/owner/repo/pull/456" },
+		]);
 		await createPullRequest(pi as any, "owner/repo", "main", "branch", "title", "/tmp/body.md");
 		assert.strictEqual(calls.length, 1);
 		const args = calls[0].args;
 		assert.ok(args.includes("--body-file"), "Expected --body-file in args");
-		assert.ok(args.includes("--json"), "Expected --json in args");
+		assert.equal(args.includes("--json"), false, "should NOT include --json flag");
 		const bfIdx = args.indexOf("--body-file");
 		assert.strictEqual(args[bfIdx + 1], "/tmp/body.md");
 	});
 
-	it("parses PR number from JSON output with --json number", async () => {
-		const { pi } = makeMockPi([{ code: 0, stdout: '{"number":789}' }]);
-		const result = await createPullRequest(pi as any, "owner/repo", "main", "branch", "title");
-		assert.deepStrictEqual(result, { number: 789 });
+	it("throws on text-with-number like 'PR #42' (tightened regex guard)", async () => {
+		const { pi } = makeMockPi([{ code: 0, stdout: "PR #42" }]);
+		await assert.rejects(
+			() => createPullRequest(pi as any, "owner/repo", "main", "branch", "title"),
+			/failed to parse PR number/i,
+		);
 	});
 
 	it("parses PR number when gh outputs plain URL (backward compat)", async () => {
