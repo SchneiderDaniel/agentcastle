@@ -114,7 +114,7 @@ function makeSignalReview(
 	};
 }
 
-// Make a minimal JSONL that parseJsonlFile can consume with a tool-mismatch symptom
+// Make a minimal JSONL that parseJsonlFile can consume with a bash-grep symptom
 function makeSessionBody(): string[] {
 	return [
 		JSON.stringify({
@@ -177,8 +177,8 @@ describe("Phase 1: Recency map fix — sessionRecency keyed by header.id", () =>
 		assert.ok(report.includes("00000001"), "report should contain session prefix 00000001");
 		assert.ok(report.includes("00000003"), "report should contain session prefix 00000003");
 
-		// All sessions have issues (tool-mismatch from bash grep), so report has findings
-		assert.ok(report.includes("tool-mismatch"), "report should contain tool-mismatch category");
+		// All sessions have issues (bash-grep from bash grep), so report has findings
+		assert.ok(report.includes("bash-grep"), "report should contain bash-grep category");
 	});
 
 	it("single session file: recency factor = 0, no crash", () => {
@@ -359,7 +359,7 @@ describe("Phase 2: Report output integrity (regression guards)", () => {
 
 	it("session with issues in multiple categories — grouping correct", () => {
 		const dir = makeDir();
-		// Create minimal session body that triggers tool-mismatch and redundant-read
+		// Create minimal session body that triggers bash-grep and redundant-read
 		const bodyLines = [
 			// Turn 0: user
 			JSON.stringify({
@@ -458,8 +458,8 @@ describe("Phase 2: Report output integrity (regression guards)", () => {
 		writeJsonl(dir, "multi-issue.jsonl", "uuid-multi", bodyLines);
 
 		const report = generateAdviceReport(dir);
-		// Should have tool-mismatch and redundant-read categories
-		assert.ok(report.includes("tool-mismatch"), "should include tool-mismatch");
+		// Should have bash-grep and redundant-read categories
+		assert.ok(report.includes("bash-grep"), "should include bash-grep");
 		assert.ok(report.includes("redundant-read"), "should include redundant-read");
 	});
 });
@@ -515,13 +515,13 @@ describe("Phase 3: Recency-weighted priority calculation", () => {
 
 	it("issue in newest session — higher priority than same issue in old session", () => {
 		const dir = makeDir();
-		// Both sessions have same tool-mismatch issue
+		// Both sessions have same bash-grep issue
 		writeJsonl(dir, "old.jsonl", "uuid-old", makeSessionBody());
 		writeJsonl(dir, "new.jsonl", "uuid-new", makeSessionBody());
 
 		const report = generateAdviceReport(dir);
-		// With 2 sessions, tool-mismatch appears in both
-		assert.ok(report.includes("tool-mismatch"), "tool-mismatch should be in report");
+		// With 2 sessions, bash-grep appears in both
+		assert.ok(report.includes("bash-grep"), "bash-grep should be in report");
 		// Both sessions contribute to same category, so recency-weighted should be > low
 		// Not asserting exact priority (depends on internal calculation) but must not crash
 		assert.ok(report.includes("Total findings"), "report should have findings");
@@ -530,14 +530,14 @@ describe("Phase 3: Recency-weighted priority calculation", () => {
 	it("same issue across old + new — recent contributes 2x weight", () => {
 		const dir = makeDir();
 		// 3 sessions: old (first sorted), middle, new (last sorted)
-		// All have tool-mismatch issue
+		// All have bash-grep issue
 		writeJsonl(dir, "2026-01-01T00-00-00-000Z_old.jsonl", "uuid-old", makeSessionBody());
 		writeJsonl(dir, "2026-01-02T00-00-00-000Z_mid.jsonl", "uuid-mid", makeSessionBody());
 		writeJsonl(dir, "2026-01-03T00-00-00-000Z_new.jsonl", "uuid-new", makeSessionBody());
 
 		const report = generateAdviceReport(dir);
-		// All 3 sessions contribute to tool-mismatch
-		assert.ok(report.includes("3"), "should show 3 findings for tool-mismatch");
+		// All 3 sessions contribute to bash-grep
+		assert.ok(report.includes("3"), "should show 3 findings for bash-grep");
 		// No crash, report generated
 		assert.ok(report, "report generated successfully");
 	});

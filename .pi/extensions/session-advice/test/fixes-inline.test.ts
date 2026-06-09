@@ -17,14 +17,14 @@ import type { SignalReview } from "../llm-advisor.ts";
 // ── Phase 1: Domain tests ──
 
 describe("FIXES inlining — domain tests", () => {
-	it('FIXES["tool-mismatch"].effort === "Low"', async () => {
+	it('FIXES["bash-grep"].effort === "Low"', async () => {
 		const mod = await import("../advice-pipeline.ts");
-		assert.equal(mod.FIXES["tool-mismatch"].effort, "Low");
+		assert.equal(mod.FIXES["bash-grep"].effort, "Low");
 	});
 
-	it('FIXES["redundant-read"].effort === "Medium"', async () => {
+	it('FIXES["redundant-read"].effort === "Low"', async () => {
 		const mod = await import("../advice-pipeline.ts");
-		assert.equal(mod.FIXES["redundant-read"].effort, "Medium");
+		assert.equal(mod.FIXES["redundant-read"].effort, "Low");
 	});
 
 	it('FIXES["nonexistent-signal"] ?? DEFAULT_FIX returns default fallback', async () => {
@@ -38,18 +38,17 @@ describe("FIXES inlining — domain tests", () => {
 		assert.equal(mod.DEFAULT_FIX.effort, "Medium");
 	});
 
-	it("FIXES contains all 9 expected keys", async () => {
+	it("FIXES contains all 8 expected keys", async () => {
 		const mod = await import("../advice-pipeline.ts");
 		const expectedKeys = [
-			"tool-mismatch",
-			"error-not-actioned",
-			"identical-call-loop",
-			"same-tool-cascade",
+			"bash-cat",
+			"bash-grep",
+			"error-loop",
+			"identical-args",
+			"no-batch",
 			"redundant-read",
-			"high-error-rate",
-			"excessive-turns",
-			"tool-coverage-gap",
 			"structural-search-underuse",
+			"turn-inefficiency",
 		];
 		const actualKeys = Object.keys(mod.FIXES).sort();
 		assert.deepEqual(actualKeys, [...expectedKeys].sort());
@@ -68,6 +67,36 @@ describe("FIXES inlining — domain tests", () => {
 				`${key} has invalid effort: ${fix.effort}`,
 			);
 			assert.ok(fix.idea.length > 0, `${key} has empty idea`);
+		}
+	});
+
+	it("All FIXES entries have agent-first ideas", async () => {
+		const mod = await import("../advice-pipeline.ts");
+		for (const [key, fix] of Object.entries(mod.FIXES)) {
+			assert.ok(
+				fix.idea.startsWith("Agent should"),
+				`${key} idea should start with "Agent should", got: ${fix.idea.slice(0, 50)}`,
+			);
+		}
+	});
+
+	it("All FIXES entries mention AGENTS.md (second priority layer)", async () => {
+		const mod = await import("../advice-pipeline.ts");
+		for (const [key, fix] of Object.entries(mod.FIXES)) {
+			assert.ok(
+				fix.idea.includes("AGENTS.md"),
+				`${key} idea should mention AGENTS.md, got: ${fix.idea.slice(0, 80)}`,
+			);
+		}
+	});
+
+	it("All FIXES entries mention harness-level approach is not recommended", async () => {
+		const mod = await import("../advice-pipeline.ts");
+		for (const [key, fix] of Object.entries(mod.FIXES)) {
+			assert.ok(
+				fix.idea.includes("not recommended") || fix.idea.includes("only if"),
+				`${key} idea should mention "not recommended" or "only if" for harness-level, got: ${fix.idea.slice(0, 80)}`,
+			);
 		}
 	});
 

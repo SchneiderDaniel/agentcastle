@@ -58,41 +58,37 @@ export interface WasteReport {
 }
 
 export const FIXES: Record<string, FixSuggestion> = {
-	"tool-mismatch": {
-		idea: "Implement pre-call validation in harness: intercept bash commands containing grep/rg/cat/head/tail and auto-route to dedicated tool (ripgrep_search/read). Falls back to tool-choice table in AGENTS.md only if harness hook not feasible.",
+	"bash-grep": {
+		idea: "Agent should use ripgrep_search instead of bash | grep for file content searches. Session advisor detects and advises this per-session. If persists after N sessions, add to AGENTS.md: 'Use ripgrep_search for file content search, not bash | grep'. Harness-level auto-routing not recommended: most bash-grep calls are command pipes, not file searches, and auto-routing would break legitimate piped operations.",
 		effort: "Low",
 	},
-	"error-not-actioned": {
-		idea: "Track last 3 errors per tool in agent runtime. If same tool errors twice consecutively, force strategy switch — block that tool, surface alternative. AGENTS.md rule only if code-level error tracking unavailable.",
+	"bash-cat": {
+		idea: "Agent should use read tool instead of bash cat/head/tail to view file contents. Session advisor detects and advises this per-session. If persists after N sessions, add to AGENTS.md: 'Use read tool, not bash cat/head/tail'. Harness-level auto-routing not recommended: bash file reads may include flags or pipes that don't map cleanly to read tool semantics.",
+		effort: "Low",
+	},
+	"identical-args": {
+		idea: "Agent should avoid calling the same tool with identical arguments repeatedly. Session advisor detects and advises this per-session. If persists after N sessions, add to AGENTS.md: 'Combine repeated identical calls into one, or use a variable to store results'. Harness-level dedup cache not recommended: agent should learn to avoid duplicate calls, not rely on runtime dedup which can mask logic bugs.",
+		effort: "Low",
+	},
+	"error-loop": {
+		idea: "Agent should change strategy after a tool error instead of retrying the same tool with the same args. Session advisor detects and advises this per-session. If persists after N sessions, add to AGENTS.md: 'After a tool error, try a different approach — verify preconditions, use a different tool, or ask the user'. Harness-level error blocking not recommended: tool errors are learning opportunities; blocking tools prevents the agent from understanding error patterns.",
 		effort: "Medium",
 	},
-	"identical-call-loop": {
-		idea: "Add tool-call dedup cache in harness: before issuing call, compare args against last N calls. Skip or merge duplicates. Detect loops via arg fingerprinting and break them at runtime. AGENTS.md guidance as secondary guard.",
-		effort: "High",
-	},
-	"same-tool-cascade": {
-		idea: "Implement tool-level batching in harness queue: when N same-tool calls collected within a turn, merge into single call (e.g., combine bash with `&&`, batch reads by coalescing offsets). AGENTS.md batching guidance only if queue merge not viable.",
-		effort: "Medium",
+	"no-batch": {
+		idea: "Agent should batch consecutive same-tool calls into fewer turns to reduce turn overhead (~600 tokens per extra turn). Session advisor detects and advises this per-session. If persists after N sessions, add to AGENTS.md: 'Batch consecutive same-tool calls into single turns'. Harness-level tool batching not recommended: agent should learn to batch naturally; forced batching can interfere with interleaved reasoning.",
+		effort: "Low",
 	},
 	"redundant-read": {
-		idea: "Add read-result cache in harness keyed by (path, offset, limit). If same file re-read within 3 turns, serve cached content automatically. Fallback: add 'read once, use offset to page' to AGENTS.md.",
-		effort: "Medium",
-	},
-	"high-error-rate": {
-		idea: "Add pre-flight validation in harness: check file exists before read/edit, verify command exists before bash, validate path before write. Surface errors early via typed error responses. Code validation preferred over AGENTS.md rules.",
-		effort: "High",
-	},
-	"excessive-turns": {
-		idea: "Add turn budget tracker in agent loop: if N tool calls produce no file change, pause and prompt user for direction. Code-based budget enforcement; AGENTS.md guidance only if loop hook not available.",
-		effort: "Medium",
-	},
-	"tool-coverage-gap": {
-		idea: "Add auto-detection hook: when code files read/edited but structural_search never called in first 3 turns, emit in-context reminder to use AST queries. Code reminder over AGENTS.md mention.",
+		idea: "Agent should avoid re-reading files already in context. Session advisor detects and advises this per-session. If persists after N sessions, add guidance to AGENTS.md (e.g., 'use offset-based read, not re-read from start'). Harness cache is not recommended: request tokens already consumed by the time cache would help, invalidation is fragile, and marginal gain (~18K tokens/session) doesn't justify complexity.",
 		effort: "Low",
 	},
 	"structural-search-underuse": {
-		idea: "Add runtime counter: track read/edit calls on code files. If count hits 3 and structural_search never invoked, auto-prompt agent with AST query suggestion. Code trigger over AGENTS.md instruction.",
+		idea: "Agent should use structural_search (AST-aware query) when working with code files instead of reading/editing multiple files blindly. Session advisor detects and advises this per-session. If persists after N sessions, add to AGENTS.md: 'Use structural_search to find code structures before reading files'. Harness-level auto-detection hook not recommended: agent should learn the tool set; counters and reminders add prompt overhead.",
 		effort: "Low",
+	},
+	"turn-inefficiency": {
+		idea: "Agent should avoid turns with many tool calls but no file changes or discovery. Session advisor detects and advises this per-session. If persists after N sessions, add to AGENTS.md: 'If a turn has many tool calls with no file changes, consider whether those calls are necessary'. Harness-level turn budget not recommended: fixed budgets are brittle and may prematurely interrupt legitimate exploration turns.",
+		effort: "Medium",
 	},
 };
 
