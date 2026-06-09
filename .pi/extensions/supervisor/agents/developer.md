@@ -41,7 +41,7 @@ Creates matching branch in each submodule. No-op if no submodules exist. Fails e
 
 Follow the **Test First** rule:
 
-**Package Safety Check (npm):** Before any `npm install <pkg>` call, verify package age:
+**Package Safety Check:** The supervisor pipeline automatically runs `runPackageSafetyAudit` (in `.pi/extensions/supervisor/checks/package-safety.ts`) during the Implementation→Audit transition, checking all dependencies in `package.json`. Before any `npm install <pkg>` call, you can also verify package age manually:
 
 1. Run: `npm view <pkg> time.created`
 2. If date is < 14 days ago, refuse with: "Package <name> is <X> days old — below 14-day safety threshold. Cannot install."

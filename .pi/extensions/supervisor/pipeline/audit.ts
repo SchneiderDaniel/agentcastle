@@ -12,6 +12,7 @@ import { determineTscCheckpointDecision, getRunTscCheckpoint } from "../checks/t
 import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-decisions.ts";
 import { pollCiChecks } from "../checks/ci-gating.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
+import { runPackageSafetyAudit } from "../checks/package-safety.ts";
 
 /**
  * Run TSC checkpoint, LSP pre-audit, and duplicate code check during
@@ -29,6 +30,10 @@ export async function runTscAndLspAudit(
 	ctx: ExtensionCommandContext,
 ): Promise<{ nextStatus: string; note: string }> {
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
+
+	// Shared exec function for running shell commands via pi.exec
+	const execFn = (cmd: string, args: string[], opts?: Record<string, unknown>) =>
+		pi.exec(cmd, args, opts);
 
 	try {
 		// Step 0: CI gating — poll check runs before running local hooks
@@ -86,8 +91,6 @@ export async function runTscAndLspAudit(
 		// verified by the auditor agent.
 		ctx.ui.setStatus("supervisor", "Checking for duplicate code...");
 		getDebugLogger().info("pipeline-audit", "Running duplicate code check", { worktreePath });
-		const execFn = (cmd: string, args: string[], opts?: Record<string, unknown>) =>
-			pi.exec(cmd, args, opts);
 		const dupResult = await runDuplicateCheck(execFn, worktreePath, config.defaultBranch || "main");
 
 		if (dupResult.status === "duplicates_found") {
@@ -107,7 +110,42 @@ export async function runTscAndLspAudit(
 			});
 		}
 
-		// Step 2: TSC checkpoint (Tier 2)
+		// Step 2: Package safety audit (non-blocking — informational)
+		// Runs after duplicate code check. Checks all npm dependencies
+		// in the worktree's package.json for package age safety.
+		ctx.ui.setStatus("supervisor", "Checking package safety...");
+		getDebugLogger().info("pipeline-audit", "Running package safety audit", { worktreePath });
+		try {
+			const safetyResult = await runPackageSafetyAudit(execFn, worktreePath);
+			if (safetyResult.status === "blocked") {
+				const blockedPkgs = safetyResult.results
+					.filter((r) => r.blocked)
+					.map((r) => r.packageName)
+					.join(", ");
+				ctx.ui.notify(
+					`Package safety: ${safetyResult.results.filter((r) => r.blocked).length} blocked package(s): ${blockedPkgs}. Auditor may flag this.`,
+					"warning",
+				);
+				getDebugLogger().info("pipeline-audit", "Package safety check found blocked packages", {
+					blockedCount: safetyResult.results.filter((r) => r.blocked).length,
+					results: safetyResult.results,
+				});
+			} else if (safetyResult.status === "error") {
+				getDebugLogger().warn("pipeline-audit", "Package safety check error", {
+					message: safetyResult.message,
+				});
+			} else {
+				getDebugLogger().info("pipeline-audit", "Package safety check passed", {
+					checkedCount: safetyResult.results.length,
+				});
+			}
+		} catch (safetyErr: unknown) {
+			getDebugLogger().warn("pipeline-audit", "Package safety check threw", {
+				error: safetyErr instanceof Error ? safetyErr.message : String(safetyErr),
+			});
+		}
+
+		// Step 3: TSC checkpoint (Tier 2)
 		const runTscCheckpointFn = await getRunTscCheckpoint();
 
 		if (runTscCheckpointFn) {
