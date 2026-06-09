@@ -29,3 +29,4 @@
 {"datetime":"2026-06-09T15:43:17.193Z","question":"Add configurable comment summary threshold + max comment chars to SupervisorConfig?","answer":"add_both"}
 {"datetime":"2026-06-09T15:56:13.741Z","question":"structural-analyzer done — 4 bugs filed. Continue hunt on next extension? 17 remaining.","answer":"continue"}
 {"datetime":"2026-06-09T16:20:35.144Z","question":"'--clear/' folder — empty placeholder dir (0-byte bin/python3) added accidentally in the Scrapling migration commit. No code references it.\n\nWhat should I do?","answer":"delete"}
+{"datetime":"2026-06-09T16:34:56.969Z","question":"Researcher token consumption fix priority?","answer":"all"}

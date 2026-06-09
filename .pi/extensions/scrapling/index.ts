@@ -44,6 +44,12 @@ export default function webCrawlExtension(pi: ExtensionAPI): void {
 					description: "Maximum pages to crawl (default 1, max 10)",
 				}),
 			),
+			maxTokens: Type.Optional(
+				Type.Number({
+					description:
+						"Hard token limit per page (rough estimate). Content beyond limit is truncated with notice. 0 = no limit.",
+				}),
+			),
 		}),
 		async execute(_toolCallId, params, signal, onUpdate, _ctx) {
 			await acquireCrawlLock();
@@ -98,11 +104,24 @@ export default function webCrawlExtension(pi: ExtensionAPI): void {
 								run.stdout,
 						);
 						if (parsed.ok && parsed.results) {
-							const texts = parsed.results.map((r: any) =>
-								r.success
-									? `--- ${r.url} (via ${r.method}) ---\n${r.markdown || "[No content]"}`
-									: `--- ${r.url} ---\nError: ${r.error}`,
-							);
+							// Cast needed because pi tool params type isn't updated when schema changes
+							const maxTokens = (params as { maxTokens?: number }).maxTokens ?? 0;
+							const texts = parsed.results.map((r: any) => {
+								if (!r.success) {
+									return `--- ${r.url} ---\nError: ${r.error}`;
+								}
+								let content = r.markdown || "[No content]";
+								if (maxTokens > 0) {
+									// Rough token estimate: ~4 chars per token for English text
+									const estimatedTokens = Math.round(content.length / 4);
+									if (estimatedTokens > maxTokens) {
+										const maxChars = maxTokens * 4;
+										const truncated = content.slice(0, maxChars);
+										content = `${truncated}\n\n[... truncated at ~${maxTokens.toLocaleString()} tokens (${estimatedTokens.toLocaleString()} total). Use narrower query or page-specific section.]`;
+									}
+								}
+								return `--- ${r.url} (via ${r.method}) ---\n${content}`;
+							});
 							return {
 								content: [{ type: "text", text: texts.join("\n\n") }],
 								details: {} as Record<string, unknown>,
