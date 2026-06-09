@@ -1,10 +1,10 @@
-# AgentCastle: Kanban-Centred Pi AI Agent
+# AgentCastle: Token-Saving Agent Harness with Kanban Git Sub-Agent Framework
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.74.0-6e3bf0)](https://pi.dev)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-**Kanban-centred Pi agent with token-efficient tools, security guardrails, and efficient workflow enhancements.** Docker + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback. Heavy use of git worktrees for parallel development.
+**Token-saving agent harness with security guardrails and a Kanban git-oriented sub-agent framework.** Docker + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback via git worktrees for parallel development.
 
 ![AgentCastle TUI — multi-agent Kanban pipeline](agentcastletui.png)
 
@@ -40,7 +40,7 @@ This README follows your path from first encounter to daily use. Each section is
 
 ### 1. Discovery — What is AgentCastle?
 
-AgentCastle is a **Kanban-centred AI agent** built on the [Pi coding agent](https://pi.dev). It uses a GitHub Project board to drive an autonomous multi-agent pipeline — Researcher → Architect → TestDesigner → Developer → Auditor — with tools designed to minimise token waste, enforce security boundaries, and streamline the dev workflow. Clone this repo and you get a complete toolchain:
+AgentCastle is a **Pi agent harness** built on the [Pi coding agent](https://pi.dev) — engineered to save tokens, enforce security boundaries, and drive sub-agents through a Kanban git-oriented workflow. It uses a GitHub Project board to orchestrate an autonomous multi-agent pipeline — Researcher → Architect → TestDesigner → Developer → Auditor — with tools that minimise token waste, enforce security boundaries, and streamline development inside isolated git worktrees. Clone this repo and you get a complete toolchain:
 
 - **Codebase mapping** — `ranked_map` via universal-ctags: auto-mode (query → ranked, no query → full dump for small repos, recency-ranked for large repos)
 - **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching
