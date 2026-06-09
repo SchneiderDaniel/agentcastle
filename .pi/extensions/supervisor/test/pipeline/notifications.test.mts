@@ -27,7 +27,14 @@ beforeEach(() => {
 
 function createMockPi(): ExtensionAPI {
 	return {
-		exec: (async () => ({ code: 0, stdout: "", stderr: "" })) as ExtensionAPI["exec"],
+		exec: (async () => ({
+			code: 0,
+			stdout: "",
+			stderr: "",
+			killed: false,
+			signal: null,
+			pid: 0,
+		})) as unknown as ExtensionAPI["exec"],
 		registerCommand: (() => {}) as ExtensionAPI["registerCommand"],
 		sendMessage: ((msg: any) => {
 			sentMessages.push(msg);

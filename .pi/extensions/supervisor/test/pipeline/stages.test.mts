@@ -234,6 +234,16 @@ describe("calculateNextStatus()", () => {
 		assert.equal(result.status, "Done");
 	});
 
+	it("auditor AUDIT_DECISION: REJECTED → Implementation (pipeline loops back, not stops)", () => {
+		// Auditor rejection should send back to Implementation, not stop the pipeline
+		const result = calculateNextStatus(
+			"auditor",
+			"some output",
+			"Some text\nAUDIT_DECISION: REJECTED\nmore text",
+		);
+		assert.equal(result.status, "Implementation");
+	});
+
 	it("falls back to textOutput when textOnly has no marker", () => {
 		const result = calculateNextStatus(
 			"architect",
