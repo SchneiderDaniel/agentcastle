@@ -32,31 +32,26 @@ COMMENT_BODY_END
 
 Do nothing else.
 
-### 2. Query Planning (Decompose Complex Topics)
+### 2. Query Planning (Narrow Scope)
 
-Extract the core topic from the issue title and body. If the topic is complex, decompose it into focused sub-queries with distinct angles (e.g. definition, evidence, comparison, counterargument, historical, technical). This ensures broader source diversity and reduces bias. Formulate 3-5 distinct search queries covering:
+Extract the core topic from the issue title and body. Formulate at most 2-3 search queries that directly target the specific technology, library, or pattern in the issue. Do not search broadly — narrow to what the issue actually needs. Prefer queries with high probability of direct relevance.
 
-- **Best practices** for the topic — proven patterns and approaches used in production
-- **Recent/stable library versions** — what is actively maintained, latest releases, migration guides
-- **Common pitfalls** — known issues, footguns, anti-patterns, deprecated approaches
-- **Comparative analysis** — how different solutions stack up, trade-offs, benchmarks
-- **Security considerations** — CVEs, vulnerability patterns, hardening practices (when applicable)
+If the core topic is too broad to formulate narrow queries, stop here and output a "no relevant results" finding instead of broadening the search.
 
-### 3. Web Search + Web Crawl (3-5 sources)
+Good queries focus on:
+- **Best practices** for the exact pattern/library in the issue
+- **Current stable versions** of libraries mentioned in the issue
+- **Known pitfalls** for the specific technology in the issue
 
-For each query, first use the `web_search` tool to discover relevant URLs from the web. The `web_search` tool accepts a search query and optional maxResults parameter, returning ranked results with titles, URLs, and snippets. Example:
+Omit any search angle that would require loose interpretation to connect back to the issue.
 
-```
-web_search "latest rust web framework 2026" --maxResults 5
-```
+### 3. Web Search + Web Crawl (at most 2-3 sources)
 
-Then use `web_crawl` on each promising result URL to fetch full page content. You must consult at least 3 and at most 5 distinct web sources. The `web_crawl` tool accepts a URL and optional maxPages parameter. Example:
+For each query, use `web_search` to discover URLs. Keep `--maxResults 3` or fewer — ignore low-ranking results. Then use `web_crawl` on promising URLs.
 
-```
-web_crawl "https://example.com/relevant-page" --maxPages 1
-```
+**Relevance gate**: Before crawling a result, evaluate its snippet. If it does not have a direct, unambiguous connection to the issue topic, discard it. Do not crawl irrelevant pages. It is better to have 0 sources than weak matches.
 
-Prioritize sources with high authority: official docs, high-star GitHub repos (check stars), respected tech blogs, published papers, or authoritative community resources (e.g. Stack Overflow accepted answers with high vote counts).
+Consult at most 2-3 distinct web sources. Prioritize official docs, high-star GitHub repos, and authoritative community resources.
 
 Record the URL of every crawled page — every finding must link back to its source.
 
@@ -71,7 +66,9 @@ Web crawl results can be long. When content exceeds your working context:
 
 ### 5. Synthesis
 
-Synthesize the crawled content into findings. Categorize into these sections (omit any section with no findings):
+Synthesize crawled content into findings. For each potential finding, ask: "Is this directly relevant to the issue topic?" If the connection requires explanation or stretch logic, discard it.
+
+Categorize into these sections (omit any section with no findings):
 
 - **Best Practices** — actionable patterns, architecture approaches, and proven techniques
 - **Recent Libraries** — library names, versions, and why they are relevant (include release dates)
@@ -82,6 +79,7 @@ Synthesize the crawled content into findings. Categorize into these sections (om
 
 Before posting findings, apply these verification checks:
 
+- **Relevance check**: review each potential finding one final time. If it is not directly about the issue topic, discard it. Loose connections are not acceptable.
 - **Cross-source verification**: a claim supported by 2+ independent sources has stronger confidence. Prefer claims confirmed by multiple sources.
 - **Source authority**: prioritize claims from official documentation, high-star repos, and authoritative domains over personal blogs or forum posts.
 - **Contradiction detection**: if two sources disagree on a claim, surface the disagreement explicitly rather than picking a winner. Flag it as "conflicting".
@@ -90,7 +88,9 @@ Before posting findings, apply these verification checks:
 
 ### 7. Graceful Degradation
 
-If all `web_crawl` calls fail or return empty content, post:
+Reporting no findings is the correct outcome when relevant sources cannot be found. Do not include loose matches.
+
+If after applying the relevance gate you have 0 sources, or if all web searches return no directly relevant results, post:
 
 ```
 ## Research Findings — No relevant results found for this topic.
@@ -105,7 +105,7 @@ COMMENT_BODY:
 COMMENT_BODY_END
 ```
 
-If some sources fail but others succeed, proceed with what you have. Do not fabricate findings to fill missing sections.
+If some sources pass the relevance gate but others fail, proceed with only the passing sources. Do not fabricate findings to fill missing sections.
 
 ### 8. Structured Comment
 
