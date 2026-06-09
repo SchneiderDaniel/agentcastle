@@ -1,51 +1,49 @@
 {
-  "quietStartup": true,
-  "theme": "agentcastle",
-  "sessionDir": ".pi/sessions",
-  "contextStatusBar": {
-    "showTps": true
-  },
-  "rankedMap": {
-    "tokenBudget": 2048,
-    "recencyWindowDays": 30,
-    "cacheTtlHours": 24,
-    "autoThreshold": 20000,
-    "weights": {
-      "keyword": 0.5,
-      "recency": 0.3,
-      "fileSize": 0.2
-    }
-  },
-  "docker": {
-    "memory": "4G",
-    "cpus": "2.0"
-  },
-  "skills": [
-    ".pi/skills"
-  ],
-  "prompts": [
-    "prompts",
-    "prompts/operations",
-    "prompts/development",
-    "prompts/requirement",
-    "prompts/misc"
-  ],
-  "supervisor": {
-    "repo": "SchneiderDaniel/agentcastle",
-    "projectNumber": 3,
-    "statusField": "Status",
-    "statusMapping": {
-      "Research": "researcher",
-      "Architecture": "architect",
-      "TestDesign": "test-designer",
-      "Implementation": "developer",
-      "Audit": "auditor"
-    },
-    "maxRejections": 5,
-    "codeowners": [
-      "SchneiderDaniel"
-    ],
-    "agentTimeoutsMin": {},
-    "bellOnComplete": false
-  }
+	"quietStartup": true,
+	"theme": "agentcastle",
+	"sessionDir": ".pi/sessions",
+	"contextStatusBar": {
+		"showTps": true
+	},
+	"rankedMap": {
+		"tokenBudget": 4096,
+		"recencyWindowDays": 30,
+		"cacheTtlHours": 24,
+		"autoThreshold": 20000,
+		"frequencyScalingFactor": 0.2,
+		"weights": {
+			"keyword": 0.65,
+			"recency": 0.2,
+			"fileSize": 0.1,
+			"commitCount": 0.05
+		}
+	},
+	"docker": {
+		"memory": "4G",
+		"cpus": "2.0"
+	},
+	"skills": [".pi/skills"],
+	"prompts": [
+		"prompts",
+		"prompts/operations",
+		"prompts/development",
+		"prompts/requirement",
+		"prompts/misc"
+	],
+	"supervisor": {
+		"repo": "SchneiderDaniel/agentcastle",
+		"projectNumber": 3,
+		"statusField": "Status",
+		"statusMapping": {
+			"Research": "researcher",
+			"Architecture": "architect",
+			"TestDesign": "test-designer",
+			"Implementation": "developer",
+			"Audit": "auditor"
+		},
+		"maxRejections": 5,
+		"codeowners": ["SchneiderDaniel"],
+		"agentTimeoutsMin": {},
+		"bellOnComplete": false
+	}
 }

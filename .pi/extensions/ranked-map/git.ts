@@ -1,5 +1,5 @@
 /**
- * ranked-map — Git recency, HEAD helpers, and submodule discovery
+ * ranked-map — Git recency, commit count, HEAD helpers, and submodule discovery
  *
  * Adapter module — uses ExecFn (pi.exec compatible) for subprocess execution.
  * Fully async with AbortSignal support.
@@ -283,6 +283,104 @@ export async function discoverSubmodules(
 	}
 
 	return submodules;
+}
+
+// --------------------------------------------------------------------------
+// Git commit count — 4th signal for file importance
+// --------------------------------------------------------------------------
+
+/**
+ * Count commits per file within the recency window.
+ *
+ * Files with more git commits over the window have more developer attention
+ * and are likely more important. Used as a 4th scoring signal with small weight.
+ *
+ * Runs `git log --oneline` and counts how many commits touched each file.
+ * When submodules are provided, also queries each initialized submodule.
+ *
+ * Returns a map of file path → commit count. Returns empty map on error.
+ *
+ * @param exec - ExecFn for subprocess execution
+ * @param windowDays - Recency window in days
+ * @param cwd - Working directory
+ * @param signal - Optional AbortSignal for cancellation
+ * @param submodules - Optional array of submodule info for submodule-aware counting
+ */
+export async function runGitCommitCount(
+	exec: ExecFn,
+	windowDays: number,
+	cwd: string,
+	signal?: AbortSignal,
+	submodules?: SubmoduleInfo[],
+): Promise<Record<string, number>> {
+	const fileCommitCounts: Record<string, number> = {};
+
+	// Phase 1: Superproject git log
+	const since = `--since="${windowDays} days ago"`;
+	const result = await exec("git", ["log", since, "--oneline", "--name-only", "--diff-filter=AM"], {
+		cwd,
+		timeout: 15_000,
+		signal,
+	});
+
+	if (result.code === 0) {
+		parseCommitCountOutput(result.stdout, fileCommitCounts);
+	}
+
+	// Phase 2: Submodule commit counts (if any)
+	if (submodules && submodules.length > 0) {
+		for (const sm of submodules) {
+			if (sm.sha === "uninitialized") continue;
+
+			const smResult = await exec(
+				"git",
+				["-C", sm.path, "log", since, "--oneline", "--name-only", "--diff-filter=AM"],
+				{ cwd, timeout: 15_000, signal },
+			);
+
+			if (smResult.code === 0) {
+				// Parse and prefix submodule paths
+				const smCounts: Record<string, number> = {};
+				parseCommitCountOutput(smResult.stdout, smCounts);
+				for (const [smPath, count] of Object.entries(smCounts)) {
+					const prefixedPath = `${sm.path}/${smPath}`;
+					fileCommitCounts[prefixedPath] = (fileCommitCounts[prefixedPath] ?? 0) + count;
+				}
+			}
+		}
+	}
+
+	return fileCommitCounts;
+}
+
+/**
+ * Parse git log --oneline --name-only output into file → commit count map.
+ *
+ * Each commit is separated by blank lines and has a commit hash line
+ * followed by file paths. Each occurrence of a file path increments its count.
+ */
+function parseCommitCountOutput(stdout: string, counts: Record<string, number>): void {
+	const lines = stdout.split("\n");
+	let inCommit = false;
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) {
+			inCommit = false;
+			continue;
+		}
+
+		// Commit hash line: starts with hex chars at beginning
+		if (/^[a-f0-9]{4,}/.test(trimmed) && !trimmed.includes("/") && !trimmed.includes(".")) {
+			inCommit = true;
+			continue;
+		}
+
+		// File path line
+		if (inCommit && trimmed) {
+			counts[trimmed] = (counts[trimmed] ?? 0) + 1;
+		}
+	}
 }
 
 // --------------------------------------------------------------------------
