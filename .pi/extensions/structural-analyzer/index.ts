@@ -503,6 +503,7 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 			const result = await pi.exec(binary, args, {
 				cwd: ctx.cwd,
 				timeout: 30_000,
+				signal: _signal,
 			});
 
 			// Use the extracted pure function to interpret the exec result
