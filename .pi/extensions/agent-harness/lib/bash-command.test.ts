@@ -49,6 +49,26 @@ describe("BashCommand.isSearch", () => {
 		assert.equal(new BashCommand("cd src && echo 'testing `rg` in body'").isSearch(), false);
 	});
 
+	// ── Phase 1: standalone commands with backtick grep/rg in quoted string args ──
+
+	it("false for standalone gh issue with backtick grep in body", () => {
+		assert.equal(
+			new BashCommand("gh issue create --body 'uses `grep` for searching'").isSearch(),
+			false,
+		);
+	});
+
+	it("false for standalone echo with backtick rg in string", () => {
+		assert.equal(new BashCommand("echo 'testing `rg` in the code'").isSearch(), false);
+	});
+
+	it("false for standalone gh issue with backtick grep pattern in body", () => {
+		assert.equal(
+			new BashCommand("gh issue create --body 'found by `grep` pattern'").isSearch(),
+			false,
+		);
+	});
+
 	it("false for grep with redirect", () => {
 		assert.equal(new BashCommand("grep foo > out.txt").isSearch(), true);
 	});
@@ -382,6 +402,20 @@ describe("BashCommand.detectMismatch", () => {
 		assert.equal(result, null);
 	});
 
+	// ── Phase 2: standalone commands with backtick grep/rg in quoted string args ──
+
+	it("standalone gh issue with backtick grep in body → null", () => {
+		const result = new BashCommand(
+			"gh issue create --body 'uses `grep` for searching'",
+		).detectMismatch();
+		assert.equal(result, null);
+	});
+
+	it("standalone echo with backtick rg in body → null", () => {
+		const result = new BashCommand("echo 'testing `rg` in body'").detectMismatch();
+		assert.equal(result, null);
+	});
+
 	it("head inside quoted argument → null", () => {
 		const result = new BashCommand(`gh issue view 123 --title "head -5"`).detectMismatch();
 		assert.equal(result, null);
@@ -553,6 +587,15 @@ describe("BashCommand.suggestRedirection", () => {
 
 	it("rg in quoted argument → null", () => {
 		assert.equal(new BashCommand(`gh issue view 123 --title "rg"`).suggestRedirection(), null);
+	});
+
+	// ── Phase 2: standalone commands with backtick grep/rg in quoted string args ──
+
+	it("standalone gh issue with backtick grep in body → null", () => {
+		assert.equal(
+			new BashCommand("gh issue create --body 'uses `grep` for text'").suggestRedirection(),
+			null,
+		);
 	});
 });
 

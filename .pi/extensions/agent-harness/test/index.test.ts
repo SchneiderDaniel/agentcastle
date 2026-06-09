@@ -147,6 +147,17 @@ describe("AgentHarness — bash tool mismatch", () => {
 			assert.equal(h.handleToolCall(makeEvent("bash", { command: cmd }), makeCtx()), null, cmd);
 		}
 	});
+
+	it("standalone gh issue with backtick grep in body passes through", () => {
+		const h = new AgentHarness();
+		assert.equal(
+			h.handleToolCall(
+				makeEvent("bash", { command: "gh issue create --body 'uses `grep` for search'" }),
+				makeCtx(),
+			),
+			null,
+		);
+	});
 });
 
 // ── Error accumulation and retry blocking ──
