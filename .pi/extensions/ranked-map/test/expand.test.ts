@@ -536,7 +536,7 @@ describe("expandQuery — edge cases", () => {
 		const result = expandQuery("file", synonyms);
 		const pattern = result[0]!;
 		assert.ok(
-			pattern.includes("\\bf(oo)\") || pattern.includes("(oo)"),
+			pattern.includes("\\bf(oo)\b") || pattern.includes("(oo)"),
 			"synonym with parens included",
 		);
 		assert.ok(
