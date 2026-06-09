@@ -44,6 +44,8 @@
 		"maxRejections": 5,
 		"codeowners": ["SchneiderDaniel"],
 		"agentTimeoutsMin": {},
-		"bellOnComplete": false
+		"bellOnComplete": false,
+		"commentSummaryThreshold": 7,
+		"maxCommentChars": 2000
 	}
 }

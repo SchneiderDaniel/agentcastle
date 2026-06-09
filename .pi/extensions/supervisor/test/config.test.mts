@@ -117,4 +117,32 @@ describe("loadConfig — config shape", () => {
 			);
 		}
 	});
+
+	it("commentSummaryThreshold defaults to 7, must be non-negative integer", () => {
+		const validValues = [0, 1, 7, 100];
+		for (const v of validValues) {
+			assert.ok(Number.isInteger(v) && v >= 0, `${v} should be valid`);
+		}
+		const invalidValues = [-1, 1.5, "7", true, null];
+		for (const v of invalidValues) {
+			assert.ok(
+				!(typeof v === "number" && Number.isInteger(v) && v >= 0),
+				`${JSON.stringify(v)} should be invalid`,
+			);
+		}
+	});
+
+	it("maxCommentChars defaults to 2000, must be positive integer", () => {
+		const validValues = [1, 500, 2000, 10000];
+		for (const v of validValues) {
+			assert.ok(Number.isInteger(v) && v > 0, `${v} should be valid`);
+		}
+		const invalidValues = [0, -1, 1.5, "2000", true, null];
+		for (const v of invalidValues) {
+			assert.ok(
+				!(typeof v === "number" && Number.isInteger(v) && v > 0),
+				`${JSON.stringify(v)} should be invalid`,
+			);
+		}
+	});
 });

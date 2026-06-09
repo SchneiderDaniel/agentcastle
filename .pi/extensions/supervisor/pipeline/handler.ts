@@ -319,7 +319,11 @@ export async function handleSupervisorCommand(
 				worktreePath,
 				worktreeBranch,
 				loopFilteredData.comments.length > 1
-					? summarizeComments(loopFilteredData.comments)
+					? summarizeComments(
+							loopFilteredData.comments,
+							config.commentSummaryThreshold,
+							config.maxCommentChars,
+						)
 					: undefined,
 				dupContext,
 			);

@@ -298,6 +298,70 @@ describe("summarizeComments", () => {
 		}
 		assert.ok(!result.includes("a".repeat(201)));
 	});
+
+	// ─── Configurable threshold tests ────────────────────────────────
+
+	it("custom threshold=3 → 3 comments verbatim, 4th triggers summary", () => {
+		const comments = Array.from({ length: 4 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: `Comment body ${i + 1}`,
+		}));
+		const result = summarizeComments(comments, 3);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		assert.ok(result.includes("- @user1:"));
+		assert.ok(result.includes("- @user2:"));
+		assert.ok(result.includes("- @user3:"));
+		assert.ok(result.includes("--- Comment #4 by @user4 ---"));
+	});
+
+	it("custom threshold=10 → 10 comments verbatim, 11th triggers summary", () => {
+		const comments = Array.from({ length: 11 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: `Comment body ${i + 1}`,
+		}));
+		const result = summarizeComments(comments, 10);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		for (let i = 0; i < 10; i++) {
+			assert.ok(result.includes(`- @user${i + 1}:`));
+		}
+		assert.ok(result.includes("--- Comment #11 by @user11 ---"));
+	});
+
+	it("threshold=0 → always summarize (empty bullet list, latest comment full)", () => {
+		const comments = [{ author: "user1", body: "Single comment" }];
+		const result = summarizeComments(comments, 0);
+		// threshold=0 skips verbatim branch (threshold>0 guard), goes to summarize path
+		assert.ok(result.includes("### Previous Comments (summarized)"), "should have summary heading");
+		assert.ok(result.includes("--- Comment #1 by @user1 ---"), "should have latest comment");
+		assert.ok(result.includes("Single comment"), "should include comment body");
+	});
+
+	it("custom maxCommentChars=100 → truncates at 100 chars", () => {
+		const longBody = "x".repeat(250);
+		const comments = [
+			{ author: "user1", body: longBody },
+			{ author: "user2", body: "Short" },
+		];
+		const result = summarizeComments(comments, 7, 100);
+		// Both comments are under threshold so rendered verbatim
+		assert.ok(result.includes("--- Comment #1 by @user1 ---"));
+		assert.ok(result.includes("…[+150 more chars]"));
+		assert.ok(result.includes("--- Comment #2 by @user2 ---"));
+	});
+
+	it("custom maxCommentChars=100 with >threshold comments → bullets truncated at 100, latest truncated", () => {
+		const longBody = "y".repeat(200);
+		const comments = Array.from({ length: 5 }, (_, i) => ({
+			author: `user${i + 1}`,
+			body: i < 4 ? longBody : "z".repeat(200),
+		}));
+		const result = summarizeComments(comments, 3, 100);
+		assert.ok(result.includes("### Previous Comments (summarized)"));
+		// Bullets get first line of truncated body (100 chars of y)
+		assert.ok(result.includes("- @user1:"));
+		// Latest comment truncated
+		assert.ok(result.includes("…[+100 more chars]"));
+	});
 });
 
 // ---------------------------------------------------------------------------

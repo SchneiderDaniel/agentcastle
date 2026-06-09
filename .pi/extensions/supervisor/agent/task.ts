@@ -85,31 +85,38 @@ export function truncateComment(body: string, maxLength: number = MAX_COMMENT_CH
 
 /**
  * Summarize a list of trusted comments.
- * When >7 comments: first n-1 are summarized into bullet list, latest is in full.
- * When ≤7 comments: renders all verbatim.
- * Comments >2000 chars are truncated with overflow note.
+ * When > threshold comments: first n-1 are summarized into bullet list, latest is in full.
+ * When ≤ threshold comments: renders all verbatim.
+ * Comments > maxCommentChars are truncated with overflow note.
+ *
+ * @param threshold - Comment count threshold (default 7). Set to 0 to always summarize.
+ * @param maxCommentChars - Max chars per comment body before truncation (default 2000).
  */
-export function summarizeComments(comments: Array<{ author: string; body: string }>): string {
+export function summarizeComments(
+	comments: Array<{ author: string; body: string }>,
+	threshold: number = 7,
+	maxCommentChars: number = MAX_COMMENT_CHARS,
+): string {
 	if (comments.length === 0) return "(no trusted comments)";
 
-	if (comments.length <= 7) {
-		// 1-7 comments: render all verbatim
+	if (threshold > 0 && comments.length <= threshold) {
+		// ≤ threshold comments: render all verbatim (threshold=0 = always summarize)
 		return comments
 			.map((c, i) => {
-				const body = truncateComment(c.body);
+				const body = truncateComment(c.body, maxCommentChars);
 				return `--- Comment #${i + 1} by @${c.author} ---\n${body}`;
 			})
 			.join("\n\n");
 	}
 
-	// >7 comments: summarize all but the latest
+	// > threshold comments: summarize all but the latest
 	const latest = comments[comments.length - 1];
 	const earlier = comments.slice(0, -1);
 
 	// Build summarized bullet list for earlier comments
 	const bullets = earlier
 		.map((c) => {
-			const preview = truncateComment(c.body);
+			const preview = truncateComment(c.body, maxCommentChars);
 			// Take first meaningful line for the summary
 			const firstLine =
 				preview.split("\n").find((l) => l.trim() && !l.startsWith("---")) || preview;
@@ -120,7 +127,7 @@ export function summarizeComments(comments: Array<{ author: string; body: string
 	const summaryBlock = ["### Previous Comments (summarized)", bullets].join("\n");
 
 	// Latest comment in full (also truncate if needed)
-	const latestBody = truncateComment(latest.body);
+	const latestBody = truncateComment(latest.body, maxCommentChars);
 	const latestBlock = `--- Comment #${comments.length} by @${latest.author} ---\n${latestBody}`;
 
 	return `${summaryBlock}\n\n${latestBlock}`;
