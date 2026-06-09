@@ -64,7 +64,7 @@ const DEFAULT_LANGUAGE = "ts";
 /** Maximum number of entries in the result cache before FIFO eviction. */
 const MAX_CACHE_SIZE = 200;
 
-/** Module-level result cache keyed by `${pattern}::${language}::${cwd}`. */
+/** Module-level result cache keyed by `${pattern}\x00${language}\x00${cwd}`. */
 const RESULT_CACHE = new Map<string, ExecResultResponse>();
 
 /**
@@ -95,10 +95,11 @@ function setCache(key: string, value: ExecResultResponse): void {
 
 /**
  * Build a deterministic cache key from search parameters.
- * Uses '::' as separator — unlikely to appear in pattern/language/cwd values.
+ * Uses '\x00' (null byte) as separator — cannot appear in normal UTF-8 text input,
+ * eliminating collision risk when pattern, language, or cwd contain '::'.
  */
 export function makeCacheKey(pattern: string, language: string, cwd: string): string {
-	return `${pattern}::${language}::${cwd}`;
+	return `${pattern}\x00${language}\x00${cwd}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
