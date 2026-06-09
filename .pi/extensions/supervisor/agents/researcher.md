@@ -21,11 +21,29 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments)
 
 ### 1. Deduplication Scan
 
-Scan the provided issue data for an existing comment containing `## Research Findings`. If one exists, skip all research and output JSON per §10 Completion Format — no research needed.
+Scan the provided issue data for an existing comment containing `## Research Findings`. If one exists, skip all research and output JSON per §9 Completion Format — no research needed.
 
 Do nothing else.
 
-### 2. Query Planning (Narrow Scope)
+### 2. Research Value Judgment
+
+Before proceeding to research, evaluate whether external web research provides value for this issue:
+
+- Does the issue involve an **external library, tool, API, protocol, or format**?
+- Does the issue ask about **best practices, library versions, or security**?
+- Does the issue require **knowledge outside the codebase** (new integration, unfamiliar domain)?
+
+If **none** of these apply — issue is internal-only (bug fix, refactor, config change, rename, or feature using existing patterns) — skip research. Post:
+
+```
+## Research Findings — Research skipped: issue touches only internal code with no external dependency, library, or version question. No public web data needed.
+```
+
+Then output JSON per §9 Completion Format.
+
+If any check is **yes**, proceed to Query Planning.
+
+### 3. Query Planning (Narrow Scope)
 
 Extract the core topic from the issue title and body. Formulate at most 1 narrowly-scoped search query that directly targets the specific technology, library, or pattern in the issue. Do not search broadly — narrow to what the issue actually needs. Prefer queries with high probability of direct relevance.
 
@@ -38,7 +56,7 @@ Good queries focus on:
 
 Omit any search angle that would require loose interpretation to connect back to the issue.
 
-### 3. Web Search + Crawl
+### 4. Web Search + Crawl
 
 Run your 1 query with `web_search` (`--maxResults 5`). For each result, evaluate the snippet for relevance to the issue topic. **If snippet proves relevance, crawl the page** — your job is to extract the core information so downstream agents never need to crawl.
 
@@ -46,13 +64,13 @@ Crawl at most 1-2 pages total. **Always pass `maxTokens=25000` to every `web_cra
 
 Record URL of every crawled page — every finding must link back to its source.
 
-### 4. Crawl Budget Enforcement
+### 5. Crawl Budget Enforcement
 
 Track total crawled content tokens. Hard stop at ~75K tokens — do not crawl additional pages beyond this budget. If a single page exceeds 75K tokens, extract only the relevant section (skip navigation, boilerplate, ads).
 
 Synthesize what you have within budget. The downstream agents depend on your extraction — capture the necessary facts from each source you crawl.
 
-### 5. Synthesis
+### 6. Synthesis
 
 Synthesize findings from crawled content. You are the only agent that crawls — other agents never access the web. Extract the relevant facts, version info, best practices, and pitfalls from each source you crawl. For each potential finding, ask: "Is this directly relevant to the issue topic?" If the connection requires explanation or stretch logic, discard it.
 
@@ -63,7 +81,7 @@ Categorize into these sections (omit any section with no findings):
 - **Common Pitfalls** — known issues, footguns, anti-patterns, deprecation warnings
 - **Security Considerations** — vulnerabilities, hardening patterns, CVE references (when applicable)
 
-### 6. Verification & Confidence
+### 7. Verification & Confidence
 
 Before posting findings, apply these verification checks:
 
@@ -74,7 +92,7 @@ Before posting findings, apply these verification checks:
 - **Recency check**: prefer findings from the last 12 months. For libraries, always use the latest stable version (not beta/RC unless explicitly relevant).
 - **No LLM self-assessment**: never assign confidence scores based on your own judgment. Confidence comes from source quality and cross-source agreement only.
 
-### 7. Graceful Degradation
+### 8. Graceful Degradation
 
 If after applying relevance gate you have 0 sources (or all searches return nothing), post:
 
@@ -82,11 +100,11 @@ If after applying relevance gate you have 0 sources (or all searches return noth
 ## Research Findings — No relevant results found for this topic.
 ```
 
-Then output JSON per §10 Completion Format.
+Then output JSON per §9 Completion Format.
 
 If some sources pass but others fail, proceed with passing sources only. Do not fabricate findings.
 
-### 10. Completion Format
+### 9. Completion Format
 
 At end (or when dedup triggers, or graceful degradation yields nothing), output a JSON object:
 
