@@ -93,8 +93,8 @@ function makeProjectFields(statusFieldId: string): ProjectField[] {
 			type: "single_select",
 			options: [
 				{ id: "opt_bk", name: "Backlog" },
-				{ id: "opt_ar", name: "Architecture" },
 				{ id: "opt_re", name: "Research" },
+				{ id: "opt_ar", name: "Architecture" },
 				{ id: "opt_td", name: "TestDesign" },
 				{ id: "opt_im", name: "Implementation" },
 				{ id: "opt_au", name: "Audit" },
@@ -244,13 +244,13 @@ describe("calculateNextStatus()", () => {
 		assert.equal(result.status, "Implementation");
 	});
 
-	it("falls back to textOutput when textOnly has no marker", () => {
+	it("falls back to textOutput when textOnly has no marker — Architect → TestDesign", () => {
 		const result = calculateNextStatus(
 			"architect",
 			"Some output\nARCHITECTURE_COMPLETE",
 			"text only no markers here",
 		);
-		assert.equal(result.status, "Research");
+		assert.equal(result.status, "TestDesign");
 	});
 
 	it("infers forward status when no marker found", () => {
@@ -260,16 +260,16 @@ describe("calculateNextStatus()", () => {
 		assert.equal(result.status, "Audit");
 	});
 
-	it("last occurrence wins (overrides earlier markers)", () => {
-		// Researcher can map to both TestDesign and Architecture (via canLoopBackTo)
+	it("last occurrence wins (overrides earlier markers) — Architect FEEDBACK_RESEARCH", () => {
+		// Architect now has FEEDBACK_RESEARCH → Research (feedback loop)
 		// Test: last marker wins
 		const result = calculateNextStatus(
-			"researcher",
-			"RESEARCH_COMPLETE\nsome text\nFEEDBACK_ARCHITECTURE",
-			"RESEARCH_COMPLETE\nsome text\nFEEDBACK_ARCHITECTURE",
+			"architect",
+			"ARCHITECTURE_COMPLETE\nsome text\nFEEDBACK_RESEARCH",
+			"ARCHITECTURE_COMPLETE\nsome text\nFEEDBACK_RESEARCH",
 		);
-		// Last marker is FEEDBACK_ARCHITECTURE → Architecture
-		assert.equal(result.status, "Architecture");
+		// Last marker is FEEDBACK_RESEARCH → Research
+		assert.equal(result.status, "Research");
 	});
 
 	it("returns null for unknown agent name", () => {
@@ -418,7 +418,7 @@ describe("buildAgentResultEntry()", () => {
 describe("handleBacklogTransition()", () => {
 	const statusFieldId = "sf_status";
 
-	it("calls setItemStatus with correct args and returns 'Architecture' on success", async () => {
+	it("calls setItemStatus with correct args and returns 'Research' on success", async () => {
 		const calls: ExecCall[] = [];
 		// setItemStatus calls gh(pi, ["project", "item-edit", ...])
 		// which calls pi.exec("gh", [...])
@@ -432,7 +432,7 @@ describe("handleBacklogTransition()", () => {
 			"item_123",
 			"project_456",
 		);
-		assert.equal(result, "Architecture");
+		assert.equal(result, "Research");
 
 		// Verify the gh project item-edit call was made
 		assert.ok(calls.length >= 1);
@@ -442,9 +442,9 @@ describe("handleBacklogTransition()", () => {
 		assert.ok(ghCall!.args.includes("project_456"));
 	});
 
-	it("throws when 'Architecture' option not found", async () => {
+	it("throws when 'Research' option not found", async () => {
 		const pi = createMockPi([{ code: 0, stdout: "", stderr: "" }]);
-		// No "Architecture" option
+		// No "Research" option
 		const fields: ProjectField[] = [
 			{
 				id: statusFieldId,
@@ -452,14 +452,14 @@ describe("handleBacklogTransition()", () => {
 				type: "single_select",
 				options: [
 					{ id: "opt_bk", name: "Backlog" },
-					{ id: "opt_re", name: "Research" },
+					{ id: "opt_ar", name: "Architecture" },
 				],
 			},
 		];
 
 		await assert.rejects(
 			() => handleBacklogTransition(pi, fields, statusFieldId, "item_123", "project_456"),
-			/Cannot find 'Architecture' status option/,
+			/Cannot find 'Research' status option/,
 		);
 	});
 
