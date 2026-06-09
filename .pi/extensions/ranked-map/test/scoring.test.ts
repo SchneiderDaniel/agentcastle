@@ -1235,4 +1235,27 @@ describe("applyPathBoost", () => {
 		const result = applyPathBoost(scores, ["extension"]);
 		assert.strictEqual(result["src/extension.ts"], 0.75);
 	});
+
+	it("handles \\b-wrapped variants from expandTerm output", () => {
+		// expandTerm now produces patterns like "(\bextension\b|\bextensions\b)"
+		// In TScript/JS string literals, "\\b" represents the two-character sequence backslash-b
+		const scores = { ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(\\bextension\\b|\\bextensions\\b)"]);
+		// The \b wrapping should be stripped, leaving "extension" and "extensions"
+		// to match against the path
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.75);
+	});
+
+	it("handles mixed \\b-wrapped and non-wrapped alternatives", () => {
+		const scores = { "src/auth.ts": 0.5, ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(\\bauth\\b|login)"]);
+		assert.strictEqual(result["src/auth.ts"], 0.75, "auth with \\b should match");
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.5, "login should not match");
+	});
+
+	it("handles \\b-wrapped single alternative", () => {
+		const scores = { "src/extension.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(\\bextension\\b)"]);
+		assert.strictEqual(result["src/extension.ts"], 0.75);
+	});
 });

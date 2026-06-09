@@ -97,14 +97,18 @@ describe("expandTerm — suffix stripping and derivation", () => {
 		assert.equal(expandTerm("   "), "");
 	});
 
-	it("term with no known suffix: delete → (delete|deleted|deleting|deletes|del)", () => {
+	it("term with no known suffix: delete → (delete|deleted|deleting|deletes|dele)", () => {
 		const result = expandTerm("delete");
 		assert.ok(result.includes("delete"), "should include original");
 		assert.ok(result.includes("deleted"), "should include -ed derivation");
 		assert.ok(result.includes("deleting"), "should include -ing derivation");
 		assert.ok(result.includes("deletes"), "should include plural");
-		// First-3 shorthand for 6-char word starting with 'del'
-		assert.ok(result.includes("del"), "should include first-3 shorthand for delete");
+		// First-4 shorthand for 6-char word, no more first-3
+		assert.ok(result.includes("dele"), "should include first-4 shorthand for delete");
+		assert.ok(
+			!result.includes("|del|") && !result.includes("|del)"),
+			"should NOT include first-3 shorthand del",
+		);
 	});
 
 	it("uses first-4 shorthand for words > 5 chars: configuration → (configuration|...|conf)", () => {
@@ -113,10 +117,14 @@ describe("expandTerm — suffix stripping and derivation", () => {
 		assert.ok(result.includes("config"), "should include first-4 shorthand");
 	});
 
-	it("uses first-3 shorthand for words ending with common prefix: del → delete derivatives", () => {
-		// "delete" is 6 chars, so first-N shorthand is first 4 chars
+	it("uses first-4 shorthand for words > 5 chars, no 3-char shorthand", () => {
+		// "delete" is 6 chars, so first-N shorthand is first 4 chars (dele), not first-3 (del)
 		const result = expandTerm("delete");
-		assert.ok(result.includes("del"), "should include shorthand for delete");
+		assert.ok(result.includes("dele"), "should include first-4 shorthand for delete");
+		assert.ok(
+			!result.includes("|del|") && !result.includes("|del)"),
+			"should NOT include 3-char shorthand del",
+		);
 	});
 
 	it("includes plural of stripped base: cache → (cache|cached|caching|caches)", () => {
@@ -237,9 +245,9 @@ describe("expandQuery — multi-term expansion with synonyms", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("expandTerm — edge cases", () => {
-	it("single character term: a → (a)", () => {
+	it("single character term: a → (\\ba\\b)", () => {
 		const result = expandTerm("a");
-		assert.equal(result, "(a)");
+		assert.equal(result, "(\\ba\\b)");
 	});
 
 	it("two character term: ok → (ok|oks)", () => {
@@ -276,14 +284,248 @@ describe("expandTerm — edge cases", () => {
 	});
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 4: \\b word boundary wrapping
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("expandTerm — \\b word boundary wrapping", () => {
+	it("wraps each variant with \\b in the output", () => {
+		const result = expandTerm("extension");
+		// At runtime, \\b is the two-character sequence \ + b
+		assert.ok(result.includes("\\bextension\\b"), "should wrap extension with \\b");
+		assert.ok(result.includes("\\bextensions\\b"), "should wrap extensions with \\b");
+		assert.ok(result.includes("\\bexten\\b"), "should wrap exten shorthand with \\b");
+	});
+
+	it("\\b-wrapped pattern matches word exactly, not as substring", () => {
+		const result = expandTerm("extension");
+		// Remove outer parens to get alternation group
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const regex = new RegExp(inner, "i");
+
+		assert.ok(regex.test("extension"), "should match 'extension'");
+		assert.ok(!regex.test("someextensionthing"), "should NOT match inside 'someextensionthing'");
+	});
+
+	it("\\b-wrapped pattern does NOT match 'text' or 'context'", () => {
+		const result = expandTerm("extension");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const regex = new RegExp(inner, "i");
+
+		assert.ok(!regex.test("text"), "should NOT match text");
+		assert.ok(!regex.test("context"), "should NOT match context");
+	});
+
+	it("\\b-wrapped pattern matches at word boundary before space", () => {
+		const result = expandTerm("extension");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const regex = new RegExp(inner, "i");
+
+		assert.ok(regex.test("extensions middleware"), "should match 'extensions middleware'");
+		assert.ok(regex.test("build/extension.ts"), "should match 'build/extension.ts'");
+	});
+
+	it("config pattern matches 'config' and 'configs' but not 'preconfigured'", () => {
+		const result = expandTerm("config");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const regex = new RegExp(inner, "i");
+
+		assert.ok(regex.test("config"), "should match 'config'");
+		assert.ok(regex.test("configs"), "should match 'configs'");
+		// "configure" contains "config" but with \b boundary it won't match
+		assert.ok(
+			!regex.test("configure"),
+			"should NOT match 'configure' (\\b boundary between g and u)",
+		);
+		assert.ok(!regex.test("preconfigured"), "should NOT match 'preconfigured'");
+	});
+
+	it("token pattern matches 'token' and 'tokens' but not 'tokenize'", () => {
+		const result = expandTerm("token");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const regex = new RegExp(inner, "i");
+
+		assert.ok(regex.test("token"), "should match 'token'");
+		assert.ok(regex.test("tokens"), "should match 'tokens'");
+		assert.ok(!regex.test("tokenize"), "should NOT match inside 'tokenize'");
+	});
+
+	it("single-char term 'a' wrapped with \\b", () => {
+		const result = expandTerm("a");
+		// Single char should be \\b a \\b
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const regex = new RegExp(inner, "i");
+
+		assert.ok(regex.test("a"), "should match 'a' alone");
+		assert.ok(!regex.test("cat"), "should NOT match inside 'cat'");
+	});
+
+	it("hyphenated term 'set-up' pattern matches at word boundaries", () => {
+		const result = expandTerm("set-up");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const regex = new RegExp(inner, "i");
+
+		assert.ok(regex.test("set-up"), "should match 'set-up'");
+	});
+
+	it("delete pattern matches 'delete', 'deleted' but not 'predeleted'", () => {
+		const result = expandTerm("delete");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const regex = new RegExp(inner, "i");
+
+		assert.ok(regex.test("delete"), "should match 'delete'");
+		assert.ok(regex.test("deleted"), "should match 'deleted'");
+		assert.ok(!regex.test("predeleted"), "should NOT match 'predeleted'");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 5: Minimum 4-char shorthand length
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("expandTerm — minimum 4-char shorthand length", () => {
+	it("expandTerm('extension') does NOT include 'ext'", () => {
+		const result = expandTerm("extension");
+		assert.ok(result.includes("exten"), "should include first-4 shorthand 'exten'");
+		// Check that 'ext' is NOT a standalone variant (could be part of 'exten', 'extensions', etc.)
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const variants = inner.split("|");
+		assert.ok(
+			variants.some((v) => v === "\\bexten\\b"),
+			"should have \\bexten\\b variant",
+		);
+		assert.ok(
+			!variants.some((v) => /^\\\\bext\\\\b$/.test(v)),
+			"should NOT have \\bext\\b variant",
+		);
+	});
+
+	it("expandTerm('delete') includes 'dele' (first-4) not 'del' (first-3)", () => {
+		const result = expandTerm("delete");
+		assert.ok(result.includes("dele"), "should include first-4 shorthand 'dele'");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const variants = inner.split("|");
+		assert.ok(!variants.some((v) => v === "\\bdel\\b"), "should NOT have \\bdel\\b variant");
+	});
+
+	it("expandTerm('cache') (length 5) produces no first-N shorthand", () => {
+		const result = expandTerm("cache");
+		// cache is 5 chars, so no first-N shorthand (only > 5 gets first-4)
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const variants = inner.split("|");
+		// Should only have original + derivations, no 3-char or 4-char shorthand
+		assert.ok(result.includes("cache"), "should include original");
+		assert.ok(result.includes("cached"), "should include cached");
+		assert.ok(result.includes("caching"), "should include caching");
+		assert.ok(result.includes("caches"), "should include caches");
+		// Count variants: cache + cached + caching + caches = 4
+		assert.equal(variants.length, 4, "should have exactly original + 3 derivations, no shorthand");
+	});
+
+	it("expandTerm('ab') (length 2) unchanged — no shorthand", () => {
+		const result = expandTerm("ab");
+		assert.ok(result.includes("ab"), "should include original");
+		assert.ok(result.includes("abs"), "should include plural");
+	});
+
+	it("expandTerm('run') (length 3) unchanged — no shorthand", () => {
+		const result = expandTerm("run");
+		assert.equal(result.split("|").length, 2, "should have original + plural only");
+	});
+
+	it("expandTerm('config') (length 6) includes 4-char shorthand 'conf' not 3-char 'con'", () => {
+		const result = expandTerm("config");
+		assert.ok(result.includes("conf"), "should include first-4 shorthand 'conf'");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const variants = inner.split("|");
+		assert.ok(!variants.some((v) => v === "\\bcon\\b"), "should NOT have 3-char 'con' variant");
+	});
+
+	it("expandTerm('authentication') includes 'auth' but not 'aut'", () => {
+		const result = expandTerm("authentication");
+		assert.ok(result.includes("auth"), "should include first-4 shorthand 'auth'");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const variants = inner.split("|");
+		assert.ok(!variants.some((v) => v === "\\baut\\b"), "should NOT have 3-char 'aut' variant");
+	});
+
+	it("expandTerm('v2') (length 2) unchanged — no shorthand", () => {
+		const result = expandTerm("v2");
+		assert.ok(result.includes("v2"), "should include original");
+		assert.ok(result.includes("v2s"), "should include plural");
+		const inner = result.startsWith("(") && result.endsWith(")") ? result.slice(1, -1) : result;
+		const variants = inner.split("|");
+		assert.equal(variants.length, 2, "should have original + plural only");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 6: expandQuery with \\b synonym wrapping
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("expandQuery — \\b synonym wrapping", () => {
+	it("synonyms are wrapped with \\b in output", () => {
+		const synonyms = {
+			delete: ["remove", "destroy"],
+		};
+		const result = expandQuery("delete", synonyms);
+		const pattern = result[0]!;
+		assert.ok(pattern.includes("\\bremove\\b"), "synonym 'remove' should be wrapped with \\b");
+		assert.ok(pattern.includes("\\bdestroy\\b"), "synonym 'destroy' should be wrapped with \\b");
+	});
+
+	it("synonyms don't get duplicated when wrapped", () => {
+		const synonyms = {
+			delete: ["remove"],
+		};
+		const result = expandQuery("delete", synonyms);
+		const pattern = result[0]!;
+		// Should appear exactly once
+		const occurrences = pattern.match(/\\bremove\\b/g);
+		assert.equal(occurrences?.length, 1, "synonym should appear exactly once");
+	});
+
+	it("empty synonyms map still produces \\b-wrapped derivatives", () => {
+		const result = expandQuery("extension");
+		const pattern = result[0]!;
+		assert.ok(
+			pattern.includes("\\bextension\\b"),
+			"derivatives wrapped with \\b even without synonyms",
+		);
+	});
+
+	it("synonym wrapping is case-preserving", () => {
+		const synonyms = {
+			file: ["File"],
+		};
+		const result = expandQuery("file", synonyms);
+		const pattern = result[0]!;
+		assert.ok(pattern.includes("\\bFile\\b"), "synonym preserves case with \\b wrapping");
+	});
+
+	it("synonyms merged with existing \\b-wrapped variants have no duplicates", () => {
+		const synonyms = {
+			cache: ["cached"], // 'cached' is already a derivative
+		};
+		const result = expandQuery("cache", synonyms);
+		const pattern = result[0]!;
+		const occurrences = pattern.match(/\\bcached\\b/g);
+		assert.equal(occurrences?.length, 1, "cached should appear exactly once even in synonyms");
+	});
+});
+
 describe("expandQuery — edge cases", () => {
 	it("very long query terms produce reasonable patterns", () => {
 		const result = expandQuery("internationalization");
 		assert.ok(result.length === 1);
 		const pattern = result[0]!;
-		// Should include original and shorter variants
-		assert.ok(pattern.includes("internationalization"), "original");
-		assert.ok(pattern.includes("internationaliz"), "first-4 chars prefix base");
+		// Should include original, suffix-stripped root with -ize, and first-4 shorthand
+		assert.ok(pattern.includes("\\binternationalization\\b"), "original wrapped");
+		assert.ok(
+			pattern.includes("\\binternationalize\\b"),
+			"should derive -ize variant from -ization",
+		);
+		assert.ok(pattern.includes("\\binte\\b"), "should include first-4 shorthand 'inte'");
 	});
 
 	it("synonyms with special characters: regex safe handling", () => {
@@ -293,8 +535,17 @@ describe("expandQuery — edge cases", () => {
 		// Synonyms should be included verbatim (user-provided, so assumed safe for regex)
 		const result = expandQuery("file", synonyms);
 		const pattern = result[0]!;
-		assert.ok(pattern.includes("f(oo)"), "synonym with parens included");
-		assert.ok(pattern.includes("bar?"), "synonym with ? included");
-		assert.ok(pattern.includes("baz*"), "synonym with * included");
+		assert.ok(
+			pattern.includes("\\bf(oo)\b") || pattern.includes("(oo)"),
+			"synonym with parens included",
+		);
+		assert.ok(
+			pattern.includes("\\bbar?\\b") || pattern.includes("bar?"),
+			"synonym with ? included",
+		);
+		assert.ok(
+			pattern.includes("\\bbaz*\\b") || pattern.includes("baz*"),
+			"synonym with * included",
+		);
 	});
 });
