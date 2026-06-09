@@ -102,146 +102,69 @@ function readSource(filename: string): string {
 
 // ── Phase 2: production files remove local copies, import shared ──
 
-describe("executor.ts — no local ExecResult/ExecFn, imports from types.ts", () => {
-	const source = readSource("executor.ts");
-
-	it("(D) executor.ts no local interface ExecResult", () => {
-		assertNoLocalInterface(source, "ExecResult", "executor.ts");
-	});
-
-	it("(D) executor.ts no local interface ExecFn", () => {
-		assertNoLocalInterface(source, "ExecFn", "executor.ts");
-	});
-
-	it("(D) executor.ts imports ExecResult and ExecFn from ./types.ts", () => {
-		assert.ok(
-			hasImportFromTypes(source, ["ExecResult", "ExecFn"]),
-			'executor.ts should import ExecResult and ExecFn from "./types"',
-		);
-	});
-});
-
-describe("backends.ts — no local ExecResult/ExecFn, imports from types.ts", () => {
-	const source = readSource("backends.ts");
-
-	it("(D) backends.ts no local interface ExecResult", () => {
-		assertNoLocalInterface(source, "ExecResult", "backends.ts");
-	});
-
-	it("(D) backends.ts no local interface ExecFn", () => {
-		assertNoLocalInterface(source, "ExecFn", "backends.ts");
-	});
-
-	it("(D) backends.ts imports ExecResult and ExecFn from ./types.ts", () => {
-		assert.ok(
-			hasImportFromTypes(source, ["ExecResult", "ExecFn"]),
-			'backends.ts should import ExecResult and ExecFn from "./types"',
-		);
-	});
-});
-
-describe("venv-setup.ts — no local ExecResult/ExecFn, imports from types.ts", () => {
+describe("venv-setup.ts — no local ExecFn, imports from types.ts", () => {
 	const source = readSource("venv-setup.ts");
-
-	it("(D) venv-setup.ts no local interface ExecResult", () => {
-		assertNoLocalInterface(source, "ExecResult", "venv-setup.ts");
-	});
 
 	it("(D) venv-setup.ts no local interface ExecFn", () => {
 		assertNoLocalInterface(source, "ExecFn", "venv-setup.ts");
 	});
 
-	it("(D) venv-setup.ts imports ExecResult and ExecFn from ./types.ts", () => {
+	it("(D) venv-setup.ts imports ExecFn from ./types.ts", () => {
+		// New venv-setup.ts only imports ExecFn (not ExecResult)
+		const pattern = /import\s+type\s*\{[^}]*\bExecFn\b[^}]*\}\s*from\s+["']\.\/types(?:\.ts)?["']/;
+		assert.ok(pattern.test(source), 'venv-setup.ts should import ExecFn from "./types"');
+	});
+});
+
+// ── Phase 3: scrapling-script.test.ts — verify SCRAPLING_SCRIPT imports from python-script.ts ──
+
+describe("test/scrapling-script.test.ts — imports SCRAPLING_SCRIPT from ../python-script.ts", () => {
+	const source = readSource("test/scrapling-script.test.ts");
+
+	it("(D) imports SCRAPLING_SCRIPT from ../python-script.ts", () => {
+		const pattern =
+			/import\s+\{[^}]*\bSCRAPLING_SCRIPT\b[^}]*\}\s*from\s+["']\.\.\/python-script(?:\.ts)?["']/;
 		assert.ok(
-			hasImportFromTypes(source, ["ExecResult", "ExecFn"]),
-			'venv-setup.ts should import ExecResult and ExecFn from "./types"',
+			pattern.test(source),
+			'test/scrapling-script.test.ts should import SCRAPLING_SCRIPT from "../python-script"',
 		);
 	});
 });
 
-// ── Phase 3: test files remove local copies, import shared ──
+// ── Phase 4: venv-setup-scrapling.test.ts — imports ensureScraplingVenv and VENV_DIR ──
 
-describe("test/executor.test.ts — no local ExecResult/ExecHandler, imports from types.ts", () => {
-	const source = readSource("test/executor.test.ts");
+describe("test/venv-setup-scrapling.test.ts — imports from ../venv-setup.ts", () => {
+	const source = readSource("test/venv-setup-scrapling.test.ts");
 
-	it("(D) test/executor.test.ts no local interface ExecResult", () => {
-		assertNoLocalInterface(source, "ExecResult", "test/executor.test.ts");
-	});
-
-	it("(D) test/executor.test.ts no local full ExecHandler type definition", () => {
-		assertNoLocalFullType(source, "ExecHandler", "test/executor.test.ts");
-	});
-
-	it("(D) test/executor.test.ts imports ExecResult and ExecFn from ../types.ts", () => {
-		// For test files, use ../types pattern
+	it("(D) imports ensureScraplingVenv from ../venv-setup.ts", () => {
 		const pattern =
-			/import\s+type\s*\{[^}]*\bExecResult\b[^}]*\bExecFn\b[^}]*\}\s*from\s+["']\.\.\/types(?:\.ts)?["']/;
+			/import\s+\{[^}]*\bensureScraplingVenv\b[^}]*\}\s*from\s+["']\.\.\/venv-setup(?:\.ts)?["']/;
 		assert.ok(
 			pattern.test(source),
-			'test/executor.test.ts should import ExecResult and ExecFn from "../types"',
+			'test/venv-setup-scrapling.test.ts should import ensureScraplingVenv from "../venv-setup"',
+		);
+	});
+
+	it("(D) imports VENV_DIR from ../venv-setup.ts", () => {
+		const pattern =
+			/import\s+\{[^}]*\bVENV_DIR\b[^}]*\}\s*from\s+["']\.\.\/venv-setup(?:\.ts)?["']/;
+		assert.ok(
+			pattern.test(source),
+			'test/venv-setup-scrapling.test.ts should import VENV_DIR from "../venv-setup"',
 		);
 	});
 });
 
-describe("test/backends.test.ts — no local ExecResult/ExecHandler, imports from types.ts", () => {
-	const source = readSource("test/backends.test.ts");
+// ── Phase 5: index.test.ts — verify tool import (no local ExecResult/ExecFn needed since test is self-contained) ──
 
-	it("(D) test/backends.test.ts no local interface ExecResult", () => {
-		assertNoLocalInterface(source, "ExecResult", "test/backends.test.ts");
+describe("test/index.test.ts — no local ExecResult/ExecFn definitions", () => {
+	const source = readSource("test/index.test.ts");
+
+	it("(D) test/index.test.ts no local interface ExecResult", () => {
+		assertNoLocalInterface(source, "ExecResult", "test/index.test.ts");
 	});
 
-	it("(D) test/backends.test.ts no local full ExecHandler type definition", () => {
-		assertNoLocalFullType(source, "ExecHandler", "test/backends.test.ts");
-	});
-
-	it("(D) test/backends.test.ts imports ExecResult and ExecFn from ../types.ts", () => {
-		const pattern =
-			/import\s+type\s*\{[^}]*\bExecResult\b[^}]*\bExecFn\b[^}]*\}\s*from\s+["']\.\.\/types(?:\.ts)?["']/;
-		assert.ok(
-			pattern.test(source),
-			'test/backends.test.ts should import ExecResult and ExecFn from "../types"',
-		);
-	});
-});
-
-describe("test/venv-setup.test.ts — no local ExecResult/ExecHandler, imports from types.ts", () => {
-	const source = readSource("test/venv-setup.test.ts");
-
-	it("(D) test/venv-setup.test.ts no local interface ExecResult", () => {
-		assertNoLocalInterface(source, "ExecResult", "test/venv-setup.test.ts");
-	});
-
-	it("(D) test/venv-setup.test.ts no local full ExecHandler type definition", () => {
-		assertNoLocalFullType(source, "ExecHandler", "test/venv-setup.test.ts");
-	});
-
-	it("(D) test/venv-setup.test.ts imports ExecResult and ExecFn from ../types.ts", () => {
-		const pattern =
-			/import\s+type\s*\{[^}]*\bExecResult\b[^}]*\bExecFn\b[^}]*\}\s*from\s+["']\.\.\/types(?:\.ts)?["']/;
-		assert.ok(
-			pattern.test(source),
-			'test/venv-setup.test.ts should import ExecResult and ExecFn from "../types"',
-		);
-	});
-});
-
-describe("test/crawl4ai.test.mts — no local ExecResult/ExecFn, imports from types.ts", () => {
-	const source = readSource("test/crawl4ai.test.mts");
-
-	it("(D) test/crawl4ai.test.mts no local interface ExecResult", () => {
-		assertNoLocalInterface(source, "ExecResult", "test/crawl4ai.test.mts");
-	});
-
-	it("(D) test/crawl4ai.test.mts no local full ExecFn type definition", () => {
-		assertNoLocalFullType(source, "ExecFn", "test/crawl4ai.test.mts");
-	});
-
-	it("(D) test/crawl4ai.test.mts imports ExecResult and ExecFn from ../types.ts", () => {
-		const pattern =
-			/import\s+type\s*\{[^}]*\bExecResult\b[^}]*\bExecFn\b[^}]*\}\s*from\s+["']\.\.\/types(?:\.ts)?["']/;
-		assert.ok(
-			pattern.test(source),
-			'test/crawl4ai.test.mts should import ExecResult and ExecFn from "../types"',
-		);
+	it("(D) test/index.test.ts no local full ExecFn type definition", () => {
+		assertNoLocalFullType(source, "ExecFn", "test/index.test.ts");
 	});
 });

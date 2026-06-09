@@ -69,14 +69,17 @@ export async function pushBranch(
 	throw new Error(`git push failed: ${stderr}`);
 }
 
-/** Add all, commit, and push in sequence. */
+/**
+ * Add all, commit, and push in sequence.
+ * @returns true if commits were pushed, false if nothing to commit (no changes).
+ */
 export async function commitAndPush(
 	pi: ExtensionAPI,
 	cwd: string,
 	remote: string,
 	branch: string,
 	message: string,
-): Promise<void> {
+): Promise<boolean> {
 	const log = getDebugLogger();
 	log.info("git", `commitAndPush starting: ${branch}`, {
 		cwd,
@@ -112,4 +115,5 @@ export async function commitAndPush(
 
 	await pushBranch(pi, cwd, remote, branch);
 	log.info("git", `commitAndPush complete: ${branch}`);
+	return true;
 }

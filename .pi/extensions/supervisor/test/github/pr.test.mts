@@ -107,43 +107,27 @@ describe("createPullRequest()", () => {
 		assert.ok(callArgs.includes("/tmp/body.md"));
 	});
 
-	it("passes --json number flag to gh pr create for machine-parseable output", async () => {
+	it("parses PR number from URL output (gh pr create default format)", async () => {
 		const calls: Array<{ cmd: string; args: string[] }> = [];
 		const pi = {
 			exec: ((cmd: string, args: string[]) => {
 				calls.push({ cmd, args });
-				return Promise.resolve({ code: 0, stdout: '{"number":789}', stderr: "" });
+				return Promise.resolve({
+					code: 0,
+					stdout: "https://github.com/owner/repo/pull/456",
+					stderr: "",
+				});
 			}) as ExtensionAPI["exec"],
 		} as unknown as ExtensionAPI;
 		const result = await createPullRequest(pi, "owner/repo", "main", "feature", "PR title");
-		assert.equal(result.number, 789, "should parse PR number from JSON output");
-		// Verify --json number is passed
+		assert.equal(result.number, 456, "should parse PR number from URL");
+		// Verify --json is NOT passed (gh pr create does not support it)
 		const args = calls[0].args;
-		assert.ok(args.includes("--json"), "should include --json flag");
-		const jsonIdx = args.indexOf("--json");
-		assert.equal(args[jsonIdx + 1], "number", "should request 'number' field in JSON output");
+		assert.equal(args.includes("--json"), false, "should NOT include --json flag");
 	});
 
-	it("can parse both URL and --json number formats for backward compat", async () => {
-		// URL format (no --json number specified, we still handle it via gh which returns URL)
-		const pi1 = createMockPi({ code: 0, stdout: "https://github.com/o/r/pull/42", stderr: "" });
-		const r1 = await createPullRequest(pi1, "o/r", "main", "b1", "title");
-		assert.equal(r1.number, 42);
-
-		// JSON format (--json number)
-		const calls2: Array<{ cmd: string; args: string[] }> = [];
-		const pi2 = {
-			exec: ((cmd: string, args: string[]) => {
-				calls2.push({ cmd, args });
-				return Promise.resolve({ code: 0, stdout: '{"number":99}', stderr: "" });
-			}) as ExtensionAPI["exec"],
-		} as unknown as ExtensionAPI;
-		const r2 = await createPullRequest(pi2, "o/r", "main", "b2", "title");
-		assert.equal(r2.number, 99);
-	});
-
-	it("throws when gh --json number output is malformed JSON", async () => {
-		const pi = createMockPi({ code: 0, stdout: "not-json-at-all", stderr: "" });
+	it("throws when gh output has no parseable PR number", async () => {
+		const pi = createMockPi({ code: 0, stdout: "unexpected output without number", stderr: "" });
 		await assert.rejects(
 			() => createPullRequest(pi, "owner/repo", "main", "feature", "PR title"),
 			/failed to parse PR number/,

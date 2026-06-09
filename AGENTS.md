@@ -30,6 +30,8 @@ Core philosophies:
 - Correct: `structural_search`
 - Wrong: `ripgrep_search`, `bash | grep`
 
+  Use `structural_search` when reading code files to find function definitions, class declarations, method calls, try/catch blocks — avoids text-match noise from comments/strings. Prefer this over reading entire files when you need to locate specific code structures.
+
 **Read** file contents
 
 - Correct: `read(path, offset?, limit?)`
@@ -68,7 +70,9 @@ Tool error → stop → change args, tool, or ask user
 
 ## Package Safety
 
-Before npm install from public registry: `npm view <pkg> time.created`
+The supervisor pipeline automatically runs `runPackageSafetyAudit` (in `.pi/extensions/supervisor/checks/package-safety.ts`) during Implementation→Audit transition, checking all `package.json` dependencies. Before npm install from public registry, you can also verify manually:
+
+`npm view <pkg> time.created`
 
 - < 14 days old → block: "Package <name> is <X> days old — below 14-day safety threshold. Cannot install."
 - Command fails or field missing → block (fail closed)

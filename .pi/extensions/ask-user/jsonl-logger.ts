@@ -7,8 +7,7 @@
  * Testable standalone.
  */
 
-import * as fs from "node:fs/promises";
-import * as fsSync from "node:fs";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import type { QnaEntry } from "./types.ts";
 
@@ -152,7 +151,7 @@ function listArchiveIndices(projectDir: string): number[] {
 	const dir = contextDir(projectDir);
 	let entries: string[];
 	try {
-		entries = fsSync.readdirSync(dir);
+		entries = fs.readdirSync(dir);
 	} catch {
 		return [];
 	}
@@ -182,7 +181,7 @@ function listArchiveIndices(projectDir: string): number[] {
  */
 function countLines(filePath: string): number {
 	try {
-		const content = fsSync.readFileSync(filePath, "utf-8");
+		const content = fs.readFileSync(filePath, "utf-8");
 		if (content.length === 0) return 0;
 		// Split, then drop trailing empty from terminal newline
 		const lines = content.split("\n");
@@ -203,7 +202,7 @@ function countLines(filePath: string): number {
  */
 async function rotateQnaFile(projectDir: string): Promise<void> {
 	const dir = contextDir(projectDir);
-	await fs.mkdir(dir, { recursive: true });
+	await fs.promises.mkdir(dir, { recursive: true });
 
 	// Find next unused index
 	const existing = listArchiveIndices(projectDir);
@@ -211,7 +210,7 @@ async function rotateQnaFile(projectDir: string): Promise<void> {
 
 	// Rename active → qna_NNNN.jsonl
 	try {
-		await fs.rename(jsonlPath(projectDir), rotatedJsonlPath(projectDir, nextIdx));
+		await fs.promises.rename(jsonlPath(projectDir), rotatedJsonlPath(projectDir, nextIdx));
 	} catch {
 		/* no-op */
 	}
@@ -243,14 +242,14 @@ export async function appendQnaEntry(
 	const dir = contextDir(projectDir);
 	const filePath = jsonlPath(projectDir);
 
-	await fs.mkdir(dir, { recursive: true });
+	await fs.promises.mkdir(dir, { recursive: true });
 
 	// Rotate if active file at or above threshold
 	if (countLines(filePath) >= MAX_LINES_PER_FILE) {
 		await rotateQnaFile(projectDir);
 	}
 
-	await fs.appendFile(filePath, toJsonlLine(entry), "utf-8");
+	await fs.promises.appendFile(filePath, toJsonlLine(entry), "utf-8");
 
 	return entry;
 }
@@ -271,7 +270,7 @@ export async function appendQnaEntry(
 async function readOneJsonlFile(filePath: string): Promise<QnaEntry[]> {
 	let content: string;
 	try {
-		content = await fs.readFile(filePath, "utf-8");
+		content = await fs.promises.readFile(filePath, "utf-8");
 	} catch (err: unknown) {
 		if ((err as NodeJS.ErrnoException).code === "ENOENT") {
 			return [];
@@ -464,21 +463,21 @@ export async function migrateQnaFromCsv(
 	const jsonlFile = jsonlPath(projectDir);
 
 	// Check if CSV exists
-	if (!fsSync.existsSync(csvFile)) {
+	if (!fs.existsSync(csvFile)) {
 		return { migrated: 0, skipped: 0 };
 	}
 
 	// Atomically rename CSV to temp path. If rename fails (permissions, disk
 	// error), no entries have been written yet — throw for safe retry.
 	const tmpFile = csvFile + ".tmp." + Date.now();
-	fsSync.renameSync(csvFile, tmpFile);
+	fs.renameSync(csvFile, tmpFile);
 
 	let migrated = 0;
 	let skipped = 0;
 
 	try {
 		// Read content from the temp file (former CSV)
-		const content = fsSync.readFileSync(tmpFile, "utf-8");
+		const content = fs.readFileSync(tmpFile, "utf-8");
 		const lines = splitCsvRows(content);
 
 		for (const line of lines) {
@@ -500,13 +499,13 @@ export async function migrateQnaFromCsv(
 			}
 
 			// Append to JSONL
-			await fs.appendFile(jsonlFile, toJsonlLine(entry), "utf-8");
+			await fs.promises.appendFile(jsonlFile, toJsonlLine(entry), "utf-8");
 			migrated++;
 		}
 
 		// All entries written. Delete temp file.
 		try {
-			fsSync.unlinkSync(tmpFile);
+			fs.unlinkSync(tmpFile);
 		} catch {
 			// Temp file unlink failure is non-fatal. Entries already committed.
 			console.warn(`Warning: Could not remove temp file ${tmpFile}`);
@@ -518,5 +517,31 @@ export async function migrateQnaFromCsv(
 		// Migration runs once per session (called from session_start handler), so
 		// even on failure no duplicate writes occur within the same session.
 		throw err;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Session start
+// ---------------------------------------------------------------------------
+
+/**
+ * Migrate Q&A from CSV to JSONL if a CSV file exists.
+ * Called at session start to migrate legacy CSV data.
+ * No-op if CSV doesn't exist.
+ * Errors are caught and logged as warnings — never throws.
+ */
+export async function migrateIfCsvExists(projectDir: string): Promise<void> {
+	const csvFilePath = path.join(projectDir, QNA_DIR, QNA_CONTEXT, QNA_CSV);
+	if (fs.existsSync(csvFilePath)) {
+		try {
+			const result = await migrateQnaFromCsv(projectDir);
+			if (result.migrated > 0 || result.skipped > 0) {
+				console.warn(
+					`Migration: ${result.migrated} entries migrated to qna.jsonl, ${result.skipped} skipped`,
+				);
+			}
+		} catch (err) {
+			console.warn(`Migration warning: ${(err as Error).message}`);
+		}
 	}
 }

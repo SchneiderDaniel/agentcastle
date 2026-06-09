@@ -5,10 +5,12 @@ node_modules
 tmp
 ignore/
 
-# crawl4ai auto-setup (venv + Chromium system libs)
-.pi/crawl4ai-venv/
+# scrapling auto-setup (venv + lock file)
+.pi/scrapling-venv/
+.pi/.scrapling-venv.lock
 .pi/web-search-venv/
-.pi/chromium-deps/
+.pi/chromium-deps
+.pi/crawl4ai-venv
 npm/
 custom/
 cache/

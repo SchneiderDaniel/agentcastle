@@ -372,7 +372,12 @@ function detectBashCat(data: SessionData): WasteSignal[] {
 }
 
 /**
- * D5: Error loop — tool error followed by retrying same tool (no strategy change).
+ * D5: Error loop — tool error followed by retrying same tool with same args (no strategy change).
+ *
+ * Fixes for #623 / #617:
+ * - Arg comparison: flags only when retries share same args (different args = strategy change)
+ * - Proportional cost split: wastes only retries beyond the first (first retry is reasonable)
+ * - False-positive filtering: skips single errors, different-args retries
  */
 function detectErrorLoop(data: SessionData): WasteSignal[] {
 	const results: WasteSignal[] = [];
@@ -385,30 +390,71 @@ function detectErrorLoop(data: SessionData): WasteSignal[] {
 		const window = data.entries.slice(errIdx + 1, errIdx + 9);
 		const sameToolRetries = window.filter((e) => e.toolName === err.toolName);
 
-		if (sameToolRetries.length >= 2) {
-			const waste = sumTokenCost(sameToolRetries);
-			const details = [
-				`\`${err.toolName}\` errored turn ${err.turnIndex}, retried ${sameToolRetries.length}x without changing approach`,
-			];
-			results.push({
-				signal: "error-loop",
-				label: "Error retry loop",
-				wastedTokens: waste,
-				wastedCost: sumDollarCost(sameToolRetries),
-				occurrences: sameToolRetries.length,
-				details,
-				context: {
-					toolName: err.toolName,
-					turnRange: [
-						err.turnIndex,
-						sameToolRetries[sameToolRetries.length - 1]?.turnIndex ?? err.turnIndex,
-					],
-				},
-			});
+		if (sameToolRetries.length < 2) continue;
+
+		// Compare args among retries — if args differ, it's strategy change not loop
+		// Group retries by args key; pick the largest group
+		const groups = groupBy(sameToolRetries, (e) => stableJsonKey(e.args));
+		let largest: { key: string; entries: SessionEntry[] } | undefined;
+		for (const g of groups) {
+			if (!largest || g.entries.length > largest.entries.length) {
+				largest = g;
+			}
 		}
+
+		if (!largest || largest.entries.length < 2) continue;
+
+		// Proportional waste: only retries beyond the first are wasteful
+		const wastefulRetries = largest.entries.slice(1);
+		const waste = sumTokenCost(wastefulRetries);
+		const cost = sumDollarCost(wastefulRetries);
+		const details = [
+			`\`${err.toolName}\` errored turn ${err.turnIndex}, retried ${largest.entries.length}x with same args — first retry is reasonable, ${wastefulRetries.length} subsequent retries wasted`,
+		];
+		results.push({
+			signal: "error-loop",
+			label: "Error retry loop",
+			wastedTokens: waste,
+			wastedCost: cost,
+			occurrences: wastefulRetries.length,
+			details,
+			context: {
+				toolName: err.toolName,
+				turnRange: [
+					err.turnIndex,
+					largest.entries[largest.entries.length - 1]?.turnIndex ?? err.turnIndex,
+				],
+			},
+		});
 	}
 
 	return results;
+}
+
+/** Stable JSON key for args comparison. */
+function stableJsonKey(args: Record<string, unknown> | undefined): string {
+	if (!args) return "__no_args__";
+	try {
+		const keys = Object.keys(args).sort();
+		return JSON.stringify(args, keys);
+	} catch {
+		return "__no_args__";
+	}
+}
+
+/** Group entries by a string key. */
+function groupBy<T>(items: T[], keyFn: (item: T) => string): Array<{ key: string; entries: T[] }> {
+	const map = new Map<string, T[]>();
+	for (const item of items) {
+		const key = keyFn(item);
+		const group = map.get(key);
+		if (group) {
+			group.push(item);
+		} else {
+			map.set(key, [item]);
+		}
+	}
+	return Array.from(map.entries()).map(([key, entries]) => ({ key, entries }));
 }
 
 /**
@@ -530,6 +576,91 @@ function detectTurnInefficiency(data: SessionData): WasteSignal[] {
 	return results;
 }
 
+// ── Code file extension helpers ──
+
+/** Code file extensions that trigger structural-search-underuse detection. */
+const CODE_FILE_EXTS = new Set([
+	".ts",
+	".js",
+	".py",
+	".tsx",
+	".jsx",
+	".mts",
+	".go",
+	".rs",
+	".java",
+	".c",
+	".cpp",
+	".swift",
+	".kt",
+]);
+
+/** True if the file path ends with a known code file extension. */
+function isCodeFilePath(filePath: string): boolean {
+	const extIdx = filePath.lastIndexOf(".");
+	if (extIdx < 0) return false;
+	const ext = filePath.slice(extIdx).toLowerCase();
+	return CODE_FILE_EXTS.has(ext);
+}
+
+/** Entry tool names that indicate a code file touch. */
+const CODE_TOUCH_TOOLS = new Set(["read", "edit", "write", "writeIfEmpty", "editExisting"]);
+
+/** Check if a session entry is a code file touch (read/edit/write on a code file). */
+function isCodeFileTouch(e: SessionEntry): boolean {
+	if (!CODE_TOUCH_TOOLS.has(e.toolName ?? "")) return false;
+	const p = getEntryPath(e);
+	return p.length > 0 && isCodeFilePath(p);
+}
+
+/** Check if a session entry has a given tool name. */
+function hasToolName(e: SessionEntry, name: string): boolean {
+	return e.toolName === name;
+}
+
+/**
+ * D8: Structural search underuse — 3+ code file touches with zero structural_search calls.
+ */
+function detectStructuralSearchUnderuse(data: SessionData): WasteSignal[] {
+	const results: WasteSignal[] = [];
+
+	// Check if any structural_search call exists
+	const hasStructuralSearch = data.entries.some((e) => hasToolName(e, "structural_search"));
+	if (hasStructuralSearch) return results;
+
+	// Collect code file touches
+	const codeTouches = data.entries.filter(isCodeFileTouch);
+	if (codeTouches.length < 3) return results;
+
+	// Check if all code touches are on the same file path (redundant-read territory, not ours)
+	const uniquePaths = new Set(codeTouches.map((e) => getEntryPath(e)));
+	if (uniquePaths.size === 1) return results;
+
+	// Calculate waste: sumTokenCost of offending calls minus structural_search overhead
+	const waste = sumTokenCost(codeTouches);
+	// Estimate 1 structural_search call would have been sufficient
+	const estimatedSearchCost = 50;
+	const actualWaste = Math.max(0, waste - estimatedSearchCost);
+
+	const details = codeTouches.map(
+		(e) => `${e.toolName} ${getEntryPath(e)} (turn ${e.turnIndex}) instead of structural_search`,
+	);
+
+	results.push({
+		signal: "structural-search-underuse",
+		label: "structural_search underused — read/edit on code files without AST query",
+		wastedTokens: actualWaste,
+		wastedCost: sumDollarCost(codeTouches),
+		occurrences: codeTouches.length,
+		details,
+		context: {
+			files: [...uniquePaths],
+		},
+	});
+
+	return results;
+}
+
 // ── Main analysis ──
 
 /**
@@ -545,6 +676,7 @@ export function analyzeSession(data: SessionData): WasteSignal[] {
 		...detectErrorLoop(data),
 		...detectNoBatch(data),
 		...detectTurnInefficiency(data),
+		...detectStructuralSearchUnderuse(data),
 	];
 
 	// Dedup by signal+context (same key = same underlying issue, merge)

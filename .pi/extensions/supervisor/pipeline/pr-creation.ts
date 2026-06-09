@@ -36,7 +36,7 @@ const RETRY_BASE_DELAY_MS = 1000;
  * - Returns PrCreationResult instead of void (Bug 6 fix)
  * - Push failure stops the flow early (Bug 3 fix)
  * - Retries gh pr create with exponential backoff (Bug 5 fix)
- * - Uses --json number for machine-parseable output (Bug 7 fix)
+ * - Pre-checks commit count before PR creation (Bug 3 fix)
  */
 export async function createPrOnApproval(
 	pi: ExtensionAPI,
@@ -114,7 +114,35 @@ export async function createPrOnApproval(
 		}
 	}
 
-	// ─── Phase 3: Check for existing PR ────────────────────────────
+	// ─── Phase 3: Pre-check — verify head has commits beyond base ──
+	// Only runs when worktree exists (branch was pushed). Skip check if
+	// no worktree since there are no new commits to PR.
+	if (worktreePath) {
+		try {
+			const compareResult = await gh(pi, [
+				"api",
+				`repos/${config.repo}/compare/${config.defaultBranch}...${headBranch}`,
+				"--jq",
+				".ahead_by",
+			]);
+			const aheadCount = parseInt(compareResult, 10);
+			if (aheadCount === 0) {
+				log.warn(
+					"pr-creation",
+					`No commits between ${config.defaultBranch} and ${headBranch} — skipping PR`,
+				);
+				ctx.ui.notify("No changes to merge — PR creation skipped", "info");
+				return { success: true, prNumber: undefined };
+			}
+			log.info("pr-creation", `Head is ${aheadCount} commits ahead of ${config.defaultBranch}`);
+		} catch (compareErr: unknown) {
+			// Compare check is advisory — if it fails, attempt PR creation anyway
+			const compareMsg = compareErr instanceof Error ? compareErr.message : String(compareErr);
+			log.warn("pr-creation", `Commit count check failed: ${compareMsg} — attempting PR anyway`);
+		}
+	}
+
+	// ─── Phase 4: Check for existing PR ────────────────────────────
 	let existingPr: PrConflictInfo | null = null;
 	try {
 		existingPr = await checkPrConflicts(pi, headBranch, config.repo);
@@ -127,7 +155,7 @@ export async function createPrOnApproval(
 		);
 	}
 
-	// ─── Phase 4: Create or update PR (with retry) ─────────────────
+	// ─── Phase 5: Create or update PR (with retry) ─────────────────
 	if (existingPr) {
 		log.info("pr-creation", `PR #${existingPr.number} already exists — updating body`);
 		try {

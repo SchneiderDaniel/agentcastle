@@ -1,233 +1,101 @@
 /**
- * Python virtual environment + Chromium system dependencies management.
+ * Simplified Python virtual environment setup for Scrapling.
  *
- * Adapts system/shell operations — pi.exec injected to keep functions
- * testable with mock exec. State Maps (venvReady, depsReady) passed in
- * to let caller own caching lifecycle.
+ * Replaces the old crawl4ai venv-setup.ts which handled:
+ *   - Complex Chromium system dependencies (ensureChromiumDeps)
+ *   - apt-get download of libs, dpkg extraction
+ *   - Retry cache logic with TTL
  *
- * Cache entries carry retry metadata: failed setups retry after TTL expiry
- * up to max retries. This prevents permanent lockout without restart.
+ * New approach:
+ *   - Clean pip install scrapling[fetchers] markdownify beautifulsoup4
+ *   - File-based lock to prevent race conditions from parallel agents
+ *   - No system-level Chromium deps needed (Scrapling manages its own browser binaries)
  */
 
-import type { ExecResult, ExecFn, OnUpdateCallback } from "./types.ts";
-import { shSingleQuote } from "./executor.ts";
+import type { ExecFn } from "./types.ts";
+import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 
-// ── Configurable constants ──
+// ── Constants ──
 
-/** TTL before a failed venv/deps cache entry is eligible for retry (ms). */
-export const VENV_RETRY_TTL_MS = 30_000;
+export const VENV_DIR = ".pi/scrapling-venv";
+const LOCK_FILE = ".pi/.scrapling-venv.lock";
+const LOCK_WAIT_MS = 5000;
 
-/** Maximum retry attempts for failed venv/deps setup. */
-export const VENV_RETRY_MAX = 3;
-
-// ── Types ──
-
-/** Cache entry for venv/deps ready state with retry metadata. */
-export interface VenvCacheEntry {
-	ready: boolean;
-	timestamp: number;
-	retries: number;
-}
-
-export type VenvCache = Map<string, VenvCacheEntry>;
-
-function lazyPaths(cwd: string) {
-	return {
-		VENV_DIR: `${cwd}/.pi/crawl4ai-venv`,
-		VENV_PYTHON: `${cwd}/.pi/crawl4ai-venv/bin/python3`,
-		DEPS_DIR: `${cwd}/.pi/chromium-deps`,
-		DEPS_LIB_DIR: `${cwd}/.pi/chromium-deps/usr/lib/x86_64-linux-gnu`,
-	};
-}
-
-// ── Cache helpers ──
-
-function cacheGet(
-	cache: Map<string, VenvCacheEntry>,
-	key: string,
-): { entry: VenvCacheEntry | undefined; shouldRetry: boolean } {
-	const entry = cache.get(key);
-	if (!entry) return { entry: undefined, shouldRetry: false };
-	if (entry.ready) return { entry, shouldRetry: false };
-	// Failed entry: check if retry eligible
-	if (entry.retries >= VENV_RETRY_MAX) return { entry, shouldRetry: false };
-	if (Date.now() - entry.timestamp < VENV_RETRY_TTL_MS) return { entry, shouldRetry: false };
-	return { entry, shouldRetry: true };
-}
-
-function cacheMarkSuccess(cache: Map<string, VenvCacheEntry>, key: string): void {
-	cache.set(key, { ready: true, timestamp: Date.now(), retries: 0 });
-}
-
-function cacheMarkFailure(cache: Map<string, VenvCacheEntry>, key: string): void {
-	const existing = cache.get(key);
-	const retries = existing ? existing.retries + 1 : 0;
-	cache.set(key, { ready: false, timestamp: Date.now(), retries });
-}
+// ── ensureScraplingVenv ──
 
 /**
- * Ensure Python virtual env with crawl4ai installed exists.
- * Returns path to python3 binary or null if setup fails.
+ * Ensure Scrapling Python virtual environment exists and has required packages.
+ *
+ * @param exec — Exec function (typically pi.exec)
+ * @param cwd — Working directory (project root)
+ * @param onUpdate — Optional progress update callback
+ * @returns Path to python3 binary, or null if setup fails
  */
-export async function ensurePythonVenv(
+export async function ensureScraplingVenv(
 	exec: ExecFn,
 	cwd: string,
-	onUpdate?: OnUpdateCallback,
-	venvReady?: VenvCache,
+	onUpdate?: (u: { content: Array<{ type: "text"; text: string }>; details: unknown }) => void,
 ): Promise<string | null> {
-	const ready = venvReady ?? new Map<string, VenvCacheEntry>();
-	const { VENV_PYTHON, VENV_DIR } = lazyPaths(cwd);
+	const pyPath = `${cwd}/${VENV_DIR}/bin/python3`;
 
-	const { entry, shouldRetry } = cacheGet(ready, cwd);
-	if (entry && !shouldRetry) return entry.ready ? VENV_PYTHON : null;
+	// Quick check if already setup
+	const check = await exec(pyPath, [
+		"-c",
+		"from scrapling.fetchers import StealthyFetcher; import markdownify; print('ok')",
+	]);
+	if (check.code === 0) return pyPath;
 
-	// Check system python3 exists
-	const pyCheck = await exec("python3", ["--version"]);
-	if (pyCheck.code !== 0) {
-		console.error("crawl4ai: python3 not found");
-		cacheMarkFailure(ready, cwd);
-		return null;
+	// Prevent parallel venv creation race condition
+	if (existsSync(`${cwd}/${LOCK_FILE}`)) {
+		// Wait for the other process to finish creating it
+		await new Promise((r) => setTimeout(r, LOCK_WAIT_MS));
+		return pyPath;
 	}
 
-	// Check if venv already set up with crawl4ai
-	const alreadyOk = await exec(VENV_PYTHON, ["-c", "import crawl4ai; print('ok')"]);
-	if (alreadyOk.code === 0 && alreadyOk.stdout.includes("ok")) {
-		cacheMarkSuccess(ready, cwd);
-		return VENV_PYTHON;
-	}
+	try {
+		mkdirSync(`${cwd}/.pi`, { recursive: true });
+		writeFileSync(`${cwd}/${LOCK_FILE}`, "locked");
 
-	// Create venv if it doesn't exist (or is broken)
-	const venvCheck = await exec(VENV_PYTHON, ["--version"]);
-	if (venvCheck.code !== 0) {
-		// Clean up any broken partial venv first
-		await exec("rm", ["-rf", VENV_DIR]);
 		onUpdate?.({
-			content: [{ type: "text", text: "Creating Python virtual environment for crawl4ai…" }],
-			details: {} as Record<string, unknown>,
+			content: [{ type: "text", text: "Creating Python venv for scraping…" }],
+			details: {},
 		});
-		const create = await exec("python3", ["-m", "venv", "--clear", VENV_DIR]);
-		if (create.code !== 0) {
-			console.error("crawl4ai: failed to create venv");
-			cacheMarkFailure(ready, cwd);
+		const createVenv = await exec("python3", ["-m", "venv", "--clear", `${cwd}/${VENV_DIR}`]);
+		if (createVenv.code !== 0) {
+			console.error("scrapling: failed to create venv");
 			return null;
 		}
-	}
 
-	// Install crawl4ai in venv
-	onUpdate?.({
-		content: [{ type: "text", text: "Installing crawl4ai (this may take a minute)…" }],
-		details: {} as Record<string, unknown>,
-	});
-	const install = await exec(VENV_PYTHON, ["-m", "pip", "install", "crawl4ai"], {
-		timeout: 180_000,
-	});
-	if (install.code !== 0) {
-		console.error("crawl4ai: pip install failed:", install.stderr.slice(0, 500));
-		cacheMarkFailure(ready, cwd);
-		return null;
-	}
+		onUpdate?.({
+			content: [{ type: "text", text: "Installing Scrapling and Markdown tools…" }],
+			details: {},
+		});
+		const install = await exec(
+			pyPath,
+			["-m", "pip", "install", "scrapling[fetchers]", "markdownify", "beautifulsoup4"],
+			{ timeout: 180_000 },
+		);
+		if (install.code !== 0) {
+			console.error("scrapling: pip install failed:", install.stderr.slice(0, 500));
+			return null;
+		}
 
-	// Install playwright browsers (best-effort)
-	onUpdate?.({
-		content: [{ type: "text", text: "Installing Chromium browser for crawl4ai…" }],
-		details: {} as Record<string, unknown>,
-	});
-	await exec(VENV_PYTHON, ["-m", "playwright", "install", "chromium"], { timeout: 120_000 });
+		onUpdate?.({
+			content: [{ type: "text", text: "Downloading browser binaries…" }],
+			details: {},
+		});
+		await exec(pyPath, ["-m", "scrapling.cli", "install"], { timeout: 120_000 });
 
-	// Verify
-	const verify = await exec(VENV_PYTHON, ["-c", "import crawl4ai; print('ok')"]);
-	const readyFlag = verify.code === 0 && verify.stdout.includes("ok");
-	if (readyFlag) {
-		cacheMarkSuccess(ready, cwd);
-		return VENV_PYTHON;
-	}
-	cacheMarkFailure(ready, cwd);
-	return null;
-}
-
-/**
- * Ensure Chromium system dependencies are available.
- * Downloads and extracts .deb packages without sudo.
- * Returns path to lib directory or null if setup fails.
- *
- * Tries package names with fallback for distro version differences
- * (e.g., libasound2t64 on Debian 12+ / Ubuntu 24.04+ vs libasound2 on older).
- */
-export async function ensureChromiumDeps(
-	exec: ExecFn,
-	cwd: string,
-	onUpdate?: OnUpdateCallback,
-	depsReady?: VenvCache,
-): Promise<string | null> {
-	const ready = depsReady ?? new Map<string, VenvCacheEntry>();
-	const { DEPS_DIR, DEPS_LIB_DIR } = lazyPaths(cwd);
-
-	const { entry, shouldRetry } = cacheGet(ready, cwd);
-	if (entry && !shouldRetry) return entry.ready ? DEPS_LIB_DIR : null;
-
-	// Check if deps already extracted and working
-	const testLib = `${DEPS_LIB_DIR}/libnspr4.so`;
-	const libCheck = await exec("bash", ["-c", `test -f ${shSingleQuote(testLib)}`]);
-	if (libCheck.code === 0) {
-		cacheMarkSuccess(ready, cwd);
-		return DEPS_LIB_DIR;
-	}
-
-	// Create deps directory if it doesn't exist
-	await exec("mkdir", ["-p", DEPS_DIR]);
-
-	// Download and extract Chromium system dependencies (without sudo)
-	onUpdate?.({
-		content: [{ type: "text", text: "Downloading Chromium system libraries…" }],
-		details: {} as Record<string, unknown>,
-	});
-
-	// Package groups with fallback names per group
-	// libasound2t64 is Debian 12+ / Ubuntu 24.04+ naming; libasound2 for older distros
-	const pkgGroups = [["libasound2t64", "libasound2"], ["libnspr4"], ["libnss3"]];
-
-	for (const group of pkgGroups) {
-		let downloaded = false;
-		for (const pkg of group) {
-			const dl = await exec(
-				"bash",
-				["-c", `cd ${shSingleQuote(DEPS_DIR)} && apt-get download ${pkg}`],
-				{
-					timeout: 30_000,
-				},
-			);
-			if (dl.code === 0) {
-				downloaded = true;
-				if (pkg !== group[0]) {
-					console.warn(`crawl4ai: using fallback package ${pkg} (${group[0]} not available)`);
-				}
-				break;
+		return pyPath;
+	} finally {
+		// Always remove the lock file
+		try {
+			if (existsSync(`${cwd}/${LOCK_FILE}`)) {
+				unlinkSync(`${cwd}/${LOCK_FILE}`);
 			}
-			if (pkg === group[group.length - 1]) {
-				console.error(`crawl4ai: failed to download ${group[0]} (and fallback if available)`);
-			}
-		}
-		if (!downloaded) {
-			console.error(`crawl4ai: failed to download any package in group ${group[0]}`);
+		} catch {
+			// Best-effort cleanup
 		}
 	}
-
-	// Extract all debs
-	const findResult = await exec("bash", ["-c", `ls ${shSingleQuote(DEPS_DIR)}/*.deb 2>/dev/null`]);
-	if (findResult.code === 0 && findResult.stdout.trim()) {
-		for (const deb of findResult.stdout.trim().split("\n")) {
-			await exec("dpkg", ["-x", deb.trim(), DEPS_DIR]);
-		}
-	}
-
-	// Verify
-	const verify = await exec("bash", ["-c", `test -f ${shSingleQuote(testLib)}`]);
-	if (verify.code !== 0) {
-		console.error("crawl4ai: failed to set up Chromium system libraries");
-		cacheMarkFailure(ready, cwd);
-		return null;
-	}
-
-	cacheMarkSuccess(ready, cwd);
-	return DEPS_LIB_DIR;
 }

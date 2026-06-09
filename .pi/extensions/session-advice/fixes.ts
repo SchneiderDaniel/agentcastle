@@ -40,6 +40,10 @@ export const FIXES: Record<string, FixEntry> = {
 		idea: "Combine multiple read-only tool calls into discovery turns, or skip turns that produce no file changes.",
 		effort: "High",
 	},
+	"structural-search-underuse": {
+		idea: "Use `structural_search` (AST-aware query) when working with code files instead of reading/editing multiple files blindly. Reduces token waste from excessive file reads.",
+		effort: "Low",
+	},
 };
 
 /** Fallback fix when signal key is not in FIXES. */

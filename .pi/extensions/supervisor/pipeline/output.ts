@@ -90,8 +90,9 @@ export function buildPipelineSummary(
 		`**Total:** ${agentResults.length} agents · ${formatDuration(totalDurationMs)} · ${formatTokens(totalTokens)} tokens · ${totalToolCalls} tool calls`,
 	);
 
-	// Issue link
+	// Issue link + auto-link PR to issue (cross-reference in GitHub UI)
 	lines.push(`**Issue:** https://github.com/${config.repo}/issues/${issueNum}`);
+	lines.push(`Closes #${issueNum}`);
 
 	// PR creation status
 	if (prCreationResult) {

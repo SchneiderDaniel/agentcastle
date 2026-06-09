@@ -1,79 +1,102 @@
 /**
- * Inline Python script that uses local crawl4ai to extract markdown from pages.
+ * Inline Python script that uses Scrapling's progressive fetching strategy.
  *
- * Volatile detail (crawl4ai API surface) hidden behind string export.
- * Callers never see script content — import CRAWL4AI_SCRIPT and pass to subprocess.
+ * Volatile detail (Scrapling API surface) hidden behind string export.
+ * Callers never see script content — import SCRAPLING_SCRIPT and pass to subprocess.
+ *
+ * Progressive Fetching Strategy:
+ *   Tier 1: Lightweight zero-browser curl_cffi fetcher (~40MB RAM)
+ *   Tier 2: Heavy Playwright StealthyFetcher (~800MB RAM) — only when blocked
  */
 
-export const CRAWL4AI_SCRIPT = `
-import asyncio
+export const SCRAPLING_SCRIPT = `
 import json
 import sys
-import signal
+from urllib.parse import urljoin, urlparse
+import markdownify
 
-signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(130))
+def fetch_page(url):
+    from scrapling.fetchers import Fetcher, StealthyFetcher
 
-async def main():
-    with open(sys.argv[1]) as f:
-        config = json.load(f)
+    # Tier 1: Lightweight Zero-Browser Fetch (~40MB RAM)
+    try:
+        page = Fetcher.get(url)
+        content_lower = page.text.lower()
+        is_blocked = page.status in [403, 503] or "cloudflare" in content_lower or "just a moment" in content_lower
+
+        if not is_blocked:
+            return {"html": page.html, "method": "lightweight"}
+    except Exception:
+        pass  # Fall through to heavy fetcher on error
+
+    # Tier 2: Heavy Headless Browser (~800MB RAM) - Only used if blocked
+    StealthyFetcher.adaptive = True
+    try:
+        page = StealthyFetcher.fetch(
+            url,
+            headless=True,
+            network_idle=True,
+            solve_cloudflare=True,
+        )
+        return {"html": page.html, "method": "stealth"}
+    except Exception as e:
+        raise Exception(f"Stealth bypass failed: {str(e)}")
+    finally:
+        # Crucial: Ensure Playwright processes don't zombie
+        if hasattr(StealthyFetcher, '_browser') and StealthyFetcher._browser:
+            try:
+                StealthyFetcher._browser.close()
+            except:
+                pass
+
+def main():
+    config = json.loads(sys.argv[1])
     url = config["url"]
     max_pages = min(max(1, config.get("maxPages", 1)), 10)
-
-    try:
-        from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode
-    except ImportError as e:
-        print("CRAWL4AI_OK")
-        print(json.dumps({"ok": False, "error": f"crawl4ai not installed: {e}"}))
-        print("CRAWL4AI_DONE")
-        return
 
     results = []
     visited = set()
     queue = [url]
 
-    run_conf = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
+    while queue and len(visited) < max_pages:
+        current = queue.pop(0)
+        if current in visited:
+            continue
+        visited.add(current)
 
-    async with AsyncWebCrawler() as crawler:
-        while queue and len(visited) < max_pages:
-            current = queue.pop(0)
-            if current in visited:
-                continue
-            visited.add(current)
+        try:
+            fetch_data = fetch_page(current)
 
-            try:
-                try:
-                    result = await crawler.arun(url=current, config=run_conf)
-                except TypeError:
-                    result = await crawler.arun(url=current)
+            # Convert HTML to clean LLM-friendly Markdown
+            md_text = markdownify.markdownify(
+                fetch_data["html"],
+                heading_style="ATX",
+                strip=['script', 'style']
+            ).strip()
 
-                md_attr = getattr(result, "markdown", "")
-                if isinstance(md_attr, str):
-                    md = md_attr
-                elif hasattr(md_attr, "raw_markdown"):
-                    md = md_attr.raw_markdown or ""
-                elif hasattr(md_attr, "fit_markdown"):
-                    md = md_attr.fit_markdown or ""
-                else:
-                    md = str(md_attr) if md_attr else ""
+            results.append({
+                "url": current,
+                "markdown": md_text,
+                "method": fetch_data["method"],
+                "success": True,
+            })
 
-                results.append({"url": current, "markdown": md, "success": True})
-
-                if len(visited) < max_pages:
-                    links = getattr(result, "links", None)
-                    internal = []
-                    if isinstance(links, dict):
-                        internal = links.get("internal", [])
-                    elif isinstance(links, list):
-                        internal = links
-                    for link in internal:
+            # Follow same-origin links safely
+            if len(visited) < max_pages:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(fetch_data["html"], 'html.parser')
+                for a_tag in soup.find_all('a', href=True):
+                    # Fix: Resolve relative links
+                    link = urljoin(current, a_tag['href'])
+                    if link.startswith("http") and urlparse(link).netloc == urlparse(url).netloc:
                         if link not in visited and link not in queue:
                             queue.append(link)
-            except Exception as e:
-                results.append({"url": current, "error": str(e), "success": False})
 
-    print("CRAWL4AI_OK")
+        except Exception as e:
+            results.append({"url": current, "error": str(e), "success": False})
+
     print(json.dumps({"ok": True, "results": results}))
-    print("CRAWL4AI_DONE")
 
-asyncio.run(main())
+if __name__ == "__main__":
+    main()
 `;

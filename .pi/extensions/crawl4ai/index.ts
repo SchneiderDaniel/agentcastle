@@ -1,39 +1,43 @@
 /**
- * crawl4ai — Web page crawling and content extraction
+ * web_crawl — Web page crawling and content extraction via Scrapling
  *
- * Provides the web_crawl tool using a pluggable CrawlBackend strategy.
- * Backends are tried in order (crawl4ai → Apify → direct HTTP fetch)
- * until one succeeds. Adding a new backend is a single import + registration.
+ * Uses Scrapling's Progressive Fetching Strategy:
+ *   Tier 1: Lightweight zero-browser fetcher (~40MB RAM) for most pages
+ *   Tier 2: Heavy Playwright StealthyFetcher (~800MB RAM) for Cloudflare bypass
+ *
+ * Concurrency semaphore (MAX_CONCURRENT_CRAWLS = 2) prevents OOM on 8GB RAM machines.
+ * File-based lock prevents parallel agents from corrupting the venv on fresh start.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { VenvCache } from "./venv-setup";
-import {
-	CrawlBackendRegistry,
-	LocalCrawl4aiBackend,
-	ApifyBackend,
-	DirectFetchBackend,
-} from "./backends";
+import { ensureScraplingVenv } from "./venv-setup";
+import { SCRAPLING_SCRIPT } from "./python-script";
 
-export default function crawl4ai(pi: ExtensionAPI): void {
-	const venvReady: VenvCache = new Map();
-	const depsReady: VenvCache = new Map();
+// Concurrency lock: Max 2 simultaneous web crawls to protect 8GB RAM
+let activeCrawls = 0;
+const MAX_CONCURRENT_CRAWLS = 2;
 
+async function acquireCrawlLock(): Promise<void> {
+	while (activeCrawls >= MAX_CONCURRENT_CRAWLS) {
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+	}
+	activeCrawls++;
+}
+
+function releaseCrawlLock(): void {
+	activeCrawls = Math.max(0, activeCrawls - 1);
+}
+
+export default function webCrawlExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "web_crawl",
 		label: "Web Crawl",
 		description:
-			"Crawl and extract markdown content from web pages using crawl4ai. " +
-			"Runs locally when possible, falls back to Apify (if APIFY_TOKEN is set), " +
-			"then to direct HTTP fetch. " +
-			"Use when the user asks to search the web, scrape a page, " +
-			"extract content from a URL, or crawl a site.",
-		promptSnippet: "Crawl web pages and return extracted markdown content via crawl4ai",
+			"Crawl web pages. Uses lightweight fetcher normally, " +
+			"automatically bypasses Cloudflare if blocked.",
 		parameters: Type.Object({
-			url: Type.String({
-				description: "URL to crawl (e.g. https://example.com)",
-			}),
+			url: Type.String({ description: "URL to crawl (e.g. https://example.com)" }),
 			maxPages: Type.Optional(
 				Type.Number({
 					default: 1,
@@ -42,38 +46,84 @@ export default function crawl4ai(pi: ExtensionAPI): void {
 			),
 		}),
 		async execute(_toolCallId, params, signal, onUpdate, _ctx) {
-			const maxPages = Math.min(Math.max(1, params.maxPages ?? 1), 10);
+			await acquireCrawlLock();
 
-			// URL validation — reject invalid URLs early
 			try {
-				new URL(params.url);
-			} catch {
+				const maxPages = Math.min(Math.max(1, params.maxPages ?? 1), 10);
+
+				// URL validation — reject invalid URLs early
+				try {
+					new URL(params.url);
+				} catch {
+					return {
+						content: [{ type: "text", text: "Invalid URL" }],
+						details: {} as Record<string, unknown>,
+					};
+				}
+
+				onUpdate?.({
+					content: [{ type: "text", text: `Crawling ${params.url} …` }],
+					details: {} as Record<string, unknown>,
+				});
+
+				const cwd = _ctx.cwd;
+
+				const python = await ensureScraplingVenv(pi.exec, cwd, onUpdate);
+				if (!python) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: "Error: Failed to initialize scraping environment.",
+							},
+						],
+						details: {} as Record<string, unknown>,
+					};
+				}
+
+				const cfg = JSON.stringify({ url: params.url, maxPages });
+				const scriptB64 = Buffer.from(SCRAPLING_SCRIPT, "utf-8").toString("base64");
+				const cfgB64 = Buffer.from(cfg, "utf-8").toString("base64");
+
+				const run = await pi.exec(
+					"bash",
+					["-c", `${python} -c "$(echo ${scriptB64} | base64 -d)" "$(echo ${cfgB64} | base64 -d)"`],
+					{ timeout: 120_000, signal },
+				);
+
+				if (run.code === 0) {
+					try {
+						const parsed = JSON.parse(
+							run.stdout.split("\n").find((l) => l.startsWith("{") && l.endsWith("}")) ||
+								run.stdout,
+						);
+						if (parsed.ok && parsed.results) {
+							const texts = parsed.results.map((r: any) =>
+								r.success
+									? `--- ${r.url} (via ${r.method}) ---\n${r.markdown || "[No content]"}`
+									: `--- ${r.url} ---\nError: ${r.error}`,
+							);
+							return {
+								content: [{ type: "text", text: texts.join("\n\n") }],
+								details: {} as Record<string, unknown>,
+							};
+						}
+					} catch {
+						/* Fallback to raw output if JSON parse fails */
+					}
+				}
 				return {
-					content: [{ type: "text", text: "Invalid URL" }],
+					content: [
+						{
+							type: "text",
+							text: `Error executing crawl: ${run.stderr || run.stdout}`,
+						},
+					],
 					details: {} as Record<string, unknown>,
 				};
+			} finally {
+				releaseCrawlLock();
 			}
-
-			onUpdate?.({
-				content: [{ type: "text", text: `Crawling ${params.url} …` }],
-				details: {} as Record<string, unknown>,
-			});
-
-			// Build fallback chain: crawl4ai → Apify → direct fetch
-			const cwd = _ctx.cwd;
-			const registry = new CrawlBackendRegistry([
-				new LocalCrawl4aiBackend(pi.exec, cwd, venvReady, depsReady),
-				new ApifyBackend(),
-				new DirectFetchBackend(),
-			]);
-
-			const result = await registry.tryAll(params.url, maxPages, signal, onUpdate);
-			return {
-				content: [
-					{ type: "text", text: result ?? "Crawl completed but no content was extracted." },
-				],
-				details: {} as Record<string, unknown>,
-			};
 		},
 	});
 }

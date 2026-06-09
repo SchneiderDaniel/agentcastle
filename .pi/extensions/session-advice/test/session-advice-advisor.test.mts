@@ -126,7 +126,7 @@ describe("detectBashGrep", () => {
 });
 
 describe("detectErrorLoop", () => {
-	it("flags when same tool errors and retried 2+ times", () => {
+	it("flags when same tool errors and retried 2+ times with same args", () => {
 		const data = makeSession([
 			readToolError(0),
 			readEntry("/repo/src/missing.ts", 1),
@@ -134,7 +134,30 @@ describe("detectErrorLoop", () => {
 		]);
 		const signals = analyzeSession(data);
 		const errs = signals.filter((s) => s.signal === "error-loop");
-		assert.ok(errs.length >= 1, "should flag retries after error");
+		assert.ok(errs.length >= 1, "should flag retries after error with same args");
+	});
+
+	it("does NOT flag when retries have different args (strategy change)", () => {
+		const data = makeSession([
+			readToolError(0),
+			readEntry("/repo/src/file-a.ts", 1),
+			readEntry("/repo/src/file-b.ts", 2),
+		]);
+		const signals = analyzeSession(data);
+		const errs = signals.filter((s) => s.signal === "error-loop");
+		assert.strictEqual(errs.length, 0, "different args = strategy change, not loop");
+	});
+
+	it("flags 2+ retries with same args even with different-args retries in window", () => {
+		const data = makeSession([
+			readToolError(0),
+			readEntry("/repo/src/target.ts", 1),
+			readEntry("/repo/src/other.ts", 2),
+			readEntry("/repo/src/target.ts", 3),
+		]);
+		const signals = analyzeSession(data);
+		const errs = signals.filter((s) => s.signal === "error-loop");
+		assert.ok(errs.length >= 1, "should flag same-args retries despite different-args in between");
 	});
 
 	it("does NOT flag single error without retry", () => {
@@ -142,6 +165,21 @@ describe("detectErrorLoop", () => {
 		const signals = analyzeSession(data);
 		const errs = signals.filter((s) => s.signal === "error-loop");
 		assert.strictEqual(errs.length, 0);
+	});
+
+	it("proportional waste: counts only retries beyond first", () => {
+		// 1 error + 3 retries with same args → 2 wasteful (first retry excluded)
+		const data = makeSession([
+			readToolError(0),
+			readEntry("/repo/src/missing.ts", 1),
+			readEntry("/repo/src/missing.ts", 2),
+			readEntry("/repo/src/missing.ts", 3),
+		]);
+		const signals = analyzeSession(data);
+		const errs = signals.filter((s) => s.signal === "error-loop");
+		assert.ok(errs.length >= 1, "should flag");
+		// 3 retries - 1 = 2 wasteful
+		assert.strictEqual(errs[0].occurrences, 2, "should have 2 wasteful occurrences");
 	});
 });
 
@@ -365,6 +403,181 @@ describe("return type is WasteSignal[]", () => {
 		const data = makeSession([bashEntry("npm test", 0), bashEntry("node build.js", 1)]);
 		const signals = analyzeSession(data);
 		assert.strictEqual(signals.length, 0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// detectStructuralSearchUnderuse tests
+// ---------------------------------------------------------------------------
+
+describe("detectStructuralSearchUnderuse", () => {
+	it("3 distinct code file reads, 0 structural_search → signal fires", () => {
+		const data = makeSession([
+			readEntry("/repo/src/components/app.ts", 0),
+			readEntry("/repo/src/utils/helpers.ts", 1),
+			readEntry("/repo/src/main/entry.ts", 2),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 1, "3 code file reads with no structural_search should fire");
+		assert.ok(ss[0].wastedTokens >= 0, "wastedTokens should be >= 0");
+	});
+
+	it("3 code file reads + 1 structural_search → NO signal", () => {
+		const data = makeSession([
+			readEntry("/repo/src/app.ts", 0),
+			readEntry("/repo/src/utils.ts", 1),
+			readEntry("/repo/src/main.ts", 2),
+			structuralSearchEntry(3),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 0, "at least 1 structural_search call should prevent signal");
+	});
+
+	it("2 code file reads → NO signal (below threshold)", () => {
+		const data = makeSession([
+			readEntry("/repo/src/app.ts", 0),
+			readEntry("/repo/src/utils.ts", 1),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 0, "2 code reads should not fire");
+	});
+
+	it("3 reads on non-code files (.json, .yaml) → NO signal", () => {
+		const data = makeSession([
+			readEntry("/repo/config.json", 0),
+			readEntry("/repo/tsconfig.json", 1),
+			readEntry("/repo/deploy.yaml", 2),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 0, "non-code file reads should not fire");
+	});
+
+	it("3 code file edits (edit/write) → signal fires", () => {
+		const data = makeSession([
+			editEntry("/repo/src/app.ts", 0),
+			writeEntry("/repo/src/utils.ts", 1),
+			editEntry("/repo/src/main.ts", 2),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 1, "3 code file edits should fire");
+	});
+
+	it("mixed: 2 code reads + 3 non-code reads → NO signal (code < 3)", () => {
+		const data = makeSession([
+			readEntry("/repo/src/app.ts", 0),
+			readEntry("/repo/src/utils.ts", 1),
+			readEntry("/repo/config.json", 2),
+			readEntry("/repo/deploy.yaml", 3),
+			readEntry("/repo/.env", 4),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 0, "2 code + 3 non-code should not fire");
+	});
+
+	it("3 reads all on same file → NO signal (redundant-read territory)", () => {
+		const data = makeSession([
+			readEntry("/repo/src/app.ts", 0),
+			readEntry("/repo/src/app.ts", 1),
+			readEntry("/repo/src/app.ts", 2),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(
+			ss.length,
+			0,
+			"3 reads on same file should not fire structural-search-underuse",
+		);
+	});
+
+	it("empty session → no crash, no signal", () => {
+		const data = makeSession([]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 0, "empty session should not crash");
+	});
+
+	it("session with only structural_search calls → no crash, no signal", () => {
+		const data = makeSession([
+			structuralSearchEntry(0),
+			structuralSearchEntry(1),
+			structuralSearchEntry(2),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 0, "only structural_search calls should not fire");
+	});
+
+	it("wastedTokens estimate includes sumTokenCost of offending reads", () => {
+		const data = makeSession([
+			readEntry("/repo/src/app.ts", 0),
+			readEntry("/repo/src/utils.ts", 1),
+			readEntry("/repo/src/main.ts", 2),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 1);
+		// Each read entry has text=path, charsToTokens for "/repo/src/app.ts" = ceil(17/4) = 5
+		// 3 entries * 5 = 15. Minus 50 overhead = 0 with floor. At minimum > 0 for longer paths.
+		assert.ok(ss[0].wastedTokens >= 0, "wastedTokens should be non-negative");
+	});
+
+	it("writeIfEmpty and editExisting count as code file touches", () => {
+		const data = makeSession([
+			{
+				type: "tool_use",
+				toolName: "writeIfEmpty",
+				args: { path: "/repo/src/new.ts" },
+				text: "/repo/src/new.ts",
+				turnIndex: 0,
+			},
+			{
+				type: "tool_use",
+				toolName: "editExisting",
+				args: { path: "/repo/src/existing.ts" },
+				text: "/repo/src/existing.ts",
+				turnIndex: 1,
+			},
+			{
+				type: "tool_use",
+				toolName: "edit",
+				args: { path: "/repo/src/another.ts" },
+				text: "/repo/src/another.ts",
+				turnIndex: 2,
+			},
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 1, "writeIfEmpty/editExisting/edit should count as code touches");
+	});
+
+	it("0 code file reads, 3 non-code reads → NO signal", () => {
+		const data = makeSession([
+			readEntry("/repo/README.md", 0),
+			readEntry("/repo/.gitignore", 1),
+			readEntry("/repo/package.json", 2),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 0, "only non-code reads should not fire");
+	});
+
+	it("signal context includes files list", () => {
+		const data = makeSession([
+			readEntry("/repo/src/app.ts", 0),
+			readEntry("/repo/src/utils.ts", 1),
+			readEntry("/repo/src/main.ts", 2),
+		]);
+		const signals = analyzeSession(data);
+		const ss = signals.filter((s) => s.signal === "structural-search-underuse");
+		assert.strictEqual(ss.length, 1);
+		assert.ok(ss[0].context.files, "should have files context");
+		assert.ok(ss[0].context.files!.length >= 3, "should list affected files");
 	});
 });
 

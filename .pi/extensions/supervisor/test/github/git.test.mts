@@ -69,13 +69,14 @@ describe("pushBranch()", () => {
 // ─── Tests: commitAndPush() ───────────────────────────────────────
 
 describe("commitAndPush()", () => {
-	it("stages all changes, commits, then pushes", async () => {
+	it("stages all changes, commits, then pushes — returns true", async () => {
 		const { pi, calls } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 0, stdout: "committed", stderr: "" },
 			{ code: 0, stdout: "", stderr: "" },
 		]);
-		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "feat(#123): msg");
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "feat(#123): msg");
+		assert.equal(result, true, "should return true when commits were pushed");
 		assert.equal(calls.length, 3);
 		assert.deepEqual(calls[0].args, ["add", "-A"]);
 		assert.deepEqual(calls[1].args, ["commit", "-m", "feat(#123): msg"]);

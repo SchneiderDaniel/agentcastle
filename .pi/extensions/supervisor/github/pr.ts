@@ -95,35 +95,22 @@ export async function createPullRequest(
 		args.push("--body-file", bodyFile);
 		log.debug("pr", `PR body from file: ${bodyFile}`);
 	}
-	args.push("--json", "number");
 
-	// Execute gh pr create with --json number for machine-parseable output (Bug 7 fix)
-	// Single exec call — try JSON parse first, then fall back to URL/number regex
+	// gh pr create returns PR URL (e.g. https://github.com/o/r/pull/123)
+	// Parse PR number via URL regex, with numeric fallback
 	const rawOutput = await gh(pi, args);
 
-	// Primary path: parse --json number output (machine-parseable)
-	try {
-		const parsed = JSON.parse(rawOutput);
-		if (parsed !== null && typeof parsed === "object" && typeof parsed.number === "number") {
-			const num = parsed.number;
-			log.info("pr", `PR #${num} created (from --json number): ${head} → ${base}`);
-			return { number: num };
-		}
-	} catch {
-		// Not JSON — fall through to regex parsing
-	}
-
-	// Fallback: parse PR number from raw gh output (backward compat)
+	// Parse PR number from URL output
 	const urlMatch = rawOutput.match(/pull\/(\d+)/);
 	if (urlMatch) {
 		const num = parseInt(urlMatch[1], 10);
 		log.info("pr", `PR #${num} created (from URL): ${head} → ${base}`);
 		return { number: num };
 	}
-	const numMatch = rawOutput.match(/(\d+)/);
+	const numMatch = rawOutput.match(/^(\d+)$/);
 	if (numMatch) {
 		const num = parseInt(numMatch[1], 10);
-		log.info("pr", `PR #${num} created (from number match)`);
+		log.info("pr", `PR #${num} created (from numeric output)`);
 		return { number: num };
 	}
 
