@@ -126,7 +126,7 @@ describe("detectBashGrep", () => {
 });
 
 describe("detectErrorLoop", () => {
-	it("flags when same tool errors and retried 2+ times", () => {
+	it("flags when same tool errors and retried 2+ times with same args", () => {
 		const data = makeSession([
 			readToolError(0),
 			readEntry("/repo/src/missing.ts", 1),
@@ -134,7 +134,30 @@ describe("detectErrorLoop", () => {
 		]);
 		const signals = analyzeSession(data);
 		const errs = signals.filter((s) => s.signal === "error-loop");
-		assert.ok(errs.length >= 1, "should flag retries after error");
+		assert.ok(errs.length >= 1, "should flag retries after error with same args");
+	});
+
+	it("does NOT flag when retries have different args (strategy change)", () => {
+		const data = makeSession([
+			readToolError(0),
+			readEntry("/repo/src/file-a.ts", 1),
+			readEntry("/repo/src/file-b.ts", 2),
+		]);
+		const signals = analyzeSession(data);
+		const errs = signals.filter((s) => s.signal === "error-loop");
+		assert.strictEqual(errs.length, 0, "different args = strategy change, not loop");
+	});
+
+	it("flags 2+ retries with same args even with different-args retries in window", () => {
+		const data = makeSession([
+			readToolError(0),
+			readEntry("/repo/src/target.ts", 1),
+			readEntry("/repo/src/other.ts", 2),
+			readEntry("/repo/src/target.ts", 3),
+		]);
+		const signals = analyzeSession(data);
+		const errs = signals.filter((s) => s.signal === "error-loop");
+		assert.ok(errs.length >= 1, "should flag same-args retries despite different-args in between");
 	});
 
 	it("does NOT flag single error without retry", () => {
@@ -142,6 +165,21 @@ describe("detectErrorLoop", () => {
 		const signals = analyzeSession(data);
 		const errs = signals.filter((s) => s.signal === "error-loop");
 		assert.strictEqual(errs.length, 0);
+	});
+
+	it("proportional waste: counts only retries beyond first", () => {
+		// 1 error + 3 retries with same args → 2 wasteful (first retry excluded)
+		const data = makeSession([
+			readToolError(0),
+			readEntry("/repo/src/missing.ts", 1),
+			readEntry("/repo/src/missing.ts", 2),
+			readEntry("/repo/src/missing.ts", 3),
+		]);
+		const signals = analyzeSession(data);
+		const errs = signals.filter((s) => s.signal === "error-loop");
+		assert.ok(errs.length >= 1, "should flag");
+		// 3 retries - 1 = 2 wasteful
+		assert.strictEqual(errs[0].occurrences, 2, "should have 2 wasteful occurrences");
 	});
 });
 
