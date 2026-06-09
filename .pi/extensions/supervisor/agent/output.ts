@@ -612,10 +612,3 @@ export function parseAgentOutput(output: string): ParseResult {
 export function isSuccess(result: ParseResult): result is AgentOutput {
 	return "action" in result && "agentName" in result;
 }
-
-/**
- * Check if a ParseResult is a FailedParse.
- */
-export function isFailure(result: ParseResult): result is FailedParse {
-	return "error" in result && "rawOutput" in result;
-}

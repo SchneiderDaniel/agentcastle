@@ -892,3 +892,18 @@ describe("parseAgentOutput — JSON in thinking blocks (💭 prefix)", () => {
 		);
 	});
 });
+
+// ─── Verification: dead code removal ───────────────────────────────
+
+describe("dead code — isFailure removed from exports", () => {
+	it("isFailure is no longer exported", async () => {
+		const mod = await import("../agent/output.ts");
+		assert.equal("isFailure" in mod, false);
+	});
+
+	it("isSuccess is still exported (counterpart preserved)", async () => {
+		const mod = await import("../agent/output.ts");
+		assert.notEqual(mod.isSuccess, undefined);
+		assert.equal(typeof mod.isSuccess, "function");
+	});
+});
