@@ -10,6 +10,7 @@ import { formatTokens } from "../config/formatting.ts";
 import { jsonLineToNormalizedEvent, processNormalizedEvent } from "../event/adapter.ts";
 import { phasePriority } from "../event/types.ts";
 import { getDebugLogger } from "../config/debug.ts";
+import { getErrorCollector } from "../pipeline/error-collector.ts";
 
 // ─── Re-exports for backward compat ───────────────────────────────
 
@@ -124,7 +125,7 @@ export function processJsonLine(
 		const errMsg = String(parseErr).slice(0, 200);
 		getDebugLogger().warn("agent-stream", `JSON parse error: ${errMsg}`, { preview });
 		if (line.trim()) {
-			console.error(`[supervisor] JSON parse error: ${errMsg} | line: ${preview}`);
+			getErrorCollector().push("stream", "warn", `JSON parse error: ${errMsg}`);
 		}
 		return { flush: false, workingChange: false };
 	}

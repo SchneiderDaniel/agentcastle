@@ -16,6 +16,7 @@ import { buildWidgetLines, getWorkingMessage } from "../session/widget.ts";
 import { runAgentInProcess } from "./session-runner.ts";
 import { buildErrorNotificationContext } from "../config/diagnostics.ts";
 import { getDebugLogger } from "../config/debug.ts";
+import { getErrorCollector } from "../pipeline/error-collector.ts";
 
 // Re-export DEFAULT_AGENT_TIMEOUT_MS for backward compatibility
 export { DEFAULT_AGENT_TIMEOUT_MS } from "../config/config.ts";
@@ -236,6 +237,7 @@ export async function runAgentSubprocess(
 			} catch (renderErr: unknown) {
 				const msg = renderErr instanceof Error ? renderErr.message : String(renderErr);
 				log.error("agent-runner", `Widget render error for ${agentName}: ${msg}`);
+				getErrorCollector().push("runner", "warn", `Widget render error for ${agentName}: ${msg}`);
 			}
 		};
 
@@ -255,7 +257,7 @@ export async function runAgentSubprocess(
 				if (!flushTimer) flushWidget();
 			} catch (hbErr: unknown) {
 				const msg = hbErr instanceof Error ? hbErr.message : String(hbErr);
-				console.error(`[supervisor] heartbeat error for ${agentName}: ${msg}`);
+				getErrorCollector().push("runner", "warn", `heartbeat error for ${agentName}: ${msg}`);
 			}
 		}, 2000);
 
@@ -275,7 +277,11 @@ export async function runAgentSubprocess(
 				}
 			} catch (lineErr: unknown) {
 				const msg = lineErr instanceof Error ? lineErr.message : String(lineErr);
-				console.error(`[supervisor] JSON line error for ${agentName}: ${msg}`);
+				getErrorCollector().push(
+					"runner",
+					"warn",
+					`JSON line processing error for ${agentName}: ${msg}`,
+				);
 			}
 		};
 

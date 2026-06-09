@@ -13,6 +13,7 @@ import { parseAgentFile } from "../agent/loader.ts";
 import { runAgent } from "../agent/runner.ts";
 import { resolveTimeoutMs } from "../config/config.ts";
 import { getDebugLogger } from "../config/debug.ts";
+import type { ErrorCollector } from "./error-collector.ts";
 
 /**
  * Handle post-pipeline merge conflict detection and resolution.
@@ -26,6 +27,7 @@ export async function handlePostPipelineMerge(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	worktreePath?: string,
+	collector?: ErrorCollector,
 ): Promise<void> {
 	const log = getDebugLogger();
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
@@ -44,6 +46,7 @@ export async function handlePostPipelineMerge(
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
 			ctx.ui.notify(`PR conflict check failed: ${msg}`, "error");
+			collector?.push("merge", "error", `PR conflict check failed: ${msg}`);
 			return;
 		}
 
@@ -109,6 +112,7 @@ export async function handlePostPipelineMerge(
 						const msg = pushErr instanceof Error ? pushErr.message : String(pushErr);
 						log.error("pipeline-merge", `Merge succeeded but push failed: ${msg}`);
 						ctx.ui.notify(`Merge succeeded but push failed: ${msg}`, "error");
+						collector?.push("merge", "error", `Merge succeeded but push failed: ${msg}`);
 					}
 				} else {
 					log.info("pipeline-merge", "Auto-merge failed, dispatching developer");

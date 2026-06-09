@@ -8,6 +8,7 @@ import type { SupervisorConfig, DebugLogger } from "../config/types.ts";
 import { resolve as resolvePath } from "node:path";
 import { getDebugLogger } from "../config/debug.ts";
 import { generateBranchName } from "../agent/task.ts";
+import type { ErrorCollector } from "./error-collector.ts";
 import { determineTscCheckpointDecision, getRunTscCheckpoint } from "../checks/tsc-decisions.ts";
 import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-decisions.ts";
 import { pollCiChecks } from "../checks/ci-gating.ts";
@@ -28,6 +29,7 @@ export async function runTscAndLspAudit(
 	worktreePath: string,
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
+	collector?: ErrorCollector,
 ): Promise<{ nextStatus: string; note: string }> {
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 
@@ -196,6 +198,7 @@ async function runLspPreAudit(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	worktreePath: string,
+	collector?: ErrorCollector,
 ): Promise<{ nextStatus: string; note: string }> {
 	const runPreAuditFn = await getRunPreAudit();
 	let preAuditResult: any = null;
@@ -212,6 +215,11 @@ async function runLspPreAudit(
 				});
 				hasModifiedFiles = (diffResult.stdout || "").trim().length > 0;
 			} catch {
+				collector?.push(
+					"audit",
+					"warn",
+					`git diff failed against ${config.defaultBranch} for LSP pre-audit, assuming no modified files`,
+				);
 				hasModifiedFiles = false;
 			}
 

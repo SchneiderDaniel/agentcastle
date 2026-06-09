@@ -982,6 +982,48 @@ Issue #42 is complete with a PR ready for final review.
 
 > **Note:** The walkthrough above shows the updated pipeline: dependency gate, in-process agent execution (live TUI widget), architecture-before-research sequence, auditor summary file protocol, and post-pipeline merge conflict resolution.
 
+#### 8.9 Error Aggregation
+
+The supervisor pipeline uses a centralized `ErrorCollector` to aggregate all non-fatal errors and warnings. Instead of silent `console.warn` / `console.error` calls that the user never sees, every failure mode pushes a structured record to the collector:
+
+- **Issue fetch failures** — GitHub API errors, stale data fallbacks
+- **Agent comment posting failures** — GitHub comment API errors
+- **Commit/push failures** — git errors during developer commit
+- **Worktree cleanup failures** — git worktree remove/branch delete errors
+- **PR creation failures** — push retries exhausted, PR create API errors
+- **Pre-audit errors** — TSC/LSP check failures, CI polling errors
+- **Subprocess errors** — agent runner heartbeat/JSON processing errors
+- **Watchdog timeouts** — stalled session detection
+
+**How it works:**
+
+1. The pipeline creates an `ErrorCollector` instance at startup and threads it through all pipeline functions
+2. Deeper layers (agent runner, session runner, stream parser) use a module-level singleton accessor
+3. After each agent execution, if the collector has entries, a `supervisor-warnings` message is rendered
+4. The final `supervisor-summary` message prepends the warnings block with grouped error/warning counts
+
+**Warnings panel format:**
+
+```
+## ⚠️ Warnings
+
+### helpers
+- **[ERROR]** Issue #42 not found in owner/repo
+
+### stages
+- **[WARN]** Developer commentBody extracted from result.textOutput (fallback)
+
+**1 error(s), 1 warning(s)** — see above for details.
+```
+
+This replaces silent `console.warn` / `console.error` calls across 12+ pipeline and agent files, ensuring every failure mode is visible to the user.
+
+The `ErrorCollector` class (`pipeline/error-collector.ts`) provides:
+- `push(source, severity, message)` — add a record
+- `flush(source)` — retrieve and clear records by source
+- `hasErrors()` — check if any records exist
+- `toNotificationBlock()` — build markdown warnings panel
+
 ---
 
 ### 9. Troubleshooting — Something broke

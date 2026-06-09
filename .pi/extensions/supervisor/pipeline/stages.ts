@@ -12,6 +12,7 @@ import type {
 	AgentRunResult,
 	FilteredIssueData,
 } from "../config/types.ts";
+import type { ErrorCollector } from "./error-collector.ts";
 import {
 	resolveNextStatus,
 	resolveNextStatusFromAgentOutput,
@@ -444,6 +445,7 @@ export async function handlePostAgentSuccess(
 	worktreePath: string | undefined,
 	worktreeBranch: string | undefined,
 	issueTitle: string,
+	collector?: ErrorCollector,
 ): Promise<boolean> {
 	// Agent comments: architect, test-designer, researcher
 	if (agentName === "architect" || agentName === "test-designer" || agentName === "researcher") {
@@ -459,7 +461,11 @@ export async function handlePostAgentSuccess(
 			commentBody = extractAgentCommentBody(result.textOutput);
 			if (commentBody) {
 				extractionSource = "result.textOutput";
-				console.warn(`[supervisor] ${agentName} commentBody extracted from result.textOutput`);
+				collector?.push(
+					"stages",
+					"warn",
+					`${agentName} commentBody extracted from result.textOutput`,
+				);
 			}
 		}
 
@@ -468,8 +474,10 @@ export async function handlePostAgentSuccess(
 			commentBody = extractAgentCommentBody(result.output);
 			if (commentBody) {
 				extractionSource = "result.output";
-				console.warn(
-					`[supervisor] ${agentName} commentBody extracted from result.output (fallback)`,
+				collector?.push(
+					"stages",
+					"warn",
+					`${agentName} commentBody extracted from result.output (fallback)`,
 				);
 			}
 		}
@@ -480,8 +488,10 @@ export async function handlePostAgentSuccess(
 			commentBody = extractAgentCommentBody(result.thinkingOutput);
 			if (commentBody) {
 				extractionSource = "result.thinkingOutput";
-				console.warn(
-					`[supervisor] ${agentName} commentBody extracted from result.thinkingOutput (fallback)`,
+				collector?.push(
+					"stages",
+					"warn",
+					`${agentName} commentBody extracted from result.thinkingOutput (fallback)`,
 				);
 			}
 		}
@@ -491,9 +501,10 @@ export async function handlePostAgentSuccess(
 		if (commentBody && agentName === "researcher") {
 			const validated = validateResearcherFindings(commentBody);
 			if (validated !== commentBody) {
-				console.warn(
-					`[supervisor] researcher commentBody has no substantive findings ` +
-						`(source: ${extractionSource}). Replacing with graceful degradation message.`,
+				collector?.push(
+					"stages",
+					"warn",
+					`researcher commentBody has no substantive findings (source: ${extractionSource}). Replacing with graceful degradation message.`,
 				);
 				commentBody = validated;
 			}
@@ -504,18 +515,21 @@ export async function handlePostAgentSuccess(
 				await postIssueComment(pi, issueNum, config.repo, commentBody);
 				ctx.ui.notify(`Posted ${agentName} comment on issue #${issueNum}`, "info");
 			} catch (commentErr: unknown) {
-				console.warn(
-					`[supervisor] Failed to post ${agentName} comment: ${
+				collector?.push(
+					"stages",
+					"warn",
+					`Failed to post ${agentName} comment: ${
 						commentErr instanceof Error ? commentErr.message : String(commentErr)
 					}`,
 				);
 			}
 		} else {
-			console.warn(
-				`[supervisor] ${agentName} completed but no commentBody found. ` +
+			collector?.push(
+				"stages",
+				"warn",
+				`${agentName} completed but no commentBody found. ` +
 					`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
-					`output: ${JSON.stringify((result.output || "").slice(0, 200))}, ` +
-					`thinkingOutput: ${JSON.stringify((result.thinkingOutput || "").slice(0, 200))}`,
+					`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
 			);
 		}
 	}
@@ -539,7 +553,7 @@ export async function handlePostAgentSuccess(
 		} catch (cpErr: unknown) {
 			const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr);
 			ctx.ui.notify(`commitAndPush failed: ${cpMsg}`, "warning");
-			console.warn(`[supervisor] commitAndPush failed: ${cpMsg}`);
+			collector?.push("stages", "error", `commitAndPush failed: ${cpMsg}`);
 			return false;
 		}
 
@@ -554,7 +568,7 @@ export async function handlePostAgentSuccess(
 			);
 			if (!readmeCheck.updated && readmeCheck.warning) {
 				ctx.ui.notify(readmeCheck.warning, "warning");
-				console.warn(`[supervisor] ${readmeCheck.warning}`);
+				collector?.push("stages", "warn", readmeCheck.warning);
 			}
 		} catch {
 			// README check is advisory — don't block pipeline
@@ -564,7 +578,7 @@ export async function handlePostAgentSuccess(
 	// Audit output processing
 	if (agentName === "auditor") {
 		const auditorOutput = result.textOutput || result.output || "";
-		await handleAuditorOutput(pi, ctx, auditorOutput, result, issueNum, config);
+		await handleAuditorOutput(pi, ctx, auditorOutput, result, issueNum, config, collector);
 	}
 
 	// Default: pipeline should continue
@@ -582,6 +596,7 @@ async function handleAuditorOutput(
 	result: AgentRunResult,
 	issueNum: number,
 	config: SupervisorConfig,
+	collector?: ErrorCollector,
 ): Promise<void> {
 	// Try structured AgentOutput parsing first
 	const parseResult = parseAgentOutput(agentOutput);
@@ -608,8 +623,10 @@ async function handleAuditorOutput(
 					await postIssueComment(pi, issueNum, config.repo, bodyToPost);
 					ctx.ui.notify("Audit comment posted (text marker fallback)", "info");
 				} catch (acErr: unknown) {
-					console.warn(
-						`[supervisor] Failed to post audit comment: ${
+					collector?.push(
+						"stages",
+						"warn",
+						`Failed to post audit comment: ${
 							acErr instanceof Error ? acErr.message : String(acErr)
 						}`,
 					);
@@ -622,8 +639,10 @@ async function handleAuditorOutput(
 					await postIssueComment(pi, issueNum, config.repo, bodyToPost);
 					ctx.ui.notify("Audit rejection comment posted (text marker fallback)", "info");
 				} catch (rcErr: unknown) {
-					console.warn(
-						`[supervisor] Failed to post rejection comment: ${
+					collector?.push(
+						"stages",
+						"warn",
+						`Failed to post rejection comment: ${
 							rcErr instanceof Error ? rcErr.message : String(rcErr)
 						}`,
 					);
@@ -641,10 +660,10 @@ async function handleAuditorOutput(
 				await postIssueComment(pi, issueNum, config.repo, bodyToPost);
 				ctx.ui.notify("Audit approval comment posted (from structured output)", "info");
 			} catch (acErr: unknown) {
-				console.warn(
-					`[supervisor] Failed to post audit comment: ${
-						acErr instanceof Error ? acErr.message : String(acErr)
-					}`,
+				collector?.push(
+					"stages",
+					"warn",
+					`Failed to post audit comment: ${acErr instanceof Error ? acErr.message : String(acErr)}`,
 				);
 			}
 		}
@@ -655,15 +674,19 @@ async function handleAuditorOutput(
 				await postIssueComment(pi, issueNum, config.repo, bodyToPost);
 				ctx.ui.notify("Audit rejection comment posted (from structured output)", "info");
 			} catch (rcErr: unknown) {
-				console.warn(
-					`[supervisor] Failed to post rejection comment: ${
+				collector?.push(
+					"stages",
+					"warn",
+					`Failed to post rejection comment: ${
 						rcErr instanceof Error ? rcErr.message : String(rcErr)
 					}`,
 				);
 			}
 		} else {
-			console.warn(
-				`[supervisor] Auditor rejected issue #${issueNum} but no comment body provided in structured output.`,
+			collector?.push(
+				"stages",
+				"warn",
+				`Auditor rejected issue #${issueNum} but no comment body provided in structured output.`,
 			);
 		}
 	}

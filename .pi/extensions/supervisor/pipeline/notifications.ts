@@ -10,6 +10,7 @@ import type {
 } from "../config/types.ts";
 import { formatDuration } from "../config/formatting.ts";
 import { buildPipelineSummary } from "../pipeline/output.ts";
+import type { ErrorCollector } from "./error-collector.ts";
 
 /**
  * Send pipeline completion notification.
@@ -26,7 +27,10 @@ export function sendPipelineSummary(
 	config: SupervisorConfig,
 	stopReason?: string,
 	prCreationResult?: PrCreationResult,
+	collector?: ErrorCollector,
 ): void {
+	// Prepend warnings block from collector if non-empty
+	const warningsBlock = collector?.toNotificationBlock();
 	const summaryMarkdown = buildPipelineSummary(
 		agentResults,
 		overallStatus,
@@ -37,9 +41,21 @@ export function sendPipelineSummary(
 		prCreationResult,
 	);
 
+	// Combine warnings and summary
+	const finalContent = warningsBlock ? warningsBlock + "\n\n" + summaryMarkdown : summaryMarkdown;
+
+	// If warnings exist, also send a separate supervisor-warnings message
+	if (warningsBlock) {
+		pi.sendMessage({
+			customType: "supervisor-warnings",
+			content: warningsBlock,
+			display: true,
+		});
+	}
+
 	pi.sendMessage({
 		customType: "supervisor-summary",
-		content: summaryMarkdown,
+		content: finalContent,
 		display: true,
 	});
 
