@@ -1,0 +1,27 @@
+[
+  {
+    "title": "Seek and destroy dead code for good: a strategy using ts-prune",
+    "href": "https://www.theodo.com/en-fr/blog/seek-and-destroy-dead-code-for-good-a-strategy-using-ts-prune",
+    "body": "Dead code designates all code that will never be executed during the app lifecycle. It can be lines of code after a return or throw instruction, or unused exported functions and components."
+  },
+  {
+    "title": "Finding dead code (and dead types) in TypeScript",
+    "href": "https://effectivetypescript.com/2020/10/20/tsprune/",
+    "body": "Two functions call each other (mutual recursion), but are otherwise unused. A function is only used by other dead code. An exported symbol can be alive even if it's never imported. This happens if it's used in its own module. This is all a little easier to understand in picture form"
+  },
+  {
+    "title": "Move faster by deleting unused TypeScript code | Medium",
+    "href": "https://medium.com/dovetail-engineering/move-faster-by-deleting-unused-typescript-code-965112702e8e",
+    "body": "ts-prune reports unused exports, but we have the habit of exporting stuff that doesn’t really need to be exported when its only usage was in the file itself. In that case, it reports like this: The (used in module) lines show unnecessary exports, and the other lines are dead code."
+  },
+  {
+    "title": "Boost Frontend Performance: 3 Ways to Detect and Remove Dead Code",
+    "href": "https://www.somethingsblog.com/2024/10/22/boost-frontend-performance-3-ways-to-detect-and-remove-dead-code/",
+    "body": "TypeScript is a popular superset of JavaScript that can help detect dead code. By using the ts-prune tool, you can identify unused exports and imports. To use this tool, simply install it and run it in your project."
+  },
+  {
+    "title": "unused variables - Visual Studio Code: How to detect dead typescript...",
+    "href": "https://stackoverflow.com/questions/50184496/visual-studio-code-how-to-detect-dead-typescript-code",
+    "body": "By detecting unused exports you can find dead code.What if you have an angular component? You can have an unexported public function that gets called from the html-template. Its not exported, yet still in use. Exports only wont do it."
+  }
+]

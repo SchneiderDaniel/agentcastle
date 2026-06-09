@@ -247,8 +247,8 @@ describe("parseIgnoreLine", () => {
 		assert.equal(parseIgnoreLine(".pi/chromium-deps/"), "chromium-deps");
 	});
 
-	it("extracts basename for .pi/crawl4ai-venv/", () => {
-		assert.equal(parseIgnoreLine(".pi/crawl4ai-venv/"), "crawl4ai-venv");
+	it("extracts basename for .pi/scrapling-venv/", () => {
+		assert.equal(parseIgnoreLine(".pi/scrapling-venv/"), "scrapling-venv");
 	});
 
 	it("extracts basename for deeply nested path a/b/c/d/", () => {

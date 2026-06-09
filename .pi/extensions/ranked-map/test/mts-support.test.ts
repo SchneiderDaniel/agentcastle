@@ -92,7 +92,7 @@ describe("Phase 2: Regression — existing args unchanged", () => {
 			"sessions",
 			"npm",
 			"chromium-deps",
-			"crawl4ai-venv",
+			"scrapling-venv",
 			"web-search-venv",
 			"benchmarks",
 		];

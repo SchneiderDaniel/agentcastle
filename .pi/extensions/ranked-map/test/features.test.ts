@@ -181,14 +181,14 @@ describe("Phase 2: Additional ctags exclude patterns", () => {
 		assert.ok(result.args.includes("--exclude=npm"));
 	});
 
-	it("buildCtagsArgs excludes chromium-deps/ (chromium for crawl4ai)", () => {
+	it("buildCtagsArgs excludes chromium-deps/ (chromium for scrapling)", () => {
 		const result = buildCtagsArgs(".", 0);
 		assert.ok(result.args.includes("--exclude=chromium-deps"));
 	});
 
-	it("buildCtagsArgs excludes crawl4ai-venv/ (Python venv)", () => {
+	it("buildCtagsArgs excludes scrapling-venv/ (Python venv)", () => {
 		const result = buildCtagsArgs(".", 0);
-		assert.ok(result.args.includes("--exclude=crawl4ai-venv"));
+		assert.ok(result.args.includes("--exclude=scrapling-venv"));
 	});
 
 	it("buildCtagsArgs excludes web-search-venv/ (Python venv for web search)", () => {
@@ -283,7 +283,7 @@ describe("Phase 2: Additional ctags exclude patterns", () => {
 			"sessions",
 			"npm",
 			"chromium-deps",
-			"crawl4ai-venv",
+			"scrapling-venv",
 			"web-search-venv",
 			"benchmarks",
 		];
@@ -659,8 +659,8 @@ describe("Phase 7: Engine integration", () => {
 			assert.ok(ctagsCall!.args.includes("--exclude=*.md"), "should exclude *.md");
 			assert.ok(ctagsCall!.args.includes("--exclude=context"), "should exclude context");
 			assert.ok(
-				ctagsCall!.args.includes("--exclude=crawl4ai-venv"),
-				"should exclude crawl4ai-venv",
+				ctagsCall!.args.includes("--exclude=scrapling-venv"),
+				"should exclude scrapling-venv",
 			);
 
 			// Verify index was built
@@ -1159,7 +1159,7 @@ describe("Phase 9: Git submodule indexing (flask_blogs)", () => {
 			"sessions",
 			"npm",
 			"chromium-deps",
-			"crawl4ai-venv",
+			"scrapling-venv",
 			"web-search-venv",
 			"benchmarks",
 		];

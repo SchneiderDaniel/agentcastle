@@ -1,15 +1,10 @@
 /**
  * Simplified Python virtual environment setup for Scrapling.
  *
- * Replaces the old crawl4ai venv-setup.ts which handled:
- *   - Complex Chromium system dependencies (ensureChromiumDeps)
- *   - apt-get download of libs, dpkg extraction
- *   - Retry cache logic with TTL
- *
- * New approach:
- *   - Clean pip install scrapling[fetchers] markdownify beautifulsoup4
- *   - File-based lock to prevent race conditions from parallel agents
- *   - No system-level Chromium deps needed (Scrapling manages its own browser binaries)
+ * Sets up Python venv for scrapling-based web crawling.
+ * Clean pip install scrapling[fetchers] markdownify beautifulsoup4
+ * File-based lock to prevent race conditions from parallel agents
+ * No system-level Chromium deps needed (Scrapling manages its own browser binaries)
  */
 
 import type { ExecFn } from "./types.ts";

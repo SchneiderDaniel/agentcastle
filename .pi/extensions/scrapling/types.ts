@@ -1,5 +1,5 @@
 /**
- * Shared types for crawl4ai extension
+ * Shared types for scrapling extension
  */
 
 export interface ExecResult {

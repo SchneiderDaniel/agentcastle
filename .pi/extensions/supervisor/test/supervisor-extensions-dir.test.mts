@@ -147,12 +147,12 @@ describe("resolveExtensions — directory-aware resolution", () => {
 		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/context-info.ts"]);
 	});
 
-	it("crawl4ai still resolves to crawl4ai.ts (unchanged file-based)", () => {
+	it("scrapling still resolves to scrapling.ts (unchanged file-based)", () => {
 		const tmpDir = setupFixture();
-		const result = resolveExtensions("crawl4ai");
+		const result = resolveExtensions("scrapling");
 		assert.ok(
-			result.some((r) => r.includes("crawl4ai.ts")),
-			`Expected crawl4ai.ts, got: ${JSON.stringify(result)}`,
+			result.some((r) => r.includes("scrapling.ts")),
+			`Expected scrapling.ts, got: ${JSON.stringify(result)}`,
 		);
 	});
 });

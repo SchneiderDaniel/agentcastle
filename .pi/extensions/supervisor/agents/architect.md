@@ -4,7 +4,7 @@ description: Proposes target architecture/implementation approach via a GitHub i
 tools: read, bash, structural_search, ripgrep_search, ranked_map
 model: opencode-go/deepseek-v4-flash
 thinking: high
-extensions: "agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer"
+extensions: "agent-harness,caveman,piignore,ranked-map,ripgrep-search,scrapling,structural-analyzer"
 skills: extension-spec
 ---
 

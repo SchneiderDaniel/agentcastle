@@ -20,12 +20,12 @@ def fetch_page(url):
 
     # Tier 1: Lightweight Zero-Browser Fetch (~40MB RAM)
     try:
-        page = Fetcher.get(url)
-        content_lower = page.text.lower()
-        is_blocked = page.status in [403, 503] or "cloudflare" in content_lower or "just a moment" in content_lower
+        page = Fetcher.get(url, timeout=15)
+        page_html = str(page.html_content)
+        is_blocked = page.status in [403, 503] or "cloudflare" in page_html.lower() or "just a moment" in page_html.lower()
 
         if not is_blocked:
-            return {"html": page.html, "method": "lightweight"}
+            return {"html": page_html, "method": "lightweight"}
     except Exception:
         pass  # Fall through to heavy fetcher on error
 
@@ -38,7 +38,7 @@ def fetch_page(url):
             network_idle=True,
             solve_cloudflare=True,
         )
-        return {"html": page.html, "method": "stealth"}
+        return {"html": str(page.html_content), "method": "stealth"}
     except Exception as e:
         raise Exception(f"Stealth bypass failed: {str(e)}")
     finally:

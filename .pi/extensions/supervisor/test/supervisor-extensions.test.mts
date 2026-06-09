@@ -244,18 +244,18 @@ describe("edge cases", () => {
 		assert.deepStrictEqual(result, ["--extension", ".pi/extensions/context-info.ts"]);
 	});
 
-	it("caveman,crawl4ai (PS requirement) + context-info", () => {
-		const result = resolveExtensions("caveman,crawl4ai");
-		// Both caveman and crawl4ai are directory-based -> resolve to /index.ts
+	it("caveman,scrapling (PS requirement) + context-info", () => {
+		const result = resolveExtensions("caveman,scrapling");
+		// Both caveman and scrapling are directory-based -> resolve to /index.ts
 		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
-		assert.ok(result.some((r) => r.includes("crawl4ai/index.ts")));
+		assert.ok(result.some((r) => r.includes("scrapling/index.ts")));
 		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 
 	it("supervisor with caveman → supervisor excluded, context-info added", () => {
-		const result = resolveExtensions("supervisor,caveman,crawl4ai");
+		const result = resolveExtensions("supervisor,caveman,scrapling");
 		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
-		assert.ok(result.some((r) => r.includes("crawl4ai/index.ts")));
+		assert.ok(result.some((r) => r.includes("scrapling/index.ts")));
 		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 
@@ -301,22 +301,22 @@ describe("production agent files — extensions field", () => {
 		{
 			name: "architect",
 			expected:
-				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+				"agent-harness,caveman,piignore,ranked-map,ripgrep-search,scrapling,structural-analyzer",
 		},
 		{
 			name: "test-designer",
 			expected:
-				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer",
+				"agent-harness,caveman,piignore,ranked-map,ripgrep-search,scrapling,structural-analyzer",
 		},
 		{
 			name: "developer",
 			expected:
-				"agent-harness,caveman,crawl4ai,format-on-save,piignore,ranked-map,ripgrep-search,tsc-checkpoint,structural-analyzer,worktree-sandbox",
+				"agent-harness,caveman,format-on-save,piignore,ranked-map,ripgrep-search,scrapling,tsc-checkpoint,structural-analyzer,worktree-sandbox",
 		},
 		{
 			name: "auditor",
 			expected:
-				"agent-harness,caveman,crawl4ai,piignore,ranked-map,ripgrep-search,structural-analyzer,worktree-sandbox",
+				"agent-harness,caveman,piignore,ranked-map,ripgrep-search,scrapling,structural-analyzer,worktree-sandbox",
 		},
 	];
 
@@ -365,10 +365,10 @@ describe("context-info extension auto-injection", () => {
 	});
 
 	it("P3.2: other extensions → appends context-info (directory-based paths)", () => {
-		const result = resolveExtensions("caveman,crawl4ai");
-		// Both caveman and crawl4ai are directory-based -> resolve to /index.ts
+		const result = resolveExtensions("caveman,scrapling");
+		// Both caveman and scrapling are directory-based -> resolve to /index.ts
 		assert.ok(result.some((r) => r.includes("caveman/index.ts")));
-		assert.ok(result.some((r) => r.includes("crawl4ai/index.ts")));
+		assert.ok(result.some((r) => r.includes("scrapling/index.ts")));
 		assert.ok(result.some((r) => r.includes("context-info.ts")));
 	});
 

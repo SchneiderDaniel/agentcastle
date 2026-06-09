@@ -197,7 +197,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/ranked-map/`                        | `ranked_map` tool — modular (cache, ctags, git, scoring, search). Unified codebase mapper via ctags + rg + git recency |
 | `.pi/extensions/structural-analyzer.ts`             | `structural_search` tool via ast-grep                                                                                  |
 | `.pi/extensions/ripgrep-search/`                    | `ripgrep_search` tool via ripgrep (modular: args, config, parse, temp, validate)                                       |
-| `.pi/extensions/crawl4ai/`                          | `web_crawl` tool: Scrapling with progressive fetching (lightweight → stealth)                                           |
+| `.pi/extensions/scrapling/`                         | `web_crawl` tool: Scrapling with progressive fetching (lightweight → stealth)                                           |
 | `.pi/extensions/web-search/`                        | `web_search` tool: DuckDuckGo search via ddgs Python lib — ranked results with URLs + snippets                         |
 | `.pi/extensions/supervisor/`                        | Kanban-driven multi-agent orchestration                                                                                |
 | `.pi/extensions/context-info/`                      | Rich TUI status bar (branch, model, tokens, TPS, cache), welcome banner                                                |
@@ -1098,7 +1098,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | structural-analyzer.ts                            | —        | MIT          | project    | This repository                                                                                          |
 | ripgrep-search/                                   | —        | MIT          | project    | This repository                                                                                          |
 | caveman/                                          | —        | MIT          | project    | This repository                                                                                          |
-| crawl4ai/                                         | —        | MIT          | project    | This repository                                                                                          |
+| scrapling/                                        | —        | MIT          | project    | This repository                                                                                          |
 | session-logger/                                   | —        | MIT          | project    | This repository                                                                                          |
 | ask-user/                                         | —        | MIT          | project    | This repository                                                                                          |
 | supervisor/                                       | —        | MIT          | project    | This repository                                                                                          |
