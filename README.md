@@ -45,7 +45,7 @@ AgentCastle is a **Kanban-centred AI agent** built on the [Pi coding agent](http
 - **Codebase mapping** — `ranked_map` via universal-ctags: auto-mode (query → ranked, no query → full dump for small repos, recency-ranked for large repos)
 - **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching
 - **Text search** — `ripgrep_search` via ripgrep: fast literal/regex code search
-- **Web crawling** — `web_crawl`: local crawl4ai → Apify cloud → HTTP fallback
+- **Web crawling** — `web_crawl`: Scrapling (progressive fetch with automatic Cloudflare bypass)
 - **Rich TUI** — Custom status bar (branch, model, token usage, TPS, cache stats), welcome banner
 - **Session logging** — Every conversation saved as JSONL, queryable with jq
 - **Multi-agent pipeline** — Autonomous Kanban: Researcher → Architect → TestDesigner → Developer → Auditor
@@ -171,9 +171,9 @@ Exit with `Ctrl+C` twice. The provider is persisted in `.pi/settings.json`.
      │  │base tool │ │search tool    │ │
      │  └──────────┘ └───────────────┘ │
      │  ┌──────────┐ ┌───────────────┐ │
-     │  │ ripgrep  │ │ crawl4ai      │ │
+     │  │ ripgrep  │ │ scrapling    │ │
      │  │ripgrep_  │ │Python venv    │ │
-     │  │search    │ │(host browser) │ │
+     │  │search    │ │(zero-browser) │ │
      │  └──────────┘ └───────────────┘ │
      └─────────────────────────────────┘
 ```
@@ -197,7 +197,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/ranked-map/`                        | `ranked_map` tool — modular (cache, ctags, git, scoring, search). Unified codebase mapper via ctags + rg + git recency |
 | `.pi/extensions/structural-analyzer.ts`             | `structural_search` tool via ast-grep                                                                                  |
 | `.pi/extensions/ripgrep-search/`                    | `ripgrep_search` tool via ripgrep (modular: args, config, parse, temp, validate)                                       |
-| `.pi/extensions/crawl4ai/`                          | `web_crawl` tool: local crawl4ai → Apify → HTTP fallback                                                               |
+| `.pi/extensions/crawl4ai/`                          | `web_crawl` tool: Scrapling with progressive fetching (lightweight → stealth)                                           |
 | `.pi/extensions/web-search/`                        | `web_search` tool: DuckDuckGo search via ddgs Python lib — ranked results with URLs + snippets                         |
 | `.pi/extensions/supervisor/`                        | Kanban-driven multi-agent orchestration                                                                                |
 | `.pi/extensions/context-info/`                      | Rich TUI status bar (branch, model, tokens, TPS, cache), welcome banner                                                |
@@ -252,7 +252,7 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **Structural Analyzer** | `structural_search` via ast-grep. AST-aware pattern matching (function calls, try/catch, class defs).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | **Ripgrep Search**      | `ripgrep_search` via ripgrep. Fast literal/regex code search, respects `.gitignore`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Supervisor**          | Kanban-driven multi-agent pipeline. Reads issue from GitHub project, dispatches agents in loop. Registers `/supervisor <issue-number>` command.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| **Web Crawler**         | `web_crawl`: local crawl4ai → Apify cloud → HTTP fallback. Auto-installs venv + Chromium deps.
+| **Web Crawler**         | `web_crawl`: Scrapling with progressive fetching (lightweight curl_cffi → Playwright stealth). Auto-installs venv via pip install scrapling[fetchers] markdownify. |
 | **Web Search**          | `web_search`: DuckDuckGo search via `ddgs` Python library. Ranked results with titles, URLs, snippets. Result cache (5-min TTL). Graceful degradation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **Context Info**        | Rich TUI status bar (branch, model, tokens, TPS, cache), welcome banner, animated working indicator.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Session Logger**      | Logs sessions to `.pi/sessions/<id>.jsonl`. Generates `.md` reports with sub-agent output from supervisor pipeline. Toggle with `/session-logger`. Query with `scripts/session-query.sh`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -1000,7 +1000,7 @@ docker compose build --no-cache
 The extension auto-installs system libraries inside the container. If it persists:
 
 ```bash
-rm -rf .pi/crawl4ai-venv .pi/chromium-deps    # Next call auto-recreates
+rm -rf .pi/scrapling-venv    # Next call auto-recreates
 ```
 
 #### Permission errors on bind-mounted files
@@ -1090,8 +1090,9 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | ripgrep (rg)                                      | latest   | MIT          | system     | [github.com/BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep)                                   |
 | jscpd                                             | 4.2.4    | MIT          | system     | [github.com/kucherenko/jscpd](https://github.com/kucherenko/jscpd)                                       |
 | **Web Crawling (Python venv)**                    |          |              |            |                                                                                                          |
-| crawl4ai                                          | latest   | Apache-2.0   | venv       | [github.com/unclecode/crawl4ai](https://github.com/unclecode/crawl4ai)                                   |
+| scrapling                                         | latest   | MIT          | venv       | [github.com/nicofirst/scrapling](https://github.com/nicofirst/scrapling)                                 |
 | Playwright Chromium                               | latest   | Apache-2.0   | venv       | [playwright.dev](https://playwright.dev)                                                                 |
+| markdownify                                        | latest   | MIT          | venv       | [github.com/matthewwithanm/python-markdownify](https://github.com/matthewwithanm/python-markdownify)     |
 | **Project Extensions (`.pi/extensions/`)**        |          |              |            |                                                                                                          |
 | ranked-map.ts                                     | —        | MIT          | project    | This repository (unified ctags mapper)                                                                   |
 | structural-analyzer.ts                            | —        | MIT          | project    | This repository                                                                                          |
@@ -1115,7 +1116,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 
 > **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
 >
-> **SBOM Generation:** This table is manually maintained. For automated CycloneDX/SPDX SBOM: `npx cyclonedx-npm` + `pip freeze | cyclonedx-py` in `.pi/crawl4ai-venv/`.
+> **SBOM Generation:** This table is manually maintained. For automated CycloneDX/SPDX SBOM: `npx cyclonedx-npm` + `pip freeze | cyclonedx-py` in `.pi/scrapling-venv/`.
 
 ### Security
 
@@ -1168,7 +1169,7 @@ Built on top of these excellent projects:
 **Runtime & Tools:**
 
 - [Pi Coding Agent](https://pi.dev) — The agent runtime
-- [crawl4ai](https://github.com/unclecode/crawl4ai) — LLM-friendly web crawler
+- [scrapling](https://github.com/nicofirst/scrapling) — Memory-optimized web scraper with progressive fetching
 - [Zed](https://zed.dev) — The editor
 
 **Agent Best Practices:**
