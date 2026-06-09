@@ -47,6 +47,7 @@ const MANY_MATCHES = Array.from({ length: 150 }, (_, i) =>
 function emptyMockPi(overrides?: Record<string, any>) {
 	return {
 		registerTool: () => {},
+		on: () => {},
 		exec: async (cmd: string, args: string[]) => {
 			if (cmd === "ast-grep" && args[0] === "--version") {
 				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
@@ -155,8 +156,274 @@ describe("parseSgOutput", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Cache key tests
 // ═══════════════════════════════════════════════════════════════════════
+// Cache eviction tests (FIFO bounded)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("cache eviction (FIFO bounded)", () => {
+	let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	let execCalls: Array<{ command: string; args: string[]; options?: any }>;
+	let onCalls: Array<{ event: string; handler: Function }>;
+
+	beforeEach(() => {
+		clearResultCache();
+		execCalls = [];
+		capturedExecute = undefined;
+		onCalls = [];
+	});
+
+	function generatePatterns(n: number): string[] {
+		return Array.from({ length: n }, (_, i) => `p${i}($A)`);
+	}
+
+	function makeScanExec(stdout: string, code = 0) {
+		return async (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version") {
+				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "test" && args[0] === "-f") {
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			}
+			if (cmd === "cat") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			return { stdout, stderr: "", code, killed: false };
+		};
+	}
+
+	function makePi(execFn?: (cmd: string, args: string[]) => any) {
+		const defaultExec = async (cmd: string, args: string[], opts?: any) => {
+			execCalls.push({ command: cmd, args, options: opts });
+			return execFn ? execFn(cmd, args) : { stdout: "", stderr: "", code: 1, killed: false };
+		};
+		return {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: defaultExec,
+			on: (event: string, handler: Function) => {
+				onCalls.push({ event, handler });
+			},
+		};
+	}
+
+	it("201st unique pattern — cache stays at 200; oldest evicted, newest survives", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const patterns = generatePatterns(201);
+
+		// Fill cache with 201 unique patterns
+		for (const pattern of patterns) {
+			await capturedExecute!("id", { pattern, language: "ts" }, undefined, undefined, {
+				cwd: "/tmp",
+			});
+		}
+
+		// All 201 should have been scan executions (first pass, no cache)
+		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls.length, 201);
+
+		execCalls.length = 0;
+
+		// 200th pattern (index 199) should still be a hit
+		await capturedExecute!("id", { pattern: patterns[199], language: "ts" }, undefined, undefined, {
+			cwd: "/tmp",
+		});
+		assert.strictEqual(
+			execCalls.filter((c) => c.args[0] === "scan").length,
+			0,
+			"200th pattern should be a cache hit",
+		);
+
+		execCalls.length = 0;
+
+		// 1st pattern (index 0) should be a miss (evicted)
+		await capturedExecute!("id", { pattern: patterns[0], language: "ts" }, undefined, undefined, {
+			cwd: "/tmp",
+		});
+		assert.strictEqual(
+			execCalls.filter((c) => c.args[0] === "scan").length,
+			1,
+			"1st pattern should be evicted → cache miss → re-exec",
+		);
+	});
+
+	it("199 unique patterns — all hit on second pass (no eviction)", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const patterns = generatePatterns(199);
+
+		// Fill cache with 199 patterns
+		for (const pattern of patterns) {
+			await capturedExecute!("id", { pattern, language: "ts" }, undefined, undefined, {
+				cwd: "/tmp",
+			});
+		}
+
+		execCalls.length = 0;
+
+		// All 199 should be hits
+		for (const pattern of patterns) {
+			await capturedExecute!("id", { pattern, language: "ts" }, undefined, undefined, {
+				cwd: "/tmp",
+			});
+		}
+
+		assert.strictEqual(
+			execCalls.filter((c) => c.args[0] === "scan").length,
+			0,
+			"no scans — all 199 should be cached hits",
+		);
+	});
+
+	it("clearResultCache() empties full cache", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const patterns = generatePatterns(5);
+
+		// Fill cache
+		for (const pattern of patterns) {
+			await capturedExecute!("id", { pattern, language: "ts" }, undefined, undefined, {
+				cwd: "/tmp",
+			});
+		}
+
+		clearResultCache();
+
+		execCalls.length = 0;
+
+		// Re-run one pattern — should miss (cache cleared)
+		await capturedExecute!("id", { pattern: patterns[0], language: "ts" }, undefined, undefined, {
+			cwd: "/tmp",
+		});
+		assert.strictEqual(
+			execCalls.filter((c) => c.args[0] === "scan").length,
+			1,
+			"should be cache miss after clearResultCache()",
+		);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Session lifecycle tests
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("session lifecycle", () => {
+	let onCalls: Array<{ event: string; handler: Function }>;
+	let capturedExecute: ((...args: any[]) => Promise<any>) | undefined;
+	let execCalls: Array<{ command: string; args: string[] }>;
+
+	beforeEach(() => {
+		clearResultCache();
+		onCalls = [];
+		capturedExecute = undefined;
+		execCalls = [];
+	});
+
+	function makeScanExec(stdout: string) {
+		return async (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version") {
+				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "test" && args[0] === "-f") {
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			}
+			if (cmd === "cat") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			return { stdout, stderr: "", code: 0, killed: false };
+		};
+	}
+
+	function makePi(execFn: (cmd: string, args: string[]) => any) {
+		return {
+			registerTool: (tool: any) => {
+				capturedExecute = tool.execute;
+			},
+			exec: async (cmd: string, args: string[], _opts?: any) => {
+				execCalls.push({ command: cmd, args });
+				return execFn(cmd, args);
+			},
+			on: (event: string, handler: Function) => {
+				onCalls.push({ event, handler });
+			},
+		};
+	}
+
+	it("session_shutdown handler is registered", () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		const shutdownHandlers = onCalls.filter((c) => c.event === "session_shutdown");
+		assert.strictEqual(
+			shutdownHandlers.length,
+			1,
+			"should register exactly one session_shutdown handler",
+		);
+	});
+
+	it("cache is cleared after session shutdown", async () => {
+		const execFn = makeScanExec(TWO_MATCHES);
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		// Execute a search — populates cache
+		await capturedExecute!(
+			"id",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(execCalls.filter((c) => c.args[0] === "scan").length, 1);
+
+		execCalls.length = 0;
+
+		// Same search again — cache hit
+		await capturedExecute!(
+			"id",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(
+			execCalls.filter((c) => c.args[0] === "scan").length,
+			0,
+			"second call should be cache hit",
+		);
+
+		// Trigger session shutdown
+		const shutdownHandler = onCalls.find((c) => c.event === "session_shutdown")!.handler;
+		await shutdownHandler();
+
+		execCalls.length = 0;
+
+		// Same search again — should miss (cache was cleared)
+		await capturedExecute!(
+			"id",
+			{ pattern: "console.log($A)", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/tmp" },
+		);
+		assert.strictEqual(
+			execCalls.filter((c) => c.args[0] === "scan").length,
+			1,
+			"should be cache miss after session shutdown",
+		);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Cache key tests
 
 describe("makeCacheKey", () => {
 	it("produces deterministic key from pattern, language, cwd", () => {
@@ -355,6 +622,7 @@ describe("cache integration (adapter)", () => {
 				capturedExecute = tool.execute;
 			},
 			exec: defaultExec,
+			on: () => {},
 		};
 	}
 
@@ -577,6 +845,7 @@ describe("language auto-detect (adapter)", () => {
 				capturedExecute = tool.execute;
 			},
 			exec: defaultExec,
+			on: () => {},
 		};
 	}
 
@@ -715,6 +984,7 @@ describe("streaming (adapter)", () => {
 				execCalls.push({ command: cmd, args });
 				return execFn(cmd, args);
 			},
+			on: () => {},
 			_execCalls: execCalls,
 		};
 	}
@@ -866,6 +1136,7 @@ describe("binary detection (adapter)", () => {
 				execCalls.push({ command: cmd, args });
 				return execFn(cmd, args);
 			},
+			on: () => {},
 		};
 	}
 
@@ -960,6 +1231,7 @@ describe("error propagation (adapter)", () => {
 				capturedExecute = tool.execute;
 			},
 			exec: async (cmd: string, args: string[], _opts?: any) => execFn(cmd, args),
+			on: () => {},
 		};
 	}
 

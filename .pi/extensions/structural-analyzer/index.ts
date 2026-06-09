@@ -61,6 +61,9 @@ const CONFIG_PRIORITY: Array<{ file: string; language: string }> = [
 /** Default language when auto-detect fails and no caller-supplied language. */
 const DEFAULT_LANGUAGE = "ts";
 
+/** Maximum number of entries in the result cache before FIFO eviction. */
+const MAX_CACHE_SIZE = 200;
+
 /** Module-level result cache keyed by `${pattern}::${language}::${cwd}`. */
 const RESULT_CACHE = new Map<string, ExecResultResponse>();
 
@@ -70,6 +73,20 @@ const RESULT_CACHE = new Map<string, ExecResultResponse>();
  */
 export function clearResultCache(): void {
 	RESULT_CACHE.clear();
+}
+
+/**
+ * Set a cache entry with FIFO eviction when the cache exceeds MAX_CACHE_SIZE.
+ * Evicts the oldest entry (first inserted) when at capacity.
+ */
+function setCache(key: string, value: ExecResultResponse): void {
+	if (RESULT_CACHE.size >= MAX_CACHE_SIZE) {
+		const firstKey = RESULT_CACHE.keys().next().value;
+		if (firstKey !== undefined) {
+			RESULT_CACHE.delete(firstKey);
+		}
+	}
+	RESULT_CACHE.set(key, value);
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -499,10 +516,15 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 
 			// Cache the result (only cache successful, non-error responses)
 			if (!response.isError) {
-				RESULT_CACHE.set(cacheKey, response);
+				setCache(cacheKey, response);
 			}
 
 			return response;
 		},
+	});
+
+	// Clear cache between sessions to prevent cross-session memory bleed
+	pi.on("session_shutdown", async () => {
+		RESULT_CACHE.clear();
 	});
 }
