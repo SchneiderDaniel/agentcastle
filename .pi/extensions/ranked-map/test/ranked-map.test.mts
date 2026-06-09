@@ -31,6 +31,7 @@ import type {
 	RankedMapConfig,
 	CachedIndex,
 	SymbolEntry,
+	RankedEntry,
 	RankedFileScore,
 	RankedMapResult,
 	CtagsTag,
@@ -56,6 +57,7 @@ import {
 	estimateTokens,
 	selectMode,
 	dumpAllFiles,
+	buildOutputFromEntries,
 	formatSymbols,
 	formatOutput,
 	isHighSignalKind,
@@ -2153,6 +2155,155 @@ describe("dumpAllFiles", () => {
 		};
 		const result = dumpAllFiles(syms, 5000);
 		assert.ok(result.totalTokens > 0);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 6b: buildOutputFromEntries helper (shared budget-fill loop)
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("buildOutputFromEntries", () => {
+	const symA: SymbolEntry[] = [{ type: "function", name: "foo", line: 1 }];
+	const symB: SymbolEntry[] = [{ type: "class", name: "Bar", line: 5 }];
+
+	it("single entry fits within budget → 1 file, totalTokens > 0, truncated = false", () => {
+		const entries: RankedEntry[] = [{ path: "a.ts", score: 0.0, symbols: symA }];
+		const result = buildOutputFromEntries(entries, 5000);
+		assert.strictEqual(result.files.length, 1);
+		assert.ok(result.totalTokens > 0);
+		assert.strictEqual(result.truncated, false);
+	});
+
+	it("empty entries array → empty result, no truncation", () => {
+		const result = buildOutputFromEntries([], 5000);
+		assert.strictEqual(result.files.length, 0);
+		assert.strictEqual(result.totalTokens, 0);
+		assert.strictEqual(result.truncated, false);
+	});
+
+	it("zero token budget → empty files, truncated = true", () => {
+		const entries: RankedEntry[] = [{ path: "a.ts", score: 0.5, symbols: symA }];
+		const result = buildOutputFromEntries(entries, 0);
+		assert.strictEqual(result.files.length, 0);
+		assert.strictEqual(result.totalTokens, 0);
+		assert.strictEqual(result.truncated, true);
+	});
+
+	it("first entry alone fits, second exceeds → 1 file, truncated = true", () => {
+		const bigText = Array.from({ length: 200 }, (_, i) => ({
+			type: "function",
+			name: `f${i}`,
+			line: i,
+		})) as SymbolEntry[];
+		const entries: RankedEntry[] = [
+			{ path: "small.ts", score: 0.5, symbols: symA },
+			{ path: "big.ts", score: 0.5, symbols: bigText },
+		];
+		const result = buildOutputFromEntries(entries, 150);
+		// First entry should fit (small with 1 symbol = ~1 token + 50 preview ≈ 51 tokens)
+		// Second is too big
+		assert.strictEqual(result.files.length, 1);
+		assert.strictEqual(result.truncated, true);
+	});
+
+	it("entry tokens exactly equal budget → included, truncated = false (fits exactly, no truncation needed)", () => {
+		const entries: RankedEntry[] = [{ path: "a.ts", score: 0.5, symbols: symA }];
+		// The entry will have estimateTokens(formattedSymbols) + 50 preview
+		// Use a very tight budget — matching exactly
+		const symText = "a.ts\n  1 symbol: 1 function\n  function foo";
+		const entryTokens = Math.ceil(symText.length / 4) + 50;
+		const result = buildOutputFromEntries(entries, entryTokens);
+		assert.strictEqual(result.files.length, 1);
+		// Guard is > not >=, so exact fit is not truncated
+		assert.strictEqual(result.truncated, false);
+	});
+
+	it("budget exactly enough for first 2 of 3 entries → 2 files, truncated = true", () => {
+		const entries: RankedEntry[] = [
+			{ path: "a.ts", score: 0.5, symbols: symA },
+			{ path: "b.ts", score: 0.4, symbols: [{ type: "function", name: "bar", line: 2 }] },
+			{ path: "c.ts", score: 0.3, symbols: [{ type: "function", name: "baz", line: 3 }] },
+		];
+		// a.ts + b.ts tokens + 2*50 preview ≈ 2 small entries
+		const entryTokens = Math.ceil("a.ts\n  1 symbol: 1 function\n  function foo".length / 4) + 50;
+		const result = buildOutputFromEntries(entries, entryTokens * 2);
+		assert.strictEqual(result.files.length, 2);
+		assert.strictEqual(result.truncated, true);
+	});
+
+	it("all entries fit within budget → all included, truncated = false", () => {
+		const entries: RankedEntry[] = [
+			{ path: "a.ts", score: 0.5, symbols: symA },
+			{ path: "b.ts", score: 0.4, symbols: symB },
+		];
+		const result = buildOutputFromEntries(entries, 5000);
+		assert.strictEqual(result.files.length, 2);
+		assert.strictEqual(result.truncated, false);
+	});
+
+	it("score values preserved in output", () => {
+		const entries: RankedEntry[] = [{ path: "a.ts", score: 0.75, symbols: symA }];
+		const result = buildOutputFromEntries(entries, 5000);
+		assert.strictEqual(result.files[0]!.score, 0.75);
+	});
+
+	it("path values preserved in output", () => {
+		const entries: RankedEntry[] = [{ path: "src/main.ts", score: 1.0, symbols: symA }];
+		const result = buildOutputFromEntries(entries, 5000);
+		assert.strictEqual(result.files[0]!.path, "src/main.ts");
+	});
+
+	it("entry with empty SymbolEntry[] produces (no symbols) string, still included", () => {
+		const entries: RankedEntry[] = [{ path: "empty.ts", score: 0.5, symbols: [] }];
+		const result = buildOutputFromEntries(entries, 5000);
+		assert.strictEqual(result.files.length, 1);
+		assert.ok(result.files[0]!.symbols.includes("no symbols"));
+	});
+
+	it("PREVIEW_TOKEN_ESTIMATE (50) added to each entry's token count", () => {
+		const entries: RankedEntry[] = [
+			{ path: "a.ts", score: 0.5, symbols: symA },
+			{ path: "b.ts", score: 0.5, symbols: [{ type: "function", name: "g", line: 1 }] },
+		];
+		const result = buildOutputFromEntries(entries, 5000);
+		// Two entries, each gets +50 preview tokens added to their symbol tokens
+		const expectedSymbolTokens =
+			Math.ceil("a.ts\n  1 symbol: 1 function\n  function foo".length / 4) +
+			Math.ceil("b.ts\n  1 symbol: 1 function\n  function g".length / 4);
+		assert.strictEqual(result.totalTokens, expectedSymbolTokens + 100);
+	});
+
+	it("tokenBudget <= 0 guard fires before first entry → empty files + truncated = true even with negative budget", () => {
+		const entries: RankedEntry[] = [{ path: "a.ts", score: 0.5, symbols: symA }];
+		const result = buildOutputFromEntries(entries, -5);
+		assert.strictEqual(result.files.length, 0);
+		assert.strictEqual(result.truncated, true);
+	});
+
+	it("totalTokens > 0 guard allows first oversized entry through but blocks second", () => {
+		const big: SymbolEntry[] = Array.from({ length: 100 }, (_, i) => ({
+			type: "function",
+			name: `longFuncName_${i}`,
+			line: i,
+		})) as SymbolEntry[];
+		const entries: RankedEntry[] = [
+			{ path: "big.ts", score: 0.5, symbols: big },
+			{ path: "small.ts", score: 0.3, symbols: symA },
+		];
+		// Budget enough for exactly the first entry (oversized) but not the second
+		const result = buildOutputFromEntries(entries, 50);
+		assert.strictEqual(result.files.length, 1);
+		assert.strictEqual(result.truncated, true);
+	});
+
+	it("RankedEntry type accepts SymbolEntry[] and score: number, returns correct shape", () => {
+		const entries: RankedEntry[] = [{ path: "a.ts", score: 0.85, symbols: symA }];
+		const result = buildOutputFromEntries(entries, 5000);
+		assert.strictEqual(result.files.length, 1);
+		assert.strictEqual(result.files[0]!.score, 0.85);
+		assert.ok(Array.isArray(result.files));
+		assert.strictEqual(typeof result.totalTokens, "number");
+		assert.strictEqual(typeof result.truncated, "boolean");
 	});
 });
 
