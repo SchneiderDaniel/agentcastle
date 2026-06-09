@@ -42,7 +42,7 @@ Omit any search angle that would require loose interpretation to connect back to
 
 Run your 1 query with `web_search` (`--maxResults 5`). For each result, evaluate the snippet for relevance to the issue topic. **If snippet proves relevance, crawl the page** — your job is to extract the core information so downstream agents never need to crawl.
 
-Crawl at most 1-2 pages total. Hard cap total crawled content at ~75K tokens — if a page is longer, extract the relevant section and stop. If budget exceeded, stop crawling and synthesize what you have.
+Crawl at most 1-2 pages total. **Always pass `maxTokens=25000` to every `web_crawl` call** — this caps each page at ~25K tokens. If a page exceeds this, only the first ~25K tokens are returned with a truncation notice. Extract relevant sections from what you get. Do NOT re-crawl with higher maxTokens.
 
 Record URL of every crawled page — every finding must link back to its source.
 

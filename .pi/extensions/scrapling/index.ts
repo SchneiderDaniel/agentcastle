@@ -105,7 +105,7 @@ export default function webCrawlExtension(pi: ExtensionAPI): void {
 						);
 						if (parsed.ok && parsed.results) {
 							// Cast needed because pi tool params type isn't updated when schema changes
-							const maxTokens = (params as { maxTokens?: number }).maxTokens ?? 0;
+							const maxTokens = (params as { maxTokens?: number }).maxTokens ?? 25000;
 							const texts = parsed.results.map((r: any) => {
 								if (!r.success) {
 									return `--- ${r.url} ---\nError: ${r.error}`;

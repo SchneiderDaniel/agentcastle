@@ -44,6 +44,7 @@
 		"maxRejections": 5,
 		"codeowners": ["SchneiderDaniel"],
 		"agentTimeoutsMin": {},
+		"agentTokenBudget": 300000,
 		"bellOnComplete": false,
 		"commentSummaryThreshold": 7,
 		"maxCommentChars": 2000
