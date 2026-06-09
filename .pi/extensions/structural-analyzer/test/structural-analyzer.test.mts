@@ -576,6 +576,34 @@ suppressError: false`;
 		const result = await detectLanguage(mockExec as any, "/p");
 		assert.strictEqual(result, "typescript");
 	});
+
+	it("detectLanguage with double-quoted key in sgconfig.yml", async () => {
+		const sgconfigYaml = `languageGlobs:
+  "ts": "**/*.ts"`;
+
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "sgconfig.yml") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			if (cmd === "cat" && args[0] === "sgconfig.yml") return { code: 0, stdout: sgconfigYaml };
+			return { code: 0, stdout: "" };
+		};
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "ts");
+	});
+
+	it("detectLanguage with single-quoted key in sgconfig.yml", async () => {
+		const sgconfigYaml = `languageGlobs:
+  'ts': "**/*.ts"`;
+
+		const mockExec = async (cmd: string, args: string[]) => {
+			if (cmd === "test" && args[1] === "sgconfig.yml") return { code: 0 };
+			if (cmd === "test") return { code: 1 };
+			if (cmd === "cat" && args[0] === "sgconfig.yml") return { code: 0, stdout: sgconfigYaml };
+			return { code: 0, stdout: "" };
+		};
+		const result = await detectLanguage(mockExec as any, "/p");
+		assert.strictEqual(result, "ts");
+	});
 });
 
 describe("parseLanguageGlobsFromYaml", () => {
@@ -595,6 +623,59 @@ languageGlobs:
 
 	it("returns null for empty yaml", () => {
 		assert.strictEqual(parseLanguageGlobsFromYaml(""), null);
+	});
+
+	// ═══════════════════════════════════════════════════════════════════
+	// Quoted YAML key handling (issue #665)
+	// ═══════════════════════════════════════════════════════════════════
+
+	it('unquotes double-quoted key: "ts" → ts', () => {
+		const yaml = `languageGlobs:
+  "ts": "**/*.ts"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), "ts");
+	});
+
+	it("unquotes single-quoted key: 'py' → py", () => {
+		const yaml = `languageGlobs:
+  'py': "**/*.py"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), "py");
+	});
+
+	it("mixed quoted first key / unquoted second key → returns first key unquoted", () => {
+		const yaml = `languageGlobs:
+  "ts": "**/*.ts"
+  js: "**/*.js"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), "ts");
+	});
+
+	it("unquoted key still works (regression guard)", () => {
+		const yaml = `languageGlobs:
+  ts: "**/*.ts"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), "ts");
+	});
+
+	it("key with only leading quote (malformed) returns unchanged", () => {
+		const yaml = `languageGlobs:
+  "ts: "**/*.ts"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), '"ts');
+	});
+
+	it("key with only trailing quote (malformed) returns unchanged", () => {
+		const yaml = `languageGlobs:
+  ts": "**/*.ts"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), 'ts"');
+	});
+
+	it("empty double-quoted key returns empty string", () => {
+		const yaml = `languageGlobs:
+  "": "**/*.ts"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), "");
+	});
+
+	it("quoted key with special chars and spaces returns unquoted", () => {
+		const yaml = `languageGlobs:
+  "my-lang": "**/*.my"`;
+		assert.strictEqual(parseLanguageGlobsFromYaml(yaml), "my-lang");
 	});
 });
 

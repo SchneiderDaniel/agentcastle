@@ -191,7 +191,16 @@ export function parseLanguageGlobsFromYaml(yamlContent: string): string | null {
 			// Match "  lang: ..." pattern
 			const match = trimmed.match(/^(\S+):/);
 			if (match) {
-				return match[1];
+				let lang = match[1];
+				// Strip surrounding single or double quotes (YAML spec §3.2.3.1)
+				// Quotes are presentation detail, not content
+				if (
+					(lang.startsWith('"') && lang.endsWith('"')) ||
+					(lang.startsWith("'") && lang.endsWith("'"))
+				) {
+					lang = lang.slice(1, -1);
+				}
+				return lang;
 			}
 		}
 	}
