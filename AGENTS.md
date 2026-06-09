@@ -30,6 +30,8 @@ Core philosophies:
 - Correct: `structural_search`
 - Wrong: `ripgrep_search`, `bash | grep`
 
+  Use `structural_search` when reading code files to find function definitions, class declarations, method calls, try/catch blocks — avoids text-match noise from comments/strings. Prefer this over reading entire files when you need to locate specific code structures.
+
 **Read** file contents
 
 - Correct: `read(path, offset?, limit?)`
