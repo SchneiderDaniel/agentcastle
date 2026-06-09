@@ -22,6 +22,7 @@ import {
 	computeRecencyScores,
 	computeFileSizeScores,
 	computeCommitCountScores,
+	applyPathBoost,
 } from "../scoring.ts";
 import type { SymbolEntry } from "../types.ts";
 
@@ -894,9 +895,7 @@ describe("rankFiles with testFilePenalties and queryTerms", () => {
 		".pi/extensions/check-extensions/test/pipeline.test.ts": [
 			{ type: "function", name: "test", line: 1 },
 		],
-		"other/test/foo.test.ts": [
-			{ type: "function", name: "test_i18n", line: 1 },
-		],
+		"other/test/foo.test.ts": [{ type: "function", name: "test_i18n", line: 1 }],
 		"src/foo.test.ts": [{ type: "function", name: "testFoo", line: 1 }],
 		"src/bar.ts": [{ type: "function", name: "bar", line: 1 }],
 	};
@@ -1070,5 +1069,170 @@ describe("rankFiles with testFilePenalties and queryTerms", () => {
 		assert.ok(bar);
 		assert.strictEqual(fooTest!.score, 0.5); // default 0.5 penalty
 		assert.strictEqual(bar!.score, 1.0); // no penalty
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 11: applyPathBoost
+// ---------------------------------------------------------------------------
+
+describe("applyPathBoost", () => {
+	it("path match boosts score by 1.5x", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.75);
+	});
+
+	it("score already at 1.0 stays 1.0 after boost (cap works)", () => {
+		const scores = { ".pi/extensions/foo.ts": 1.0 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 1.0);
+	});
+
+	it("score ≤ 0 skipped (unchanged)", () => {
+		const scores = { ".pi/extensions/foo.ts": 0 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0);
+	});
+
+	it("non-matching path unchanged", () => {
+		const scores = { "src/views.ts": 0.4 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(result["src/views.ts"], 0.4);
+	});
+
+	it("case-insensitive path matching", () => {
+		const scores = { ".pi/Extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(result[".pi/Extensions/foo.ts"], 0.75);
+	});
+
+	it("multi-alternative expanded term splits on | and checks each alternative individually", () => {
+		// The bug from the issue: using term.replace(/[()|\\]/g, "") would produce
+		// "extensionextensions" which never matches. Must split on | and check each.
+		const scores = { ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.75);
+	});
+
+	it("empty expandedTerms returns scores unchanged, no mutation", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, []);
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.5);
+		// Verify original object is not mutated
+		assert.strictEqual(scores[".pi/extensions/foo.ts"], 0.5);
+	});
+
+	it("term with no | (single alternative) matches correctly", () => {
+		const scores = { "src/extension.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(extension)"]);
+		assert.strictEqual(result["src/extension.ts"], 0.75);
+	});
+
+	it("boost value rounded to 2 decimal places", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.33 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		// 0.33 * 1.5 = 0.495 → rounded to 0.5
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.5);
+	});
+
+	it("multiple files, only matching paths get boost", () => {
+		const scores = {
+			".pi/extensions/foo.ts": 0.5,
+			"src/views.ts": 0.4,
+			"lib/extension.ts": 0.3,
+		};
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.75);
+		assert.strictEqual(result["src/views.ts"], 0.4);
+		assert.strictEqual(result["lib/extension.ts"], 0.45);
+	});
+
+	it("term with regex special characters like . or + treated as plain text", () => {
+		const scores = { "src/file.plus.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(file.plus)"]);
+		// After splitting, "file.plus" should be checked as plain substring (not regex)
+		// pathLower.includes(clean) — plain text match
+		assert.strictEqual(result["src/file.plus.ts"], 0.75);
+	});
+
+	it("expanded term alternative is a substring of path component", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(extension)"]);
+		// "extension" is a substring of "extensions" → matches
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.75);
+	});
+
+	it("empty string in expandedTerms skipped gracefully", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, [""]);
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.5);
+	});
+
+	it("score 0.67 * 1.5 = 1.005 capped at 1.0", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.67 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		// 0.67 * 1.5 = 1.005 → capped at 1.0
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 1.0);
+	});
+
+	it("score 0.01 * 1.5 = 0.015 rounded to 0.02", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.01 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		// 0.01 * 1.5 = 0.015 → Math.round(0.015 * 100) / 100 = Math.round(1.5) / 100 = 2/100 = 0.02
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.02);
+	});
+
+	it("input scores object is not mutated", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(scores[".pi/extensions/foo.ts"], 0.5, "original should not change");
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.75, "result should have boosted value");
+	});
+
+	it("multiple expanded terms, match on second term", () => {
+		const scores = { "src/config.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(auth|login)", "(config|configuration)"]);
+		// "config" matches path "src/config.ts"
+		assert.strictEqual(result["src/config.ts"], 0.75);
+	});
+
+	it("path match via shorthand variant from expansion", () => {
+		const scores = { ".pi/extensions/foo.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(extension|extensions|extens|ext)"]);
+		// All alternatives contain "ext" which is substring of "extensions" → matches
+		assert.strictEqual(result[".pi/extensions/foo.ts"], 0.75);
+	});
+
+	it("negative scores are skipped", () => {
+		const scores = { ".pi/extensions/foo.ts": -0.5 };
+		const result = applyPathBoost(scores, ["(extension|extensions)"]);
+		assert.strictEqual(result[".pi/extensions/foo.ts"], -0.5);
+	});
+
+	it("no expanded terms match any path → all scores unchanged", () => {
+		const scores = {
+			"src/views.ts": 0.4,
+			"lib/utils.ts": 0.6,
+		};
+		const result = applyPathBoost(scores, ["(auth|login)", "(db|database)"]);
+		assert.strictEqual(result["src/views.ts"], 0.4);
+		assert.strictEqual(result["lib/utils.ts"], 0.6);
+	});
+
+	it("expanded term with pipe-only alternative is handled", () => {
+		const scores = { "src/foo/bar.ts": 0.5 };
+		const result = applyPathBoost(scores, ["(|foo|)"]);
+		// After splitting on |: ["", "foo", ""], check each
+		// "" doesn't match anything (includes check on empty string is true for all paths)
+		// but empty alternatives should be skipped
+		assert.strictEqual(result["src/foo/bar.ts"], 0.75);
+	});
+
+	it("single alternative term (bare string not in parens) matches", () => {
+		const scores = { "src/extension.ts": 0.5 };
+		// Some expandedTerms might not be in parens if it's a single term
+		const result = applyPathBoost(scores, ["extension"]);
+		assert.strictEqual(result["src/extension.ts"], 0.75);
 	});
 });

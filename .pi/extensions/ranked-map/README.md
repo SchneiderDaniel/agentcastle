@@ -11,6 +11,7 @@
   - Structural overview in recency-only mode — one file per top-level directory ensures broad repo awareness
 - **Configurable token budget** — Default 4096 tokens, adjustable per call
 - **Caching** — Symbol index cached to `.pi/cache/ranked-map-index.json` keyed by git HEAD, config hash, and target directory (config changes or different directory scope invalidate the cache)
+- **Path-aware keyword boost** — Files whose path contains any expanded query term (e.g. query `"extension"` boosts `.pi/extensions/` files) receive a 1.5x keyword score multiplier (capped at 1.0). This follows field-weighted search principles — path matches are weighted higher than content-only matches
 - **Configurable test-file penalty** — Test files (`.test.`, `.spec.`, `/test/`) default to 0.5x score penalty; per-directory overrides configurable via `testFilePenalties` in settings (e.g. `{ ".pi/": 0.7 }`). Query terms matching file paths automatically cap penalty at 0.7x
 - **.piignore integration** — Patterns from `.piignore` are automatically added as ctags excludes
 - **Improved previews** — Shows ctag definition lines (from pattern field) instead of first 5 comment/import lines
@@ -45,7 +46,7 @@ Each phase accepts `ExecFn` + config via constructor, making all methods testabl
 2. The index is cached to disk keyed by current git HEAD, config hash, and target directory scope
 3. When called, the extension selects mode:
    - **Full dump** — repo small enough, returns all files sorted by path up to token budget
-   - **Ranked** — runs `rg --files-with-matches` for keyword scoring, `git log --name-only` for recency scoring (includes submodule commits via `discoverSubmodules` + `runGitRecency`), then combines scores with configurable weights. Only files present in the ctags symbol index are eligible for ranking — files excluded by `--exclude` patterns (`.json`, `.md`, `node_modules`, etc.) are filtered out regardless of keyword or recency matches, preventing token waste on non-code files. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory
+   - **Ranked** — runs `rg --files-with-matches` for keyword scoring, applies path-aware keyword boost (1.5x multiplier for files whose path contains query terms), then `git log --name-only` for recency scoring (includes submodule commits via `discoverSubmodules` + `runGitRecency`), then combines scores with configurable weights. Only files present in the ctags symbol index are eligible for ranking — files excluded by `--exclude` patterns (`.json`, `.md`, `node_modules`, etc.) are filtered out regardless of keyword or recency matches, preventing token waste on non-code files. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory
 4. Results are formatted as JSON with file paths, symbols, token counts, and (in ranked mode) file previews showing definition lines
 
 ## Install

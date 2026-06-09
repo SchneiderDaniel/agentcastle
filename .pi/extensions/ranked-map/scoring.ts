@@ -184,6 +184,60 @@ export function computeFileSizeScores(fileSizes: Record<string, number>): Record
 }
 
 /**
+ * Apply path-aware keyword score boost for files whose relative path contains
+ * any individual alternative from the expanded query terms.
+ *
+ * For each file, if its path contains any expanded term alternative (plain text,
+ * case-insensitive), its keyword score is boosted by 1.5x, capped at 1.0.
+ *
+ * This is the path-aware boost step between computeKeywordScores and rankFiles.
+ * It follows the same field-weighted search technique used in production search
+ * engines: matches in the file path field are weighted higher than content matches.
+ *
+ * @param keywordScores - Map of file path → keyword score (0 to 1) from computeKeywordScores
+ * @param expandedTerms - Array of expanded regex patterns from expandQuery, e.g. "(extension|extensions)"
+ * @returns New map with boosted scores (original object is not mutated)
+ */
+export function applyPathBoost(
+	keywordScores: Record<string, number>,
+	expandedTerms: string[],
+): Record<string, number> {
+	const boosted: Record<string, number> = { ...keywordScores };
+
+	if (expandedTerms.length === 0) return boosted;
+
+	// Pre-parse expanded terms: split each pattern on | and collect alternatives
+	const alternatives: string[] = [];
+	for (const term of expandedTerms) {
+		// Strip outer parens if present, then split on |
+		const inner = term.startsWith("(") && term.endsWith(")") ? term.slice(1, -1) : term;
+		const parts = inner.split("|");
+		for (const part of parts) {
+			const clean = part.toLowerCase();
+			if (clean.length > 0 && !alternatives.includes(clean)) {
+				alternatives.push(clean);
+			}
+		}
+	}
+
+	if (alternatives.length === 0) return boosted;
+
+	for (const [path, score] of Object.entries(boosted)) {
+		if (score <= 0) continue;
+		const pathLower = path.toLowerCase();
+		for (const alt of alternatives) {
+			if (pathLower.includes(alt)) {
+				const raw = Math.min(1.0, score * 1.5);
+				boosted[path] = Math.round(raw * 100) / 100;
+				break;
+			}
+		}
+	}
+
+	return boosted;
+}
+
+/**
  * Apply test-file penalty to a set of ranked file scores.
  *
  * Files matching test patterns (.test., .spec., /test/) get their score
