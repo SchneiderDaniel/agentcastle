@@ -463,6 +463,30 @@ describe("makeCacheKey", () => {
 		assert.ok(typeof key === "string");
 		assert.ok(key.length > 0);
 	});
+
+	it("no collision when pattern contains :: and language contains ::", () => {
+		// Current :: separator would produce "a::b::ts::/p" for BOTH calls
+		// \x00 separator produces different keys: "a::b\x00ts\x00/p" vs "a\x00b::ts\x00/p"
+		const key1 = makeCacheKey("a::b", "ts", "/p");
+		const key2 = makeCacheKey("a", "b::ts", "/p");
+		assert.notStrictEqual(
+			key1,
+			key2,
+			"key1 (pattern='a::b') must differ from key2 (language='b::ts')",
+		);
+	});
+
+	it("no collision when pattern contains :: and cwd contains ::", () => {
+		const key1 = makeCacheKey("a::b", "ts", "/p");
+		const key2 = makeCacheKey("a", "ts", "b::/p");
+		assert.notStrictEqual(key1, key2, "key1 (pattern='a::b') must differ from key2 (cwd='b::/p')");
+	});
+
+	it("uses \\x00 null byte as separator between fields", () => {
+		const key = makeCacheKey("a", "b", "c");
+		assert.ok(key.includes("\x00"), "key should contain null byte separator");
+		assert.strictEqual(key, "a\x00b\x00c", "key should be a\\x00b\\x00c");
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -817,6 +841,111 @@ describe("cache integration (adapter)", () => {
 		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
 		assert.strictEqual(scanCalls.length, 1, "error response should NOT be cached - must re-exec");
 		assert.strictEqual(r2.isError, true);
+	});
+
+	it("collision scenario: pattern with :: vs language with :: get different cached results", async () => {
+		let callCount = 0;
+		const execFn = async (cmd: string, args: string[]) => {
+			if (cmd === "ast-grep" && args[0] === "--version") {
+				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "test" && args[0] === "-f") {
+				return { stdout: "", stderr: "", code: 1, killed: false };
+			}
+			if (cmd === "cat") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			callCount++;
+			const result = createMatchJson(`result${callCount}.ts`, "1-1", `call number ${callCount}`);
+			return { stdout: result, stderr: "", code: 0, killed: false };
+		};
+		const pi = makePi(execFn);
+		structuralAnalyzer(pi as any);
+
+		// Under :: separator these would collide:
+		//   makeCacheKey("$A::method", "ts", "/p") → "$A::method::ts::/p"
+		//   makeCacheKey("$A", "method::ts", "/p") → "$A::method::ts::/p" ← SAME
+		// Under \x00 separator they are distinct:
+		//   makeCacheKey("$A::method", "ts", "/p") → "$A::method\x00ts\x00/p"
+		//   makeCacheKey("$A", "method::ts", "/p") → "$A\x00method::ts\x00/p" ← DIFFERENT
+
+		// First call: pattern="$A::method", language="ts" → exec scan, cache result
+		const r1 = await capturedExecute!(
+			"id1",
+			{ pattern: "$A::method", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/p" },
+		);
+		assert.strictEqual(r1.isError, undefined, "first call should succeed");
+
+		const scanCalls1 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls1.length, 1, "first call should exec scan");
+
+		execCalls.length = 0;
+
+		// Second call: pattern="$A", language="method::ts" → cache miss (different key), exec scan
+		const r2 = await capturedExecute!(
+			"id2",
+			{ pattern: "$A", language: "method::ts" },
+			undefined,
+			undefined,
+			{ cwd: "/p" },
+		);
+		assert.strictEqual(r2.isError, undefined, "second call should succeed");
+
+		const scanCalls2 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(
+			scanCalls2.length,
+			1,
+			"second call with different ::-containing params should exec scan (cache miss)",
+		);
+
+		// r2 should contain "call number 2" (from second exec), NOT "call number 1" (from cache)
+		const details2 = r2.details as Record<string, unknown>;
+		const results2 = details2.results as Array<{ file: string; lines: string; snippet: string }>;
+		assert.ok(
+			results2[0]!.file.includes("result2"),
+			`Expected result2 file, got ${results2[0]!.file}`,
+		);
+
+		execCalls.length = 0;
+
+		// Third call: same as first → cache hit (no scan)
+		const r3 = await capturedExecute!(
+			"id3",
+			{ pattern: "$A::method", language: "ts" },
+			undefined,
+			undefined,
+			{ cwd: "/p" },
+		);
+
+		const scanCalls3 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(
+			scanCalls3.length,
+			0,
+			"third call with same params as first should be cache hit",
+		);
+		assert.deepStrictEqual(r3, r1, "third call should return same result as first");
+
+		execCalls.length = 0;
+
+		// Fourth call: same as second → cache hit (no scan)
+		const r4 = await capturedExecute!(
+			"id4",
+			{ pattern: "$A", language: "method::ts" },
+			undefined,
+			undefined,
+			{ cwd: "/p" },
+		);
+
+		const scanCalls4 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(
+			scanCalls4.length,
+			0,
+			"fourth call with same params as second should be cache hit",
+		);
+		assert.deepStrictEqual(r4, r2, "fourth call should return same result as second");
 	});
 });
 
