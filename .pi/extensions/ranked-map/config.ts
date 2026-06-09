@@ -82,6 +82,16 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 		let frequencyScalingFactor = DEFAULT_CONFIG.frequencyScalingFactor ?? 0.2;
 		let synonyms: Record<string, string[]> | undefined;
 
+		// Parse testFilePenalties
+		let testFilePenalties: Record<string, number> | undefined;
+		if (
+			rm.testFilePenalties &&
+			typeof rm.testFilePenalties === "object" &&
+			!Array.isArray(rm.testFilePenalties)
+		) {
+			testFilePenalties = rm.testFilePenalties as Record<string, number>;
+		}
+
 		// Parse frequencyScalingFactor
 		if (
 			typeof rm.frequencyScalingFactor === "number" &&
@@ -171,6 +181,7 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			autoThreshold,
 			frequencyScalingFactor,
 			synonyms,
+			testFilePenalties,
 			weights: { keyword: kwWeight, recency: recWeight, fileSize: fsWeight, commitCount: ccWeight },
 		};
 	} catch {

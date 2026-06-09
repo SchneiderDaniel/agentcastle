@@ -28,6 +28,8 @@ export interface RankedMapConfig {
 	synonyms?: Record<string, string[]>;
 	/** Frequency scaling factor for keyword scoring (default 0.2). */
 	frequencyScalingFactor?: number;
+	/** Per-directory test-file penalty overrides (e.g. { ".pi/": 0.7 }). */
+	testFilePenalties?: Record<string, number>;
 	weights: {
 		keyword: number;
 		recency: number;

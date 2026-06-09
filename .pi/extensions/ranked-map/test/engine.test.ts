@@ -12,6 +12,7 @@ import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtempSync } from "node:fs";
 import { RankedMapEngine } from "../engine.ts";
+import { loadRankedMapConfig } from "../config.ts";
 import type { CachedIndex, RankedMapConfig, RankedFileScore, ExecFn } from "../types.ts";
 
 // ---------------------------------------------------------------------------
@@ -395,5 +396,108 @@ describe("RankedMapEngine — format", () => {
 
 		assert.equal(result.mode, "full_dump");
 		assert.equal(result.truncated, true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// rank — config-driven testFilePenalties
+// ---------------------------------------------------------------------------
+
+describe("RankedMapEngine — rank with testFilePenalties config", () => {
+	it("config with testFilePenalties applies override to .pi test files", async () => {
+		const exec = mockExec();
+		// Mock all git calls (HEAD, submodule status, log) and rg
+		exec.mock.mockImplementation(async (cmd: string, args: string[], _opts?: any) => {
+			if (cmd === "git" && args[0] === "rev-parse") {
+				return { stdout: "abc123\n", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "git" && args[0] === "submodule") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "git" && (args[0] === "log" || args[0] === "-C")) {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			// rg --count-matches returns "filepath:count" format
+			if (cmd === "rg") {
+				return {
+					stdout: ".pi/extensions/check-extensions/test/pipeline.test.ts:3\n",
+					stderr: "",
+					code: 0,
+					killed: false,
+				};
+			}
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		});
+
+		const config: RankedMapConfig = {
+			...defaultConfig,
+			autoThreshold: 0,
+			testFilePenalties: { ".pi/": 0.7 },
+		};
+		const engine = new RankedMapEngine(config, exec, "/tmp");
+		const index = makeIndex();
+		index.symbols[".pi/extensions/check-extensions/test/pipeline.test.ts"] = [
+			{ type: "function", name: "test", line: 1 },
+		];
+
+		const result = await engine.rank(index, "extension", 50000, ".", undefined);
+
+		const piTest = result.files.find((f) => f.path.startsWith(".pi/"));
+		assert.ok(piTest, ".pi test file should be in results");
+		// .pi test: kw = min(1.0, 3 * 0.2) = 0.6, score = 0.6 * 0.5 (kw weight) = 0.3, after override 0.7 → 0.21
+		assert.strictEqual(piTest!.score, 0.21);
+	});
+
+	it("config without testFilePenalties uses default 0.5x penalty (backward compat)", async () => {
+		const exec = mockExec();
+		exec.mock.mockImplementation(async (cmd: string, args: string[], _opts?: any) => {
+			if (cmd === "git" && args[0] === "rev-parse") {
+				return { stdout: "abc123\n", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "git" && args[0] === "submodule") {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "git" && (args[0] === "log" || args[0] === "-C")) {
+				return { stdout: "", stderr: "", code: 0, killed: false };
+			}
+			if (cmd === "rg") {
+				return { stdout: "src/foo.test.ts:2\nsrc/app.ts:2\n", stderr: "", code: 0, killed: false };
+			}
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		});
+
+		const engine = new RankedMapEngine(defaultConfig, exec, "/tmp");
+		const index = makeIndex({
+			symbols: {
+				"src/foo.test.ts": [{ type: "function", name: "testFoo", line: 1 }],
+				"src/app.ts": [{ type: "function", name: "app", line: 1 }],
+			},
+		});
+
+		const result = await engine.rank(index, "bar", 50000, ".", undefined);
+		const fooTest = result.files.find((f) => f.path === "src/foo.test.ts");
+		const app = result.files.find((f) => f.path === "src/app.ts");
+		assert.ok(fooTest);
+		assert.ok(app);
+		// Query "bar" doesn't match any path, so no query-term cap applies
+		// src/foo.test.ts: kw = min(1.0, 2*0.2) = 0.4, score = 0.4 * 0.5 (kw weight) = 0.2, after default penalty 0.5 → 0.1
+		// src/app.ts: kw = 0.4, score = 0.4 * 0.5 (kw weight) = 0.2, no penalty → 0.2
+		assert.strictEqual(fooTest!.score, 0.1);
+		assert.strictEqual(app!.score, 0.2);
+	});
+
+	it("loadRankedMapConfig with testFilePenalties flows end-to-end through engine", () => {
+		const dir = tmpDirPath();
+		try {
+			mkdirSync(join(dir, ".pi"), { recursive: true });
+			writeFileSync(
+				join(dir, ".pi", "settings.json"),
+				JSON.stringify({ rankedMap: { testFilePenalties: { ".pi/": 0.7 } } }),
+			);
+			const config = loadRankedMapConfig(dir);
+			assert.deepEqual(config.testFilePenalties, { ".pi/": 0.7 });
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

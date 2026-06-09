@@ -884,3 +884,191 @@ describe("rankFiles with fileSize weight", () => {
 		assert.strictEqual(noFs.score, 0.5);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Phase 10: rankFiles with testFilePenalties and queryTerms
+// ---------------------------------------------------------------------------
+
+describe("rankFiles with testFilePenalties and queryTerms", () => {
+	const symEntries: Record<string, SymbolEntry[]> = {
+		".pi/extensions/check-extensions/test/pipeline.test.ts": [
+			{ type: "function", name: "test", line: 1 },
+		],
+		"other/test/foo.test.ts": [
+			{ type: "function", name: "test_i18n", line: 1 },
+		],
+		"src/foo.test.ts": [{ type: "function", name: "testFoo", line: 1 }],
+		"src/bar.ts": [{ type: "function", name: "bar", line: 1 }],
+	};
+
+	it("passes path overrides to applyTestFilePenalty (integration)", () => {
+		const kw: Record<string, number> = {
+			".pi/extensions/check-extensions/test/pipeline.test.ts": 1.0,
+			"other/test/foo.test.ts": 1.0,
+			"src/bar.ts": 1.0,
+		};
+		const rec = {};
+		const testFilePenalties: Record<string, number> = { ".pi/": 0.7 };
+		const weights = { keyword: 1.0, recency: 0.0 };
+
+		const result = rankFiles(
+			kw,
+			rec,
+			weights,
+			10_000,
+			symEntries,
+			undefined,
+			undefined,
+			testFilePenalties,
+		);
+
+		const piTest = result.files.find((f) => f.path.startsWith(".pi/"));
+		const otherTest = result.files.find((f) => f.path.startsWith("other/"));
+		const bar = result.files.find((f) => f.path === "src/bar.ts");
+
+		assert.ok(piTest, ".pi test should be in results");
+		assert.ok(otherTest, "other test should be in results");
+		assert.ok(bar, "bar.ts should be in results");
+
+		// .pi test: 1.0 * 0.7 = 0.7 (path override)
+		assert.strictEqual(piTest!.score, 0.7);
+		// other test: 1.0 * 0.5 = 0.5 (default penalty, no override match)
+		assert.strictEqual(otherTest!.score, 0.5);
+		// bar.ts: 1.0 (not a test file)
+		assert.strictEqual(bar!.score, 1.0);
+	});
+
+	it("passes queryTerms to applyTestFilePenalty (integration)", () => {
+		const kw: Record<string, number> = {
+			".pi/extensions/check-extensions/test/pipeline.test.ts": 1.0,
+			"other/test/foo.test.ts": 1.0,
+		};
+		const rec = {};
+		const weights = { keyword: 1.0, recency: 0.0 };
+
+		// Query includes "extension" which matches .pi test path
+		const result = rankFiles(
+			kw,
+			rec,
+			weights,
+			10_000,
+			symEntries,
+			undefined,
+			undefined,
+			undefined,
+			["extension"],
+		);
+
+		const piTest = result.files.find((f) => f.path.startsWith(".pi/"));
+		const otherTest = result.files.find((f) => f.path.startsWith("other/"));
+
+		assert.ok(piTest, ".pi test should be in results");
+		assert.ok(otherTest, "other test should be in results");
+
+		// .pi test: path contains "extension" → penalty capped at min 0.7
+		assert.strictEqual(piTest!.score, 0.7);
+		// other test: no path override, no query term match → stays 0.5
+		assert.strictEqual(otherTest!.score, 0.5);
+	});
+
+	it("path override takes precedence over query-term cap", () => {
+		const kw: Record<string, number> = {
+			".pi/extensions/check-extensions/test/pipeline.test.ts": 1.0,
+		};
+		const rec = {};
+		const testFilePenalties: Record<string, number> = { ".pi/": 0.9 };
+		const weights = { keyword: 1.0, recency: 0.0 };
+
+		// Path override gives 0.9, query term would cap at 0.7
+		// Path override is checked first, so 0.9 wins
+		const result = rankFiles(
+			kw,
+			rec,
+			weights,
+			10_000,
+			symEntries,
+			undefined,
+			undefined,
+			testFilePenalties,
+			["extension"],
+		);
+
+		const piTest = result.files.find((f) => f.path.startsWith(".pi/"));
+		assert.ok(piTest);
+		// 0.9 from path override (not overridden by query-term cap since query check only raises penalty)
+		assert.strictEqual(piTest!.score, 0.9);
+	});
+
+	it("query term matching is case-insensitive", () => {
+		const kw: Record<string, number> = {
+			".pi/extensions/foo/test/bar.test.ts": 1.0,
+		};
+		const rec = {};
+		const weights = { keyword: 1.0, recency: 0.0 };
+		// Need sym entry for the file
+		const syms: Record<string, SymbolEntry[]> = {
+			".pi/extensions/foo/test/bar.test.ts": [{ type: "function", name: "test", line: 1 }],
+		};
+
+		// Query "Extension" (capitalized) should still match "extensions" in path
+		const result = rankFiles(kw, rec, weights, 10_000, syms, undefined, undefined, undefined, [
+			"Extension",
+		]);
+		const entry = result.files.find((f) => f.path.includes("bar.test.ts"));
+		assert.ok(entry);
+		// Penalty capped at 0.7
+		assert.strictEqual(entry!.score, 0.7);
+	});
+
+	it("query term does not match path → default 0.5 penalty", () => {
+		const kw: Record<string, number> = {
+			"src/foo.test.ts": 1.0,
+		};
+		const rec = {};
+		const weights = { keyword: 1.0, recency: 0.0 };
+		// src/foo.test.ts doesn't have "extension" in path
+		const result = rankFiles(
+			kw,
+			rec,
+			weights,
+			10_000,
+			symEntries,
+			undefined,
+			undefined,
+			undefined,
+			["extension"],
+		);
+		const fooTest = result.files.find((f) => f.path === "src/foo.test.ts");
+		assert.ok(fooTest);
+		// 1.0 * 0.5 = 0.5 (no query term match in path)
+		assert.strictEqual(fooTest!.score, 0.5);
+	});
+
+	it("no queryTerms and no testFilePenalties keeps default 0.5x penalty (backward compat)", () => {
+		const kw: Record<string, number> = {
+			"src/foo.test.ts": 1.0,
+			"src/bar.ts": 1.0,
+		};
+		const rec = {};
+		const weights = { keyword: 1.0, recency: 0.0 };
+
+		const result = rankFiles(
+			kw,
+			rec,
+			weights,
+			10_000,
+			symEntries,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+		);
+
+		const fooTest = result.files.find((f) => f.path === "src/foo.test.ts");
+		const bar = result.files.find((f) => f.path === "src/bar.ts");
+		assert.ok(fooTest);
+		assert.ok(bar);
+		assert.strictEqual(fooTest!.score, 0.5); // default 0.5 penalty
+		assert.strictEqual(bar!.score, 1.0); // no penalty
+	});
+});
