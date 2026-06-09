@@ -5,28 +5,13 @@
 // In-process runner lives in agent-session-runner.ts
 // Subprocess lifecycle lives in this file (parsing in agent-stream.ts).
 
-import type {
-	AgentRunResult,
-	AgentRunState,
-	AgentPhase,
-	ParsedAgent,
-	DebugLogger,
-} from "../config/types.ts";
+import type { AgentRunResult, AgentRunState, ParsedAgent } from "../config/types.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { resolveTools, resolveExtensions, resolveSkillPaths } from "../config/extensions.ts";
-import { formatDuration, extractSummaryLine, formatTokens } from "../config/formatting.ts";
-import { resolveTimeoutMs, DEFAULT_AGENT_TIMEOUT_MS } from "../config/config.ts";
-import {
-	processJsonLine,
-	getPhaseFromEvent,
-	filterStderr,
-	phasePriority,
-	pushLog,
-	MAX_FULL_LOG,
-	WIDGET_LINES,
-	MAX_LIVE_THINKING,
-} from "./stream.ts";
+import { formatDuration, extractSummaryLine } from "../config/formatting.ts";
+import { DEFAULT_AGENT_TIMEOUT_MS } from "../config/config.ts";
+import { processJsonLine, filterStderr, pushLog } from "./stream.ts";
 import { buildWidgetLines, getWorkingMessage } from "../session/widget.ts";
 import { runAgentInProcess } from "./session-runner.ts";
 import { buildErrorNotificationContext } from "../config/diagnostics.ts";
