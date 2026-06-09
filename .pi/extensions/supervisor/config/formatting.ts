@@ -92,7 +92,7 @@ export function extractSummaryLine(
 // Builds a status string for ctx.ui.setStatus("supervisor", ...) with
 // subagent prefix and model. Token/tool count intentionally omitted.
 
-export function buildSubagentStatusLine(
+function buildSubagentStatusLine(
 	agentName: string,
 	startedAt: number,
 	_tokenCount: number,

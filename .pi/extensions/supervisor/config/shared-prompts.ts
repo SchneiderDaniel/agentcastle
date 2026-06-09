@@ -7,7 +7,7 @@
 // Per-agent overrides are injected after the shared discipline block.
 
 /** Per-agent tool discipline overrides (injected after shared discipline block). */
-export interface AgentDisciplineOverrides {
+interface AgentDisciplineOverrides {
 	/** Additional discipline rules specific to this agent. */
 	extra: string[];
 }
@@ -55,14 +55,14 @@ export const TOOL_DISCIPLINE_SNIPPET = `🛠 Tool Discipline — Shared Rules
  * Instruction for researcher deduplication scan.
  * Previously embedded in researcher.md, now a shared constant.
  */
-export const DEDUPLICATION_SCAN_INSTRUCTION = `### 1. Deduplication Scan
+const DEDUPLICATION_SCAN_INSTRUCTION = `### 1. Deduplication Scan
 Scan the provided issue data for an existing comment containing \`## Research Findings\`. If one exists, skip all research and output a JSON object with \`"action": "COMPLETE", "agentName": "researcher"\` (see Structured Output Format in your task). Fallback: if you cannot output JSON, output \`RESEARCH_COMPLETE\` on its own line. Do nothing else.`;
 
 /**
  * Instruction for developer README update check.
  * Previously embedded in developer.md, now a shared constant.
  */
-export const README_CHECK_INSTRUCTION = `**Step D — Update README if needed:**
+const README_CHECK_INSTRUCTION = `**Step D — Update README if needed:**
 - Review your changes. Did you add, remove, or change any feature, config, CLI flag, env var, API endpoint, dependency, or user-facing behavior?
 - If yes: update README.md to reflect the change (new section, updated example, changed instructions)
 - If no: skip. Do not touch README for purely internal refactors or bug fixes with no user-facing impact.
@@ -72,7 +72,7 @@ export const README_CHECK_INSTRUCTION = `**Step D — Update README if needed:**
  * Centralized comment format templates.
  * Previously defined in individual agent .md files, now code-generated.
  */
-export const COMMENT_FORMAT_TEMPLATES = {
+const COMMENT_FORMAT_TEMPLATES = {
 	researcher: `## Research Findings
 
 ### Best Practices
