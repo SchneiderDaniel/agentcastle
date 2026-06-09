@@ -64,13 +64,23 @@ export function buildSearchErrorText(
 	return errorText;
 }
 
-async function verifyDirectory(
+export async function verifyDirectory(
 	cwd: string,
 	directory: string,
 ): Promise<
 	{ ok: true; resolvedDir: string } | { ok: false; response: ReturnType<typeof errResponse> }
 > {
 	const resolvedDir = resolve(cwd, directory);
+	// Security: prevent path traversal — reject directories outside project root
+	const resolvedCwd = resolve(cwd);
+	if (resolvedDir !== resolvedCwd && !resolvedDir.startsWith(resolvedCwd + "/")) {
+		return {
+			ok: false,
+			response: errResponse(
+				`Directory traversal detected: "${directory}" resolves outside project root.`,
+			),
+		};
+	}
 	try {
 		const dirStat = await stat(resolvedDir);
 		if (!dirStat.isDirectory())
