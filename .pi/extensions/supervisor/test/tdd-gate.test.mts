@@ -538,4 +538,92 @@ describe("runTddGate()", () => {
 		const gitDiffCall = calls.find((c) => c.cmd === "git" && c.args[0] === "diff");
 		assert.ok(gitDiffCall!.args.includes("develop"), "should use provided branch");
 	});
+
+	it("check 'test-fail-first' reverts using <defaultBranch> not HEAD (critical fix)", async () => {
+		// This test verifies the critical bug fix: checkTestFailFirst must use
+		// git checkout <defaultBranch> -- ... (not HEAD) so implementation is
+		// actually reverted to the base branch version.
+		const checkoutCalls: Array<{ args: string[] }> = [];
+		const mockExec: ExecFn = async (cmd, args, _opts) => {
+			if (cmd === "git" && args[0] === "checkout") {
+				checkoutCalls.push({ args });
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (cmd === "git" && args[0] === "diff") {
+				return { code: 0, stdout: "src/impl.ts\nsrc/impl.test.ts", stderr: "" };
+			}
+			if (cmd === "find") {
+				return { code: 0, stdout: "/repo/worktree/src/impl.test.ts", stderr: "" };
+			}
+			if (cmd === "which") {
+				return { code: 1, stdout: "", stderr: "not found" };
+			}
+			if (cmd === "node" && args[0] === "--experimental-strip-types") {
+				return { code: 1, stdout: "FAIL", stderr: "" };
+			}
+			return { code: 0, stdout: "", stderr: "" };
+		};
+
+		await runTddGate(mockExec, "/repo/worktree", "develop");
+
+		// First checkout should be revert using defaultBranch (develop, not HEAD)
+		const revertCall = checkoutCalls[0];
+		assert.ok(revertCall, "should call git checkout for revert");
+		assert.ok(revertCall!.args.includes("develop"), "revert should use defaultBranch (develop)");
+		assert.ok(revertCall!.args.includes("--"), "revert should include -- separator");
+		assert.ok(revertCall!.args.includes("src/impl.ts"), "revert should include impl file");
+		assert.ok(!revertCall!.args.includes("HEAD"), "revert should NOT use HEAD");
+
+		// Second checkout should be restore using HEAD
+		const restoreCall = checkoutCalls[1];
+		assert.ok(restoreCall, "should call git checkout for restore");
+		assert.ok(restoreCall!.args.includes("HEAD"), "restore should use HEAD");
+		assert.ok(restoreCall!.args.includes("--"), "restore should include -- separator");
+	});
+
+	it("check 'test-fail-first' restore uses HEAD not index (critical fix)", async () => {
+		// After git checkout <defaultBranch> -- files, the index contains the
+		// base branch version. The restore must use git checkout HEAD -- files
+		// (from HEAD commit), not git checkout -- files (from index).
+		const checkoutCalls: Array<{ args: string[] }> = [];
+		const mockExec: ExecFn = async (cmd, args, _opts) => {
+			if (cmd === "git" && args[0] === "checkout") {
+				checkoutCalls.push({ args });
+				return { code: 0, stdout: "", stderr: "" };
+			}
+			if (cmd === "git" && args[0] === "diff") {
+				return { code: 0, stdout: "src/impl.ts\nsrc/impl.test.ts", stderr: "" };
+			}
+			if (cmd === "find") {
+				return { code: 0, stdout: "/repo/worktree/src/impl.test.ts", stderr: "" };
+			}
+			if (cmd === "which") {
+				return { code: 1, stdout: "", stderr: "not found" };
+			}
+			if (cmd === "node" && args[0] === "--experimental-strip-types") {
+				return { code: 1, stdout: "FAIL", stderr: "" };
+			}
+			return { code: 0, stdout: "", stderr: "" };
+		};
+
+		await runTddGate(mockExec, "/repo/worktree", "main");
+
+		// First checkout: revert with defaultBranch
+		const revertCall = checkoutCalls[0];
+		assert.ok(revertCall, "should have revert call");
+		assert.ok(revertCall!.args.includes("main"), "revert should use main");
+
+		// Second checkout: restore must explicitly use HEAD
+		const restoreCall = checkoutCalls[1];
+		assert.ok(restoreCall, "should have restore call");
+		assert.ok(
+			restoreCall!.args.includes("HEAD"),
+			"restore must use 'git checkout HEAD -- files' not 'git checkout -- files'",
+		);
+		assert.ok(restoreCall!.args.includes("--"), "restore should include --");
+		assert.ok(restoreCall!.args.includes("src/impl.ts"), "restore should include impl file");
+
+		// Verify there are exactly 2 checkouts (revert + restore)
+		assert.equal(checkoutCalls.length, 2, "should have exactly 2 git checkout calls");
+	});
 });

@@ -323,7 +323,13 @@ export async function runTddGate(
 		});
 	} else {
 		try {
-			const failFirstResult = await checkTestFailFirst(exec, worktreePath, implFiles, testFiles);
+			const failFirstResult = await checkTestFailFirst(
+				exec,
+				worktreePath,
+				defaultBranch,
+				implFiles,
+				testFiles,
+			);
 			checks.push(failFirstResult);
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -369,9 +375,9 @@ export async function runTddGate(
  * Check that tests fail when implementation files are reverted (test-fail-first).
  *
  * Steps:
- * 1. Run `git checkout <defaultBranch> -- <implFiles>` to revert implementation files
+ * 1. Run `git checkout <defaultBranch> -- <implFiles>` to revert implementation files to base branch
  * 2. Run the test suite
- * 3. Revert the revert (restore implementation) with `git checkout -- <implFiles>`
+ * 3. Restore implementation with `git checkout HEAD -- <implFiles>`
  * 4. If tests fail after revert → pass. If tests pass → fail (tautological tests).
  *
  * Always restores implementation files before returning, even on failure.
@@ -379,6 +385,7 @@ export async function runTddGate(
 async function checkTestFailFirst(
 	exec: ExecFn,
 	worktreePath: string,
+	defaultBranch: string,
 	implFiles: string[],
 	testFiles: string[],
 ): Promise<TddCheck> {
@@ -401,8 +408,10 @@ async function checkTestFailFirst(
 	}
 
 	// Step 1: Revert implementation files to the base branch version
+	// Uses <defaultBranch> (e.g. "main") — NOT "HEAD" — because HEAD contains the developer's implementation.
+	// Reverting to HEAD would be a no-op, making the check always pass regardless of TDD compliance.
 	try {
-		await exec("git", ["checkout", "HEAD", "--", ...implFiles], {
+		await exec("git", ["checkout", defaultBranch, "--", ...implFiles], {
 			cwd: worktreePath,
 			timeout: 10_000,
 		});
@@ -427,9 +436,11 @@ async function checkTestFailFirst(
 	} catch {
 		testPassed = false;
 	} finally {
-		// Step 3: Always restore implementation files
+		// Step 3: Always restore implementation files from HEAD (developer's commit)
+		// After the revert above, the index contains the base branch version.
+		// We need git checkout HEAD -- files to restore the developer's version, not the index.
 		try {
-			await exec("git", ["checkout", "--", ...implFiles], {
+			await exec("git", ["checkout", "HEAD", "--", ...implFiles], {
 				cwd: worktreePath,
 				timeout: 10_000,
 			});
@@ -467,13 +478,6 @@ async function checkTestsReferenceImpl(
 	testFiles: string[],
 	implFiles: string[],
 ): Promise<TddCheck> {
-	// Extract basenames (without extension) from implementation files
-	const implBasenames = implFiles.map((f) => {
-		const base = basename(f);
-		const dotIdx = base.lastIndexOf(".");
-		return dotIdx > 0 ? base.slice(0, dotIdx) : base;
-	});
-
 	// Extract potential export names from implementation files
 	const implKeywords = new Set<string>();
 	for (const implFile of implFiles) {
