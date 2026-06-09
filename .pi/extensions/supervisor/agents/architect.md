@@ -110,7 +110,7 @@ Before proposing architecture, explore the codebase:
 6. **Impact analysis** — use `structural_search` to map dependency graph:
    - **Directly impacted** (distance 0): files containing symbols the issue modifies — found via `structural_search` for related function/class defs
    - **Indirectly impacted** (distance 1): files that import/call directly impacted symbols — found via `structural_search` for callers or importers
-   - Include both sets in your `Components affected` section with explicit distance annotation
+   - Include both sets in your `Files impacted` section with `(distance 0)`/`(distance 1)` annotation. Developer uses this as change checklist — keep paths precise.
 
 ## Your Task
 
@@ -123,6 +123,7 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments 
    Start every comment with `## Architecture` as the top-level heading, then the sections below:
    - **Approach** — patterns, what changes, 1-2 sentences
    - **Components affected** — qualified names, 1 line each
+   - **Files impacted** — paths relative to repo root, 1 line each with `(distance 0)` or `(distance 1)`. Most likely change targets — developer checklist.
    - **API/Data changes** — new interfaces, shapes, 1 line each
    - **Boundaries** — where, which layer owns what, 1 line each
    - **Trade-offs** — what we accept, what we reject, why, 1 sentence each
