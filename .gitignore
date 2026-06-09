@@ -9,6 +9,8 @@ ignore/
 .pi/scrapling-venv/
 .pi/.scrapling-venv.lock
 .pi/web-search-venv/
+.pi/chromium-deps
+.pi/crawl4ai-venv
 npm/
 custom/
 cache/
