@@ -3,12 +3,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import {
-	TOOL_DISCIPLINE_SNIPPET,
-	buildAgentSystemPrompt,
-	DEDUPLICATION_SCAN_INSTRUCTION,
-	README_CHECK_INSTRUCTION,
-} from "../config/shared-prompts.ts";
+import { TOOL_DISCIPLINE_SNIPPET, buildAgentSystemPrompt } from "../config/shared-prompts.ts";
 
 // ─── Tests: TOOL_DISCIPLINE_SNIPPET ───────────────────────────────
 
@@ -89,29 +84,5 @@ describe("buildAgentSystemPrompt", () => {
 	it("handles empty base prompt", () => {
 		const result = buildAgentSystemPrompt("", "developer");
 		assert.ok(result.startsWith("🛠 Tool Discipline"));
-	});
-});
-
-// ─── Tests: DEDUPLICATION_SCAN_INSTRUCTION ────────────────────────
-
-describe("DEDUPLICATION_SCAN_INSTRUCTION", () => {
-	it("references the `## Research Findings` marker", () => {
-		assert.ok(DEDUPLICATION_SCAN_INSTRUCTION.includes("## Research Findings"));
-	});
-
-	it("indicates skip behavior", () => {
-		assert.ok(DEDUPLICATION_SCAN_INSTRUCTION.toLowerCase().includes("skip"));
-	});
-});
-
-// ─── Tests: README_CHECK_INSTRUCTION ─────────────────────────────
-
-describe("README_CHECK_INSTRUCTION", () => {
-	it("references README.md", () => {
-		assert.ok(README_CHECK_INSTRUCTION.includes("README.md"));
-	});
-
-	it("references git diff", () => {
-		assert.ok(README_CHECK_INSTRUCTION.includes("git diff"));
 	});
 });
