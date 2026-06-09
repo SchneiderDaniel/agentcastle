@@ -167,6 +167,97 @@ describe("detectBashGrep", () => {
 		const mm = signals.filter((s) => s.signal === "bash-grep");
 		assert.strictEqual(mm.length, 0);
 	});
+
+	it("flags file-source pipe: head -n 20 file | grep foo", () => {
+		const data = makeSession([bashEntry("head -n 20 file | grep foo", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.ok(mm.length >= 1, "head | grep should be flagged");
+	});
+
+	it("flags file-source pipe: tail -f log | grep error", () => {
+		const data = makeSession([bashEntry("tail -f log | grep error", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.ok(mm.length >= 1, "tail | grep should be flagged");
+	});
+
+	it("flags file-source pipe: less file | grep foo", () => {
+		const data = makeSession([bashEntry("less file | grep foo", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.ok(mm.length >= 1, "less | grep should be flagged");
+	});
+
+	it("flags file-source pipe: more file | grep foo", () => {
+		const data = makeSession([bashEntry("more file | grep foo", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.ok(mm.length >= 1, "more | grep should be flagged");
+	});
+
+	it("does NOT flag command-output pipe: ctags --list-maps | grep typescript", () => {
+		const data = makeSession([bashEntry("ctags --list-maps | grep typescript", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "ctags | grep should NOT be flagged");
+	});
+
+	it("does NOT flag command-output pipe: git branch -a | grep 599", () => {
+		const data = makeSession([bashEntry("git branch -a | grep 599", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "git branch | grep should NOT be flagged");
+	});
+
+	it("does NOT flag command-output pipe: gh issue list | grep bug", () => {
+		const data = makeSession([bashEntry("gh issue list | grep bug", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "gh issue list | grep should NOT be flagged");
+	});
+
+	it("does NOT flag dir listing pipe: ls | grep -v node_modules", () => {
+		const data = makeSession([bashEntry("ls | grep -v node_modules", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "ls | grep should NOT be flagged");
+	});
+
+	it("does NOT flag process pipe: ps aux | grep node", () => {
+		const data = makeSession([bashEntry("ps aux | grep node", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "ps aux | grep should NOT be flagged");
+	});
+
+	it("does NOT flag docker pipe: docker ps | grep myapp", () => {
+		const data = makeSession([bashEntry("docker ps | grep myapp", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "docker ps | grep should NOT be flagged");
+	});
+
+	it('does NOT flag find pipe: find . -name "*.ts" | grep test', () => {
+		const data = makeSession([bashEntry('find . -name "*.ts" | grep test', 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "find | grep should NOT be flagged");
+	});
+
+	it("does NOT flag | find (removed)", () => {
+		const data = makeSession([bashEntry("somecmd | find foo", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "| find should NOT be flagged");
+	});
+
+	it("does NOT flag | rg with non-file source: git branch -a | rg main", () => {
+		const data = makeSession([bashEntry("git branch -a | rg main", 0)]);
+		const signals = analyzeSession(data);
+		const mm = signals.filter((s) => s.signal === "bash-grep");
+		assert.strictEqual(mm.length, 0, "git branch | rg should NOT be flagged");
+	});
 });
 
 describe("detectErrorLoop", () => {
