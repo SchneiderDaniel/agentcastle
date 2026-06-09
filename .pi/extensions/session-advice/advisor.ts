@@ -187,10 +187,12 @@ function shortPath(p: string): string {
 	return idx >= 0 ? p.slice(idx + 1) : p;
 }
 
-/** Check if a bash command has piped grep/rg/find patterns. */
-function isPipedGrep(cmd: string): boolean {
+/** Check if a bash command pipes from a file-reading command to grep/rg. */
+function isPipedFileGrep(cmd: string): boolean {
 	const low = cmd.toLowerCase();
-	return low.includes("| grep") || low.includes("| rg") || low.includes("| find");
+	return (
+		/^(cat|head|tail|less|more)\s/.test(low) && (low.includes("| grep") || low.includes("| rg"))
+	);
 }
 
 function getEntryPath(e: SessionEntry): string {
@@ -306,7 +308,7 @@ function detectBashGrep(data: SessionData): WasteSignal[] {
 	for (const e of data.entries) {
 		if (e.toolName !== "bash") continue;
 		const cmd = e.text ?? "";
-		if (new BashCommand(cmd).isSearch() || isPipedGrep(cmd)) {
+		if (new BashCommand(cmd).isSearch() || isPipedFileGrep(cmd)) {
 			bashGrepCalls.push(e);
 		}
 	}
@@ -514,8 +516,9 @@ const DISCOVERY_TOOLS = new Set([
 function isBashSearchOrRead(cmd: string): boolean {
 	if (!cmd) return false;
 	const low = cmd.toLowerCase();
-	// Check piped grep/rg/find
-	if (low.includes("| grep") || low.includes("| rg") || low.includes("| find")) return true;
+	// Check piped grep/rg from file-reading commands only
+	if (/^(cat|head|tail|less|more)\s/.test(low) && (low.includes("| grep") || low.includes("| rg")))
+		return true;
 	// Check file read commands
 	if (low.startsWith("cat ") || low.startsWith("head ") || low.startsWith("tail ")) return true;
 	// Check using rg/grep/find as primary command
