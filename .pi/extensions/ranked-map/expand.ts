@@ -7,10 +7,14 @@
  *
  * Expansion rules applied to each term:
  * - Strip common suffixes (-ion, -ed, -ing, -ate, -ify, -ment)
- * - Add first-N shorthand (4 chars for words > 5, 3 chars for words > 4)
+ * - Add first-4 shorthand for words > 5 chars (minimum 4-char shorthand)
  * - Add plurals
  * - Add -ed, -ing, -s derivations
  * - Keep original term
+ *
+ * All variants are wrapped in \\b word boundary anchors to prevent matches
+ * inside unrelated words (e.g. "ext" matching inside "text" or "context").
+ * Minimum shorthand length is 4 to avoid overly short noise patterns.
  *
  * Synonyms from config are merged into the expanded pattern.
  */
@@ -56,9 +60,13 @@ const RECIPROCAL_SUFFIXES: { suffix: string; getVariants: (root: string) => stri
  * - Plural (adds "s" or "es")
  * - -ed and -ing forms
  * - Stripped suffix root + derivations
- * - First-N character shorthand
+ * - First-4 character shorthand (for words > 5 chars)
  *
- * Returns a string like "(authentication|authenticate|auth)".
+ * All variants are wrapped in \\b word boundary anchors to prevent matches
+ * inside unrelated words (e.g. "extension" does not match inside "text").
+ * Minimum shorthand length is 4.
+ *
+ * Returns a string like "(\\bauthentication\\b|\\bauthenticate\\b|\\bauth\\b)".
  * Returns empty string for empty input.
  */
 export function expandTerm(term: string): string {
@@ -85,9 +93,14 @@ export function expandTerm(term: string): string {
 	// Step 5: Add first-N character shorthand
 	addShortHand(trimmed, variants);
 
-	// Remove empty strings and duplicates, then build regex alternation group
-	const parts = [...variants].filter(Boolean).sort();
-	if (parts.length === 0) return `(${trimmed})`;
+	// Remove empty strings and duplicates, then build regex alternation group.
+	// Wrap each variant with \\b word boundary anchors to prevent matches
+	// inside unrelated words (e.g. "ext" matching inside "text" or "context").
+	const parts = [...variants]
+		.filter(Boolean)
+		.sort()
+		.map((p) => `\\b${p}\\b`);
+	if (parts.length === 0) return `(\\b${trimmed}\\b)`;
 	if (parts.length === 1) return `(${parts[0]})`;
 	return `(${parts.join("|")})`;
 }
@@ -251,18 +264,13 @@ function tryAddIonFromAte(term: string, variants: Set<string>): void {
 
 /**
  * Add first-N character shorthand.
- * For words > 5 chars: first 4 chars
- * For words > 4 chars: first 3 chars
+ * For words > 5 chars: first 4 chars only (no 3-char shorthand).
+ * Minimum shorthand length is 4 to avoid overly short noise patterns
+ * that match as substrings inside unrelated words.
  */
 function addShortHand(term: string, variants: Set<string>): void {
 	if (term.length > 5) {
 		variants.add(term.slice(0, 4));
-	} else if (term.length > 4) {
-		variants.add(term.slice(0, 3));
-	}
-	// Also try first-3 for longer words if first-4 is too close to full word
-	if (term.length >= 6) {
-		variants.add(term.slice(0, 3));
 	}
 }
 
@@ -294,13 +302,15 @@ export function expandQuery(query: string, synonyms?: Record<string, string[]>):
 		// Merge synonyms into the expanded pattern
 		const syns = synonyms[term]!;
 		// Extract existing variants from the expanded pattern
-		// Pattern is like "(variant1|variant2|...)"
+		// Pattern is like "(\\bvariant1\\b|\\bvariant2\\b|...)"
 		const innerContent = expanded.startsWith("(") ? expanded.slice(1, -1) : expanded;
 		const existingVariants = new Set(innerContent.split("|"));
 
 		for (const syn of syns) {
-			if (!existingVariants.has(syn)) {
-				existingVariants.add(syn);
+			// Wrap each synonym with \\b for consistent boundary treatment
+			const wrappedSyn = `\\b${syn}\\b`;
+			if (!existingVariants.has(wrappedSyn)) {
+				existingVariants.add(wrappedSyn);
 			}
 		}
 

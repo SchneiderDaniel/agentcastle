@@ -213,7 +213,8 @@ export function applyPathBoost(
 		const inner = term.startsWith("(") && term.endsWith(")") ? term.slice(1, -1) : term;
 		const parts = inner.split("|");
 		for (const part of parts) {
-			const clean = part.toLowerCase();
+			// Strip leading/trailing \\b word boundary anchors from each alternative
+			const clean = part.toLowerCase().replace(/^\\b/, "").replace(/\\b$/, "");
 			if (clean.length > 0 && !alternatives.includes(clean)) {
 				alternatives.push(clean);
 			}
