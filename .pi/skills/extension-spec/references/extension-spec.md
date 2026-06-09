@@ -134,6 +134,20 @@ These rules are **mandatory** for every extension design. Violating any P0/P1 ru
 
 ---
 
+### 🔥 Error Visibility
+
+| #      | Rule                                                                                                | Explanation                                                                                                                                                                                                                                                        |
+| ------ | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **E1** | **Never empty `catch`** — Every catch must notify user or re-throw                                  | `catch {}` is forbidden. Minimum: `catch { ctx.ui.notify(msg, "error"); }`. Pair with `collector.push()` when ErrorCollector (#634) is in place.                                                                                                                  |
+| **E2** | **`console.error`/`console.warn` not sufficient alone** — Always pair with `ctx.ui.notify()` or `pi.sendMessage()` | TUI users see notifications, not stderr. Console is supplemental only.                                                                                                                                                                                             |
+| **E3** | **Check `pi.exec` return code** — `result.code !== 0` means failure                                 | Every `pi.exec()` call must check `result.code` and handle non-zero with notification.                                                                                                                                                                             |
+| **E4** | **Always clean up state in `finally`** — `setStatus`, `setWidget`, `setWorkingMessage` must be reversed | Leaked state corrupts UI. Pattern: `try { ... } finally { ctx.ui.setStatus("name", undefined); }`.                                                                                                                                                                |
+| **E5** | **Fail closed, not open** — Precondition failure should stop, not continue silently                 | When a check fails, assume operation cannot proceed. Notify and return. Do NOT fall through with defaults.                                                                                                                                                         |
+| **E6** | **Prefer `Result<T>` for fallible operations** — Return `{ ok: true; value: T } | { ok: false; error: string }` | Forces callers to acknowledge failure. TypeScript won't compile if `.ok` unchecked.                                                                                                                                                                                |
+| **E7** | **Never return partial success data** — If operation fails partway, return error, not half-baked result | Partial results hide the failure. Caller assumes everything worked.                                                                                                                                                                                                |
+
+---
+
 ### 🔒 Security Considerations
 
 1. **Untyped external data enables injection** — sanitization functions accepting `rawInput: any` can bypass checks if malicious payloads contain unexpected fields. Define interfaces with runtime type guards.
@@ -214,6 +228,13 @@ Before finalizing any design, verify against this checklist:
 - [ ] P23: Property renames in interfaces include grep for old key name across all extensions
 - [ ] P24: `pi.sendMessage()` / `pi.sendUserMessage()` includes all required fields including `customType`
 - [ ] M8: Parameter count/type changes in signatures updated across all consumers including re-exports
+- [ ] E1: No empty catch blocks — every catch notifies or re-throws
+- [ ] E2: console.error/warn paired with ctx.ui.notify
+- [ ] E3: pi.exec return code checked after every call
+- [ ] E4: State cleanup in finally — no leaked setStatus/setWidget
+- [ ] E5: Fail closed — pre-condition failure stops operation
+- [ ] E6: Result<T> used for fallible functions
+- [ ] E7: No partial success data on failure
 
 ---
 
