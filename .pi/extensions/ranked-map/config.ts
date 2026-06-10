@@ -15,6 +15,7 @@ export const DEFAULT_CONFIG: RankedMapConfig = {
 	recencyWindowDays: 30,
 	cacheTtlHours: 24,
 	autoThreshold: 20000,
+	maxCommits: 1000,
 	frequencyScalingFactor: 0.2,
 	weights: { keyword: 0.65, recency: 0.2, fileSize: 0.1, commitCount: 0.05 },
 };
@@ -101,6 +102,17 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			frequencyScalingFactor = rm.frequencyScalingFactor;
 		}
 
+		// Parse maxCommits
+		let maxCommits = DEFAULT_CONFIG.maxCommits;
+		if (
+			typeof rm.maxCommits === "number" &&
+			Number.isFinite(rm.maxCommits) &&
+			Number.isInteger(rm.maxCommits) &&
+			rm.maxCommits > 0
+		) {
+			maxCommits = rm.maxCommits;
+		}
+
 		// Parse synonyms
 		if (rm.synonyms && typeof rm.synonyms === "object" && !Array.isArray(rm.synonyms)) {
 			synonyms = rm.synonyms as Record<string, string[]>;
@@ -179,6 +191,7 @@ export function loadRankedMapConfig(cwd: string): RankedMapConfig {
 			recencyWindowDays,
 			cacheTtlHours,
 			autoThreshold,
+			maxCommits,
 			frequencyScalingFactor,
 			synonyms,
 			testFilePenalties,

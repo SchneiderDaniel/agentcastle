@@ -1,5 +1,6 @@
 /**
- * ranked-map — Git recency, commit count, HEAD helpers, and submodule discovery
+ * ranked-map — Git recency, commit count, HEAD helpers, submodule discovery,
+ * and working-tree hash
  *
  * Adapter module — uses ExecFn (pi.exec compatible) for subprocess execution.
  * Fully async with AbortSignal support.
@@ -45,6 +46,10 @@ function parseGitLogOutput(stdout: string, fileDates: Record<string, string>): v
  * When submodules is provided, also runs git log inside each initialized submodule
  * and merges file dates with the submodule path prefix (e.g. "flask_blogs/src/file.py").
  *
+ * The git log command is bounded by both --since (via recencyWindowDays) and
+ * --max-count (via maxCommits, default 1000) to prevent unbounded traversal
+ * in large repositories.
+ *
  * Returns a map of file path → ISO date string (most recent commit date per file).
  * Returns empty map on error or no commits.
  *
@@ -56,23 +61,29 @@ export async function runGitRecency(
 	cwd: string,
 	signal?: AbortSignal,
 	submodules?: SubmoduleInfo[],
+	maxCommits?: number,
 ): Promise<Record<string, string>> {
 	const fileDates: Record<string, string> = {};
 
-	// Phase 1: Superproject git log (unchanged behavior)
+	// Build bounded git log args
+	// Default to 1000 when maxCommits not provided (bounded by default).
+	// Skip --max-count only when maxCommits is explicitly 0 or negative.
 	const since = `--since="${windowDays} days ago"`;
-	const result = await exec(
-		"git",
-		[
-			"log",
-			since,
-			"--pretty=format:%ad",
-			"--date=format:%Y-%m-%dT%H:%M:%SZ",
-			"--name-only",
-			"--diff-filter=AM",
-		],
-		{ cwd, timeout: 15_000, signal },
-	);
+	const effectiveMaxCommits = maxCommits !== undefined ? maxCommits : 1000;
+	const maxCount = effectiveMaxCommits > 0 ? `--max-count=${effectiveMaxCommits}` : undefined;
+
+	const logArgs = [
+		"log",
+		since,
+		"--pretty=format:%ad",
+		"--date=format:%Y-%m-%dT%H:%M:%SZ",
+		"--name-only",
+		"--diff-filter=AM",
+	];
+	if (maxCount) logArgs.push(maxCount);
+
+	// Phase 1: Superproject git log
+	const result = await exec("git", logArgs, { cwd, timeout: 15_000, signal });
 
 	// git log may fail on repos with no commits — continue but fileDates stays empty
 	if (result.code === 0) {
@@ -85,20 +96,19 @@ export async function runGitRecency(
 			// Skip uninitialized submodules — no git repo to query
 			if (sm.sha === "uninitialized") continue;
 
-			const smResult = await exec(
-				"git",
-				[
-					"-C",
-					sm.path,
-					"log",
-					since,
-					"--pretty=format:%ad",
-					"--date=format:%Y-%m-%dT%H:%M:%SZ",
-					"--name-only",
-					"--diff-filter=AM",
-				],
-				{ cwd, timeout: 15_000, signal },
-			);
+			const smLogArgs = [
+				"-C",
+				sm.path,
+				"log",
+				since,
+				"--pretty=format:%ad",
+				"--date=format:%Y-%m-%dT%H:%M:%SZ",
+				"--name-only",
+				"--diff-filter=AM",
+			];
+			if (maxCount) smLogArgs.push(maxCount);
+
+			const smResult = await exec("git", smLogArgs, { cwd, timeout: 15_000, signal });
 
 			// Skip failed submodule git log — superproject results preserved
 			if (smResult.code !== 0) continue;
@@ -298,6 +308,10 @@ export async function discoverSubmodules(
  * Runs `git log --oneline` and counts how many commits touched each file.
  * When submodules are provided, also queries each initialized submodule.
  *
+ * The git log command is bounded by both --since (via recencyWindowDays) and
+ * --max-count (via maxCommits, default 1000) to prevent unbounded traversal
+ * in large repositories.
+ *
  * Returns a map of file path → commit count. Returns empty map on error.
  *
  * @param exec - ExecFn for subprocess execution
@@ -305,6 +319,7 @@ export async function discoverSubmodules(
  * @param cwd - Working directory
  * @param signal - Optional AbortSignal for cancellation
  * @param submodules - Optional array of submodule info for submodule-aware counting
+ * @param maxCommits - Maximum number of commits to traverse (default 1000)
  */
 export async function runGitCommitCount(
 	exec: ExecFn,
@@ -312,12 +327,22 @@ export async function runGitCommitCount(
 	cwd: string,
 	signal?: AbortSignal,
 	submodules?: SubmoduleInfo[],
+	maxCommits?: number,
 ): Promise<Record<string, number>> {
 	const fileCommitCounts: Record<string, number> = {};
 
-	// Phase 1: Superproject git log
+	// Build bounded git log args
+	// Default to 1000 when maxCommits not provided (bounded by default).
+	// Skip --max-count only when maxCommits is explicitly 0 or negative.
 	const since = `--since="${windowDays} days ago"`;
-	const result = await exec("git", ["log", since, "--oneline", "--name-only", "--diff-filter=AM"], {
+	const effectiveMaxCommits = maxCommits !== undefined ? maxCommits : 1000;
+	const maxCount = effectiveMaxCommits > 0 ? `--max-count=${effectiveMaxCommits}` : undefined;
+
+	const logArgs = ["log", since, "--oneline", "--name-only", "--diff-filter=AM"];
+	if (maxCount) logArgs.push(maxCount);
+
+	// Phase 1: Superproject git log
+	const result = await exec("git", logArgs, {
 		cwd,
 		timeout: 15_000,
 		signal,
@@ -332,11 +357,18 @@ export async function runGitCommitCount(
 		for (const sm of submodules) {
 			if (sm.sha === "uninitialized") continue;
 
-			const smResult = await exec(
-				"git",
-				["-C", sm.path, "log", since, "--oneline", "--name-only", "--diff-filter=AM"],
-				{ cwd, timeout: 15_000, signal },
-			);
+			const smLogArgs = [
+				"-C",
+				sm.path,
+				"log",
+				since,
+				"--oneline",
+				"--name-only",
+				"--diff-filter=AM",
+			];
+			if (maxCount) smLogArgs.push(maxCount);
+
+			const smResult = await exec("git", smLogArgs, { cwd, timeout: 15_000, signal });
 
 			if (smResult.code === 0) {
 				// Parse and prefix submodule paths
@@ -403,4 +435,43 @@ export async function getGitHead(
 	});
 	if (result.code !== 0) return null;
 	return result.stdout.trim();
+}
+
+// --------------------------------------------------------------------------
+// Working-tree hash — for cache invalidation on uncommitted changes
+// --------------------------------------------------------------------------
+
+/**
+ * Compute a fast hash of the git working tree state.
+ *
+ * Runs `git status --porcelain` and computes a djb2 hash of the output.
+ * Returns a hex string if the working tree has uncommitted changes,
+ * or null if the working tree is clean or git fails.
+ *
+ * This enables cache invalidation on uncommitted changes made during
+ * active agent coding sessions, not just HEAD changes.
+ */
+export async function getWorkingTreeHash(
+	exec: ExecFn,
+	cwd: string,
+	signal?: AbortSignal,
+): Promise<string | null> {
+	try {
+		const result = await exec("git", ["status", "--porcelain"], {
+			cwd,
+			timeout: 5_000,
+			signal,
+		});
+		if (result.code !== 0) return null;
+		const output = result.stdout;
+		if (!output || !output.trim()) return null;
+		// Simple djb2 hash
+		let hash = 5381;
+		for (let i = 0; i < output.length; i++) {
+			hash = ((hash << 5) + hash + output.charCodeAt(i)) | 0;
+		}
+		return Math.abs(hash).toString(16);
+	} catch {
+		return null;
+	}
 }
