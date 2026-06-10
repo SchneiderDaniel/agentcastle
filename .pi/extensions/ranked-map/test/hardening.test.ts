@@ -5,6 +5,10 @@
  * Feature 2: Strict Path Post-Processing — resolvePiignorePatterns + matchPiignorePattern
  * Feature 3: Bounded Git Recency Search — maxCommits injected into git log
  *
+ * Uses namespace imports for git and piignore modules so that when the
+ * implementation is reverted, missing exports become undefined (not module
+ * loading errors), causing proper test assertion failures.
+ *
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/ranked-map/test/hardening.test.ts
  */
@@ -15,15 +19,10 @@ import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-import type { ExecFn, CachedIndex, RankedMapConfig } from "../types.ts";
-import { getWorkingTreeHash, runGitRecency, runGitCommitCount, getGitHead } from "../git.ts";
+import type { ExecFn, CachedIndex, RankedMapConfig, ResolvedPiignorePattern } from "../types.ts";
+import * as git from "../git.ts";
+import * as piignore from "../piignore.ts";
 import { loadCachedIndex, computeConfigHash } from "../cache.ts";
-import {
-	resolvePiignorePatterns,
-	matchPiignorePattern,
-	parseIgnoreLine,
-	buildIgnoreExcludes,
-} from "../piignore.ts";
 import { loadRankedMapConfig } from "../config.ts";
 import { RankedMapEngine } from "../engine.ts";
 
@@ -94,6 +93,13 @@ describe("Feature 1: Working-Tree Cache Invalidation", () => {
 	// ── getWorkingTreeHash ──────────────────────────────────────────
 
 	describe("getWorkingTreeHash", () => {
+		it("exports the function from git module", () => {
+			assert.ok(
+				typeof git.getWorkingTreeHash === "function",
+				"getWorkingTreeHash should be a function (will be undefined if implementation reverted)",
+			);
+		});
+
 		it("returns null when git status fails", async () => {
 			const exec = mockExecConditional([
 				{
@@ -102,7 +108,7 @@ describe("Feature 1: Working-Tree Cache Invalidation", () => {
 					handler: async () => ({ stdout: "", stderr: "not a git repo", code: 128, killed: false }),
 				},
 			]);
-			const hash = await getWorkingTreeHash(exec, "/tmp");
+			const hash = await git.getWorkingTreeHash(exec, "/tmp");
 			assert.equal(hash, null);
 		});
 
@@ -110,7 +116,7 @@ describe("Feature 1: Working-Tree Cache Invalidation", () => {
 			const exec: ExecFn = async () => {
 				throw new Error("exec failed");
 			};
-			const hash = await getWorkingTreeHash(exec, "/tmp");
+			const hash = await git.getWorkingTreeHash(exec, "/tmp");
 			assert.equal(hash, null);
 		});
 
@@ -122,7 +128,7 @@ describe("Feature 1: Working-Tree Cache Invalidation", () => {
 					handler: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
 				},
 			]);
-			const hash = await getWorkingTreeHash(exec, "/tmp");
+			const hash = await git.getWorkingTreeHash(exec, "/tmp");
 			assert.equal(hash, null);
 		});
 
@@ -143,12 +149,13 @@ describe("Feature 1: Working-Tree Cache Invalidation", () => {
 					},
 				},
 			]);
-			const hash1 = await getWorkingTreeHash(exec, "/tmp");
+			const hash1 = await git.getWorkingTreeHash(exec, "/tmp");
 			assert.ok(hash1, "should return a hash string");
 			assert.match(hash1!, /^[0-9a-f]+$/, "should be hex string");
+			assert.match(hash1!, /^.{1,16}$/, "should be a reasonably short hex string");
 
 			// Second call with same output should return same hash
-			const hash2 = await getWorkingTreeHash(exec, "/tmp");
+			const hash2 = await git.getWorkingTreeHash(exec, "/tmp");
 			assert.equal(hash1, hash2, "should be deterministic");
 
 			assert.equal(callCount, 2, "should call exec twice");
@@ -180,8 +187,8 @@ describe("Feature 1: Working-Tree Cache Invalidation", () => {
 				},
 			]);
 
-			const hash1 = await getWorkingTreeHash(exec1, "/tmp");
-			const hash2 = await getWorkingTreeHash(exec2, "/tmp");
+			const hash1 = await git.getWorkingTreeHash(exec1, "/tmp");
+			const hash2 = await git.getWorkingTreeHash(exec2, "/tmp");
 			assert.notEqual(hash1, hash2, "different states should produce different hashes");
 		});
 	});
@@ -277,7 +284,7 @@ describe("Feature 1: Working-Tree Cache Invalidation", () => {
 			rmSync(dir, { recursive: true });
 		});
 
-		it("accepts cached index without workingTreeHash field when validating (cache was pre-upgrade)", () => {
+		it("accepts cached index without workingTreeHash field when both sides are undefined", () => {
 			const cachePath = join(tmpDirPath(), "cache.json");
 			const dir = resolve(cachePath, "..");
 			mkdirSync(dir, { recursive: true });
@@ -289,7 +296,7 @@ describe("Feature 1: Working-Tree Cache Invalidation", () => {
 					symbols: { "src/a.ts": [] },
 				}),
 			);
-			// workingTreeHash is in cache but not in parsed → undefined in both → accepted
+			// Both sides undefined → no mismatch → accepted
 			const result = loadCachedIndex(cachePath, "abc123", undefined, undefined, undefined);
 			assert.ok(result, "should accept cache when both sides have undefined workingTreeHash");
 			rmSync(dir, { recursive: true });
@@ -305,8 +312,22 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 	// ── resolvePiignorePatterns ─────────────────────────────────────
 
 	describe("resolvePiignorePatterns", () => {
+		it("exports the function from piignore module", () => {
+			assert.ok(
+				typeof piignore.resolvePiignorePatterns === "function",
+				"resolvePiignorePatterns should be a function (will be undefined if implementation reverted)",
+			);
+		});
+
+		it("exports matchPiignorePattern from piignore module", () => {
+			assert.ok(
+				typeof piignore.matchPiignorePattern === "function",
+				"matchPiignorePattern should be a function (will be undefined if implementation reverted)",
+			);
+		});
+
 		it("returns empty array for non-existent file", () => {
-			const patterns = resolvePiignorePatterns("/tmp/nonexistent/.piignore");
+			const patterns = piignore.resolvePiignorePatterns("/tmp/nonexistent/.piignore");
 			assert.ok(Array.isArray(patterns));
 			assert.equal(patterns.length, 0);
 		});
@@ -315,7 +336,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 			const dir = tmpDirPath();
 			const path = join(dir, ".piignore");
 			writeFileSync(path, "", "utf-8");
-			const patterns = resolvePiignorePatterns(path);
+			const patterns = piignore.resolvePiignorePatterns(path);
 			assert.equal(patterns.length, 0);
 			rmSync(dir, { recursive: true });
 		});
@@ -324,7 +345,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 			const dir = tmpDirPath();
 			const path = join(dir, ".piignore");
 			writeFileSync(path, "# comment\n\n  \n*.log\n", "utf-8");
-			const patterns = resolvePiignorePatterns(path);
+			const patterns = piignore.resolvePiignorePatterns(path);
 			assert.equal(patterns.length, 1);
 			assert.equal(patterns[0]!.raw, "*.log");
 			rmSync(dir, { recursive: true });
@@ -334,7 +355,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 			const dir = tmpDirPath();
 			const path = join(dir, ".piignore");
 			writeFileSync(path, ".pi/cache/\nbuild\n", "utf-8");
-			const patterns = resolvePiignorePatterns(path);
+			const patterns = piignore.resolvePiignorePatterns(path);
 			assert.equal(patterns.length, 2);
 			assert.equal(patterns[0]!.type, "exact");
 			assert.equal(patterns[0]!.raw, ".pi/cache/");
@@ -347,7 +368,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 			const dir = tmpDirPath();
 			const path = join(dir, ".piignore");
 			writeFileSync(path, "*.log\nbuild/*\n", "utf-8");
-			const patterns = resolvePiignorePatterns(path);
+			const patterns = piignore.resolvePiignorePatterns(path);
 			assert.equal(patterns.length, 2);
 			assert.equal(patterns[0]!.type, "glob");
 			assert.equal(patterns[1]!.type, "glob");
@@ -358,7 +379,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 			const dir = tmpDirPath();
 			const path = join(dir, ".piignore");
 			writeFileSync(path, "!important.log\n", "utf-8");
-			const patterns = resolvePiignorePatterns(path);
+			const patterns = piignore.resolvePiignorePatterns(path);
 			assert.equal(patterns.length, 1);
 			assert.equal(patterns[0]!.negate, true);
 			assert.equal(patterns[0]!.raw, "important.log");
@@ -373,7 +394,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 				["# Exclude cache", ".pi/cache/", "*.tmp", "!keep.tmp", "dist/"].join("\n"),
 				"utf-8",
 			);
-			const patterns = resolvePiignorePatterns(path);
+			const patterns = piignore.resolvePiignorePatterns(path);
 			assert.equal(patterns.length, 4);
 			assert.equal(patterns[0]!.raw, ".pi/cache/");
 			assert.equal(patterns[0]!.type, "exact");
@@ -395,7 +416,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 
 	describe("matchPiignorePattern", () => {
 		it("matches exact directory path prefix (.pi/cache should match .pi/cache/index.ts)", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: ".pi/cache", type: "exact", pattern: ".pi/cache", negate: false },
 				".pi/cache/index.ts",
 			);
@@ -403,7 +424,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 		});
 
 		it("does NOT match sibling directories (src/utils/cache should NOT match .pi/cache rule)", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: ".pi/cache", type: "exact", pattern: ".pi/cache", negate: false },
 				"src/utils/cache/helper.ts",
 			);
@@ -411,7 +432,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 		});
 
 		it("matches exact file path", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: "secrets.env", type: "exact", pattern: "secrets.env", negate: false },
 				"secrets.env",
 			);
@@ -419,7 +440,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 		});
 
 		it("does not match different file with same name in different dir", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: "config/local.env", type: "exact", pattern: "config/local.env", negate: false },
 				"other/config/local.env",
 			);
@@ -427,7 +448,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 		});
 
 		it("matches glob pattern *.log against full path", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: "*.log", type: "glob", pattern: "*.log", negate: false },
 				"build/output.log",
 			);
@@ -435,7 +456,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 		});
 
 		it("does not match glob pattern *.log against non-matching extension", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: "*.log", type: "glob", pattern: "*.log", negate: false },
 				"build/output.txt",
 			);
@@ -443,18 +464,17 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 		});
 
 		it("matches directory glob pattern (build/* against build/asset.js)", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: "build/*", type: "glob", pattern: "build/*", negate: false },
 				"build/asset.js",
 			);
 			assert.equal(result, true);
 		});
 
-		it("negation pattern (.pi/cache but !.pi/cache/keep.ts) — keep.ts should NOT match", () => {
-			// Negation means: if matched, the file is NOT excluded
-			// So matchPiignorePattern returning true for a negated pattern means
-			// "this file would have been excluded but is protected"
-			const result = matchPiignorePattern(
+		it("negation pattern matching returns true for protected files", () => {
+			// Negation means the file is protected from exclusion.
+			// matchPiignorePattern returning true means "this pattern applies to this file"
+			const result = piignore.matchPiignorePattern(
 				{ raw: "keep.ts", type: "exact", pattern: "keep.ts", negate: true },
 				"keep.ts",
 			);
@@ -462,7 +482,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 		});
 
 		it("matches file with trailing slash pattern (.pi/cache/ should match .pi/cache/file.ts)", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: ".pi/cache/", type: "exact", pattern: ".pi/cache/", negate: false },
 				".pi/cache/file.ts",
 			);
@@ -470,7 +490,7 @@ describe("Feature 2: Strict Path Post-Processing", () => {
 		});
 
 		it("matches ** glob patterns like **/temp against paths inside temp directory", () => {
-			const result = matchPiignorePattern(
+			const result = piignore.matchPiignorePattern(
 				{ raw: "**/temp", type: "glob", pattern: "**/temp", negate: false },
 				"src/temp/file.ts",
 			);
@@ -722,7 +742,7 @@ describe("Feature 3: Bounded Git Recency Search", () => {
 				weights: { keyword: 0.5, recency: 0.3, fileSize: 0.2 },
 			};
 
-			await runGitRecency(
+			await git.runGitRecency(
 				exec,
 				config.recencyWindowDays,
 				"/tmp",
@@ -759,7 +779,14 @@ describe("Feature 3: Bounded Git Recency Search", () => {
 				},
 			]);
 
-			await runGitRecency(exec, 30, "/tmp", undefined, [{ path: "sub_a", sha: "def456" }], 1000);
+			await git.runGitRecency(
+				exec,
+				30,
+				"/tmp",
+				undefined,
+				[{ path: "sub_a", sha: "def456" }],
+				1000,
+			);
 
 			assert.ok(
 				superArgs.includes("--max-count=1000"),
@@ -784,7 +811,7 @@ describe("Feature 3: Bounded Git Recency Search", () => {
 				},
 			]);
 
-			await runGitRecency(exec, 30, "/tmp");
+			await git.runGitRecency(exec, 30, "/tmp");
 
 			assert.ok(
 				capturedArgs.includes("--max-count=1000"),
@@ -805,7 +832,7 @@ describe("Feature 3: Bounded Git Recency Search", () => {
 				},
 			]);
 
-			await runGitRecency(exec, 30, "/tmp", undefined, undefined, 0);
+			await git.runGitRecency(exec, 30, "/tmp", undefined, undefined, 0);
 			assert.ok(!capturedArgs.includes("--max-count=0"), "should not include --max-count=0");
 		});
 	});
@@ -824,7 +851,7 @@ describe("Feature 3: Bounded Git Recency Search", () => {
 				},
 			]);
 
-			await runGitCommitCount(exec, 30, "/tmp", undefined, undefined, 500);
+			await git.runGitCommitCount(exec, 30, "/tmp", undefined, undefined, 500);
 
 			assert.ok(
 				capturedArgs.includes("--max-count=500"),
@@ -852,7 +879,7 @@ describe("Feature 3: Bounded Git Recency Search", () => {
 				},
 			]);
 
-			await runGitCommitCount(
+			await git.runGitCommitCount(
 				exec,
 				30,
 				"/tmp",
