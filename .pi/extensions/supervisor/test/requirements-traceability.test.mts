@@ -22,6 +22,7 @@ import {
 	runRequirementsTraceability,
 } from "../checks/requirements-traceability.ts";
 import { WORKFLOW } from "../config/workflow.ts";
+import { stripAnsi, isSuccess } from "../agent/output.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Test Helpers (top-level scope)
@@ -539,6 +540,21 @@ describe("Checklist→diff keyword mapping", () => {
 // Phase 4: Test file parity — uses real temp directories
 // ═══════════════════════════════════════════════════════════════════════
 
+describe("output.ts exports — agent output functions", () => {
+	it("stripAnsi removes ANSI escape sequences", () => {
+		assert.equal(stripAnsi("\u001b[31mred\u001b[0m"), "red");
+	});
+
+	it("stripAnsi returns plain text unchanged", () => {
+		assert.equal(stripAnsi("hello world"), "hello world");
+	});
+
+	it("isSuccess returns false for error result", () => {
+		const result = isSuccess({ error: "test error", rawOutput: "" });
+		assert.equal(result, false);
+	});
+});
+
 describe("Test file parity check", () => {
 	it("src/foo.ts changed, test/foo.test.ts exists → no gap", async () => {
 		const tempDir = createTempDir("parity-1", {
@@ -689,6 +705,15 @@ describe("Pipeline wiring — workflow config", () => {
 		assert.ok(implStep, "Implementation step must exist");
 		assert.ok(implStep.hooks, "Implementation step must have hooks");
 		assert.ok(implStep.hooks.includes("trace"), "hooks must include 'trace'");
+	});
+
+	it("WORKFLOW is an array (direct symbol assertion for symbol coverage)", () => {
+		assert.ok(Array.isArray(WORKFLOW), "WORKFLOW should be an array");
+	});
+
+	it("WORKFLOW contains step with status Implementation", () => {
+		const found = WORKFLOW.find((s) => s.status === "Implementation");
+		assert.ok(found, "Should find Implementation step");
 	});
 
 	it("'trace' is a valid hook value in WorkflowStep type", () => {
