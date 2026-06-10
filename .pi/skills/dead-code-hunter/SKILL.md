@@ -20,10 +20,12 @@ This is a **hunt loop**. Core instruction: **keep hunting until you file at leas
 ```
 loop:
   1. Pick random extension from .pi/extensions/ (skip previously picked)
-  2. Run Phase 2-4 (understand + hunt + validate)
-  3. If dead code found AND proof confirmed → file GitHub issue (Phase 5) → exit loop
-  4. If no dead code found → log reason, goto loop start (pick next extension)
-  5. If ALL extensions exhausted with zero findings → output "Hunt complete: 0 dead code findings across all extensions"
+  2. Run Phase 1.5 (knip preliminary scan)
+  3. If knip found dead code → file GitHub issue (Phase 5) → exit loop
+  4. If knip found nothing or errored → run Phase 2-4 (understand + hunt + validate)
+  5. If dead code found AND proof confirmed → file GitHub issue (Phase 5) → exit loop
+  6. If no dead code found → log reason, goto loop start (pick next extension)
+  7. If ALL extensions exhausted with zero findings → output "Hunt complete: 0 dead code findings across all extensions"
 ```
 
 **Critical rule:** Do NOT lower proof standards when hunt gets long. A finding without proof is not a finding. Skip and move on.
@@ -42,6 +44,70 @@ ls /home/miria/git/main/.pi/extensions/*.ts     # single-file extensions
 ```
 
 Pick randomly. Document which extension selected and why (e.g. "largest file count" or "most recently modified").
+
+### Phase 1.5 — Knip Preliminary Scan
+
+Before manual analysis, run Knip — an automated dead-code detection CLI. Knip analyzes the module graph (imports/exports) to find unused exports, unused dependencies, unused files, and duplicate exports. It runs in seconds and provides deterministic output that can be filed directly as an issue.
+
+**Knip cannot detect:** unreachable code (after return/throw), dead branches (constant conditions), empty blocks, unnecessary conditionals, unused function parameters, orphaned imports within a file, dead event handlers, redundant code paths, or duplicate code blocks. These patterns require the manual Phase 2-4 detection techniques below.
+
+#### Step 1: Run Knip
+
+Run Knip against the selected extension directory using the root tsconfig:
+
+```bash
+npx knip --tsConfig /home/miria/git/main/tsconfig.json --include-entry-exports --directory /home/miria/git/main/.pi/extensions/<name>/
+```
+
+Flags:
+- `--tsConfig /home/miria/git/main/tsconfig.json` — always use root tsconfig (extends `.pi/tsconfig.json`); extension directories do not have their own tsconfig
+- `--directory` — scope analysis to the extension directory (knip v6 uses `--directory` flag, not positional argument)
+- `--include-entry-exports` — also check exports of entry files, not just internal exports; ensures comprehensive coverage of extension internals
+- No configuration file — knip uses defaults
+
+#### Step 2: Parse Knip Exit Code and Output
+
+Knip exit codes:
+- **0** — no issues found. If exit 0 with no output → no findings. Fall through to Phase 2 (manual detection).
+- **1** — lint issues found (unused exports, unused deps, etc.). Proceed to Step 3.
+- **2** — execution error (bad input, missing dependency, internal failure). Fall back to Phase 2-4 manual detection. Do NOT abort the hunt.
+
+Capture both exit code and stdout/stderr:
+
+```bash
+npx knip --tsConfig /home/miria/git/main/tsconfig.json --include-entry-exports --directory /home/miria/git/main/.pi/extensions/<name>/ 2>&1; echo "EXIT_CODE=$?"
+```
+
+#### Step 3: File Issue for First Finding
+
+If knip exits with code 1 and produces findings:
+
+1. **One finding per issue rule applies** — take only the FIRST finding from knip output (the first `file:line:col` line). Do NOT file multiple findings from a single knip run.
+2. **Use the existing issue template** from Phase 5 — same structure, same severity guide (P0-P3).
+3. **Technique** — set to `knip` (instead of a numbered technique).
+4. **Confidence** — always **90%** for knip findings. Knip is reliable for statically-resolvable code (module graph analysis) but may have false positives for dynamically-invoked code (e.g., `Reflect.get()`, plugin loading by name string, dynamic import specifiers).
+5. **Severity** — use the same severity guide (P0-P3) based on finding type and impact.
+6. **Proof section** — replace the cross-reference search output with:
+   ```
+   ### Cross-Reference Proof
+
+   Knip output:
+   <raw knip output from stdout, first finding only>
+   ```
+7. **Issue creation** — follow Phase 5 instructions for `gh issue create`.
+
+If knip produces multiple findings, file only the first one. Subsequent findings require separate hunt invocations.
+
+#### Step 4: Fall Through to Manual Detection
+
+If knip:
+- Exits with code 0 (no findings), OR
+- Exits with code 2 (execution error), OR
+- Exits with code 1 but you choose to skip the finding (e.g., suspected false positive)
+
+→ proceed to **Phase 2 (Code Understanding)** and continue with manual detection techniques. Knip only detects module-graph-level dead code; patterns like unreachable code, dead branches, empty blocks, unused parameters, orphaned imports, dead event handlers, and redundant paths require the manual techniques in Phase 3.
+
+**Important:** If knip finds a finding and you file it, the hunt loop exits (per Phase 1: "keep hunting until you file at least one finding"). If you skip the knip finding, fall through to manual detection.
 
 ### Phase 2 — Code Understanding
 
