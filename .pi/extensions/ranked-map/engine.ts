@@ -14,6 +14,7 @@ import {
 	type RankedMapConfig,
 	type RankedFileScore,
 	type RankedMapResult,
+	type ResolvedPiignorePattern,
 } from "./types.ts";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { resolve, join, dirname, relative } from "node:path";
@@ -35,9 +36,21 @@ import {
 	rankFiles,
 } from "./scoring.ts";
 import { runFrequencySearch } from "./search.ts";
-import { runGitRecency, runGitCommitCount, getGitHead, discoverSubmodules } from "./git.ts";
+import {
+	runGitRecency,
+	runGitCommitCount,
+	getGitHead,
+	getWorkingTreeHash,
+	discoverSubmodules,
+} from "./git.ts";
 import { expandQuery } from "./expand.ts";
-import { buildPiignoreExcludes, buildIgnoreExcludes, discoverIgnoreFiles } from "./piignore.ts";
+import {
+	buildPiignoreExcludes,
+	buildIgnoreExcludes,
+	discoverIgnoreFiles,
+	resolvePiignorePatterns,
+	matchPiignorePattern,
+} from "./piignore.ts";
 
 /** Result shape for the rank method — extends dumpAllFiles/rankFiles result with mode. */
 export interface RankResult {
@@ -72,8 +85,10 @@ export class RankedMapEngine {
 	 * Build or load the symbol index.
 	 *
 	 * 1. Looks up git HEAD for cache invalidation.
-	 * 2. Tries to load a cached index matching current HEAD.
-	 * 3. On cache miss, runs ctags, parses JSONL output, caches the result.
+	 * 2. Computes working-tree hash for cache invalidation on uncommitted changes.
+	 * 3. Tries to load a cached index matching current HEAD, configHash, targetDir, and workingTreeHash.
+	 * 4. On cache miss, runs ctags, parses JSONL output, post-filters against .piignore,
+	 *    caches the result.
 	 *
 	 * @throws Error if ctags fails with non-zero exit and no usable output.
 	 */
@@ -86,9 +101,22 @@ export class RankedMapEngine {
 		const currentHead = await getGitHead(this.exec, this.cwd, signal);
 		const configHash = computeConfigHash(this.config);
 
-		// Try cache first
+		// Compute working-tree hash for cache invalidation on uncommitted changes.
+		// Gracefully returns null if git fails or working tree is clean.
+		const workingTreeHashRaw = await getWorkingTreeHash(this.exec, this.cwd, signal);
+
+		// Normalize null → undefined for loadCachedIndex compatibility
+		const workingTreeHash: string | undefined = workingTreeHashRaw ?? undefined;
+
+		// Try cache first (four dimensions: HEAD, configHash, targetDir, workingTreeHash)
 		if (currentHead) {
-			const cached = loadCachedIndex(cachePath, currentHead, configHash, targetDir);
+			const cached = loadCachedIndex(
+				cachePath,
+				currentHead,
+				configHash,
+				targetDir,
+				workingTreeHash,
+			);
 			if (cached) return cached;
 		}
 
@@ -154,6 +182,40 @@ export class RankedMapEngine {
 		const index = buildSymbolIndex(result.stdout, currentHead || "unknown", undefined, targetDir);
 		index.configHash = configHash;
 		index.targetDir = targetDir;
+
+		// Feature 2: Post-process — filter out symbols matching .piignore exact paths.
+		// This complements ctags-level exclusions (which use basename matching) by
+		// evaluating .piignore patterns against full file paths.
+		const piignorePatterns = resolvePiignorePatterns(piignorePath);
+		if (piignorePatterns.length > 0) {
+			// Separate negated patterns (exceptions) from regular patterns
+			const excludePatterns = piignorePatterns.filter((p) => !p.negate);
+			const includePatterns = piignorePatterns.filter((p) => p.negate);
+
+			// First pass: remove files matching any exclude pattern
+			const filteredSymbols: Record<string, import("./types.ts").SymbolEntry[]> = {};
+			for (const [filePath, entries] of Object.entries(index.symbols)) {
+				const matchesExclude = excludePatterns.some((p) => matchPiignorePattern(p, filePath));
+				if (!matchesExclude) {
+					filteredSymbols[filePath] = entries;
+				}
+			}
+
+			// Second pass: restore files matching negation patterns (exceptions)
+			if (includePatterns.length > 0) {
+				for (const [filePath, entries] of Object.entries(index.symbols)) {
+					const matchesInclude = includePatterns.some((p) => matchPiignorePattern(p, filePath));
+					if (matchesInclude && !filteredSymbols[filePath]) {
+						filteredSymbols[filePath] = entries;
+					}
+				}
+			}
+
+			index.symbols = filteredSymbols;
+		}
+
+		// Feature 1: Store workingTreeHash in cached index
+		index.workingTreeHash = workingTreeHash;
 
 		try {
 			writeFileSync(cachePath, JSON.stringify(index), "utf-8");
@@ -222,6 +284,7 @@ export class RankedMapEngine {
 				this.cwd,
 				signal,
 				submodules,
+				this.config.maxCommits,
 			);
 			commitCountScores = computeCommitCountScores(commitCounts);
 		}
@@ -234,6 +297,7 @@ export class RankedMapEngine {
 			this.cwd,
 			signal,
 			submodules,
+			this.config.maxCommits,
 		);
 		const recencyScores = computeRecencyScores(fileDates, this.config.recencyWindowDays);
 

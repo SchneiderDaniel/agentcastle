@@ -36,7 +36,7 @@ export function computeConfigHash(config: RankedMapConfig): string {
 /**
  * Load cached index from disk.
  * Returns null if cache missing, malformed, HEAD mismatch, configHash mismatch, targetDir mismatch,
- * or missing required keys.
+ * workingTreeHash mismatch, or missing required keys.
  *
  * @param cachePath - Path to cached index file
  * @param currentHead - Current git HEAD for staleness check
@@ -47,12 +47,17 @@ export function computeConfigHash(config: RankedMapConfig): string {
  *                    When provided and cached index has targetDir, they must match exactly.
  *                    Absent targetDir in cached index is accepted for backward compatibility.
  *                    When omitted, no targetDir validation is performed.
+ * @param workingTreeHash - Optional working-tree hash for cache invalidation on uncommitted changes.
+ *                          When provided and cached index has workingTreeHash, mismatch invalidates
+ *                          the cache. Absent workingTreeHash in cached index is accepted for
+ *                          backward compatibility (pre-upgrade caches).
  */
 export function loadCachedIndex(
 	cachePath: string,
 	currentHead: string,
 	configHash?: string,
 	targetDir?: string,
+	workingTreeHash?: string,
 ): CachedIndex | null {
 	try {
 		if (!existsSync(cachePath)) return null;
@@ -85,12 +90,23 @@ export function loadCachedIndex(
 			return null;
 		}
 
+		// workingTreeHash mismatch → stale (if both present)
+		if (
+			workingTreeHash !== undefined &&
+			parsed.workingTreeHash !== undefined &&
+			parsed.workingTreeHash !== workingTreeHash
+		) {
+			return null;
+		}
+
 		return {
 			head: parsed.head,
 			builtAt: parsed.builtAt,
 			symbols: parsed.symbols as Record<string, SymbolEntry[]>,
 			configHash: typeof parsed.configHash === "string" ? parsed.configHash : undefined,
 			targetDir: typeof parsed.targetDir === "string" ? parsed.targetDir : undefined,
+			workingTreeHash:
+				typeof parsed.workingTreeHash === "string" ? parsed.workingTreeHash : undefined,
 		};
 	} catch {
 		return null;

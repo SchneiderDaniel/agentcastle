@@ -43,11 +43,12 @@ Each phase accepts `ExecFn` + config via constructor, making all methods testabl
    - Automatically excludes: `node_modules`, `.git`, `*.json`, `*.jsonl`, `*.md`, `*.min.js`, `*.css`, `static`, `context`, `sessions`, `npm`, `chromium-deps`, `scrapling-venv`, `web-search-venv`, `benchmarks`
      - Basename-only patterns — `ctags --exclude` matches against the basename of each file/directory, so path prefixes like `.pi/` are omitted
    - Also reads `.piignore` for additional exclusion patterns
-2. The index is cached to disk keyed by current git HEAD, config hash, and target directory scope
-3. When called, the extension selects mode:
+2. The index is cached to disk keyed by current git HEAD, config hash, target directory scope, and working-tree hash (from `git status --porcelain`). This means uncommitted changes made during active agent sessions immediately invalidate the cache.
+3. Before building, the cache is checked against all four dimensions; any mismatch triggers a rebuild
+5. When called, the extension selects mode:
    - **Full dump** — repo small enough, returns all files sorted by path up to token budget
-   - **Ranked** — runs `rg --files-with-matches` for keyword scoring, applies path-aware keyword boost (1.5x multiplier for files whose path contains query terms), then `git log --name-only` for recency scoring (includes submodule commits via `discoverSubmodules` + `runGitRecency`), then combines scores with configurable weights. Only files present in the ctags symbol index are eligible for ranking — files excluded by `--exclude` patterns (`.json`, `.md`, `node_modules`, etc.) are filtered out regardless of keyword or recency matches, preventing token waste on non-code files. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory
-4. Results are formatted as JSON with file paths, symbols, token counts, and (in ranked mode) file previews showing definition lines
+   - **Ranked** — runs `rg --files-with-matches` for keyword scoring, applies path-aware keyword boost (1.5x multiplier for files whose path contains query terms), then `git log --name-only` for recency scoring (includes submodule commits via `discoverSubmodules` + `runGitRecency` — both bounded by `--since` and `--max-count`), then combines scores with configurable weights. Only files present in the ctags symbol index are eligible for ranking — files excluded by `--exclude` patterns (`.json`, `.md`, `node_modules`, etc.) are filtered out regardless of keyword or recency matches, preventing token waste on non-code files. Test files receive a 0.5x score penalty. In recency-only mode (no query), a structural overview injects one representative file per top-level directory
+6. Results are formatted as JSON with file paths, symbols, token counts, and (in ranked mode) file previews showing definition lines
 
 ## Install
 
@@ -77,6 +78,7 @@ In `.pi/settings.json`:
 		"tokenBudget": 4096,
 		"autoThreshold": 20000,
 		"recencyWindowDays": 90,
+		"maxCommits": 1000,
 		"testFilePenalties": {
 			".pi/": 0.7
 		},
@@ -92,18 +94,26 @@ In `.pi/settings.json`:
 - `tokenBudget` — Max tokens per response (default 4096)
 - `autoThreshold` — Symbol count threshold for auto-mode (default 20000). Set to 0 for always-ranked
 - `recencyWindowDays` — How many days back to track git activity (default 90)
+- `maxCommits` — Maximum number of commits to traverse in git log (default 1000). Combined with `--since` to bound both temporal and count ceilings.
 - `testFilePenalties` — Optional per-directory prefix penalty overrides for test files (e.g. `{ ".pi/": 0.7 }`). Prefixes are matched against file path start — first match wins. Falls back to default 0.5x for paths not matching any prefix. Query terms that match the file path automatically cap the penalty at 0.7x minimum, providing a lighter touch for relevant test files
 - `weights` — Scoring weights: keyword relevance, git recency, file size penalty
 
 ### .piignore integration
 
-The extension automatically reads `.piignore` from the project root and converts its patterns to ctags `--exclude` arguments. Supported patterns:
+The extension uses a **two-pass exclusion model**:
 
+**Pass 1 (ctags level):** `.piignore` patterns are converted to ctags `--exclude` arguments for immediate parsing performance. Patterns are reduced to basenames for ctags compatibility. Supported:
 - Directory patterns (`dist/` → `--exclude=dist`)
 - Glob patterns (`*.log` → `--exclude=*.log`)
 - Path patterns (`.pi/cache` → `--exclude=cache` via basename extraction)
 
-Comments and negations are skipped. Patterns with double-star (`**`) or leading slash (`/`) are skipped.
+Comments and negations are skipped at this stage. Patterns with double-star (`**`) or leading slash (`/`) are skipped.
+
+**Pass 2 (strict path post-processing):** After the ctags JSONL output is parsed into the symbol index, a filter evaluates each file's full path against the resolved `.piignore` patterns using exact path matching. This means:
+- `.pi/cache/` excludes files under `.pi/cache/` but allows `src/utils/cache/helper.ts`
+- `*.log` correctly excludes all `.log` files in any directory
+- `!` negation patterns restore files that would otherwise be excluded
+- Glob `*` matches any characters including `/` for full-path matching
 
 ## Requirements
 

@@ -24,6 +24,8 @@ export interface RankedMapConfig {
 	recencyWindowDays: number;
 	cacheTtlHours: number;
 	autoThreshold: number;
+	/** Maximum number of commits to traverse in git log (default 1000). */
+	maxCommits?: number;
 	/** Optional synonym map for query term expansion. */
 	synonyms?: Record<string, string[]>;
 	/** Frequency scaling factor for keyword scoring (default 0.2). */
@@ -51,6 +53,12 @@ export interface CachedIndex {
 	 * targetDir, it must be rebuilt.
 	 */
 	targetDir?: string;
+	/**
+	 * Optional working-tree hash from git status --porcelain output.
+	 * Used for cache invalidation on uncommitted changes.
+	 * Absent in pre-upgrade caches (backward compat).
+	 */
+	workingTreeHash?: string;
 }
 
 /** A single symbol entry within a file. */
@@ -108,3 +116,19 @@ export type ExecFn = (
 	args: string[],
 	opts?: { cwd?: string; timeout?: number; signal?: AbortSignal },
 ) => Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
+
+/**
+ * A resolved .piignore pattern for post-processing.
+ * Parsed from a .piignore file line, with the pattern resolved to its
+ * canonical form for path matching rather than basename matching.
+ */
+export interface ResolvedPiignorePattern {
+	/** The raw pattern string as written in .piignore (minus negation prefix). */
+	raw: string;
+	/** Pattern type: glob (contains wildcards) or exact (literal path). */
+	type: "glob" | "exact";
+	/** The resolved pattern string for matching. */
+	pattern: string;
+	/** Whether the line was negated (!). True means this pattern is an exception. */
+	negate: boolean;
+}
