@@ -2276,7 +2276,7 @@ describe("issue-builder-extended", () => {
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { PI_CHANGELOG_PATH, API_PATTERNS, CHANGELOG_API_TO_PATTERN } from "../constants.ts";
+import { PI_CHANGELOG_PATH, API_PATTERNS, CHANGELOG_API_TO_PATTERN_LOWER } from "../constants.ts";
 
 const EXT_DIR = new URL("..", import.meta.url).pathname;
 
@@ -2336,46 +2336,49 @@ describe("constants", () => {
 		assert.ok(!Object.isFrozen(API_PATTERNS), "API_PATTERNS should not be frozen");
 	});
 
-	it("CHANGELOG_API_TO_PATTERN maps known aliases", () => {
-		assert.ok(CHANGELOG_API_TO_PATTERN["on"]?.includes("pi.on"));
-		assert.ok(CHANGELOG_API_TO_PATTERN["tool"]?.includes("pi.registerTool"));
-		assert.ok(CHANGELOG_API_TO_PATTERN["event"]?.includes("pi.on"));
+	it("CHANGELOG_API_TO_PATTERN_LOWER maps known aliases", () => {
+		assert.ok(CHANGELOG_API_TO_PATTERN_LOWER["on"]?.includes("pi.on"));
+		assert.ok(CHANGELOG_API_TO_PATTERN_LOWER["tool"]?.includes("pi.registerTool"));
+		assert.ok(CHANGELOG_API_TO_PATTERN_LOWER["event"]?.includes("pi.on"));
 	});
 
-	it("CHANGELOG_API_TO_PATTERN is non-empty object with all non-empty array values", () => {
-		const keys = Object.keys(CHANGELOG_API_TO_PATTERN);
-		assert.ok(keys.length > 0, "CHANGELOG_API_TO_PATTERN must have at least one key");
-		for (const [key, value] of Object.entries(CHANGELOG_API_TO_PATTERN)) {
-			assert.ok(Array.isArray(value), `CHANGELOG_API_TO_PATTERN["${key}"] must be an array`);
-			assert.ok(value.length > 0, `CHANGELOG_API_TO_PATTERN["${key}"] must be non-empty`);
+	it("CHANGELOG_API_TO_PATTERN_LOWER is non-empty object with all non-empty array values", () => {
+		const keys = Object.keys(CHANGELOG_API_TO_PATTERN_LOWER);
+		assert.ok(keys.length > 0, "CHANGELOG_API_TO_PATTERN_LOWER must have at least one key");
+		for (const [key, value] of Object.entries(CHANGELOG_API_TO_PATTERN_LOWER)) {
+			assert.ok(Array.isArray(value), `CHANGELOG_API_TO_PATTERN_LOWER["${key}"] must be an array`);
+			assert.ok(value.length > 0, `CHANGELOG_API_TO_PATTERN_LOWER["${key}"] must be non-empty`);
 		}
 	});
 
-	it("CHANGELOG_API_TO_PATTERN values are subsets of API_PATTERNS (no orphan patterns)", () => {
+	it("CHANGELOG_API_TO_PATTERN_LOWER values are subsets of API_PATTERNS (no orphan patterns)", () => {
 		const apiSet = new Set(API_PATTERNS);
-		for (const [key, patterns] of Object.entries(CHANGELOG_API_TO_PATTERN)) {
+		for (const [key, patterns] of Object.entries(CHANGELOG_API_TO_PATTERN_LOWER)) {
 			for (const p of patterns) {
 				assert.ok(
 					apiSet.has(p),
-					`CHANGELOG_API_TO_PATTERN["${key}"] contains "${p}" which is not in API_PATTERNS`,
+					`CHANGELOG_API_TO_PATTERN_LOWER["${key}"] contains "${p}" which is not in API_PATTERNS`,
 				);
 			}
 		}
 	});
 
-	it("CHANGELOG_API_TO_PATTERN has entries for all API_PATTERNS", () => {
-		const allMappedPatterns = new Set(Object.values(CHANGELOG_API_TO_PATTERN).flat());
+	it("CHANGELOG_API_TO_PATTERN_LOWER has entries for all API_PATTERNS", () => {
+		const allMappedPatterns = new Set(Object.values(CHANGELOG_API_TO_PATTERN_LOWER).flat());
 		for (const pattern of API_PATTERNS) {
 			assert.ok(
 				allMappedPatterns.has(pattern),
-				`API_PATTERN "${pattern}" has no mapping in CHANGELOG_API_TO_PATTERN`,
+				`API_PATTERN "${pattern}" has no mapping in CHANGELOG_API_TO_PATTERN_LOWER`,
 			);
 		}
 	});
 
-	it("CHANGELOG_API_TO_PATTERN is frozen at runtime", () => {
-		assert.ok(Object.isFrozen(CHANGELOG_API_TO_PATTERN), "CHANGELOG_API_TO_PATTERN must be frozen");
-		const keys = Object.keys(CHANGELOG_API_TO_PATTERN);
+	it("CHANGELOG_API_TO_PATTERN_LOWER is frozen at runtime", () => {
+		assert.ok(
+			Object.isFrozen(CHANGELOG_API_TO_PATTERN_LOWER),
+			"CHANGELOG_API_TO_PATTERN_LOWER must be frozen",
+		);
+		const keys = Object.keys(CHANGELOG_API_TO_PATTERN_LOWER);
 		assert.ok(keys.length >= 10, "Should have at least 10 alias mappings");
 	});
 });
@@ -2396,13 +2399,6 @@ describe("migration-contract — index.ts", () => {
 
 	it("does NOT import API_PATTERNS", () => {
 		assert.ok(!indexSrc.includes("API_PATTERNS"), "index.ts must not reference API_PATTERNS");
-	});
-
-	it("does NOT import CHANGELOG_API_TO_PATTERN", () => {
-		assert.ok(
-			!indexSrc.includes("CHANGELOG_API_TO_PATTERN"),
-			"index.ts must not reference CHANGELOG_API_TO_PATTERN",
-		);
 	});
 
 	it("does NOT import from node:os", () => {
@@ -2686,19 +2682,19 @@ describe("extractApiNames — config option (Phase 1: characterization)", () => 
 	});
 });
 
-describe("CHANGELOG_API_TO_PATTERN — config option (Phase 2: fix mapping)", () => {
-	it('CHANGELOG_API_TO_PATTERN["config option"] equals ["pi.registerFlag", "pi.getFlag"]', () => {
-		assert.deepStrictEqual(CHANGELOG_API_TO_PATTERN["config option"], [
+describe("CHANGELOG_API_TO_PATTERN_LOWER — config option (Phase 2: fix mapping)", () => {
+	it('CHANGELOG_API_TO_PATTERN_LOWER["config option"] equals ["pi.registerFlag", "pi.getFlag"]', () => {
+		assert.deepStrictEqual(CHANGELOG_API_TO_PATTERN_LOWER["config option"], [
 			"pi.registerFlag",
 			"pi.getFlag",
 		]);
 	});
 
-	it("CHANGELOG_API_TO_PATTERN remains frozen", () => {
-		assert.ok(Object.isFrozen(CHANGELOG_API_TO_PATTERN));
+	it("CHANGELOG_API_TO_PATTERN_LOWER remains frozen", () => {
+		assert.ok(Object.isFrozen(CHANGELOG_API_TO_PATTERN_LOWER));
 	});
 
-	it("All API_KEYWORDS map to existing CHANGELOG_API_TO_PATTERN keys (SSOT invariant)", () => {
+	it("All API_KEYWORDS map to existing CHANGELOG_API_TO_PATTERN_LOWER keys (SSOT invariant)", () => {
 		// For each keyword, determine what name extractApiNames pushes (excluding regex additions)
 		// The if-else chain or else-fallthrough pushes the canonical name
 		const ifElseMapping: Record<string, string> = {
@@ -2719,15 +2715,15 @@ describe("CHANGELOG_API_TO_PATTERN — config option (Phase 2: fix mapping)", ()
 			tool: "tool",
 			command: "command",
 			event: "event",
-			SDK: "SDK",
-			sdk: "SDK",
+			SDK: "sdk",
+			sdk: "sdk",
 		};
 		for (const kw of API_KEYWORDS) {
 			const name = ifElseMapping[kw] ?? kw;
-			const patterns = CHANGELOG_API_TO_PATTERN[name];
+			const patterns = CHANGELOG_API_TO_PATTERN_LOWER[name.toLowerCase()];
 			assert.ok(
 				Array.isArray(patterns) && patterns.length > 0,
-				`Keyword "${kw}" maps to name "${name}" which has no entry in CHANGELOG_API_TO_PATTERN`,
+				`Keyword "${kw}" maps to name "${name}" which has no entry in CHANGELOG_API_TO_PATTERN_LOWER`,
 			);
 		}
 	});
@@ -2762,13 +2758,13 @@ describe("extractApiNames — config option (Phase 3: remove if-else coupling)",
 		// (unless another keyword happens to push "config")
 	});
 
-	it("SSOT invariant still holds: CHANGELOG_API_TO_PATTERN has 'config option' key", () => {
+	it("SSOT invariant still holds: CHANGELOG_API_TO_PATTERN_LOWER has 'config option' key", () => {
 		assert.ok(
-			Array.isArray(CHANGELOG_API_TO_PATTERN["config option"]),
-			"CHANGELOG_API_TO_PATTERN should have 'config option' key",
+			Array.isArray(CHANGELOG_API_TO_PATTERN_LOWER["config option"]),
+			"CHANGELOG_API_TO_PATTERN_LOWER should have 'config option' key",
 		);
 		assert.deepStrictEqual(
-			CHANGELOG_API_TO_PATTERN["config option"],
+			CHANGELOG_API_TO_PATTERN_LOWER["config option"],
 			["pi.registerFlag", "pi.getFlag"],
 			"Should map to same patterns as 'config'",
 		);
