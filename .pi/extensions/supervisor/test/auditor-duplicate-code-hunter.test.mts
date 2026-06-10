@@ -78,16 +78,15 @@ describe("auditor.md — skills frontmatter (Phase 1)", () => {
 		);
 	});
 
-	it("skills value is 'duplicate-code-hunter' (single skill)", () => {
+	it("skills value contains both skills", () => {
 		const content = readAuditorMd();
 		const skillsVal = getFrontmatterField(content, "skills");
 		assert.ok(skillsVal, "skills field must exist");
 		// Normalize: strip quotes and whitespace
 		const normalized = skillsVal!.replace(/["']/g, "").trim();
-		assert.strictEqual(
-			normalized,
-			"duplicate-code-hunter",
-			`skills value should be 'duplicate-code-hunter', got '${normalized}'`,
+		assert.ok(
+			normalized.includes("duplicate-code-hunter") && normalized.includes("dead-code-hunter"),
+			`skills value '${normalized}' should contain both 'duplicate-code-hunter' and 'dead-code-hunter'`,
 		);
 	});
 

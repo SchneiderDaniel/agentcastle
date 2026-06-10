@@ -47,6 +47,7 @@ import {
 	inferForwardStatus,
 	hasBranchCommits,
 	buildDuplicateCodeContext,
+	buildDeadCodeContext,
 } from "./stages.ts";
 import {
 	fetchIssue,
@@ -347,6 +348,11 @@ export async function handleSupervisorCommand(
 							return undefined;
 						})()
 					: undefined;
+			// Build dead code context for auditor
+			const deadContext: string | undefined =
+				agentName === "auditor"
+					? (buildDeadCodeContext(stageState.deadCodeResult) ?? undefined)
+					: undefined;
 			const task = buildAgentTask(
 				agentName,
 				issueNum,
@@ -364,6 +370,7 @@ export async function handleSupervisorCommand(
 				dupContext,
 				researchFindings,
 				auditFeedback,
+				deadContext,
 			);
 
 			getDebugLogger().info("handler", `Dispatching agent ${agentName}`, {

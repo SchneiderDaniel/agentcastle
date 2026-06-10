@@ -110,6 +110,7 @@ function buildAuditChecklist(dimensionCount: number): string {
 		"Code quality: ✓",
 		"Completeness: ✓",
 		"Duplicate code: ← run jscpd or ripgrep_search to verify",
+		"Dead code: ← verify findings from pre-audit gate or run ripgrep_search",
 		"Research incorporation: ← verify researcher findings reflected in implementation, or deviation justified",
 	];
 	return checklist.join("\n");
@@ -132,6 +133,7 @@ export function buildAgentTask(
 	duplicateCodeContext?: string | null,
 	researchFindings?: string | null,
 	auditFeedback?: string | null,
+	deadCodeContext?: string | null,
 ): string {
 	// Build trusted comments block
 	// If summarizedRejections is provided, use it (pre-summarized by pipeline).
@@ -214,9 +216,14 @@ ${auditFeedback}\n`
 				? `\n### ⚠️ Duplicate Code Detected (Pre-Audit Gate)\nThe automated duplicate code check found potential clones involving your changed files.\nPlease verify these findings and include them in your audit if confirmed.\n\n${duplicateCodeContext}\n`
 				: "";
 
+			// Pre-audit dead code context — injected when pipeline found dead code
+			const deadBlock = deadCodeContext
+				? `\n### ⚠️ Dead Code Detected (Pre-Audit Gate)\nThe automated dead code check found potential dead code in your changed files.\nPlease verify these findings and include them in your audit if confirmed.\n\n${deadCodeContext}\n`
+				: "";
+
 			const checklist = buildAuditChecklist(8);
 
-			return `${issueBlock}\n\n## Task\nFollow your system prompt instructions.\n${wtBlock}${dupBlock}\n\n\n${JSON_OUTPUT_INSTRUCTION}\n\n**IF APPROVE:**\n\n\`\`\`json\n{\n  \"action\": \"APPROVED\",\n  \"agentName\": \"auditor\",\n  \"summary\": \"Approved implementation\",\n  \"commentBody\": \"## Audit Approved\\n\\n### Summary\\n[1-2 sentences: what changed, why]\\n\\n### Review Findings\\n[Non-blocking notes]\\n\\n### Checklist\\n${checklist.replace(/\n/g, "\\n")}\\n\\n### Audit Score\\nAUDIT_SCORE: <passing>/9\",\n  \"prTitle\": \"feat(#${issueNum}): ${title}\",\n  \"prBody\": \"## PR Description\\n\\n[details]\",\n  \"auditScore\": { \"passing\": 9, \"total\": 9 },\n  \"findings\": []\n}\n\`\`\`\n\n**IF REJECT:**\n\n\`\`\`json\n{\n  \"action\": \"REJECTED\",\n  \"agentName\": \"auditor\",\n  \"summary\": \"Rejected - issues found\",\n  \"commentBody\": \"## Audit Rejected\\n\\n[list specific issues with Symptom → Consequence → Remedy → Location]\",\n  \"findings\": [\n    {\n      \"severity\": \"critical\",\n      \"dimension\": \"code-quality\",\n      \"symptom\": \"<what is the issue>\",\n      \"consequence\": \"<why it matters>\",\n      \"remedy\": \"<how to fix>\",\n      \"location\": \"<file path>\"\n    }\n  ]\n}\n\`\`\`\n\nThe pipeline will:\n1. Create a PR in ${repo} with the prBody as description\n2. Post a GitHub issue comment with the commentBody\n\n**Submodules:**\n${submoduleList}\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.`;
+			return `${issueBlock}\n\n## Task\nFollow your system prompt instructions.\n${wtBlock}${dupBlock}${deadBlock}\n\n\n${JSON_OUTPUT_INSTRUCTION}\n\n**IF APPROVE:**\n\n\`\`\`json\n{\n  \"action\": \"APPROVED\",\n  \"agentName\": \"auditor\",\n  \"summary\": \"Approved implementation\",\n  \"commentBody\": \"## Audit Approved\\n\\n### Summary\\n[1-2 sentences: what changed, why]\\n\\n### Review Findings\\n[Non-blocking notes]\\n\\n### Checklist\\n${checklist.replace(/\n/g, "\\n")}\\n\\n### Audit Score\\nAUDIT_SCORE: <passing>/10\",\n  \"prTitle\": \"feat(#${issueNum}): ${title}\",\n  \"prBody\": \"## PR Description\\n\\n[details]\",\n  \"auditScore\": { \"passing\": 10, \"total\": 10 },\n  \"findings\": []\n}\n\`\`\`\n\n**IF REJECT:**\n\n\`\`\`json\n{\n  \"action\": \"REJECTED\",\n  \"agentName\": \"auditor\",\n  \"summary\": \"Rejected - issues found\",\n  \"commentBody\": \"## Audit Rejected\\n\\n[list specific issues with Symptom → Consequence → Remedy → Location]\",\n  \"findings\": [\n    {\n      \"severity\": \"critical\",\n      \"dimension\": \"code-quality\",\n      \"symptom\": \"<what is the issue>\",\n      \"consequence\": \"<why it matters>\",\n      \"remedy\": \"<how to fix>\",\n      \"location\": \"<file path>\"\n    }\n  ]\n}\n\`\`\`\n\nThe pipeline will:\n1. Create a PR in ${repo} with the prBody as description\n2. Post a GitHub issue comment with the commentBody\n\n**Submodules:**\n${submoduleList}\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.`;
 		}
 
 		case "researcher": {
