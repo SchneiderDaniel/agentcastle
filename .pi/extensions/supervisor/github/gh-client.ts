@@ -4,8 +4,37 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getDebugLogger } from "../config/debug.ts";
+import { homedir } from "node:os";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // ─── gh() — raw CLI wrapper ───────────────────────────────────────
+
+// Cache GH_TOKEN from env or ~/.config/gh/hosts.yml to work around
+// WSL auth context mismatch where pi.exec("gh", ...) can return 401
+// even though the gh binary itself is properly authenticated.
+// On WSL, pi.exec passes environment correctly but gh sometimes
+// fails to find its credentials. Injecting GH_TOKEN explicitly
+// ensures consistent auth across shell and pi.exec contexts.
+const getGhToken = (() => {
+	let token: string | null = null;
+	return (): string | null => {
+		if (token !== null) return token;
+		if (process.env.GH_TOKEN && process.env.GH_TOKEN.length > 0) {
+			token = process.env.GH_TOKEN;
+			return token;
+		}
+		try {
+			const configPath = join(homedir(), ".config", "gh", "hosts.yml");
+			const yml = readFileSync(configPath, "utf8");
+			const match = yml.match(/oauth_token:\s+(\S+)/);
+			token = match ? match[1] : null;
+		} catch {
+			token = null;
+		}
+		return token;
+	};
+})();
 
 export async function gh(
 	pi: ExtensionAPI,
@@ -18,7 +47,15 @@ export async function gh(
 		args: args.slice(0, 8),
 		timeout: opts?.timeout,
 	});
-	const result = await pi.exec("gh", args, {
+
+	// Call gh via bash to inject GH_TOKEN, working around pi.exec auth
+	// context issues on WSL.  Uses "$@" passthrough to avoid shell escaping.
+	const ghToken = getGhToken();
+	const shellArgs = ghToken
+		? ["-c", `GH_TOKEN='${ghToken.replace(/'/g, "'\\''")}' gh "$@"`, "_", ...args]
+		: args;
+
+	const result = await pi.exec(ghToken ? "bash" : "gh", shellArgs, {
 		signal: opts?.signal,
 		timeout: opts?.timeout ?? 30_000,
 	});
