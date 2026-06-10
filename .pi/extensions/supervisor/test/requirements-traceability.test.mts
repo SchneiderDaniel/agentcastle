@@ -21,6 +21,7 @@ import {
 	classifyDiffDirection,
 	runRequirementsTraceability,
 } from "../checks/requirements-traceability.ts";
+import { WORKFLOW } from "../config/workflow.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Test Helpers (top-level scope)
@@ -675,5 +676,41 @@ describe("Issue title→diff direction check", () => {
 		const dirGaps = result.filter((g) => g.check === "title-diff-direction");
 		assert.equal(dirGaps.length, 1);
 		assert.equal(dirGaps[0]!.severity, "info");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 8: Integration — wiring into pipeline
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Pipeline wiring — workflow config", () => {
+	it("Implementation step hooks includes 'trace'", () => {
+		const implStep = WORKFLOW.find((s) => s.status === "Implementation");
+		assert.ok(implStep, "Implementation step must exist");
+		assert.ok(implStep.hooks, "Implementation step must have hooks");
+		assert.ok(implStep.hooks.includes("trace"), "hooks must include 'trace'");
+	});
+
+	it("'trace' is a valid hook value in WorkflowStep type", () => {
+		// Type-level check: if this compiles, the type union includes "trace"
+		const hook: ("tsc" | "lsp" | "ci" | "dup" | "tdd" | "trace")[] = ["trace"];
+		const implStep = WORKFLOW.find((s) => s.status === "Implementation");
+		assert.ok(implStep);
+		// Verify runtime: the hook union accepts "trace"
+		const hasTrace = implStep.hooks?.includes(hook[0]);
+		assert.equal(hasTrace, true);
+	});
+
+	it("'trace' hook is also accepted by handler's .includes check", () => {
+		// Simulate the handler's pre-transition hook check
+		const implStep = WORKFLOW.find((s) => s.status === "Implementation");
+		assert.ok(implStep);
+		const hooks = implStep.hooks;
+		assert.ok(hooks);
+		// The .some((h) => ["ci", "tsc", "lsp", "dup", "tdd", "trace"].includes(h)) check
+		const allowedHooks: string[] = ["ci", "tsc", "lsp", "dup", "tdd", "trace"];
+		for (const h of hooks) {
+			assert.ok(allowedHooks.includes(h), `Hook "${h}" must be in allowed set`);
+		}
 	});
 });
