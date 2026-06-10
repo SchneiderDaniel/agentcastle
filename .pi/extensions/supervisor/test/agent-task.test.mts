@@ -422,7 +422,7 @@ describe("buildAgentTask — auditor JSON output markers", () => {
 		assert.ok(task.includes('"prTitle"'), "Should contain prTitle key");
 	});
 
-	it("contains git diff defaultBranch instruction", () => {
+	it("contains minimal delegation instruction", () => {
 		const task = buildAgentTask(
 			"auditor",
 			BASE_ARGS.issueNum,
@@ -435,7 +435,10 @@ describe("buildAgentTask — auditor JSON output markers", () => {
 			BASE_ARGS.worktreeBase,
 			BASE_ARGS.branchPrefix,
 		);
-		assert.ok(task.includes("git diff main"), "Should contain git diff main instruction");
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Should contain minimal delegation",
+		);
 	});
 
 	it("contains commentBody in REJECT flow section", () => {
@@ -539,7 +542,7 @@ describe("buildAgentTask — other agents (JSON output markers)", () => {
 		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action present");
 	});
 
-	it("researcher task: web_crawl + ## Research Findings", () => {
+	it("researcher task: minimal system prompt delegation", () => {
 		const task = buildAgentTask(
 			"researcher",
 			42,
@@ -552,8 +555,8 @@ describe("buildAgentTask — other agents (JSON output markers)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("web_crawl"), "web_crawl in researcher task");
-		assert.ok(task.includes("## Research Findings"), "Research Findings heading");
+		assert.ok(task.includes("Follow your system prompt instructions"), "Minimal delegation");
+		assert.ok(task.includes('"action": "COMPLETE"'), "JSON output format present");
 	});
 
 	it("test-designer task: JSON output with commentBody", () => {
@@ -569,7 +572,7 @@ describe("buildAgentTask — other agents (JSON output markers)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("test plan"), "Test plan reference");
+		assert.ok(task.includes("Follow your system prompt instructions"), "Minimal delegation");
 		assert.ok(task.includes('"commentBody"'), "JSON commentBody key");
 		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action");
 	});
@@ -728,7 +731,10 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 			!task.includes("Your current working directory IS the worktree"),
 			"Architect should NOT have worktree announcement",
 		);
-		assert.ok(task.includes("architecture comment"), "Architect task unchanged");
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Architect task uses minimal delegation",
+		);
 	});
 
 	it("researcher with worktreePath → task unchanged", () => {
@@ -749,7 +755,10 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 			!task.includes("Your current working directory IS the worktree"),
 			"Researcher should NOT have worktree announcement",
 		);
-		assert.ok(task.includes("web_crawl"), "Researcher task unchanged");
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Researcher task uses minimal delegation",
+		);
 	});
 
 	it("test-designer with worktreePath → task unchanged", () => {
@@ -770,10 +779,13 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 			!task.includes("Your current working directory IS the worktree"),
 			"Test-designer should NOT have worktree announcement",
 		);
-		assert.ok(task.includes("test plan"), "Test-designer task unchanged");
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Test-designer task uses minimal delegation",
+		);
 	});
 
-	it("backward compat — auditor task has git diff and JSON markers without optional params", () => {
+	it("backward compat — auditor task has minimal delegation and JSON markers without optional params", () => {
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -786,7 +798,7 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("git diff main"), "Existing auditor behavior preserved");
+		assert.ok(task.includes("Follow your system prompt instructions"), "Minimal delegation");
 		assert.ok(task.includes('"action"'), "JSON action key present");
 	});
 });

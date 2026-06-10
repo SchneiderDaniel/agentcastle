@@ -220,6 +220,12 @@ export function extractAgentCommentBody(output: string): string | null {
 	// When agent outputs markdown with ## Architecture / ## Research Findings / ## Test Plan /
 	// ## Audit (Approved|Rejected) but without COMMENT_BODY markers or valid JSON.
 	// Extract from the last occurrence of a known heading to end of output.
+	//
+	// IMPORTANT: Use exact heading matching, not prefix substring matching.
+	// lastIndexOf("## Architecture") also matches "## Architecture risk flag" because
+	// "## Architecture" is a prefix of "## Architecture risk flag". This causes the
+	// extraction to pick up the wrong content when agent output contains non-standard
+	// headings that happen to start with a known heading string.
 	if (!lastBody) {
 		const sectionHeadings = [
 			"## Architecture",
@@ -231,9 +237,19 @@ export function extractAgentCommentBody(output: string): string | null {
 		let bestIdx = -1;
 		let bestHeading = "";
 		for (const heading of sectionHeadings) {
-			const idx = output.lastIndexOf(heading);
-			if (idx > bestIdx) {
-				bestIdx = idx;
+			// Use regex for exact match — heading must be followed by newline, space, or end-of-string.
+			// This prevents prefix matches (e.g. "## Architecture" matching "## Architecture risk flag").
+			const headingRegex = new RegExp(
+				heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?=\\s|$)",
+				"gm",
+			);
+			let match;
+			let lastMatch: RegExpExecArray | null = null;
+			while ((match = headingRegex.exec(output)) !== null) {
+				lastMatch = match;
+			}
+			if (lastMatch && lastMatch.index > bestIdx) {
+				bestIdx = lastMatch.index;
 				bestHeading = heading;
 			}
 		}

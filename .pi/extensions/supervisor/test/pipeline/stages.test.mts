@@ -23,6 +23,7 @@ import {
 	handleBacklogTransition,
 	applyStatusTransition,
 	handlePostAgentSuccess,
+	validateResearcherFindings,
 } from "../../pipeline/stages.ts";
 
 // ─── Mock Helpers ──────────────────────────────────────────────────
@@ -1119,5 +1120,76 @@ describe("createStageState()", () => {
 	it("creates state with 'Done' status", () => {
 		const state = createStageState("Done");
 		assert.equal(state.loopStatus, "Done");
+	});
+});
+
+// ─── Tests: validateResearcherFindings() ──────────────────────────
+
+describe("validateResearcherFindings()", () => {
+	it("skip message with 'Research skipped:' → returns original string unchanged", () => {
+		const msg =
+			"## Research Findings — Research skipped: issue touches only internal code with no external dependency, library, or version question. No public web data needed.";
+		const result = validateResearcherFindings(msg);
+		assert.equal(result, msg);
+	});
+
+	it("graceful degradation message → returns original string unchanged", () => {
+		const msg = "## Research Findings — No relevant results found for this topic.";
+		const result = validateResearcherFindings(msg);
+		assert.equal(result, msg);
+	});
+
+	it("substantive findings with bullets → returns original string unchanged", () => {
+		const msg =
+			"## Research Findings\n\n### Best Practices\n- Use version 5.0 — https://example.com\n- Enable strict mode — https://example.com\n\n### Common Pitfalls\n- Avoid global state — https://example.com";
+		const result = validateResearcherFindings(msg);
+		assert.equal(result, msg);
+	});
+
+	it("empty headers only (no bullet content) → returns graceful degradation message", () => {
+		const msg = "## Research Findings\n\n### Best Practices\n- —\n\n### Common Pitfalls\n- —";
+		const result = validateResearcherFindings(msg);
+		assert.ok(
+			result.includes("No relevant results found"),
+			"Should fall back to graceful degradation",
+		);
+		assert.notEqual(result, msg);
+	});
+
+	it("empty string → returns graceful degradation message", () => {
+		const result = validateResearcherFindings("");
+		assert.ok(result.includes("No relevant results found"));
+	});
+
+	it("skip message with different reason → returns original unchanged", () => {
+		const msg = "## Research Findings — Research skipped: Bug fix — config change only";
+		const result = validateResearcherFindings(msg);
+		assert.equal(result, msg);
+	});
+
+	it("substantive bullet content alongside skip prefix → returns original unchanged (skip detection doesn't override real findings)", () => {
+		const msg =
+			"## Research Findings — Research skipped: minor\n\n### Best Practices\n- Use version 5.0 — https://example.com";
+		const result = validateResearcherFindings(msg);
+		assert.equal(result, msg);
+	});
+
+	it("content with 'Research skipped:' in middle of text → returns original unchanged", () => {
+		const msg =
+			"## Research Findings\n\nSome content here. Research skipped: this shouldn't match mid-line.\n- Real finding — https://example.com";
+		const result = validateResearcherFindings(msg);
+		assert.equal(result, msg);
+	});
+
+	it("skip message at different position (start, middle, end) → all return original", () => {
+		const msgs = [
+			"## Research Findings — Research skipped: internal change. No web research needed.",
+			"## Research Findings — Research skipped: refactor only. No external dependencies.",
+			"## Research Findings — Research skipped: documentation update. No code changes.",
+		];
+		for (const msg of msgs) {
+			const result = validateResearcherFindings(msg);
+			assert.equal(result, msg, `Failed for: ${msg}`);
+		}
 	});
 });

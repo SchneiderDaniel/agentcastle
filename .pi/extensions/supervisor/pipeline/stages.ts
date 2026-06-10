@@ -389,9 +389,15 @@ export function buildAgentResultEntry(
  * Returns the original commentBody if it has real content,
  * or a graceful degradation fallback message if it's empty headers only.
  */
-function validateResearcherFindings(commentBody: string): string {
+export function validateResearcherFindings(commentBody: string): string {
 	// Check for graceful degradation message already present
 	if (commentBody.includes("No relevant results found")) {
+		return commentBody;
+	}
+
+	// Check for value judgment skip message — return unchanged
+	// Format: "## Research Findings — Research skipped: ..."
+	if (commentBody.includes("Research skipped:")) {
 		return commentBody;
 	}
 
@@ -508,6 +514,50 @@ export async function handlePostAgentSuccess(
 				);
 				commentBody = validated;
 			}
+		}
+
+		// Validate test-designer output must contain "## Test Plan" heading.
+		// Prevents agent from posting architecture review / risk flag instead of a test plan.
+		// This catches cases where the LLM confuses its role or the heading extraction picks
+		// a wrong section heading due to prefix-matching in earlier extraction logic.
+		if (commentBody && agentName === "test-designer" && !commentBody.includes("## Test Plan")) {
+			collector?.push(
+				"stages",
+				"warn",
+				`test-designer commentBody missing "## Test Plan" heading. ` +
+					`commentBody starts with: ${JSON.stringify(commentBody.slice(0, 80))}. ` +
+					`Skipping post. Source: ${extractionSource}`,
+			);
+			commentBody = null;
+		}
+
+		// Validate architect output must contain "## Architecture" heading.
+		// Prevents agent from posting empty or wrong-headed content.
+		if (commentBody && agentName === "architect" && !commentBody.includes("## Architecture")) {
+			collector?.push(
+				"stages",
+				"warn",
+				`architect commentBody missing "## Architecture" heading. ` +
+					`commentBody starts with: ${JSON.stringify(commentBody.slice(0, 80))}. ` +
+					`Skipping post. Source: ${extractionSource}`,
+			);
+			commentBody = null;
+		}
+
+		// Validate research findings output must contain "## Research Findings" heading.
+		if (
+			commentBody &&
+			agentName === "researcher" &&
+			!commentBody.includes("## Research Findings")
+		) {
+			collector?.push(
+				"stages",
+				"warn",
+				`researcher commentBody missing "## Research Findings" heading. ` +
+					`commentBody starts with: ${JSON.stringify(commentBody.slice(0, 80))}. ` +
+					`Skipping post. Source: ${extractionSource}`,
+			);
+			commentBody = null;
 		}
 
 		if (commentBody) {
