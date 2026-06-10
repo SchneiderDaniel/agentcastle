@@ -388,10 +388,23 @@ export function buildAgentResultEntry(
  *
  * Returns the original commentBody if it has real content,
  * or a graceful degradation fallback message if it's empty headers only.
+ *
+ * This function also handles the "Research skipped" format — when the
+ * researcher's value judgment gate determines research is unnecessary
+ * (e.g. internal-only refactor), it produces a skip message that must
+ * NOT be replaced with graceful degradation.
  */
-function validateResearcherFindings(commentBody: string): string {
+export function validateResearcherFindings(commentBody: string): string {
 	// Check for graceful degradation message already present
 	if (commentBody.includes("No relevant results found")) {
+		return commentBody;
+	}
+
+	// Check for researcher's value judgment skip message.
+	// "Research skipped" indicates the researcher determined the issue is
+	// internal-only (no external dependency, library, or version question).
+	// This is a deliberate skip — preserve the original message.
+	if (commentBody.includes("Research skipped")) {
 		return commentBody;
 	}
 

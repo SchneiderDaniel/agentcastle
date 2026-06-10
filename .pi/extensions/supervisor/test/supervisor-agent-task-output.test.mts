@@ -102,14 +102,8 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(
-			task.includes('"action": "APPROVED"'),
-			"Auditor prompt should contain APPROVED action",
-		);
-		assert.ok(
-			task.includes('"action": "REJECTED"'),
-			"Auditor prompt should contain REJECTED action",
-		);
+		assert.ok(task.includes("APPROVED"), "Auditor prompt should contain APPROVED action type");
+		assert.ok(task.includes("REJECTED"), "Auditor prompt should contain REJECTED action type");
 	});
 
 	it("contains prTitle / prBody / commentBody JSON keys", async () => {
@@ -152,7 +146,7 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 		);
 	});
 
-	it("still includes code review instructions", async () => {
+	it("delegates to system prompt instead of inline review instructions", async () => {
 		const { buildAgentTask } = await import("../agent/task.ts");
 		const task = buildAgentTask(
 			"auditor",
@@ -166,9 +160,14 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
+		// Simplified auditor task delegates to system prompt, workflow steps removed
 		assert.ok(
-			task.includes("git diff") || task.includes("review"),
-			"Auditor prompt should still include review instructions",
+			task.includes("Follow your system prompt instructions"),
+			"Auditor prompt should delegate to system prompt",
+		);
+		assert.ok(
+			!task.includes("Review the code: git diff"),
+			"Auditor prompt should not contain inline git diff instruction",
 		);
 	});
 });

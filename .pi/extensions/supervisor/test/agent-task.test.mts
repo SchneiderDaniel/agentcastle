@@ -1,10 +1,11 @@
 /**
  * Tests for agent-task.ts
  *
- * Phase 1: generateBranchName (characterization — existing behavior preserved)
- * Phase 2: buildAgentTask auditor — structured output markers (new behavior)
- * Phase 3: buildAgentTask other agents — structured output markers (current impl)
- * Phase 4: buildAgentTask auditor worktree path + branch name
+ * Phase 0: generateBranchName (characterization — existing behavior preserved)
+ * Phase 1: buildAgentTask simplified prompts — all 5 agents delegate to system prompt
+ * Phase 2: buildAgentTask edge cases
+ * Phase 3: buildAgentTask auditor worktree path + branch name (existing)
+ * Phase 4: summarizeComments (existing)
  */
 
 import assert from "node:assert";
@@ -16,14 +17,6 @@ import {
 	summarizeComments,
 } from "../agent/task.ts";
 import type { FilteredIssueData } from "../config/types.ts";
-
-// ---------------------------------------------------------------------------
-// Phase 4: worktree path + branch name in auditor task (Bug: auditor checks
-//          main instead of feature worktree — false rejection)
-// ---------------------------------------------------------------------------
-// Tests for new optional worktreePath+branchName params on buildAgentTask.
-// Auditor case must embed the worktree path so agent's bash tool uses correct
-// cwd. Developer/architect/researcher/test-designer cases unchanged.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -56,7 +49,7 @@ const BASE_ARGS = {
 };
 
 // ---------------------------------------------------------------------------
-// Phase 1: generateBranchName
+// Phase 0: generateBranchName
 // ---------------------------------------------------------------------------
 
 describe("generateBranchName", () => {
@@ -84,7 +77,7 @@ describe("generateBranchName", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 1: truncateComment
+// Phase 0: truncateComment
 // ---------------------------------------------------------------------------
 
 describe("truncateComment", () => {
@@ -132,7 +125,7 @@ describe("truncateComment", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 2: summarizeComments threshold change
+// Phase 4: summarizeComments (existing)
 // ---------------------------------------------------------------------------
 
 describe("summarizeComments", () => {
@@ -365,181 +358,12 @@ describe("summarizeComments", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 2: buildAgentTask auditor — structured output markers
-// ---------------------------------------------------------------------------
-// The auditor task uses structured output markers (AUDIT_DECISION, PR_BODY,
-// COMMENT_BODY) instead of running gh CLI commands. Pipeline reads markers
-// and handles PR creation/comment posting programmatically.
-
-describe("buildAgentTask — auditor JSON output markers", () => {
-	it("contains JSON action: APPROVED and REJECTED markers", () => {
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			BASE_ARGS.submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		assert.ok(task.includes('"action": "APPROVED"'), "Should contain APPROVED action");
-		assert.ok(task.includes('"action": "REJECTED"'), "Should contain REJECTED action");
-	});
-
-	it("contains prBody and commentBody keys in approved flow", () => {
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			BASE_ARGS.submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		assert.ok(task.includes('"prBody"'), "Should contain prBody key");
-		assert.ok(task.includes('"commentBody"'), "Should contain commentBody key");
-	});
-
-	it("contains prTitle with issue number", () => {
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			BASE_ARGS.submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		assert.ok(task.includes('"prTitle"'), "Should contain prTitle key");
-	});
-
-	it("contains git diff defaultBranch instruction", () => {
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			BASE_ARGS.submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		assert.ok(task.includes("git diff main"), "Should contain git diff main instruction");
-	});
-
-	it("contains commentBody in REJECT flow section", () => {
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			BASE_ARGS.submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		const rejectSection = task.substring(task.lastIndexOf('"action": "REJECTED"'));
-		assert.ok(rejectSection.includes('"commentBody"'), "REJECT flow contains commentBody key");
-	});
-
-	it("contains structured output format heading", () => {
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			BASE_ARGS.submodules,
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		assert.ok(task.includes("### Structured Output Format"), "Structured output heading present");
-	});
-
-	it("with empty submodules list — no submodule repos listed", () => {
-		const task = buildAgentTask(
-			"auditor",
-			BASE_ARGS.issueNum,
-			BASE_ARGS.repo,
-			BASE_ARGS.title,
-			BASE_ARGS.filteredData,
-			[],
-			BASE_ARGS.defaultBranch,
-			BASE_ARGS.remote,
-			BASE_ARGS.worktreeBase,
-			BASE_ARGS.branchPrefix,
-		);
-		assert.ok(task.includes("(none)") || !task.includes("submodule"), "No submodules listed");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Phase 3: other agents (structured output markers)
+// Phase 1: buildAgentTask simplified prompts — all 5 agents delegate to
+//          system prompt instead of re-implementing workflow steps
 // ---------------------------------------------------------------------------
 
-describe("buildAgentTask — other agents (JSON output markers)", () => {
-	it("architect task: JSON output instead of gh CLI", () => {
-		const task = buildAgentTask(
-			"architect",
-			42,
-			"owner/repo",
-			"Fix bug",
-			makeFilteredData(),
-			[],
-			"main",
-			"origin",
-			"../",
-			"worktree-git-issue-",
-		);
-		assert.ok(task.includes('"commentBody"'), "JSON commentBody key");
-		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action");
-		// No gh CLI calls in architect task
-		assert.ok(!task.includes("gh issue comment"));
-	});
-
-	it("developer task: no git add/git commit, has work-from-cwd + branch name", () => {
-		const task = buildAgentTask(
-			"developer",
-			42,
-			"owner/repo",
-			"Fix bug",
-			makeFilteredData(),
-			[],
-			"main",
-			"origin",
-			"../",
-			"worktree-git-issue-",
-		);
-		// Pipeline handles commit/push — agent task doesn't include git add/commit
-		assert.ok(!task.includes("git worktree add"), "No git worktree add in developer task");
-		assert.ok(!task.includes("git add"), "No git add in developer task");
-		assert.ok(!task.includes("git commit"), "No git commit in developer task");
-		// Branch info still present
-		assert.ok(task.includes("worktree-git-issue-42-fix-bug"), "Branch name in task");
-		// Current-directory workflow
-		assert.ok(
-			task.includes("Work from current directory") || task.includes("worktree already set up"),
-			"Worktree pre-setup mentioned",
-		);
-		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action present");
-	});
-
-	it("researcher task: web_crawl + ## Research Findings", () => {
+describe("buildAgentTask — simplified prompts (Phase 1)", () => {
+	it("researcher: task delegates to system prompt, no duplicated workflow steps", () => {
 		const task = buildAgentTask(
 			"researcher",
 			42,
@@ -552,11 +376,49 @@ describe("buildAgentTask — other agents (JSON output markers)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("web_crawl"), "web_crawl in researcher task");
-		assert.ok(task.includes("## Research Findings"), "Research Findings heading");
+		// Must delegate to system prompt, not repeat workflow
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Delegates to system prompt",
+		);
+		assert.ok(!task.includes("web_crawl"), "No 'web_crawl' instruction — system prompt has it");
+		assert.ok(!task.includes("Crawl 1-2"), "No 'Crawl 1-2' instruction");
+		assert.ok(!task.includes("Extract the core topic"), "No 'Extract the core topic'");
+		// Still has issue data + JSON output format + security rule
+		assert.ok(task.includes("### Structured Output Format"), "JSON output instruction present");
+		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action");
+		assert.ok(task.includes("**SECURITY RULE:**"), "Security rule present");
 	});
 
-	it("test-designer task: JSON output with commentBody", () => {
+	it("architect: task delegates to system prompt, no duplicated workflow steps", () => {
+		const task = buildAgentTask(
+			"architect",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Delegates to system prompt",
+		);
+		assert.ok(
+			!task.includes("write an architecture comment"),
+			"No 'write an architecture comment' — system prompt has it",
+		);
+		assert.ok(!task.includes("Analyze the issue body"), "No 'Analyze the issue body'");
+		// Still has JSON + data + security rule
+		assert.ok(task.includes('"commentBody"'), "JSON commentBody key");
+		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action");
+		assert.ok(task.includes("**SECURITY RULE:**"), "Security rule present");
+	});
+
+	it("test-designer: task delegates to system prompt, no duplicated workflow steps", () => {
 		const task = buildAgentTask(
 			"test-designer",
 			42,
@@ -569,9 +431,74 @@ describe("buildAgentTask — other agents (JSON output markers)", () => {
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("test plan"), "Test plan reference");
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Delegates to system prompt",
+		);
+		assert.ok(!task.includes("Review the issue body"), "No 'Review the issue body' instruction");
+		assert.ok(!task.includes("write a test plan"), "No 'write a test plan' — system prompt has it");
+		// Still has JSON + data + security rule
 		assert.ok(task.includes('"commentBody"'), "JSON commentBody key");
 		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action");
+		assert.ok(task.includes("**SECURITY RULE:**"), "Security rule present");
+	});
+
+	it("developer: task delegates to system prompt, no duplicated workflow steps", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Delegates to system prompt",
+		);
+		// Workflow steps removed
+		assert.ok(!task.includes("Step 0 — Evaluate"), "No 'Step 0' instruction");
+		assert.ok(!task.includes("Step A — Write tests"), "No 'Step A' instruction");
+		assert.ok(!task.includes("Step B — Implement"), "No 'Step B' instruction");
+		assert.ok(!task.includes("Step C — Verify"), "No 'Step C' instruction");
+		assert.ok(!task.includes("Step D — Update README"), "No 'Step D' instruction");
+		// Still has branch name as data context
+		assert.ok(task.includes("worktree-git-issue-42-fix-bug"), "Branch name in task");
+		// Still has JSON + security rule
+		assert.ok(task.includes('"action": "COMPLETE"'), "COMPLETE action present");
+		assert.ok(task.includes("**SECURITY RULE:**"), "Security rule present");
+	});
+
+	it("auditor: task delegates to system prompt, no duplicated workflow steps", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Delegates to system prompt",
+		);
+		// Workflow steps removed
+		assert.ok(!task.includes("Review the code: git diff"), "No 'Review the code' instruction");
+		assert.ok(!task.includes("Run jscpd"), "No 'Run jscpd' instruction");
+		assert.ok(!task.includes("Run tests if any exist"), "No 'Run tests' instruction");
+		assert.ok(!task.includes("Evaluate against the architecture"), "No evaluate instruction");
+		// Still has JSON schema showing APPROVED|REJECTED union type + security rule
+		assert.ok(task.includes("APPROVED"), "APPROVED action type in schema");
+		assert.ok(task.includes("REJECTED"), "REJECTED action type in schema");
+		assert.ok(task.includes("**SECURITY RULE:**"), "Security rule present");
 	});
 
 	it("unknown agent name → default fallback task without crash", () => {
@@ -593,11 +520,221 @@ describe("buildAgentTask — other agents (JSON output markers)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Phase 4: worktree path + branch name in auditor task
+// Phase 2: buildAgentTask edge cases
 // ---------------------------------------------------------------------------
 
-describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () => {
-	it("auditor with worktreePath → task contains 'Your current working directory IS the worktree' with path", () => {
+describe("buildAgentTask — edge cases (Phase 2)", () => {
+	it("empty filteredData body — still valid structure, no crash", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData({ body: "" }),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(task.includes('"action": "COMPLETE"'), "JSON output still present");
+		assert.ok(task.includes("Issue Data"), "Issue data block present");
+	});
+
+	it("no trusted comments — renders (no trusted comments)", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData({ comments: [] }),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(
+			task.includes("(no trusted comments)") || task.includes("no trusted comments"),
+			"No trusted comments indicator",
+		);
+		assert.ok(task.includes('"action": "COMPLETE"'), "JSON output present");
+	});
+
+	it("researchFindings provided (for architect) — included in task", () => {
+		const findings = "## Research Findings\nFound some relevant data.";
+		const task = buildAgentTask(
+			"architect",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			findings,
+		);
+		assert.ok(task.includes("### Research Findings"), "Research findings section header");
+		assert.ok(task.includes("Found some relevant data."), "Research findings content included");
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Delegates to system prompt",
+		);
+	});
+
+	it("researchFindings is null — no research findings section", () => {
+		const task = buildAgentTask(
+			"architect",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(!task.includes("### Research Findings"), "No research findings section");
+		assert.ok(
+			task.includes("Follow your system prompt instructions"),
+			"Delegates to system prompt",
+		);
+	});
+
+	it("summarizedRejections provided — used instead of raw comments", () => {
+		const rejectionSummary = "Previous rejections: issue #42 was rejected for missing tests.";
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			rejectionSummary,
+		);
+		assert.ok(task.includes("Previous rejections:"), "Summarized rejections included");
+	});
+
+	it("worktreePath provided for auditor — included in task", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/worktree-42",
+		);
+		assert.ok(task.includes("/home/worktree-42"), "Worktree path in task");
+	});
+
+	it("branchName provided for auditor — included in task", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/wt",
+			"fix-bug-42",
+		);
+		assert.ok(task.includes("fix-bug-42"), "Branch name in task");
+	});
+
+	it("duplicateCodeContext provided for auditor — included in task", () => {
+		const dupCtx = "**2 clone(s) found (15 total duplicate lines)**";
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			"/home/wt",
+			"fix-bug-42",
+			undefined,
+			dupCtx,
+		);
+		assert.ok(task.includes("Duplicate Code Detected"), "Duplicate code section header");
+		assert.ok(task.includes("2 clone(s) found"), "Duplicate code context in task");
+	});
+
+	it("submodules list provided for auditor — included in task", () => {
+		const submodules = [
+			{ path: "lib/something", repo: "org/something" },
+			{ path: "lib/other", repo: "org/other" },
+		];
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			submodules,
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(task.includes("org/something"), "Submodule repo listed");
+		assert.ok(task.includes("org/other"), "Second submodule listed");
+	});
+
+	it("issue with special characters in title — no crash", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug: #critical [urgent]",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(task.includes('"action": "COMPLETE"'), "JSON output present");
+		// Branch should be sanitized
+		assert.ok(
+			task.includes("worktree-git-issue-42-fix-bug-critical-urgent") ||
+				task.includes("worktree-git-issue-42-fix-bug"),
+			"Sanitized branch name",
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3: buildAgentTask auditor worktree path + branch name
+// ---------------------------------------------------------------------------
+
+describe("buildAgentTask — auditor worktree path + branch name (Phase 3)", () => {
+	it("auditor with worktreePath → task contains worktree path", () => {
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -610,10 +747,6 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 			"../",
 			"worktree-git-issue-",
 			"/home/worktree-git-issue-42-fix-bug",
-		);
-		assert.ok(
-			task.includes("Your current working directory IS the worktree"),
-			"Should contain worktree path announcement",
 		);
 		assert.ok(
 			task.includes("/home/worktree-git-issue-42-fix-bug"),
@@ -636,37 +769,8 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 			"/home/wt",
 			"fix-bug",
 		);
-		assert.ok(
-			task.includes("Your current working directory IS the worktree"),
-			"Should contain worktree announcement",
-		);
 		assert.ok(task.includes("/home/wt"), "Should contain worktree path");
 		assert.ok(task.includes("fix-bug"), "Should contain branch name");
-		assert.ok(
-			task.includes("git branch --show-current"),
-			"Should contain git branch --show-current instruction",
-		);
-	});
-
-	it("auditor with worktreePath → task contains 'prepend: cd <path> &&' instruction", () => {
-		const task = buildAgentTask(
-			"auditor",
-			42,
-			"owner/repo",
-			"Fix bug",
-			makeFilteredData(),
-			[],
-			"main",
-			"origin",
-			"../",
-			"worktree-git-issue-",
-			"/home/wt",
-		);
-		assert.ok(task.includes("cd /home/wt"), "Should contain cd to worktree path instruction");
-		assert.ok(
-			task.includes("Before any bash command"),
-			"Should contain instruction to prepend cd before bash commands",
-		);
 	});
 
 	it("auditor without worktreePath → no worktree path in task (backward compat)", () => {
@@ -688,92 +792,7 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 		);
 	});
 
-	it("developer with worktreePath → developer task unchanged (no worktree path in task text)", () => {
-		const task = buildAgentTask(
-			"developer",
-			42,
-			"owner/repo",
-			"Fix bug",
-			makeFilteredData(),
-			[],
-			"main",
-			"origin",
-			"../",
-			"worktree-git-issue-",
-			"/home/wt",
-			"fix-bug",
-		);
-		assert.ok(task.includes("Work from current directory"), "Developer task unchanged");
-		assert.ok(
-			!task.includes("Your current working directory IS the worktree"),
-			"Developer should NOT have the auditor's worktree announcement",
-		);
-	});
-
-	it("architect with worktreePath → architect task unchanged", () => {
-		const task = buildAgentTask(
-			"architect",
-			42,
-			"owner/repo",
-			"Fix bug",
-			makeFilteredData(),
-			[],
-			"main",
-			"origin",
-			"../",
-			"worktree-git-issue-",
-			"/home/wt",
-		);
-		assert.ok(
-			!task.includes("Your current working directory IS the worktree"),
-			"Architect should NOT have worktree announcement",
-		);
-		assert.ok(task.includes("architecture comment"), "Architect task unchanged");
-	});
-
-	it("researcher with worktreePath → task unchanged", () => {
-		const task = buildAgentTask(
-			"researcher",
-			42,
-			"owner/repo",
-			"Fix bug",
-			makeFilteredData(),
-			[],
-			"main",
-			"origin",
-			"../",
-			"worktree-git-issue-",
-			"/home/wt",
-		);
-		assert.ok(
-			!task.includes("Your current working directory IS the worktree"),
-			"Researcher should NOT have worktree announcement",
-		);
-		assert.ok(task.includes("web_crawl"), "Researcher task unchanged");
-	});
-
-	it("test-designer with worktreePath → task unchanged", () => {
-		const task = buildAgentTask(
-			"test-designer",
-			42,
-			"owner/repo",
-			"Fix bug",
-			makeFilteredData(),
-			[],
-			"main",
-			"origin",
-			"../",
-			"worktree-git-issue-",
-			"/home/wt",
-		);
-		assert.ok(
-			!task.includes("Your current working directory IS the worktree"),
-			"Test-designer should NOT have worktree announcement",
-		);
-		assert.ok(task.includes("test plan"), "Test-designer task unchanged");
-	});
-
-	it("backward compat — auditor task has git diff and JSON markers without optional params", () => {
+	it("backward compat — auditor task has JSON markers without optional params", () => {
 		const task = buildAgentTask(
 			"auditor",
 			42,
@@ -786,7 +805,6 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 			"../",
 			"worktree-git-issue-",
 		);
-		assert.ok(task.includes("git diff main"), "Existing auditor behavior preserved");
 		assert.ok(task.includes('"action"'), "JSON action key present");
 	});
 });

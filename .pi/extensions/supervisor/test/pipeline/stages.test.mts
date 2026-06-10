@@ -23,6 +23,7 @@ import {
 	handleBacklogTransition,
 	applyStatusTransition,
 	handlePostAgentSuccess,
+	validateResearcherFindings,
 } from "../../pipeline/stages.ts";
 
 // ─── Mock Helpers ──────────────────────────────────────────────────
@@ -1119,5 +1120,73 @@ describe("createStageState()", () => {
 	it("creates state with 'Done' status", () => {
 		const state = createStageState("Done");
 		assert.equal(state.loopStatus, "Done");
+	});
+});
+
+// ─── Tests: validateResearcherFindings() ────────────────────────────
+
+describe("validateResearcherFindings()", () => {
+	it("skip message 'Research skipped: bug fix' → returns original (no graceful degradation override)", () => {
+		const input =
+			"## Research Findings — Research skipped: issue touches only internal code with no external dependency, library, or version question. No public web data needed.";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, input);
+	});
+
+	it("skip message with reason 'Bug fix — config change only' → returns original unchanged", () => {
+		const input = "## Research Findings — Research skipped: Bug fix — config change only";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, input);
+	});
+
+	it("'No relevant results found' → returns original (existing behavior preserved)", () => {
+		const input = "## Research Findings — No relevant results found for this topic.";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, input);
+	});
+
+	it("empty string → returns graceful degradation message", () => {
+		const result = validateResearcherFindings("");
+		assert.equal(result, "## Research Findings — No relevant results found for this topic.");
+	});
+
+	it("empty template headers only → returns graceful degradation", () => {
+		const input =
+			"## Research Findings\n\n### Best Practices\n- —\n\n### Recent Libraries\n- \n\n### Common Pitfalls\n";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, "## Research Findings — No relevant results found for this topic.");
+	});
+
+	it("substantive bullet content alongside empty template → returns original", () => {
+		const input =
+			"## Research Findings\n\n### Best Practices\n- Actual finding with content\n\n### Recent Libraries\n- \n";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, input);
+	});
+
+	it("skip prefix but also has real content → returns original unchanged", () => {
+		const input =
+			"## Research Findings — Research skipped: some reason\n- But actually found something useful";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, input);
+	});
+
+	it("real research bullets → returns original", () => {
+		const input =
+			"## Research Findings\n\n### Best Practices\n- Use TypeScript strict mode — https://ts.dev/strict\n- Prefer interfaces over type aliases — https://ts.dev/interfaces\n\n### Recent Libraries\n- zod 3.23 — schema validation — https://zod.dev";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, input);
+	});
+
+	it("freeform text (no bullets, no headers) → returns original", () => {
+		const input = "This is some random freeform content with actual information.";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, input);
+	});
+
+	it("headers only (just a header line) → returns graceful degradation", () => {
+		const input = "## Research Findings — Single line summary";
+		const result = validateResearcherFindings(input);
+		assert.equal(result, "## Research Findings — No relevant results found for this topic.");
 	});
 });
