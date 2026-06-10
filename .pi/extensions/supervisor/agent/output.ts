@@ -136,7 +136,13 @@ function sanitizeJsonStrings(jsonText: string): string {
  * values (e.g., tool args like {"pattern":"function.*{"}) are ignored.
  */
 function extractLastJson(raw: string): string {
-	// Step 1: Find all markdown code fence regions (```json or ```).
+	// Step 1: Strip 💭 prefix for code fence detection.
+	// Agents with thinking:high emit JSON in thinking blocks, which
+	// get pushed to fullLog with "💭 " per line. Stripping recovers
+	// valid JSON content between fences.
+	const fenceSearchText = raw.replace(THINKING_PREFIX_RE, "");
+
+	// Step 2: Find all markdown code fence regions (```json or ```).
 	// Unlike the old regex approach, we scan character-by-character
 	// to find matching fence pairs. This correctly handles triple
 	// backticks inside JSON string values (e.g. markdown code blocks
@@ -144,23 +150,23 @@ function extractLastJson(raw: string): string {
 	// outer fence. We track string boundaries to skip ``` inside strings.
 	const fenceContents: string[] = [];
 	let pos = 0;
-	while (pos < raw.length) {
+	while (pos < fenceSearchText.length) {
 		// Find opening ``` (optionally followed by "json")
-		const fenceStart = raw.indexOf("```", pos);
+		const fenceStart = fenceSearchText.indexOf("```", pos);
 		if (fenceStart === -1) break;
 
 		// Skip past optional language tag and newline
 		let afterOpen = fenceStart + 3;
-		if (raw.startsWith("json", afterOpen)) {
+		if (fenceSearchText.startsWith("json", afterOpen)) {
 			afterOpen += 4;
 		}
 		// Skip whitespace/newline after opening fence
 		while (
-			afterOpen < raw.length &&
-			(raw[afterOpen] === " " ||
-				raw[afterOpen] === "\t" ||
-				raw[afterOpen] === "\n" ||
-				raw[afterOpen] === "\r")
+			afterOpen < fenceSearchText.length &&
+			(fenceSearchText[afterOpen] === " " ||
+				fenceSearchText[afterOpen] === "\t" ||
+				fenceSearchText[afterOpen] === "\n" ||
+				fenceSearchText[afterOpen] === "\r")
 		) {
 			afterOpen++;
 		}
@@ -170,8 +176,8 @@ function extractLastJson(raw: string): string {
 		let inString = false;
 		let escaped = false;
 		let fenceEnd = -1;
-		for (let i = afterOpen; i < raw.length; i++) {
-			const ch = raw[i];
+		for (let i = afterOpen; i < fenceSearchText.length; i++) {
+			const ch = fenceSearchText[i];
 			if (escaped) {
 				escaped = false;
 				continue;
@@ -181,7 +187,7 @@ function extractLastJson(raw: string): string {
 				continue;
 			}
 			if (ch === '"') {
-				if (inString && isStructuralQuote(raw, i)) {
+				if (inString && isStructuralQuote(fenceSearchText, i)) {
 					// Structural close — end of string value
 					inString = false;
 				} else if (!inString) {
@@ -191,14 +197,14 @@ function extractLastJson(raw: string): string {
 				// else: content quote — stay in string, don't toggle
 				continue;
 			}
-			if (!inString && ch === "`" && raw.startsWith("```", i)) {
+			if (!inString && ch === "`" && fenceSearchText.startsWith("```", i)) {
 				fenceEnd = i;
 				break;
 			}
 		}
 
 		if (fenceEnd !== -1) {
-			fenceContents.push(raw.slice(afterOpen, fenceEnd).trim());
+			fenceContents.push(fenceSearchText.slice(afterOpen, fenceEnd).trim());
 			pos = fenceEnd + 3;
 		} else {
 			// Unclosed fence — skip past the opening
@@ -211,16 +217,19 @@ function extractLastJson(raw: string): string {
 		return fenceContents[fenceContents.length - 1];
 	}
 
-	// Step 2: No code fences — strip non-JSON metadata lines before brace matching.
+	// Step 2: No code fences — filter metadata lines then simple brace counting.
 	// Lines starting with 🔧, ✓, ✗, 📋, 📊 are tool execution/debug markers pushed
-	// to fullLog by event handlers. Their content may contain unescaped "quotes",
-	// `{`, `}` from tool args/results, which corrupt isStructuralQuote-based string
-	// tracking and cause brace matching to miss the outer JSON block's opening `{`.
+	// to fullLog by event handlers. Their content may contain `{`, `}` from tool
+	// args/results, which would corrupt simple brace counting.
 	// These lines are never part of the agent's structured JSON output.
+	//
+	// Use fenceSearchText (💭 prefix already stripped) so JSON inside thinking
+	// blocks is valid. Use SIMPLE brace counting (no string tracking) so
+	// double-quotes in thinking content do NOT corrupt brace matching.
 	const metadataLineRe = /^[\u{1F527}\u{2713}\u{2717}\u{1F4CB}\u{1F4CA}]/u;
-	let braceCandidateRaw = raw;
-	if (metadataLineRe.test(raw)) {
-		const lines = raw.split("\n");
+	let braceCandidateRaw = fenceSearchText;
+	if (metadataLineRe.test(fenceSearchText)) {
+		const lines = fenceSearchText.split("\n");
 		const filteredLines: string[] = [];
 		for (const line of lines) {
 			if (!metadataLineRe.test(line.trimStart())) {
@@ -232,99 +241,28 @@ function extractLastJson(raw: string): string {
 		}
 	}
 
-	// Step 3: String-boundary-aware brace matching on filtered text.
-	// Uses smart quote detection (isStructuralQuote) to handle unescaped
-	// double-quotes inside JSON string values that agents commonly produce
-	// in markdown-heavy commentBody fields.
-	let inString = false;
-	let escaped = false;
-	const braceStack: number[] = [];
-	let lastCompleteStart = -1;
-
-	// Re-scan on filtered text if metadata lines were removed.
-	// Use braceCandidateRaw (may differ from raw if we filtered).
-	const scanTarget = braceCandidateRaw !== raw ? braceCandidateRaw : raw;
-
-	for (let i = 0; i < scanTarget.length; i++) {
-		const ch = scanTarget[i];
-
-		if (escaped) {
-			escaped = false;
-			continue;
-		}
-
-		if (inString && ch === "\\") {
-			escaped = true;
-			continue;
-		}
-
-		if (ch === '"') {
-			if (inString && isStructuralQuote(scanTarget, i)) {
-				// Structural close — end of string value
-				inString = false;
-			} else if (!inString) {
-				// Opening quote — start of string value or key
-				inString = true;
-			}
-			// else: content quote — stay in string, don't toggle
-			continue;
-		}
-
-		if (!inString) {
-			if (ch === "{") {
-				braceStack.push(i);
-			} else if (ch === "}") {
-				if (braceStack.length > 0) {
-					const start = braceStack.pop()!;
-					if (braceStack.length === 0) {
-						lastCompleteStart = start;
-					}
-				}
+	// Step 3: Simple brace counting — find all complete outermost {} pairs.
+	// No string tracking: double-quotes in thinking content are harmless.
+	// Metadata tool lines (🔧 ✓ ✗ 📋 📊) with {}/quotes are already filtered.
+	// Returns the LAST complete outermost pair (agent's JSON is final output).
+	let depth = 0;
+	let lastStart = -1;
+	let lastEnd = -1;
+	for (let i = 0; i < braceCandidateRaw.length; i++) {
+		const ch = braceCandidateRaw[i];
+		if (ch === "{") {
+			if (depth === 0) lastStart = i;
+			depth++;
+		} else if (ch === "}") {
+			depth--;
+			if (depth === 0 && lastStart >= 0) {
+				lastEnd = i;
 			}
 		}
 	}
 
-	if (lastCompleteStart >= 0) {
-		// Find the matching closing brace (also string-boundary aware)
-		// Uses smart quote detection for consistency with the first scan.
-		let depth = 0;
-		let strOpen = false;
-		let esc = false;
-		for (let i = lastCompleteStart; i < scanTarget.length; i++) {
-			const c = scanTarget[i];
-
-			if (esc) {
-				esc = false;
-				continue;
-			}
-
-			if (strOpen && c === "\\") {
-				esc = true;
-				continue;
-			}
-
-			if (c === '"') {
-				if (strOpen && isStructuralQuote(scanTarget, i)) {
-					// Structural close — end of string value
-					strOpen = false;
-				} else if (!strOpen) {
-					// Opening quote — start of string value or key
-					strOpen = true;
-				}
-				// else: content quote — stay in string, don't toggle
-				continue;
-			}
-
-			if (!strOpen) {
-				if (c === "{") depth++;
-				else if (c === "}") {
-					depth--;
-					if (depth === 0) {
-						return scanTarget.slice(lastCompleteStart, i + 1);
-					}
-				}
-			}
-		}
+	if (lastEnd >= 0 && lastStart >= 0) {
+		return braceCandidateRaw.slice(lastStart, lastEnd + 1);
 	}
 
 	// No valid JSON structure found — return empty instead of raw text
@@ -498,16 +436,14 @@ export function parseAgentOutput(output: string): ParseResult {
 	// Step 1: Strip ANSI escape sequences
 	const clean = stripAnsi(trimmed);
 
-	// Step 1.5: Strip "💭 " thinking prefix from lines
-	// Agents with thinking:high emit JSON in thinking blocks, which get
-	// pushed to fullLog with "💭 " per line. Stripping recovers valid JSON.
-	const stripped = stripThinkingPrefix(clean);
-
 	// Step 2: Extract JSON from text
-	const jsonStr = extractLastJson(stripped);
+	// 💭 prefix stripping occurs inside extractLastJson for code fence
+	// detection. Brace matching uses simple brace counting (no string
+	// tracking) so double-quotes in thinking content don't corrupt it.
+	const jsonStr = extractLastJson(clean);
 	if (!jsonStr) {
 		getDebugLogger().warn("agent-output", "No JSON structure found in agent output", {
-			outputLen: stripped.length,
+			outputLen: clean.length,
 		});
 		return { error: "No JSON structure found in agent output", rawOutput: output };
 	}
