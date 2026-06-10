@@ -806,19 +806,3 @@ export function buildSessionAnalysis(
 		wasteBySignal: signals,
 	};
 }
-
-/**
- * Render a brief waste summary line for embedding in prompts.
- */
-export function renderWasteSummary(analysis: SessionAnalysis): string {
-	const lines: string[] = [];
-	lines.push(
-		`Session ${analysis.sessionId.slice(0, 8)}: ${analysis.totalTokens.toLocaleString()} total tokens, ${analysis.totalWasteTokens.toLocaleString()} wasted (${(analysis.wasteFraction * 100).toFixed(0)}%)`,
-	);
-	for (const s of analysis.wasteBySignal) {
-		lines.push(
-			`  ${s.signal}: ${s.wastedTokens.toLocaleString()} tokens, ${s.occurrences}x — ${s.details[0] ?? ""}`,
-		);
-	}
-	return lines.join("\n");
-}
