@@ -56,7 +56,7 @@ export async function runSearchScript(
 
 	try {
 		return execFn
-			? execFn("bash", ["-c", bashCmd], { timeout, signal })
+			? await execFn("bash", ["-c", bashCmd], { timeout, signal })
 			: { code: 1, stdout: "", stderr: "executor: no exec function provided" };
 	} finally {
 		try {
