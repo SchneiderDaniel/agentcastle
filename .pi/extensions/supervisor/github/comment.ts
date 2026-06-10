@@ -181,6 +181,18 @@ export function extractStructuredAuditOutput(output: string): StructuredAuditOut
 					slice = trimmed;
 				}
 			}
+
+			// Strip trailing ```json code fence (structured output, not comment body).
+			// When agent output contains a JSON block after the markdown heading, it's the
+			// structured output that should NOT be posted as part of the issue comment.
+			const lastJsonFence = slice.lastIndexOf("\n```json");
+			if (lastJsonFence > heading.length + 20) {
+				const beforeFence = slice.slice(0, lastJsonFence).trim();
+				if (beforeFence.length > heading.length + 20) {
+					slice = beforeFence;
+				}
+			}
+
 			if (slice.length > heading.length + 20) {
 				return { decision, commentBody: slice };
 			}
@@ -325,6 +337,20 @@ export function extractAgentCommentBody(output: string): string | null {
 					slice = trimmed;
 				}
 			}
+
+			// Strip trailing ```json code fence (structured output, not comment body).
+			// When agent output is truncated mid-JSON, the heading extraction includes
+			// the broken JSON block at the end (```json\n{... without closing }).
+			// Strip the entire trailing ```json block regardless of completeness —
+			// it's the agent's structured output, not part of the issue comment.
+			const lastJsonFence = slice.lastIndexOf("\n```json");
+			if (lastJsonFence > bestHeading.length + 20) {
+				const beforeFence = slice.slice(0, lastJsonFence).trim();
+				if (beforeFence.length > bestHeading.length + 20) {
+					slice = beforeFence;
+				}
+			}
+
 			// Only use extraction if it looks like substantive content (>100 chars, not just heading)
 			if (slice.length > bestHeading.length + 20) {
 				lastBody = slice;
@@ -341,7 +367,10 @@ export function extractAgentCommentBody(output: string): string | null {
 	// the extraction from heading to end-of-log would include these
 	// metadata lines, making the comment look like "the whole log".
 	// Strip them to produce clean commentBody text.
+	// Also strip reasoning/self-talk lines that LLMs sometimes leak into output.
 	const METADATA_LINE_RE = /^[\u{1F527}\u{2713}\u{2717}\u{1F4CB}\u{1F4CA}\u{1F4AD}]/u;
+	const REASONING_LINE_RE =
+		/^(Now (let me|I|we)|Let me|I need to|I'll|First,? let me|I should|I think|I'm going|Let's|Here's my|My approach|I will)/i;
 	const stripNoise = (text: string): string => {
 		return text
 			.split("\n")
@@ -350,6 +379,8 @@ export function extractAgentCommentBody(output: string): string | null {
 				if (!trimmed) return true; // keep blank lines
 				// Skip tool/thinking/instrumentation lines
 				if (METADATA_LINE_RE.test(trimmed)) return false;
+				// Skip reasoning/self-talk lines that indicate LLM internal monologue
+				if (REASONING_LINE_RE.test(trimmed)) return false;
 				return true;
 			})
 			.join("\n")

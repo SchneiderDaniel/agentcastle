@@ -524,15 +524,12 @@ export async function handlePostAgentSuccess(
 		let extractionSource = "";
 
 		// Primary: textOutput — contains JSON from streaming deltas
+		// This is the expected path for streaming models (researcher, test-designer).
+		// No warning — it's normal behavior, not a fallback.
 		if (result.textOutput) {
 			commentBody = extractAgentCommentBody(result.textOutput);
 			if (commentBody) {
 				extractionSource = "result.textOutput";
-				collector?.push(
-					"stages",
-					"warn",
-					`${agentName} commentBody extracted from result.textOutput`,
-				);
 			}
 		}
 
@@ -603,6 +600,33 @@ export async function handlePostAgentSuccess(
 					`Skipping post. Source: ${extractionSource}`,
 			);
 			commentBody = null;
+		}
+
+		// Defense-in-depth: strip trailing broken ```json code fences from any agent comment.
+		// If the heading extraction (Fallback 2 in extractAgentCommentBody) fails to strip
+		// the agent's structured JSON block — either truncated mid-JSON or complete — the
+		// raw code fence leaks into the posted comment. This catch-all strips any trailing
+		// ```json fence still present after extraction.
+		if (commentBody) {
+			const lastBacktickFence = commentBody.lastIndexOf("\n```json");
+			if (lastBacktickFence !== -1) {
+				// Check if the fence is at the end of the content (no substantive text after it)
+				const afterFence = commentBody.slice(lastBacktickFence + 1).trim();
+				// Strip if the fence contains only JSON (not legitimate code examples in comment)
+				const trimmed = commentBody.slice(0, lastBacktickFence).trim();
+				if (trimmed.length >= 50) {
+					commentBody = trimmed;
+				} else {
+					// After stripping fence, content too short — comment is just broken JSON wrapper
+					collector?.push(
+						"stages",
+						"warn",
+						`${agentName} commentBody is only a broken \`\`\`json fence — skipping post. ` +
+							`commentBody starts with: ${JSON.stringify(commentBody.slice(0, 80))}`,
+					);
+					commentBody = null;
+				}
+			}
 		}
 
 		// Validate research findings output must contain "## Research Findings" heading.

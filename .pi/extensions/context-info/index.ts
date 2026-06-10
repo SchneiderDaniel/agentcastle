@@ -91,7 +91,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		if (state.config === null) {
 			ctx.ui.setFooter(undefined);
 			ctx.ui.setStatus("contextUsage", undefined);
-			ctx.ui.setWidget("agentcastle-welcome", undefined);
+			ctx.ui.setWidget("cheasee-pi-welcome", undefined);
 			state.stopTimer();
 			return;
 		}
@@ -143,7 +143,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	// Clear welcome banner and explain-* widgets on first user input
 	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
 		if (state && state.startupWidgetActive) {
-			ctx.ui.setWidget("agentcastle-welcome", undefined);
+			ctx.ui.setWidget("cheasee-pi-welcome", undefined);
 			state.startupWidgetActive = false;
 		}
 		ctx.ui.setWidget("explain-extensions", undefined);

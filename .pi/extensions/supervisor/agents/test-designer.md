@@ -148,6 +148,12 @@ Format: `### Phase N: <goal>`
 - Test plan must mirror the architecture's layer structure — domain tests first, adapters last
 - **ALWAYS** include a runnable test command in a fenced `bash` code block
 - If the architecture makes core logic untestable without infrastructure, flag it explicitly
+- **OUTPUT ONLY the final test plan.** Do NOT include:
+  - Reasoning steps ("Now let me check...", "Now I have...", "Let me verify...", "I need to...")
+  - File content scans or code snippets from your analysis
+  - Self-talk or internal deliberation
+  The comment body must contain ONLY the test plan markdown (## Test Plan heading + content + command).
+  Your internal reasoning stays in your private thinking space — never in the output.
 - When finished, output a JSON object with `"action": "COMPLETE", "agentName": "test-designer"` and your comment body (see Structured Output Format in your task). Fallback: if you cannot output JSON, output the following on separate lines:
 
 ```
