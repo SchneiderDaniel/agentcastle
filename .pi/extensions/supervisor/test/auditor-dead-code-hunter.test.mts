@@ -14,7 +14,12 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveSkillPaths, resolveSkillPathsWithFs } from "../config/extensions.ts";
-import { buildAgentTask } from "../agent/task.ts";
+import {
+	buildAgentTask,
+	generateBranchName,
+	summarizeComments,
+	truncateComment,
+} from "../agent/task.ts";
 import type { FilteredIssueData } from "../config/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -335,5 +340,79 @@ describe("buildAgentTask — deadCodeContext (Phase 3)", () => {
 		assert.ok(task.includes("unused-export"), "Should contain the type from dead code context");
 		assert.ok(task.includes("unusedFunc"), "Should contain the symbol from dead code context");
 		assert.ok(task.includes("src/a.ts"), "Should contain the file from dead code context");
+	});
+
+	// ═════════════════════════════════════════════════════════════════
+	// Agent/task.ts symbol coverage (inline assertion lines)
+	// TDD gate requires exported symbols to appear on the same line
+	// as an assertion pattern (assert.ok, assert.equal, etc.).
+	// ═════════════════════════════════════════════════════════════════
+
+	describe("agent/task.ts — inline symbol coverage", () => {
+		it("generateBranchName inline in assertion line", () => {
+			assert.equal(generateBranchName(1, "Hello World", "worktree-"), "worktree-1-hello-world");
+		});
+
+		it("generateBranchName handles special chars", () => {
+			assert.equal(
+				generateBranchName(638, "Wire dead-code-hunter into pipeline", "prefix-"),
+				"prefix-638-wire-dead-code-hunter-into-pipeline",
+			);
+		});
+
+		it("generateBranchName uses default prefix", () => {
+			assert.ok(generateBranchName(42, "Test issue").startsWith("worktree-git-issue-42-test"));
+		});
+
+		it("summarizeComments inline in assertion line", () => {
+			const result = summarizeComments([{ author: "user1", body: "Comment 1" }]);
+			assert.ok(result.includes("Comment 1"));
+		});
+
+		it("summarizeComments returns fallback for empty", () => {
+			assert.equal(summarizeComments([]), "(no trusted comments)");
+		});
+
+		it("truncateComment inline in assertion line", () => {
+			assert.equal(truncateComment("short", 100), "short");
+		});
+
+		it("truncateComment truncates long text", () => {
+			assert.ok(truncateComment("a".repeat(100), 10).includes("[+90 more chars]"));
+		});
+
+		it("buildAgentTask inline in assertion line for auditor", () => {
+			assert.ok(
+				buildAgentTask(
+					"auditor",
+					42,
+					"owner/repo",
+					"Fix bug",
+					makeFilteredData(),
+					[],
+					"main",
+					"origin",
+					"../",
+					"worktree-git-issue-",
+				).includes("### Structured Output Format"),
+			);
+		});
+
+		it("buildAgentTask inline for developer without dead code block", () => {
+			assert.ok(
+				!buildAgentTask(
+					"developer",
+					42,
+					"owner/repo",
+					"Fix bug",
+					makeFilteredData(),
+					[],
+					"main",
+					"origin",
+					"../",
+					"worktree-git-issue-",
+				).includes("### ⚠️ Dead Code"),
+			);
+		});
 	});
 });
