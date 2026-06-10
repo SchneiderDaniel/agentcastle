@@ -74,7 +74,7 @@ export function showWelcomeBanner(
 	const themeCount = listNames(".pi/themes", ".json").length;
 	const skillCount = countSkills();
 
-	ctx.ui.setWidget("agentcastle-welcome", (_tui, theme) => {
+	ctx.ui.setWidget("cheasee-pi-welcome", (_tui, theme) => {
 		return {
 			dispose() {},
 			invalidate() {},
@@ -86,7 +86,7 @@ export function showWelcomeBanner(
 				const baseW = 88;
 
 				// ── Centered title ────────────────────────
-				const titleText = "\ud83c\udff0 Agent Castle";
+				const titleText = "\ud83c\udf70 Cheasee-Pi";
 				const titleVis = visibleWidth(titleText);
 				const titlePad = Math.max(0, Math.floor((baseW - titleVis) / 2));
 				const titleLine =
