@@ -189,10 +189,17 @@ export function installFooter(
 				}
 				const right2 = rightParts.join(" " + sep + " ");
 
-				// Conditionally return 1 or 2 lines. When row 2 empty, skip it.
-				// TUI has shrink artifact (stale rows when render shrinks), but
-				// callInstallFooter() creates fresh component every 1s, so any
-				// artifact lasts ≤1s — acceptable trade-off vs permanent blank row.
+				// ── Build row 3: session ID ─────────────────────────
+				let row3 = "";
+				if (footerConfig.sessionId) {
+					const label = theme.fg("dim", "SessionID:");
+					const id = theme.fg("muted", footerConfig.sessionId);
+					row3 = label + " " + id;
+				}
+
+				// ── Assemble rows ───────────────────────────────────
+				const rows: string[] = [row1];
+
 				if (left2 || right2) {
 					const lw = visibleWidth(left2);
 					const rw = visibleWidth(right2);
@@ -200,9 +207,14 @@ export function installFooter(
 					const row2 = right2
 						? left2 + " ".repeat(gap) + right2
 						: left2 + " ".repeat(Math.max(0, width - lw));
-					return [row1, truncateToWidth(row2, width)];
+					rows.push(truncateToWidth(row2, width));
 				}
-				return [row1];
+
+				if (row3) {
+					rows.push(truncateToWidth(row3, width));
+				}
+
+				return rows;
 			},
 		};
 	});

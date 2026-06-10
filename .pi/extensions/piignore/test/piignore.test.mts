@@ -47,6 +47,14 @@ function patternToRegex(pattern: string): Pattern {
 	}
 	if (p === "") return { regex: /(?!)/, negate };
 
+	// Handle gitignore leading escape sequences per spec
+	// \# → literal # (not comment), \! → literal ! (not negation), \\ → literal \
+	if (p.startsWith("\\#") || p.startsWith("\\!")) {
+		p = p.slice(1); // strip backslash, keep escaped char
+	} else if (p.startsWith("\\\\")) {
+		p = p.slice(1); // strip one backslash of the pair, keep one
+	}
+
 	let dirOnly = false;
 	if (p.endsWith("/")) {
 		dirOnly = true;
@@ -794,5 +802,148 @@ describe("try/catch safety net (Phase 2b)", () => {
 
 		assert.ok(result, "should return a result on error");
 		assert.strictEqual((result as any).block, true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 4: User-journey through tool_call handler — echo/printf bypass
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("tool_call handler — echo/printf segment bypass (Phase 4)", () => {
+	let tmpRoot: string;
+
+	beforeEach(() => {
+		tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "piignore-phase4-"));
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpRoot, { recursive: true, force: true });
+	});
+
+	it("echo x && cat .env with .piignore pattern .env — blocked", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), ".env\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"bash",
+			{ command: "echo x && cat .env" },
+			tmpRoot,
+		);
+
+		assert.ok(result, "should return a result");
+		assert.strictEqual((result as any).block, true, "should block .env access via cat segment");
+		assert.ok(
+			(result as any).reason?.includes(".env"),
+			`reason should mention .env, got: ${(result as any).reason}`,
+		);
+	});
+
+	it("printf '%s' 'x' && cat .env — blocked", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), ".env\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"bash",
+			{ command: "printf '%s' 'x' && cat .env" },
+			tmpRoot,
+		);
+
+		assert.ok(result, "should return a result");
+		assert.strictEqual((result as any).block, true, "should block .env access after printf");
+	});
+
+	it("echo x && cat .env with no .piignore — no block", async () => {
+		// No .piignore file at all
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"bash",
+			{ command: "echo x && cat .env" },
+			tmpRoot,
+		);
+
+		assert.strictEqual(result, undefined, "should not block when no .piignore exists");
+	});
+
+	it("echo x && cat public.txt with .piignore pattern .env — no block", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), ".env\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"bash",
+			{ command: "echo x && cat public.txt" },
+			tmpRoot,
+		);
+
+		assert.strictEqual(result, undefined, "should not block public.txt");
+	});
+
+	it('echo "hello" (single echo, no separator) — no block', async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), "*.log\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(
+			handlers.tool_call!,
+			"bash",
+			{ command: 'echo "hello"' },
+			tmpRoot,
+		);
+
+		assert.strictEqual(result, undefined, "single echo should not be blocked");
+	});
+
+	it("read tool with .env path — still blocked (non-bash path unchanged)", async () => {
+		fs.writeFileSync(path.join(tmpRoot, ".piignore"), ".env\n");
+
+		const { pi, handlers } = createMockPi();
+		piignoreFactory(pi);
+
+		await handlers.resources_discover!(
+			{ type: "resources_discover", cwd: tmpRoot, reason: "startup" },
+			{ cwd: tmpRoot },
+		);
+
+		const result = await simulateToolCall(handlers.tool_call!, "read", { path: ".env" }, tmpRoot);
+
+		assert.ok(result, "should return a result");
+		assert.strictEqual((result as any).block, true, "read .env should still be blocked");
 	});
 });

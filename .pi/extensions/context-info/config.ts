@@ -12,6 +12,9 @@ import type { ContextStatusBarConfig, ThresholdEntry } from "./types.js";
 
 // ─── Default thresholds ───────────────────────────────────────────
 
+/** Default welcome timeout: 0 = no auto-dismiss */
+export const DEFAULT_WELCOME_TIMEOUT_MS = 0;
+
 export const DEFAULT_THRESHOLDS: ThresholdEntry[] = [
 	{ maxTokens: 100_000 },
 	{ maxTokens: 150_000 },
@@ -45,6 +48,7 @@ export function loadConfig(): ContextStatusBarConfig | null {
 		showTimer: true,
 		showTps: true,
 		showCache: true,
+		welcomeTimeoutMs: DEFAULT_WELCOME_TIMEOUT_MS,
 	};
 	const settingsPath = ".pi/settings.json";
 	if (!existsSync(settingsPath)) return defaults;
@@ -102,5 +106,15 @@ export function loadConfig(): ContextStatusBarConfig | null {
 		showCache = cfg.showCache;
 	}
 
-	return { enabled, thresholds, showTimer, showTps, showCache };
+	// Parse welcomeTimeoutMs
+	let welcomeTimeoutMs = DEFAULT_WELCOME_TIMEOUT_MS;
+	if (
+		"welcomeTimeoutMs" in cfg &&
+		typeof cfg.welcomeTimeoutMs === "number" &&
+		Number.isFinite(cfg.welcomeTimeoutMs)
+	) {
+		welcomeTimeoutMs = cfg.welcomeTimeoutMs;
+	}
+
+	return { enabled, thresholds, showTimer, showTps, showCache, welcomeTimeoutMs };
 }

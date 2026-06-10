@@ -50,19 +50,21 @@ node_modules/
 ### What happens
 
 ```
-read(.env)           → Blocked: Path ".env" matches .piignore patterns
-write(secrets/key)   → Blocked: Path "secrets/key" matches .piignore patterns
-bash(cat .env)       → Blocked: Path ".env" matches .piignore patterns
-bash(npm install)    → Allowed (npm packages are not file paths)
-bash(echo "hello")   → Allowed (echo args treated as literals)
+read(.env)                    → Blocked: Path ".env" matches .piignore patterns
+write(secrets/key)            → Blocked: Path "secrets/key" matches .piignore patterns
+bash(cat .env)                → Blocked: Path ".env" matches .piignore patterns
+bash(npm install)             → Allowed (npm packages are not file paths)
+bash(echo "hello")            → Allowed (echo args treated as literals)
+bash(echo x && cat .env)      → Blocked: ".env" checked independently in cat segment
 ```
 
 ### Safe operations
 
 - URLs (`https://...`, `s3://...`) are never treated as paths
 - npm scoped packages (`@scope/package`) are excluded
-- Shell operators (`|`, `;`, `&&`) are not checked
-- Echo/printf arguments are treated as string literals
+- Shell operators (`|`, `;`, `&&`, `||`) are not checked
+- Echo/printf arguments are treated as string literals within their own command segment
+- Commands chained after `&&`, `||`, `;`, or `|` are checked independently — echo/printf exclusion does not poison subsequent commands
 
 ## Requirements
 

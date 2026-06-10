@@ -47,6 +47,7 @@ const ENABLED_CONFIG: ContextStatusBarConfig = {
 	showTimer: true,
 	showTps: true,
 	showCache: true,
+	welcomeTimeoutMs: 0,
 };
 
 // ---------------------------------------------------------------------------
