@@ -11,6 +11,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { pushBranch, commitChanges, commitAndPush } from "../github/git.ts";
 import { createPullRequest } from "../github/pr.ts";
+import type { NotifyFn } from "../pipeline/helpers.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -21,6 +22,11 @@ interface ExecCall {
 	args: string[];
 	opts?: Record<string, unknown>;
 }
+
+const noopNotify: NotifyFn = {
+	info: () => {},
+	error: () => {},
+};
 
 function makeMockPi(results: Array<{ code: number; stdout?: string; stderr?: string }> = []) {
 	let callIndex = 0;
@@ -76,19 +82,18 @@ describe("commitChanges", () => {
 describe("pushBranch", () => {
 	it("calls pi.exec(git, [push, remote, branch], {cwd})", async () => {
 		const { pi, calls } = makeMockPi([{ code: 0, stdout: "Everything up-to-date" }]);
-		await pushBranch(pi as any, "/cwd", "origin", "my-branch");
+		const result = await pushBranch(pi as any, "/cwd", "origin", "my-branch", noopNotify);
+		assert.strictEqual(result.ok, true);
 		assert.strictEqual(calls.length, 1);
 		assert.strictEqual(calls[0].cmd, "git");
 		assert.deepStrictEqual(calls[0].args, ["push", "origin", "my-branch"]);
 		assert.deepStrictEqual(calls[0].opts, { cwd: "/cwd" });
 	});
 
-	it("throws on push failure (auth fail, rejected, no remote)", async () => {
+	it("returns { ok: false } on push failure (auth fail, rejected, no remote)", async () => {
 		const { pi } = makeMockPi([{ code: 128, stderr: "fatal: Authentication failed" }]);
-		await assert.rejects(
-			() => pushBranch(pi as any, "/cwd", "origin", "branch"),
-			/git push failed/i,
-		);
+		const result = await pushBranch(pi as any, "/cwd", "origin", "branch", noopNotify);
+		assert.strictEqual(result.ok, false);
 	});
 });
 
@@ -103,7 +108,15 @@ describe("commitAndPush", () => {
 			{ code: 0, stdout: "1 file changed" },
 			{ code: 0, stdout: "Everything up-to-date" },
 		]);
-		await commitAndPush(pi as any, "/cwd", "origin", "branch", "feat(#42): msg");
+		const result = await commitAndPush(
+			pi as any,
+			"/cwd",
+			"origin",
+			"branch",
+			"feat(#42): msg",
+			noopNotify,
+		);
+		assert.strictEqual(result.ok, true);
 		assert.strictEqual(calls.length, 3);
 		assert.strictEqual(calls[0].cmd, "git");
 		assert.deepStrictEqual(calls[0].args, ["add", "-A"]);
@@ -113,12 +126,10 @@ describe("commitAndPush", () => {
 		assert.deepStrictEqual(calls[2].args, ["push", "origin", "branch"]);
 	});
 
-	it("does not push if add fails (short-circuit)", async () => {
+	it("returns { ok: false } if add fails (short-circuit)", async () => {
 		const { pi, calls } = makeMockPi([{ code: 1, stderr: "permission denied" }]);
-		await assert.rejects(
-			() => commitAndPush(pi as any, "/cwd", "origin", "branch", "msg"),
-			/git add failed/i,
-		);
+		const result = await commitAndPush(pi as any, "/cwd", "origin", "branch", "msg", noopNotify);
+		assert.strictEqual(result.ok, false);
 		assert.strictEqual(calls.length, 1); // only add, not commit/push
 	});
 
@@ -129,7 +140,8 @@ describe("commitAndPush", () => {
 			{ code: 0, stdout: "Everything up-to-date" },
 		]);
 		// Should NOT throw — pipeline continues gracefully
-		await assert.doesNotReject(() => commitAndPush(pi as any, "/cwd", "origin", "branch", "msg"));
+		const result = await commitAndPush(pi as any, "/cwd", "origin", "branch", "msg", noopNotify);
+		assert.strictEqual(result.ok, true);
 		// pushBranch is called even when nothing to commit (branch may not exist on remote)
 		assert.strictEqual(calls.length, 3); // add + commit + push
 		assert.strictEqual(calls[2].cmd, "git");

@@ -65,7 +65,11 @@ export async function createPrOnApproval(
 		const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
 		log.error("pr-creation", `Failed to write PR body file: ${writeMsg}`);
 		ctx.ui.notify(`Failed to write PR body: ${writeMsg}`, "error");
-		return { success: false, error: `Failed to write PR body file: ${writeMsg}` };
+		return {
+			success: false,
+			error: `Failed to write PR body file: ${writeMsg}`,
+			source: "pr-creation",
+		};
 	}
 
 	const prTitle = `feat(#${issueNum}): ${issueTitle}`;
@@ -112,6 +116,7 @@ export async function createPrOnApproval(
 			return {
 				success: false,
 				error: `Branch push failed after ${MAX_PUSH_RETRIES} attempts: ${pushMsg}`,
+				source: "pr-creation",
 			};
 		}
 	}
@@ -137,7 +142,11 @@ export async function createPrOnApproval(
 				// Bug #643: Return failure with descriptive error instead of
 				// { success: true, prNumber: undefined } which renders as
 				// "PR: created — [#undefined]((unknown))" in the pipeline summary.
-				return { success: false, error: "No commits ahead of base — PR skipped" };
+				return {
+					success: false,
+					error: "No commits ahead of base — PR skipped",
+					source: "pr-creation",
+				};
 			}
 			log.info("pr-creation", `Head is ${aheadCount} commits ahead of ${config.defaultBranch}`);
 		} catch (compareErr: unknown) {
@@ -177,12 +186,12 @@ export async function createPrOnApproval(
 				prTitle,
 			]);
 			ctx.ui.notify(`PR #${existingPr.number} updated`, "info");
-			return { success: true, prNumber: existingPr.number, wasUpdate: true };
+			return { success: true, prNumber: existingPr.number, wasUpdate: true, source: "pr-creation" };
 		} catch (editErr: unknown) {
 			const editMsg = editErr instanceof Error ? editErr.message : String(editErr);
 			log.error("pr-creation", `Failed to update PR #${existingPr.number}: ${editMsg}`);
 			ctx.ui.notify(`Failed to update PR #${existingPr.number}: ${editMsg}`, "error");
-			return { success: false, error: `Failed to update PR: ${editMsg}` };
+			return { success: false, error: `Failed to update PR: ${editMsg}`, source: "pr-creation" };
 		}
 	}
 
@@ -209,7 +218,7 @@ export async function createPrOnApproval(
 			);
 			log.info("pr-creation", `PR #${prResult.number} created`);
 			ctx.ui.notify(`PR #${prResult.number} created`, "info");
-			return { success: true, prNumber: prResult.number };
+			return { success: true, prNumber: prResult.number, source: "pr-creation" };
 		} catch (prErr: unknown) {
 			lastError = prErr instanceof Error ? prErr.message : String(prErr);
 			log.warn(
@@ -226,5 +235,5 @@ export async function createPrOnApproval(
 		`Failed to create PR after ${MAX_PR_CREATE_RETRIES} attempts: ${errorMsg}`,
 		"error",
 	);
-	return { success: false, error: errorMsg };
+	return { success: false, error: errorMsg, source: "pr-creation" };
 }

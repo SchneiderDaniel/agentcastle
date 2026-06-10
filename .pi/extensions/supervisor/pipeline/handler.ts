@@ -200,14 +200,31 @@ export async function handleSupervisorCommand(
 			branch: worktreeBranch,
 			base: config.worktreeBase,
 		});
-		worktreePath = await createWorktree(
+		const createResult = await createWorktree(
 			pi,
 			ctx.cwd,
 			config.worktreeBase!,
 			worktreeBranch,
 			config.defaultBranch!,
+			notify,
 		);
-		await installWorktreeDeps(pi, worktreePath);
+		if (!createResult.ok) {
+			ctx.ui.notify(`Failed to create worktree: ${createResult.error}`, "error");
+			getDebugLogger().error("handler", "Worktree creation failed", {
+				error: createResult.error,
+			});
+			collector?.push("worktree", "error", `Failed to create worktree: ${createResult.error}`);
+			worktreePath = undefined;
+			// Don't continue without a worktree — send error and stop
+			sendPipelineError(pi, ctx, agentResults, issueNum, issueTitle, config, createResult.error);
+			return;
+		}
+		worktreePath = createResult.value;
+
+		const depsResult = await installWorktreeDeps(pi, worktreePath, notify);
+		if (!depsResult.ok) {
+			collector?.push("worktree", "warn", `npm ci failed: ${depsResult.error}`);
+		}
 		getDebugLogger().info("handler", "Worktree ready", { worktreePath });
 
 		for (let i = 0; i < MAX_PIPELINE_LOOPS; i++) {
@@ -444,6 +461,7 @@ export async function handleSupervisorCommand(
 					worktreeBranch,
 					issueTitle,
 					collector,
+					notify,
 				);
 				if (!continuePipeline) {
 					stopReason = `commitAndPush failed for ${agentName}`;
@@ -663,6 +681,7 @@ export async function handleSupervisorCommand(
 			prCreationResult,
 			isDebug,
 			collector,
+			notify,
 		);
 
 		// Completion notification
@@ -702,7 +721,10 @@ export async function handleSupervisorCommand(
 		collector?.push("handler", "error", `Pipeline threw unhandled error: ${errMsg}`);
 		// Also cleanup on error
 		if (worktreePath && worktreeBranch) {
-			await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
+			const cleanResult = await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch, notify);
+			if (!cleanResult.ok) {
+				getDebugLogger().warn("handler", `Worktree cleanup on error failed: ${cleanResult.error}`);
+			}
 		}
 		sendPipelineError(pi, ctx, agentResults, issueNum, issueTitle, config, errMsg);
 	} finally {
@@ -734,6 +756,7 @@ export async function handlePostPipeline(
 	prCreationResult?: PrCreationResult,
 	isDebug?: boolean,
 	collector?: ErrorCollector,
+	notify?: NotifyFn,
 ): Promise<void> {
 	try {
 		// Step 1: Post-pipeline merge resolution — needs worktree to exist
@@ -766,7 +789,20 @@ export async function handlePostPipeline(
 					"warning",
 				);
 			} else {
-				await cleanupWorktree(pi, ctx.cwd, worktreePath, worktreeBranch);
+				const cleanResult = await cleanupWorktree(
+					pi,
+					ctx.cwd,
+					worktreePath,
+					worktreeBranch,
+					notify ||
+						({
+							info: () => {},
+							error: () => {},
+						} as NotifyFn),
+				);
+				if (!cleanResult.ok) {
+					getDebugLogger().warn("handler", `Worktree cleanup failed: ${cleanResult.error}`);
+				}
 			}
 		}
 	}
