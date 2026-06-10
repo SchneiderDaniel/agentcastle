@@ -19,6 +19,19 @@ import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Post Issue Comment ───────────────────────────────────────────
 
+/**
+ * Hard safety limit for GitHub comment body length.
+ * Prevents agent execution logs (fullLog with tool calls, thinking,
+ * results) from being posted as issue comments if upstream extraction
+ * or builder logic has a bug.
+ *
+ * The supervisor config has maxCommentChars (default 2000) for normal
+ * cases. This is a much higher defense-in-depth cap (50KB) that only
+ * catches pathological full-log dumps while allowing legitimate long
+ * comments through.
+ */
+const MAX_COMMENT_CHARS = 50_000;
+
 export async function postIssueComment(
 	pi: ExtensionAPI,
 	issueNum: number,
@@ -30,11 +43,21 @@ export async function postIssueComment(
 	// Catches literal \\n sequences from any extraction path (JSON parsing,
 	// heading fallback, COMMENT_BODY marker, audit output fallback).
 	const normalized = normalizeEscapes(body);
-	const preview = normalized.slice(0, 200).replace(/\n/g, " ");
+	// Truncate as defense-in-depth against full-log dumps.
+	// Full agent logs are typically 100K+ chars; legitimate comments are
+	// under 10K chars. If body exceeds the hard limit, it's almost certainly
+	// a bug — truncate and append overflow notice instead of posting raw log.
+	const truncated =
+		normalized.length > MAX_COMMENT_CHARS
+			? normalized.slice(0, MAX_COMMENT_CHARS) +
+				"\n\n---\n⚠️ **Comment truncated at 50,000 character safety limit** — a bug likely caused the full agent execution log to be included. Please report this."
+			: normalized;
+	const preview = truncated.slice(0, 200).replace(/\n/g, " ");
 	log.info("comment", `Posting comment on #${issueNum} (${repo})`, {
 		issueNum,
 		repo,
 		bodyLen: normalized.length,
+		truncated: normalized.length > MAX_COMMENT_CHARS,
 		preview,
 	});
 
@@ -42,7 +65,7 @@ export async function postIssueComment(
 	// Per AGENTS.md: save to ignore/ folder, delete after use.
 	const tempFile = joinPath("ignore", `comment-body-${issueNum}-${Date.now()}.md`);
 	try {
-		await writeFile(tempFile, normalized, "utf-8");
+		await writeFile(tempFile, truncated, "utf-8");
 	} catch (writeErr: unknown) {
 		const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
 		log.error("comment", `Failed to write comment body temp file: ${writeMsg}`);
