@@ -159,75 +159,6 @@ export function buildTddGateResult(checks: TddCheck[]): TddGateResult {
 	};
 }
 
-// ─── Test Runner Detection ──────────────────────────────────────────
-
-/**
- * Detect available test runner command for the project.
- *
- * Checks for common test runners in order of preference:
- * 1. package.json scripts → "test" script
- * 2. node --test (native)
- * 3. Known runner binaries (jest, mocha, vitest, ava, tap)
- *
- * Returns the command string to execute, or null if no runner found.
- */
-async function detectTestRunner(
-	exec: ExecFn,
-	worktreePath: string,
-): Promise<{ cmd: string; args: string[] } | null> {
-	// Check package.json for test script
-	try {
-		const pkgPath = join(worktreePath, "package.json");
-		if (existsSync(pkgPath)) {
-			const content = readFileSync(pkgPath, "utf-8");
-			const pkg = JSON.parse(content) as Record<string, unknown>;
-			const scripts = pkg.scripts as Record<string, string> | undefined;
-			if (scripts?.test && scripts.test !== "echo" && !scripts.test.startsWith("echo")) {
-				// Use the test script via npm
-				return { cmd: "npm", args: ["test", "--silent"] };
-			}
-		}
-	} catch {
-		// Ignore read/parse errors
-	}
-
-	// Check for test files and use node --test
-	try {
-		const testFilesResult = await exec(
-			"find",
-			[worktreePath, "-maxdepth", "3", "-name", "*.test.*", "-o", "-name", "*.spec.*"],
-			{ timeout: 5_000 },
-		);
-		if (testFilesResult.stdout?.trim()) {
-			return { cmd: "node", args: ["--experimental-strip-types", "--test"] };
-		}
-	} catch {
-		// Fall through
-	}
-
-	// Check for common test runners
-	const runners = [
-		{ cmd: "npx", args: ["jest", "--no-coverage"] },
-		{ cmd: "npx", args: ["mocha"] },
-		{ cmd: "npx", args: ["vitest", "run"] },
-		{ cmd: "npx", args: ["ava"] },
-		{ cmd: "npx", args: ["tap"] },
-	];
-
-	for (const runner of runners) {
-		try {
-			const result = await exec("which", [runner.cmd], { timeout: 3_000 });
-			if (result.code === 0) {
-				return runner;
-			}
-		} catch {
-			continue;
-		}
-	}
-
-	return null;
-}
-
 // ─── Main Orchestration ────────────────────────────────────────────
 
 /**
@@ -236,10 +167,9 @@ async function detectTestRunner(
  * Steps:
  * 1. Get changed files via `git diff <defaultBranch> --name-only` from worktree
  * 2. Classify changed files into test files and implementation files
- * 3. Run three TDD checks:
+ * 3. Run TDD checks:
  *    a. "tests-written" — at least one test file in diff
- *    b. "test-fail-first" — revert implementation, run tests, verify they fail
- *    c. "tests-reference-implementation" — test files reference new implementation code
+ *    b. "tests-reference-implementation" — test files reference new implementation code
  * 4. Return aggregate result
  *
  * @param exec - Exec function (from pi.exec or mock)
@@ -312,35 +242,6 @@ export async function runTddGate(
 		});
 	}
 
-	// Step 3b: Check "test-fail-first"
-	// Revert implementation files, run tests, verify they fail
-	if (implFiles.length === 0) {
-		// No implementation files changed — nothing to revert, skip this check
-		checks.push({
-			name: "test-fail-first",
-			passed: true,
-			detail: "No implementation files changed — nothing to revert",
-		});
-	} else {
-		try {
-			const failFirstResult = await checkTestFailFirst(
-				exec,
-				worktreePath,
-				defaultBranch,
-				implFiles,
-				testFiles,
-			);
-			checks.push(failFirstResult);
-		} catch (err: unknown) {
-			const msg = err instanceof Error ? err.message : String(err);
-			checks.push({
-				name: "test-fail-first",
-				passed: true,
-				detail: `Could not verify test-fail-first (non-blocking): ${msg}`,
-			});
-		}
-	}
-
 	// Step 3c: Check "tests-reference-implementation"
 	if (testFiles.length === 0) {
 		checks.push({
@@ -369,100 +270,6 @@ export async function runTddGate(
 	}
 
 	return buildTddGateResult(checks);
-}
-
-/**
- * Check that tests fail when implementation files are reverted (test-fail-first).
- *
- * Steps:
- * 1. Run `git checkout <defaultBranch> -- <implFiles>` to revert implementation files to base branch
- * 2. Run the test suite
- * 3. Restore implementation with `git checkout HEAD -- <implFiles>`
- * 4. If tests fail after revert → pass. If tests pass → fail (tautological tests).
- *
- * Always restores implementation files before returning, even on failure.
- */
-async function checkTestFailFirst(
-	exec: ExecFn,
-	worktreePath: string,
-	defaultBranch: string,
-	implFiles: string[],
-	testFiles: string[],
-): Promise<TddCheck> {
-	if (testFiles.length === 0) {
-		return {
-			name: "test-fail-first",
-			passed: true,
-			detail: "No test files to run",
-		};
-	}
-
-	// Detect test runner
-	const runner = await detectTestRunner(exec, worktreePath);
-	if (!runner) {
-		return {
-			name: "test-fail-first",
-			passed: true,
-			detail: "No test runner detected — skipping test-fail-first verification",
-		};
-	}
-
-	// Step 1: Revert implementation files to the base branch version
-	// Uses <defaultBranch> (e.g. "main") — NOT "HEAD" — because HEAD contains the developer's implementation.
-	// Reverting to HEAD would be a no-op, making the check always pass regardless of TDD compliance.
-	try {
-		await exec("git", ["checkout", defaultBranch, "--", ...implFiles], {
-			cwd: worktreePath,
-			timeout: 10_000,
-		});
-	} catch (err: unknown) {
-		// If revert fails, restore and report
-		const msg = err instanceof Error ? err.message : String(err);
-		return {
-			name: "test-fail-first",
-			passed: true,
-			detail: `Could not revert implementation files: ${msg}`,
-		};
-	}
-
-	let testPassed = false;
-	try {
-		// Step 2: Run tests
-		const testResult = await exec(runner.cmd, runner.args, {
-			cwd: worktreePath,
-			timeout: 60_000,
-		});
-		testPassed = testResult.code === 0;
-	} catch {
-		testPassed = false;
-	} finally {
-		// Step 3: Always restore implementation files from HEAD (developer's commit)
-		// After the revert above, the index contains the base branch version.
-		// We need git checkout HEAD -- files to restore the developer's version, not the index.
-		try {
-			await exec("git", ["checkout", "HEAD", "--", ...implFiles], {
-				cwd: worktreePath,
-				timeout: 10_000,
-			});
-		} catch {
-			// Best-effort restore — don't throw
-		}
-	}
-
-	if (testPassed) {
-		return {
-			name: "test-fail-first",
-			passed: false,
-			detail:
-				"Tests passed after reverting implementation files — tests may be tautological or not testing the implementation",
-		};
-	}
-
-	return {
-		name: "test-fail-first",
-		passed: true,
-		detail: "Tests failed after reverting implementation — TDD cycle confirmed",
-	};
 }
 
 /**

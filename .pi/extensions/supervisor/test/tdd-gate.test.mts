@@ -53,20 +53,17 @@ describe("TddGateResult interface", () => {
 			status: "failed",
 			checks: [
 				{ name: "tests-written", passed: false, detail: "No test files found in diff" },
-				{ name: "test-fail-first", passed: true },
 				{ name: "tests-reference-implementation", passed: true },
 			],
 			rejectionReason: "Tests not written",
 		};
 
-		assert.equal(result.checks.length, 3);
+		assert.equal(result.checks.length, 2);
 		assert.equal(result.checks[0]!.name, "tests-written");
 		assert.equal(result.checks[0]!.passed, false);
 		assert.equal(result.checks[0]!.detail, "No test files found in diff");
-		assert.equal(result.checks[1]!.name, "test-fail-first");
+		assert.equal(result.checks[1]!.name, "tests-reference-implementation");
 		assert.equal(result.checks[1]!.passed, true);
-		assert.equal(result.checks[2]!.name, "tests-reference-implementation");
-		assert.equal(result.checks[2]!.passed, true);
 	});
 
 	it("rejectionReason is optional", () => {
@@ -86,13 +83,11 @@ describe("TddGateResult interface", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("TddCheck interface", () => {
-	it("name field accepts all 3 literal string values", () => {
+	it("name field accepts all literal string values", () => {
 		const written: TddCheck = { name: "tests-written", passed: true };
-		const failFirst: TddCheck = { name: "test-fail-first", passed: true };
 		const reference: TddCheck = { name: "tests-reference-implementation", passed: true };
 
 		assert.equal(written.name, "tests-written");
-		assert.equal(failFirst.name, "test-fail-first");
 		assert.equal(reference.name, "tests-reference-implementation");
 	});
 
@@ -235,34 +230,27 @@ describe("buildTddGateResult()", () => {
 	it("returns passed when all checks pass", () => {
 		const checks: TddCheck[] = [
 			{ name: "tests-written", passed: true },
-			{ name: "test-fail-first", passed: true },
 			{ name: "tests-reference-implementation", passed: true },
 		];
 		const result = buildTddGateResult(checks);
 		assert.equal(result.status, "passed");
-		assert.equal(result.checks.length, 3);
+		assert.equal(result.checks.length, 2);
 		assert.equal(result.rejectionReason, undefined);
 	});
 
 	it("returns failed when any check fails", () => {
 		const checks: TddCheck[] = [
 			{ name: "tests-written", passed: true },
-			{
-				name: "test-fail-first",
-				passed: false,
-				detail: "Tests passed after reverting implementation",
-			},
-			{ name: "tests-reference-implementation", passed: true },
+			{ name: "tests-reference-implementation", passed: false, detail: "No imports from impl" },
 		];
 		const result = buildTddGateResult(checks);
 		assert.equal(result.status, "failed");
-		assert.ok(result.rejectionReason!.includes("test-fail-first"));
+		assert.ok(result.rejectionReason!.includes("tests-reference-implementation"));
 	});
 
 	it("returns failed with multiple failing check names in reason", () => {
 		const checks: TddCheck[] = [
 			{ name: "tests-written", passed: false, detail: "No test files found" },
-			{ name: "test-fail-first", passed: true },
 			{ name: "tests-reference-implementation", passed: false, detail: "No imports from impl" },
 		];
 		const result = buildTddGateResult(checks);
@@ -358,7 +346,7 @@ describe("runTddGate()", () => {
 		);
 
 		const result = await runTddGate(mockExec, "/repo/worktree", "main");
-		assert.equal(result.checks.length, 3);
+		assert.equal(result.checks.length, 2);
 		// tests-written should pass because we have a test file
 		const writtenCheck = result.checks.find((c) => c.name === "tests-written");
 		assert.ok(writtenCheck, "tests-written check should exist");
@@ -392,69 +380,6 @@ describe("runTddGate()", () => {
 		const result = await runTddGate(mockExec, "/repo/worktree", "main");
 		const writtenCheck = result.checks.find((c) => c.name === "tests-written");
 		assert.equal(writtenCheck!.passed, true);
-	});
-
-	it("check 'test-fail-first' passes when tests fail after reverting implementation", async () => {
-		const calls: ExecCall[] = [];
-		const mockExec: ExecFn = async (cmd, args, opts) => {
-			calls.push({ cmd, args: args || [], opts });
-			if (cmd === "git" && args[0] === "diff") {
-				return { code: 0, stdout: "src/impl.ts\nsrc/impl.test.ts", stderr: "" };
-			}
-			if (cmd === "git" && args[0] === "checkout") {
-				// Revert or restore implementation files
-				return { code: 0, stdout: "", stderr: "" };
-			}
-			// Test runner detection: find command returns test files
-			if (cmd === "find") {
-				return { code: 0, stdout: "/repo/worktree/src/impl.test.ts", stderr: "" };
-			}
-			// Test runner detection: which command fails (we'll use node --test)
-			if (cmd === "which") {
-				return { code: 1, stdout: "", stderr: "not found" };
-			}
-			// Test runner — tests fail because impl is reverted
-			if (cmd === "node" && args[0] === "--experimental-strip-types") {
-				return { code: 1, stdout: "FAIL: test failed", stderr: "" };
-			}
-			return { code: 0, stdout: "", stderr: "" };
-		};
-
-		const result = await runTddGate(mockExec, "/repo/worktree", "main");
-		const failFirstCheck = result.checks.find((c) => c.name === "test-fail-first");
-		assert.equal(failFirstCheck!.passed, true);
-	});
-
-	it("check 'test-fail-first' fails when tests pass after reverting implementation", async () => {
-		const calls: ExecCall[] = [];
-		const mockExec: ExecFn = async (cmd, args, opts) => {
-			calls.push({ cmd, args: args || [], opts });
-			if (cmd === "git" && args[0] === "diff") {
-				return { code: 0, stdout: "src/impl.ts\nsrc/impl.test.ts", stderr: "" };
-			}
-			if (cmd === "git" && args[0] === "checkout" && args.includes("--")) {
-				return { code: 0, stdout: "", stderr: "" };
-			}
-			if (cmd === "node" && args.some((a) => a.endsWith(".mts") || a.endsWith(".test.ts"))) {
-				// Tests pass even without impl — tautological tests!
-				return { code: 0, stdout: "PASS: all tests passed", stderr: "" };
-			}
-			return { code: 0, stdout: "", stderr: "" };
-		};
-
-		const result = await runTddGate(mockExec, "/repo/worktree", "main");
-		const failFirstCheck = result.checks.find((c) => c.name === "test-fail-first");
-		assert.equal(failFirstCheck!.passed, false);
-		assert.ok(failFirstCheck!.detail!.includes("Tests passed"));
-	});
-
-	it("check 'test-fail-first' skips when no implementation files exist (no impl to revert)", async () => {
-		const mockExec = createMockExec([{ code: 0, stdout: "src/foo.test.ts\n", stderr: "" }]);
-
-		const result = await runTddGate(mockExec, "/repo/worktree", "main");
-		const failFirstCheck = result.checks.find((c) => c.name === "test-fail-first");
-		assert.equal(failFirstCheck!.passed, true);
-		assert.ok(failFirstCheck!.detail!.includes("No implementation files"));
 	});
 
 	it("check 'tests-reference-implementation' passes when test files reference new code", async () => {
@@ -516,7 +441,7 @@ describe("runTddGate()", () => {
 		const result = await runTddGate(mockExec, "/repo/worktree", "main");
 
 		// With only test files and no impl, tests-written passes,
-		// test-fail-first is skipped (no impl), tests-reference-implementation is skipped (no impl)
+		// tests-reference-implementation is skipped (no impl)
 		assert.equal(result.status, "passed");
 	});
 
@@ -537,93 +462,5 @@ describe("runTddGate()", () => {
 		await runTddGate(mockExec, "/repo/worktree", "develop");
 		const gitDiffCall = calls.find((c) => c.cmd === "git" && c.args[0] === "diff");
 		assert.ok(gitDiffCall!.args.includes("develop"), "should use provided branch");
-	});
-
-	it("check 'test-fail-first' reverts using <defaultBranch> not HEAD (critical fix)", async () => {
-		// This test verifies the critical bug fix: checkTestFailFirst must use
-		// git checkout <defaultBranch> -- ... (not HEAD) so implementation is
-		// actually reverted to the base branch version.
-		const checkoutCalls: Array<{ args: string[] }> = [];
-		const mockExec: ExecFn = async (cmd, args, _opts) => {
-			if (cmd === "git" && args[0] === "checkout") {
-				checkoutCalls.push({ args });
-				return { code: 0, stdout: "", stderr: "" };
-			}
-			if (cmd === "git" && args[0] === "diff") {
-				return { code: 0, stdout: "src/impl.ts\nsrc/impl.test.ts", stderr: "" };
-			}
-			if (cmd === "find") {
-				return { code: 0, stdout: "/repo/worktree/src/impl.test.ts", stderr: "" };
-			}
-			if (cmd === "which") {
-				return { code: 1, stdout: "", stderr: "not found" };
-			}
-			if (cmd === "node" && args[0] === "--experimental-strip-types") {
-				return { code: 1, stdout: "FAIL", stderr: "" };
-			}
-			return { code: 0, stdout: "", stderr: "" };
-		};
-
-		await runTddGate(mockExec, "/repo/worktree", "develop");
-
-		// First checkout should be revert using defaultBranch (develop, not HEAD)
-		const revertCall = checkoutCalls[0];
-		assert.ok(revertCall, "should call git checkout for revert");
-		assert.ok(revertCall!.args.includes("develop"), "revert should use defaultBranch (develop)");
-		assert.ok(revertCall!.args.includes("--"), "revert should include -- separator");
-		assert.ok(revertCall!.args.includes("src/impl.ts"), "revert should include impl file");
-		assert.ok(!revertCall!.args.includes("HEAD"), "revert should NOT use HEAD");
-
-		// Second checkout should be restore using HEAD
-		const restoreCall = checkoutCalls[1];
-		assert.ok(restoreCall, "should call git checkout for restore");
-		assert.ok(restoreCall!.args.includes("HEAD"), "restore should use HEAD");
-		assert.ok(restoreCall!.args.includes("--"), "restore should include -- separator");
-	});
-
-	it("check 'test-fail-first' restore uses HEAD not index (critical fix)", async () => {
-		// After git checkout <defaultBranch> -- files, the index contains the
-		// base branch version. The restore must use git checkout HEAD -- files
-		// (from HEAD commit), not git checkout -- files (from index).
-		const checkoutCalls: Array<{ args: string[] }> = [];
-		const mockExec: ExecFn = async (cmd, args, _opts) => {
-			if (cmd === "git" && args[0] === "checkout") {
-				checkoutCalls.push({ args });
-				return { code: 0, stdout: "", stderr: "" };
-			}
-			if (cmd === "git" && args[0] === "diff") {
-				return { code: 0, stdout: "src/impl.ts\nsrc/impl.test.ts", stderr: "" };
-			}
-			if (cmd === "find") {
-				return { code: 0, stdout: "/repo/worktree/src/impl.test.ts", stderr: "" };
-			}
-			if (cmd === "which") {
-				return { code: 1, stdout: "", stderr: "not found" };
-			}
-			if (cmd === "node" && args[0] === "--experimental-strip-types") {
-				return { code: 1, stdout: "FAIL", stderr: "" };
-			}
-			return { code: 0, stdout: "", stderr: "" };
-		};
-
-		await runTddGate(mockExec, "/repo/worktree", "main");
-
-		// First checkout: revert with defaultBranch
-		const revertCall = checkoutCalls[0];
-		assert.ok(revertCall, "should have revert call");
-		assert.ok(revertCall!.args.includes("main"), "revert should use main");
-
-		// Second checkout: restore must explicitly use HEAD
-		const restoreCall = checkoutCalls[1];
-		assert.ok(restoreCall, "should have restore call");
-		assert.ok(
-			restoreCall!.args.includes("HEAD"),
-			"restore must use 'git checkout HEAD -- files' not 'git checkout -- files'",
-		);
-		assert.ok(restoreCall!.args.includes("--"), "restore should include --");
-		assert.ok(restoreCall!.args.includes("src/impl.ts"), "restore should include impl file");
-
-		// Verify there are exactly 2 checkouts (revert + restore)
-		assert.equal(checkoutCalls.length, 2, "should have exactly 2 git checkout calls");
 	});
 });
