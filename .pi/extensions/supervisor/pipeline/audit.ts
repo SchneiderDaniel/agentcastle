@@ -160,7 +160,12 @@ export async function runTscAndLspAudit(
 		ctx.ui.setStatus("supervisor", "Running TDD gate...");
 		getDebugLogger().info("pipeline-audit", "Running TDD gate", { worktreePath });
 		try {
-			const tddResult = await runTddGate(execFn, worktreePath, config.defaultBranch || "main");
+			const tddResult = await runTddGate(
+				execFn,
+				worktreePath,
+				config.defaultBranch || "main",
+				config.assertFunctionNames,
+			);
 
 			if (tddResult.status === "failed") {
 				const failedCheckNames = tddResult.checks

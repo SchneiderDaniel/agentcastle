@@ -1,8 +1,8 @@
 // ─── TDD Gate ─────────────────────────────────────────────────────
 // Deterministic TDD verification gate for the supervisor pipeline.
 // Runs after developer commit, before auditor dispatch.
-// Verifies that tests were written, tests fail without implementation,
-// and tests reference new implementation code.
+// Verifies that tests were written, contain assertions, and that
+// exported symbols from implementation are exercised in tests.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, extname, basename } from "node:path";
@@ -26,7 +26,7 @@ export interface TddGateResult {
 /** A single TDD check within the gate. */
 export interface TddCheck {
 	/** Check name. */
-	name: "tests-written" | "test-fail-first" | "tests-reference-implementation";
+	name: "tests-written" | "test-assertions" | "test-covers-symbols";
 	/** Whether the check passed. */
 	passed: boolean;
 	/** Optional human-readable detail about the check result. */
@@ -159,6 +159,361 @@ export function buildTddGateResult(checks: TddCheck[]): TddGateResult {
 	};
 }
 
+// ─── Assertion Detection ───────────────────────────────────────────
+
+/**
+ * Built-in regex for detecting assertion lines.
+ * Matches common assertion patterns in test files.
+ */
+const DEFAULT_ASSERT_REGEX =
+	/(?:assert|expect|t\.\w+|ok\(|deepEqual|strictEqual|notStrictEqual|throws|rejects|doesNotThrow|doesNotReject|ifError|fail)/;
+
+/**
+ * Build a combined regex for assertion line detection.
+ * Custom patterns are treated as plain function names (escaped for regex safety).
+ * The built-in DEFAULT_ASSERT_REGEX is always included as a fallback.
+ */
+function buildAssertionRegex(customPatterns: string[]): RegExp {
+	if (customPatterns.length === 0) {
+		return DEFAULT_ASSERT_REGEX;
+	}
+	// Escape custom patterns (they are plain function names like "verify", "myAssert")
+	const escaped = customPatterns.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+	return new RegExp(`${escaped.join("|")}|${DEFAULT_ASSERT_REGEX.source}`);
+}
+
+/**
+ * Check if a line of code contains a placeholder assertion.
+ * A placeholder assertion is one where ALL arguments to every assertion
+ * call on the line are literal values (true/false/null/undefined/numbers/strings).
+ * Returns true only if assertion calls exist AND all their args are literals.
+ *
+ * Creates a fresh regex each call to avoid state issues with the `g` flag
+ * (important for parallel test execution).
+ */
+function isPlaceholderLine(line: string): boolean {
+	const assertCallRegex =
+		/(?:(?:assert|expect)\.\w+|expect|t\.\w+|ok|deepEqual|strictEqual|notStrictEqual|throws|rejects|doesNotThrow|doesNotReject|ifError|fail)\s*\(([^)]*)\)/g;
+
+	// Remove string literals to avoid false matches on content
+	const cleaned = line
+		.replace(/'(?:[^'\\]|\\.)*'/g, "")
+		.replace(/"(?:[^"\\]|\\.)*"/g, "")
+		.replace(/`(?:[^`\\]|\\.)*`/g, "");
+
+	// Match assertion function calls with their parenthesized arguments
+	let match: RegExpExecArray | null;
+	let hasAnyAssertionCall = false;
+
+	while ((match = assertCallRegex.exec(cleaned)) !== null) {
+		hasAnyAssertionCall = true;
+		const args = match[1].trim();
+		if (!args) continue;
+
+		// Split args by comma (simplistic — won't handle nested parens, but
+		// nested parens imply non-literal args so this is conservative)
+		const argList = args
+			.split(",")
+			.map((a) => a.trim())
+			.filter(Boolean);
+
+		for (const arg of argList) {
+			// Check if this arg is a literal
+			if (/^(true|false|null|undefined|-?\d+(?:\.\d+)?)$/i.test(arg)) continue;
+			if (/^["'`]/.test(arg)) continue; // String literal
+			// Non-literal found — this assertion has real arguments
+			return false;
+		}
+	}
+
+	return hasAnyAssertionCall;
+}
+
+/**
+ * Check that test files contain assertion statements.
+ *
+ * Scans each test file for assertion patterns (assert.*, expect.*, t.is, ok(, etc.)
+ * and rejects files with no assertions or only placeholder assertions
+ * (all-literal arguments like `expect(true).toBe(true)`).
+ *
+ * @param testFiles - List of test file paths (relative to worktreePath)
+ * @param worktreePath - Path to the worktree
+ * @param assertPatterns - Optional custom assertion function name patterns
+ * @returns TddCheck with pass/fail
+ */
+export function checkTestAssertions(
+	testFiles: string[],
+	worktreePath: string,
+	assertPatterns?: string[],
+): TddCheck {
+	const assertRegex = buildAssertionRegex(assertPatterns ?? []);
+
+	let anyFileHasNonPlaceholderAssertion = false;
+	let filesChecked = 0;
+	const details: string[] = [];
+
+	for (const testFile of testFiles) {
+		const fullPath = join(worktreePath, testFile);
+		if (!existsSync(fullPath)) {
+			details.push(`${testFile}: file not found`);
+			continue;
+		}
+		filesChecked++;
+
+		const content = readFileSync(fullPath, "utf-8");
+
+		// Check non-comment lines for assertion patterns
+		const lines = content.split("\n");
+		const assertionLines: string[] = [];
+
+		for (const line of lines) {
+			const trimmedLine = line.trim();
+			// Skip comment-only lines
+			if (
+				trimmedLine.startsWith("//") ||
+				trimmedLine.startsWith("*") ||
+				trimmedLine.startsWith("/*")
+			) {
+				continue;
+			}
+			if (assertRegex.test(trimmedLine)) {
+				assertionLines.push(trimmedLine);
+			}
+		}
+
+		if (assertionLines.length === 0) {
+			details.push(`${testFile}: no assertion statements found`);
+			continue;
+		}
+
+		// Check for placeholder assertions (all literal args)
+		const hasNonPlaceholder = assertionLines.some((line) => !isPlaceholderLine(line));
+
+		if (hasNonPlaceholder) {
+			anyFileHasNonPlaceholderAssertion = true;
+			details.push(`${testFile}: ${assertionLines.length} assertion(s) found`);
+		} else {
+			details.push(`${testFile}: only placeholder assertions found (all literal arguments)`);
+		}
+	}
+
+	if (filesChecked === 0) {
+		return {
+			name: "test-assertions",
+			passed: true,
+			detail: "No test files to check",
+		};
+	}
+
+	if (anyFileHasNonPlaceholderAssertion) {
+		return {
+			name: "test-assertions",
+			passed: true,
+			detail: details.join("; "),
+		};
+	}
+
+	return {
+		name: "test-assertions",
+		passed: false,
+		detail: details.join("; "),
+	};
+}
+
+// ─── Symbol Coverage ───────────────────────────────────────────────
+
+/**
+ * Extract runtime export names from implementation file content.
+ * Filters out type-only exports (export type, export interface).
+ *
+ * @returns Array of export symbol names (runtime only)
+ */
+function extractRuntimeExports(content: string): string[] {
+	const exports: string[] = [];
+
+	// 1. export function name(...)
+	const funcRegex = /export\s+(?:default\s+)?function\s+(\w+)/g;
+	let match: RegExpExecArray | null;
+	while ((match = funcRegex.exec(content)) !== null) {
+		exports.push(match[1]!);
+	}
+
+	// 2. export class Name { ... }
+	const classRegex = /export\s+(?:default\s+)?class\s+(\w+)/g;
+	while ((match = classRegex.exec(content)) !== null) {
+		exports.push(match[1]!);
+	}
+
+	// 3. export const/let/var name = ...
+	const varRegex = /export\s+(?:default\s+)?(?:const|let|var)\s+(\w+)/g;
+	while ((match = varRegex.exec(content)) !== null) {
+		exports.push(match[1]!);
+	}
+
+	// 4. export enum Name { ... }
+	const enumRegex = /export\s+(?:default\s+)?enum\s+(\w+)/g;
+	while ((match = enumRegex.exec(content)) !== null) {
+		exports.push(match[1]!);
+	}
+
+	// 5. export { name1, name2, ... } — named re-export block
+	const namedExportRegex = /export\s+\{\s*([^}]+)\s*\}/g;
+	while ((match = namedExportRegex.exec(content)) !== null) {
+		const names = match[1]!
+			.split(",")
+			.map((n) => n.trim())
+			.filter(Boolean);
+		for (const name of names) {
+			// Handle 'orig as alias' — use the alias for assertion matching
+			const exportName = name
+				.split(/\s+as\s+/)
+				.pop()!
+				.trim();
+			if (exportName) exports.push(exportName);
+		}
+	}
+
+	return [...new Set(exports)]; // Deduplicate
+}
+
+/**
+ * Check if a line of test code contains an assertion call.
+ */
+function lineHasAssertion(line: string): boolean {
+	return DEFAULT_ASSERT_REGEX.test(line);
+}
+
+/**
+ * Check that implementation symbols are exercised in test assertions.
+ *
+ * For each implementation file, extracts runtime exports (filtering out
+ * type-only exports like `export type` and `export interface`). Then
+ * verifies that at least one symbol from each file appears in an assertion
+ * context within the test files.
+ *
+ * Relaxed rule: at least one symbol per impl file must be covered by at
+ * least one assertion in the test suite. This accommodates mock-isolated
+ * tests where DI inverts symbol references.
+ *
+ * @param testFiles - List of test file paths (relative to worktreePath)
+ * @param implFiles - List of implementation file paths (relative to worktreePath)
+ * @param worktreePath - Path to the worktree
+ * @param _assertPatterns - Optional custom assertion function name patterns (unused, for symmetry)
+ * @returns TddCheck with pass/fail
+ */
+export function checkTestCoversSymbols(
+	testFiles: string[],
+	implFiles: string[],
+	worktreePath: string,
+	_assertPatterns?: string[],
+): TddCheck {
+	// Edge cases
+	if (testFiles.length === 0) {
+		return {
+			name: "test-covers-symbols",
+			passed: true,
+			detail: "No test files — nothing to verify",
+		};
+	}
+
+	if (implFiles.length === 0) {
+		return {
+			name: "test-covers-symbols",
+			passed: true,
+			detail: "No implementation files — nothing to verify",
+		};
+	}
+
+	// Step 1: Extract runtime exports from each impl file
+	type FileExports = { file: string; runtimeExports: string[] };
+	const allFileExports: FileExports[] = [];
+
+	for (const implFile of implFiles) {
+		const fullPath = join(worktreePath, implFile);
+		let runtimeExports: string[] = [];
+
+		try {
+			if (existsSync(fullPath)) {
+				const content = readFileSync(fullPath, "utf-8");
+				runtimeExports = extractRuntimeExports(content);
+			}
+		} catch {
+			// If reading fails, treat as no exports
+		}
+
+		allFileExports.push({ file: implFile, runtimeExports });
+	}
+
+	// Step 2: Check if all exported files have zero runtime exports
+	const filesWithExports = allFileExports.filter((fe) => fe.runtimeExports.length > 0);
+
+	if (filesWithExports.length === 0) {
+		return {
+			name: "test-covers-symbols",
+			passed: true,
+			detail: "No runtime exports found in implementation files (type-only or no exports)",
+		};
+	}
+
+	// Step 3: Read test files and check which symbols appear in assertion contexts
+	const allTestContent = testFiles
+		.map((tf) => {
+			const fullPath = join(worktreePath, tf);
+			try {
+				if (existsSync(fullPath)) return readFileSync(fullPath, "utf-8");
+			} catch {
+				// Ignore read errors
+			}
+			return "";
+		})
+		.filter(Boolean)
+		.join("\n");
+
+	if (!allTestContent) {
+		return {
+			name: "test-covers-symbols",
+			passed: false,
+			detail: "Test files could not be read",
+		};
+	}
+
+	// Step 4: For each file, check if at least one of its runtime exports
+	// appears in an assertion context within any test file
+	const uncoveredFiles: string[] = [];
+
+	for (const fe of filesWithExports) {
+		const isCovered = fe.runtimeExports.some((symbol) => {
+			// Check each line that contains an assertion pattern
+			const testLines = allTestContent.split("\n");
+			return testLines.some((line) => {
+				if (!lineHasAssertion(line)) return false;
+				// The symbol must appear as a word boundary match on the same line
+				// as an assertion call (handles destructured imports, direct references)
+				const symbolRegex = new RegExp(`\\b${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+				return symbolRegex.test(line);
+			});
+		});
+
+		if (!isCovered) {
+			uncoveredFiles.push(fe.file);
+		}
+	}
+
+	if (uncoveredFiles.length > 0) {
+		return {
+			name: "test-covers-symbols",
+			passed: false,
+			detail: `Uncovered implementation files: ${uncoveredFiles.join(", ")}. No runtime exports from these files appear in test assertions.`,
+		};
+	}
+
+	return {
+		name: "test-covers-symbols",
+		passed: true,
+		detail: `All ${filesWithExports.length} implementation file(s) with runtime exports have symbols covered in test assertions`,
+	};
+}
+
 // ─── Main Orchestration ────────────────────────────────────────────
 
 /**
@@ -169,20 +524,21 @@ export function buildTddGateResult(checks: TddCheck[]): TddGateResult {
  * 2. Classify changed files into test files and implementation files
  * 3. Run TDD checks:
  *    a. "tests-written" — at least one test file in diff
- *    b. "tests-reference-implementation" — test files reference new implementation code
+ *    b. "test-assertions" — test files contain assertion statements
+ *    c. "test-covers-symbols" — implementation symbols appear in test assertions
  * 4. Return aggregate result
  *
  * @param exec - Exec function (from pi.exec or mock)
  * @param worktreePath - Path to the worktree
  * @param defaultBranch - Default branch name (e.g. "main")
- * @param testPatterns - Optional custom test file patterns (default: standard patterns)
+ * @param assertPatterns - Optional custom assertion function names (overrides defaults)
  * @returns TddGateResult
  */
 export async function runTddGate(
 	exec: ExecFn,
 	worktreePath: string,
 	defaultBranch: string,
-	_testPatterns?: string[],
+	assertPatterns?: string[],
 ): Promise<TddGateResult> {
 	const checks: TddCheck[] = [];
 	let changedFiles: string[] = [];
@@ -242,126 +598,53 @@ export async function runTddGate(
 		});
 	}
 
-	// Step 3c: Check "tests-reference-implementation"
+	// Step 3b: Check "test-assertions"
+	if (testFiles.length > 0) {
+		try {
+			const assertionsResult = checkTestAssertions(testFiles, worktreePath, assertPatterns);
+			checks.push(assertionsResult);
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : String(err);
+			checks.push({
+				name: "test-assertions",
+				passed: true,
+				detail: `Could not verify test assertions (non-blocking): ${msg}`,
+			});
+		}
+	}
+	// If no test files, we skip test-assertions (already reported by tests-written)
+
+	// Step 3c: Check "test-covers-symbols"
 	if (testFiles.length === 0) {
 		checks.push({
-			name: "tests-reference-implementation",
+			name: "test-covers-symbols",
 			passed: true,
 			detail: "No test files — nothing to verify",
 		});
 	} else if (implFiles.length === 0) {
 		checks.push({
-			name: "tests-reference-implementation",
+			name: "test-covers-symbols",
 			passed: true,
 			detail: "No implementation files — nothing to verify",
 		});
 	} else {
 		try {
-			const refResult = await checkTestsReferenceImpl(exec, worktreePath, testFiles, implFiles);
-			checks.push(refResult);
+			const coversResult = checkTestCoversSymbols(
+				testFiles,
+				implFiles,
+				worktreePath,
+				assertPatterns,
+			);
+			checks.push(coversResult);
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
 			checks.push({
-				name: "tests-reference-implementation",
+				name: "test-covers-symbols",
 				passed: true,
-				detail: `Could not verify test-implementation references (non-blocking): ${msg}`,
+				detail: `Could not verify symbol coverage (non-blocking): ${msg}`,
 			});
 		}
 	}
 
 	return buildTddGateResult(checks);
-}
-
-/**
- * Check that test files reference implementation files.
- *
- * Reads test file contents and checks for imports/requires of implementation files.
- * This is a lightweight check — it looks for file names and export names
- * from implementation files appearing in test files.
- */
-async function checkTestsReferenceImpl(
-	exec: ExecFn,
-	worktreePath: string,
-	testFiles: string[],
-	implFiles: string[],
-): Promise<TddCheck> {
-	// Extract potential export names from implementation files
-	const implKeywords = new Set<string>();
-	for (const implFile of implFiles) {
-		// Add the file's basename without extension
-		const base = basename(implFile);
-		const dotIdx = base.lastIndexOf(".");
-		const name = dotIdx > 0 ? base.slice(0, dotIdx) : base;
-		implKeywords.add(name);
-		implKeywords.add(`./${name}`);
-		implKeywords.add(`../${name}`);
-
-		// Try to read implementation file and extract export names
-		try {
-			const fullPath = join(worktreePath, implFile);
-			if (existsSync(fullPath)) {
-				const content = readFileSync(fullPath, "utf-8");
-				// Extract export function/class/const names
-				const exportRegex =
-					/export\s+(?:default\s+)?(?:function|class|const|let|var|interface|type|enum)\s+(\w+)/g;
-				let match: RegExpExecArray | null;
-				while ((match = exportRegex.exec(content)) !== null) {
-					implKeywords.add(match[1]!);
-				}
-				// Also extract named exports: export { Foo, Bar }
-				const namedExportRegex = /export\s+\{\s*([^}]+)\s*\}/g;
-				while ((match = namedExportRegex.exec(content)) !== null) {
-					const names = match[1]!.split(",").map((n) =>
-						n
-							.trim()
-							.split(/\s+as\s+/)[0]!
-							.trim(),
-					);
-					for (const n of names) {
-						if (n) implKeywords.add(n);
-					}
-				}
-			}
-		} catch {
-			// If reading fails, we still have basenames
-		}
-	}
-
-	// Check each test file for references to implementation
-	let anyReferenceFound = false;
-	for (const testFile of testFiles) {
-		try {
-			const fullPath = join(worktreePath, testFile);
-			if (!existsSync(fullPath)) continue;
-
-			const content = readFileSync(fullPath, "utf-8");
-
-			// Check if any implementation keyword appears in the test
-			for (const keyword of implKeywords) {
-				if (keyword.length < 2) continue; // Skip very short keywords
-				if (content.includes(keyword)) {
-					anyReferenceFound = true;
-					break;
-				}
-			}
-
-			if (anyReferenceFound) break;
-		} catch {
-			continue;
-		}
-	}
-
-	if (anyReferenceFound) {
-		return {
-			name: "tests-reference-implementation",
-			passed: true,
-			detail: "Test files reference implementation code",
-		};
-	}
-
-	return {
-		name: "tests-reference-implementation",
-		passed: false,
-		detail: "Test files do not reference any implementation code",
-	};
 }

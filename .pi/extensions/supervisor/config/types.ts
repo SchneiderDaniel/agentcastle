@@ -31,6 +31,10 @@ export interface SupervisorConfig {
 	commentSummaryThreshold?: number;
 	/** Max characters per comment body before truncation with overflow note. Default: 2000. */
 	maxCommentChars?: number;
+	/** Custom assertion function names for TDD gate.
+	 *  When set, checkTestAssertions and checkTestCoversSymbols will also
+	 *  recognize these function names as valid assertion patterns. */
+	assertFunctionNames?: string[];
 }
 
 export interface AgentFrontmatter {
