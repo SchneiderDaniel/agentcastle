@@ -330,6 +330,23 @@ export async function handleSupervisorCommand(
 							.map((c) => c.body)
 							.find((body) => /##\s*Research\s*Findings/i.test(body))
 					: undefined;
+			// Extract latest audit rejection comment for developer feedback loop
+			// When audit rejects and pipeline loops back to Implementation, the developer
+			// needs to see EXACTLY what the auditor found wrong — not just a generic
+			// list of trusted comments where audit feedback is buried.
+			const auditFeedback: string | undefined =
+				agentName === "developer"
+					? (() => {
+							// Find the latest comment containing "## Audit Rejected"
+							for (let i = loopFilteredData.comments.length - 1; i >= 0; i--) {
+								const body = loopFilteredData.comments[i]?.body || "";
+								if (/##\s*Audit\s*Rejected/i.test(body)) {
+									return body;
+								}
+							}
+							return undefined;
+						})()
+					: undefined;
 			const task = buildAgentTask(
 				agentName,
 				issueNum,
@@ -343,15 +360,10 @@ export async function handleSupervisorCommand(
 				config.branchPrefix!,
 				worktreePath,
 				worktreeBranch,
-				loopFilteredData.comments.length > 1
-					? summarizeComments(
-							loopFilteredData.comments,
-							config.commentSummaryThreshold,
-							config.maxCommentChars,
-						)
-					: undefined,
+				summarizeComments(loopFilteredData.comments),
 				dupContext,
 				researchFindings,
+				auditFeedback,
 			);
 
 			getDebugLogger().info("handler", `Dispatching agent ${agentName}`, {

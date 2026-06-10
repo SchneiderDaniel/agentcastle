@@ -78,6 +78,7 @@ If contradictions detected across sources, add before other sections:
 
 ## Rules
 
+- **READ ALL trusted comments** in the Trusted Comments section before starting. Every comment from every trusted author contains context you need.
 - **NEVER** fetch issue from GitHub — use ONLY pre-filtered data in your task
 - **NEVER** modify code, create branches, edit files, change issue status, or create PRs
 - **NEVER** make recommendations or architectural judgments. Present findings only.

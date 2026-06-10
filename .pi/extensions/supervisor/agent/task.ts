@@ -8,7 +8,7 @@ import type { FilteredIssueData } from "../config/types.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
-const MAX_COMMENT_CHARS = 2000;
+// No constants needed — agents always see the full picture.
 
 export function generateBranchName(
 	issueNum: number,
@@ -75,62 +75,26 @@ The pipeline extracts it automatically.
 `;
 
 /**
- * Truncate a comment body to `maxLength` chars with an overflow note.
+ * Format all trusted comments verbatim with labels.
+ * Every comment from every trusted author is included in full.
+ * No truncation, no summarization, no size caps — agents always see the full picture.
  */
-export function truncateComment(body: string, maxLength: number = MAX_COMMENT_CHARS): string {
-	if (body.length <= maxLength) return body;
-	const overflow = body.length - maxLength;
-	return body.slice(0, maxLength) + `\n…[+${overflow} more chars]`;
+export function summarizeComments(comments: Array<{ author: string; body: string }>): string {
+	if (comments.length === 0) return "(no trusted comments)";
+
+	return comments
+		.map((c, i) => `--- Comment #${i + 1} by @${c.author} ---\n${c.body}`)
+		.join("\n\n");
 }
 
 /**
- * Summarize a list of trusted comments.
- * When > threshold comments: first n-1 are summarized into bullet list, latest is in full.
- * When ≤ threshold comments: renders all verbatim.
- * Comments > maxCommentChars are truncated with overflow note.
- *
- * @param threshold - Comment count threshold (default 7). Set to 0 to always summarize.
- * @param maxCommentChars - Max chars per comment body before truncation (default 2000).
+ * Truncate a string to `maxLength` chars with overflow notice.
+ * Utility available for pipeline code, not used internally.
  */
-export function summarizeComments(
-	comments: Array<{ author: string; body: string }>,
-	threshold: number = 7,
-	maxCommentChars: number = MAX_COMMENT_CHARS,
-): string {
-	if (comments.length === 0) return "(no trusted comments)";
-
-	if (threshold > 0 && comments.length <= threshold) {
-		// ≤ threshold comments: render all verbatim (threshold=0 = always summarize)
-		return comments
-			.map((c, i) => {
-				const body = truncateComment(c.body, maxCommentChars);
-				return `--- Comment #${i + 1} by @${c.author} ---\n${body}`;
-			})
-			.join("\n\n");
-	}
-
-	// > threshold comments: summarize all but the latest
-	const latest = comments[comments.length - 1];
-	const earlier = comments.slice(0, -1);
-
-	// Build summarized bullet list for earlier comments
-	const bullets = earlier
-		.map((c) => {
-			const preview = truncateComment(c.body, maxCommentChars);
-			// Take first meaningful line for the summary
-			const firstLine =
-				preview.split("\n").find((l) => l.trim() && !l.startsWith("---")) || preview;
-			return `- @${c.author}: ${firstLine.slice(0, 200)}`;
-		})
-		.join("\n");
-
-	const summaryBlock = ["### Previous Comments (summarized)", bullets].join("\n");
-
-	// Latest comment in full (also truncate if needed)
-	const latestBody = truncateComment(latest.body, maxCommentChars);
-	const latestBlock = `--- Comment #${comments.length} by @${latest.author} ---\n${latestBody}`;
-
-	return `${summaryBlock}\n\n${latestBlock}`;
+export function truncateComment(body: string, maxLength: number = 2000): string {
+	if (body.length <= maxLength) return body;
+	const overflow = body.length - maxLength;
+	return body.slice(0, maxLength) + `\n…[+${overflow} more chars]`;
 }
 
 /**
@@ -176,12 +140,8 @@ export function buildAgentTask(
 	if (summarizedRejections !== undefined) {
 		commentsBlock = summarizedRejections;
 	} else if (filteredData.comments.length > 0) {
-		commentsBlock = filteredData.comments
-			.map((c, i) => {
-				const body = truncateComment(c.body);
-				return `--- Comment #${i + 1} by @${c.author} ---\n${body}`;
-			})
-			.join("\n\n");
+		// All trusted comments verbatim — no truncation. Agents need full text.
+		commentsBlock = summarizeComments(filteredData.comments);
 	} else {
 		commentsBlock = "(no trusted comments)";
 	}
