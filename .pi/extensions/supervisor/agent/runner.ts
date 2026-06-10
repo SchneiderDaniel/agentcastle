@@ -187,12 +187,29 @@ export async function runAgentSubprocess(
 		args.push("--thinking", agent.config.thinking.trim());
 	}
 
+	// Warn if task is large enough to risk ARG_MAX (Linux default: 2MB)
+	const ARG_MAX_WARN_THRESHOLD = 1_000_000; // 1MB
+	const totalArgChars = args.reduce((sum, a) => sum + a.length, 0);
+	if (totalArgChars > ARG_MAX_WARN_THRESHOLD) {
+		log.warn(
+			"agent-runner",
+			`Subprocess args large (${totalArgChars} chars) — risk of ARG_MAX overflow for ${agent.config.name}`,
+		);
+		getErrorCollector().push(
+			"runner",
+			"warn",
+			`Large subprocess args: ${totalArgChars} chars for ${agent.config.name}`,
+		);
+	}
+
 	log.info("agent-runner", `runAgentSubprocess: ${agent.config.name}`, {
 		effectiveCwd,
 		model,
 		timeoutMs,
 		tools,
 		skillCount: skillPaths.length,
+		taskLen: task.length,
+		argChars: totalArgChars,
 	});
 
 	const widgetId = `agent-${agent.config.name}`;

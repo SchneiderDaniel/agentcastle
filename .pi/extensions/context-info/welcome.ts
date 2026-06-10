@@ -83,7 +83,7 @@ export function showWelcomeBanner(
 				const muted = (s: string) => theme.fg("muted", s);
 				const accent = (s: string) => theme.fg("accent", s);
 
-				const baseW = 64;
+				const baseW = 88;
 
 				// ── Centered title ────────────────────────
 				const titleText = "\ud83c\udff0 Agent Castle";
@@ -103,17 +103,44 @@ export function showWelcomeBanner(
 					sidValue +
 					" ".repeat(Math.max(0, baseW - sidPad - sidRawW));
 
-				// ── Castle art (towers + walls) ────────────
+				// ── Castle art with stats embedded ──────────
+				const lIcon = loggerState == null ? "❓" : loggerState ? "🟢" : "🔴";
+				const aIcon = adviceState == null ? "❓" : adviceState ? "🟢" : "🔴";
+
 				const castle: string[] = [
-					"       #_||_#                #_||_#                #_||_#",
-					"       \\####/                \\####/                \\####/",
-					"       _|  |_                _|  |_                _|  |_",
-					"  # # # |  | # # # # # # # # #|  | # # # # # # # #  |  | # # #",
-					"  |-----|  |-----|-------|----|  |----|-------|-----|  |-----|",
-					"  |     /  \\     |       |    /  \\    |       |     /  \\     |",
-					" /     |    |     \\  /\\  /   |    |   \\  /\\  /     |    |     \\",
-					"|      |    |      \\/  \\/    |    |    \\/  \\/      |    |      |",
-					"|______[____]________________[____]________________[____]______|",
+					"                                                #@@@%+:",
+					"                                              %@#===+#%@@@#:",
+					"                                             %@+=========+*%@@#.",
+					"                                            #@======------====#%@#:",
+					"                                          :#@+==========-----====*%@%:",
+					"                                        :#@#===+@@%*+=======--:-====*%@*.",
+					"                                      -#@*=======+*#@@%*+=====--======+#@%-",
+					"                                    =@@*=============+*%@%+-=======++**==*%%",
+					"                                  =%%*==================+**====+#%@@#*=    #@",
+					"                                +%%*=========================*@@+.         @=",
+					"                              -*#=:---================+*#%%@@@=             @%",
+					"                            =#*-:--:-=====-:::-==*#+%@+==.                  %@",
+					"                         .#%+=::-:-==:*#%@#+%@%+.                           #@",
+					`                       .@@#=:===%*%%*+#=:   ${muted("Session:")} ${lIcon} ${accent("Logger")}  ${aIcon} ${accent("Advice")}  #@`,
+					"                      #@#-:.+%-..                                           %@",
+					"                      %%                                                    @@",
+					`                      %%   ${muted("🧩 Extensions:")} ${accent(String(extCount))} ${dim("(/explain-extensions)")}         #@`,
+					`                      %%   ${muted("📝 Prompts:")}     ${accent(String(promptCount))} ${dim("(/explain-prompts)")}            =@`,
+					"\t\t              %%   " +
+						muted("🎨 Themes:") +
+						"       " +
+						accent(String(themeCount)) +
+						"                               #@",
+					"\t\t              %%   " +
+						muted("🔧 Skills:") +
+						"       " +
+						accent(String(skillCount)) +
+						" " +
+						dim("(/explain-skills)") +
+						"             =@",
+					"\t\t              %@                                                 ## %@",
+					"                      #@*==+**#%@@%#+:.@*%%+-.@*%%=@.@*%%+-. *%%+-==*%%+-. *%%",
+					"                      #@*=%==*%%+-.=+**#%%=@.@*%%+-. *%%+-@@%#+:.@*%%+-.@* *%%",
 				];
 
 				// Pad all castle lines to baseW
@@ -122,94 +149,7 @@ export function showWelcomeBanner(
 					return dim(w < baseW ? line + " ".repeat(baseW - w) : line);
 				});
 
-				// ── Stats lines ────────────────────────────
-				function statLine(label: string, value: string): string {
-					const labelStr = muted(label);
-					const valueStr = accent(value);
-					const rawLabelW = visibleWidth(label);
-					const rawValueW = visibleWidth(value);
-					const padding = 60 - rawLabelW - rawValueW;
-					return dim("| ") + labelStr + valueStr + " ".repeat(Math.max(0, padding)) + dim(" |");
-				}
-
-				// ── Session status line (extension on/off) ────
-				function sessionLine(
-					logger: boolean | null | undefined,
-					advice: boolean | null | undefined,
-				): string {
-					const lIcon = logger == null ? "❓" : logger ? "🟢" : "🔴";
-					const aIcon = advice == null ? "❓" : advice ? "🟢" : "🔴";
-					const label = muted("Session: ");
-					const value = `${lIcon} ${accent("Logger")}  ${aIcon} ${accent("Advice")}`;
-					const rawLabelW = visibleWidth("Session: ");
-					const rawValueW = visibleWidth(value);
-					const padding = 60 - rawLabelW - rawValueW;
-					return dim("| ") + label + value + " ".repeat(Math.max(0, padding)) + dim(" |");
-				}
-
-				const sessionStatusLine = sessionLine(loggerState, adviceState);
-
-				const statLines: string[] = [
-					// Extensions line with /explain-extensions hint
-					(() => {
-						const labelStr = muted("🧩 Extensions: ");
-						const valueStr = accent(String(extCount));
-						const hintStr = dim(" (/explain-extensions)");
-						const rawLabelW = visibleWidth("🧩 Extensions: ");
-						const rawValueW =
-							visibleWidth(String(extCount)) + visibleWidth(" (/explain-extensions)");
-						const padding = 60 - rawLabelW - rawValueW;
-						return (
-							dim("| ") +
-							labelStr +
-							valueStr +
-							hintStr +
-							" ".repeat(Math.max(0, padding)) +
-							dim(" |")
-						);
-					})(),
-					// Prompts line with /explain-prompts hint
-					(() => {
-						const labelStr = muted("📝 Prompts:    ");
-						const valueStr = accent(String(promptCount));
-						const hintStr = dim(" (/explain-prompts)");
-						const rawLabelW = visibleWidth("📝 Prompts:    ");
-						const rawValueW =
-							visibleWidth(String(promptCount)) + visibleWidth(" (/explain-prompts)");
-						const padding = 60 - rawLabelW - rawValueW;
-						return (
-							dim("| ") +
-							labelStr +
-							valueStr +
-							hintStr +
-							" ".repeat(Math.max(0, padding)) +
-							dim(" |")
-						);
-					})(),
-					statLine("🎨 Themes:     ", String(themeCount)),
-					// Skills line with /explain-skills hint
-					(() => {
-						const labelStr = muted("🔧 Skills:     ");
-						const valueStr = accent(String(skillCount));
-						const hintStr = dim(" (/explain-skills)");
-						const rawLabelW = visibleWidth("🔧 Skills:     ");
-						const rawValueW = visibleWidth(String(skillCount)) + visibleWidth(" (/explain-skills)");
-						const padding = 60 - rawLabelW - rawValueW;
-						return (
-							dim("| ") +
-							labelStr +
-							valueStr +
-							hintStr +
-							" ".repeat(Math.max(0, padding)) +
-							dim(" |")
-						);
-					})(),
-				];
-
-				// Bottom wall
-				const bottom = dim("|" + "_".repeat(62) + "|");
-
-				return [titleLine, sidLine, "", ...castleLines, sessionStatusLine, ...statLines, bottom];
+				return [titleLine, sidLine, "", ...castleLines];
 			},
 		};
 	});

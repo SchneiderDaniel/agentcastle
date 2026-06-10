@@ -95,8 +95,10 @@ export async function runAgentInProcess(
 	// Track last event time for idle detection and watchdog liveness
 	let lastEventTime = Date.now();
 
-	// Create watchdog to detect stalled event delivery (30s = 30_000ms timeout, 5s check interval)
-	const WATCHDOG_TIMEOUT_MS = 30_000;
+	// Create watchdog to detect stalled event delivery (120s = 120_000ms timeout, 10s check interval)
+	// Increased from 30s because reasoning models (deepseek-v4-flash with thinking:high)
+	// can take >30s to emit first token for large audit prompts with many tools/skills.
+	const WATCHDOG_TIMEOUT_MS = 120_000;
 	const WATCHDOG_CHECK_INTERVAL_MS = 5_000;
 	const IDLE_WARNING_THRESHOLD_MS = 15_000;
 
@@ -174,6 +176,13 @@ export async function runAgentInProcess(
 			tools: tools.length > 0 ? tools : undefined,
 			noTools: tools.length > 0 ? "builtin" : undefined,
 			model: resolvedModel,
+			// Pass thinking level from agent config so in-process session matches
+			// subprocess behavior (which passes --thinking <level>). Without this,
+			// the session uses default thinking level from settings, which may differ
+			// from what the agent requires for correct behavior.
+			thinkingLevel:
+				(agent.config.thinking as "off" | "minimal" | "low" | "medium" | "high" | "xhigh") ||
+				undefined,
 		});
 		session = sessionResult.session;
 
