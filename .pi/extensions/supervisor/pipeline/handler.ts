@@ -22,7 +22,14 @@ import {
 } from "../github/index.ts";
 import { buildAgentTask, generateBranchName, summarizeComments } from "../agent/task.ts";
 import { runAgent, runAgentSubprocess } from "../agent/runner.ts";
-import { WORKFLOW } from "../config/workflow.ts";
+import {
+	WORKFLOW,
+	computeAuditScoreFromFindings,
+	getActiveAuditDimensions,
+	evaluateAuditScoreGate,
+} from "../config/workflow.ts";
+import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
+import type { AgentOutput } from "../config/types.ts";
 import { runTscAndLspAudit } from "../pipeline/audit.ts";
 import { buildPipelineSummary, validateAgentResult } from "../pipeline/output.ts";
 import { handlePostPipelineMerge } from "../pipeline/merge.ts";
@@ -47,6 +54,7 @@ import {
 	inferForwardStatus,
 	hasBranchCommits,
 	buildDuplicateCodeContext,
+	type GateRejected,
 } from "./stages.ts";
 import {
 	fetchIssue,
@@ -287,6 +295,7 @@ export async function handleSupervisorCommand(
 					"info",
 				);
 				getDebugLogger().info("handler", "Skipping researcher — findings exist");
+				stageState.researcherSkipped = true;
 				// Find the next forward status for the researcher step
 				const nextStatus = inferForwardStatus(step);
 				if (nextStatus) {
@@ -411,6 +420,33 @@ export async function handleSupervisorCommand(
 				});
 			}
 
+			// Pre-compute audit score gate decision for auditor
+			// This runs BEFORE handlePostAgentSuccess so the gate rejection
+			// comment can replace the normal approval comment.
+			let gateRejected: GateRejected | undefined;
+			if (agentName === "auditor" && result.success && result.textOutput) {
+				const parseResult = parseAgentOutput(result.textOutput);
+				if (isAgentOutputSuccess(parseResult)) {
+					const output = parseResult as AgentOutput;
+					if (output.action === "APPROVED" && output.findings && output.findings.length > 0) {
+						const dimensions = getActiveAuditDimensions(stageState.researcherSkipped);
+						const score = computeAuditScoreFromFindings(output.findings, dimensions);
+						const gateResult = evaluateAuditScoreGate(score, config.auditScoreThreshold ?? 0.75);
+						if (!gateResult.passes) {
+							gateRejected = {
+								score,
+								required: gateResult.required,
+								total: dimensions.length,
+							};
+							ctx.ui.notify(
+								`Audit score gate rejected: ${score.passing}/${dimensions.length} < ${gateResult.required}/${dimensions.length}`,
+								"warning",
+							);
+						}
+					}
+				}
+			}
+
 			// Send result to UI
 			sendAgentResultMessage(
 				pi,
@@ -430,7 +466,8 @@ export async function handleSupervisorCommand(
 				auditInfo ? `${auditInfo.score.passing}/${auditInfo.score.total}` : undefined,
 			);
 
-			// Post-processing
+			// Post-processing — pass pre-computed gateRejected so auditor
+			// comment posting can show gate rejection instead of approval
 			if (result.success) {
 				const continuePipeline = await handlePostAgentSuccess(
 					pi,
@@ -444,6 +481,7 @@ export async function handleSupervisorCommand(
 					worktreeBranch,
 					issueTitle,
 					collector,
+					gateRejected,
 				);
 				if (!continuePipeline) {
 					stopReason = `commitAndPush failed for ${agentName}`;
@@ -456,11 +494,28 @@ export async function handleSupervisorCommand(
 			// is skipped on agent failure (Bug #643 fix).
 			// hadExplicitMarker tracks whether the status came from agent output
 			// (structured JSON or text marker) vs. pipeline inference (Bug #711 fix).
+			// For auditor, pass audit context with researcherSkipped and scoreThreshold
+			// so the audit score gate (Bug #648 fix) can evaluate independently.
+			// Note: gateRejected may already be computed above; calculateNextStatus
+			// re-computes it deterministically — this is fine (<1ms overhead).
+			const auditContext =
+				agentName === "auditor"
+					? {
+							researcherSkipped: stageState.researcherSkipped,
+							scoreThreshold: config.auditScoreThreshold ?? 0.75,
+						}
+					: undefined;
 			const {
 				status: nextStatus,
 				stopReason: nsStop,
 				hadExplicitMarker = false,
-			} = calculateNextStatus(agentName, result.textOutput, result.textOnly, result.success);
+			} = calculateNextStatus(
+				agentName,
+				result.textOutput,
+				result.textOnly,
+				result.success,
+				auditContext,
+			);
 
 			getDebugLogger().info("handler", "Next status determined", {
 				nextStatus,

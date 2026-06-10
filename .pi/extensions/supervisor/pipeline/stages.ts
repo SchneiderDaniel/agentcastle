@@ -17,6 +17,9 @@ import {
 	resolveNextStatus,
 	resolveNextStatusFromAgentOutput,
 	extractAuditScore,
+	computeAuditScoreFromFindings,
+	getActiveAuditDimensions,
+	evaluateAuditScoreGate,
 	type AuditScore,
 	type WorkflowStep,
 	WORKFLOW,
@@ -28,9 +31,9 @@ import {
 	extractStructuredAuditOutput,
 	commitAndPush,
 } from "../github/index.ts";
+import { hasResearchFindings } from "../config/workflow.ts";
 import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/output.ts";
 import type { AgentOutput } from "../config/types.ts";
-import { hasResearchFindings } from "../config/workflow.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
 import type { DuplicateCodeResult } from "../checks/duplicate-code.ts";
 
@@ -47,6 +50,8 @@ export interface StageState {
 	auditCycleCount: number;
 	/** Duplicate code check result, set during Implementation→Audit hooks */
 	duplicateCodeResult: DuplicateCodeResult | null;
+	/** Whether the researcher agent was skipped by the dedup gate */
+	researcherSkipped: boolean;
 }
 
 export function createStageState(initialStatus: string): StageState {
@@ -55,6 +60,7 @@ export function createStageState(initialStatus: string): StageState {
 		lastAuditScore: null,
 		auditCycleCount: 0,
 		duplicateCodeResult: null,
+		researcherSkipped: false,
 	};
 }
 
@@ -242,6 +248,23 @@ export function isRejectionLimitReached(
 	return rejectionCount >= stepMaxRejections;
 }
 
+// ─── Audit Gate Types ─────────────────────────────────────────────
+
+/** Context for evaluating the audit score gate in calculateNextStatus */
+export interface AuditGateContext {
+	/** Whether the researcher agent was skipped */
+	researcherSkipped: boolean;
+	/** Score threshold ratio (0.0–1.0), from config */
+	scoreThreshold: number;
+}
+
+/** Result of a rejected audit gate */
+export interface GateRejected {
+	score: AuditScore;
+	required: number;
+	total: number;
+}
+
 // ─── Determine Next Status ────────────────────────────────────────
 
 export interface NextStatusResult {
@@ -255,6 +278,11 @@ export interface NextStatusResult {
 	 * by explicit agent output vs. pipeline inference.
 	 */
 	hadExplicitMarker: boolean;
+	/**
+	 * When the audit score gate rejects an auditor's APPROVED, this contains
+	 * the computed score, required minimum, and total dimensions.
+	 */
+	gateRejected?: GateRejected;
 }
 
 /**
@@ -269,12 +297,17 @@ export interface NextStatusResult {
  * @param success - Whether the agent completed successfully. When false,
  *                  inferForwardStatus is skipped to prevent a failed
  *                  agent from advancing the pipeline (Bug #643 fix).
+ * @param auditContext - Optional audit gate context. When provided and
+ *                       agentName is "auditor" with action "APPROVED",
+ *                       the score gate is evaluated. If below threshold,
+ *                       status overridden to "Implementation".
  */
 export function calculateNextStatus(
 	agentName: string,
 	agentOutput: string,
 	textOnly: string,
 	success: boolean = true,
+	auditContext?: AuditGateContext,
 ): NextStatusResult {
 	const step = WORKFLOW.find((s) => s.agentName === agentName);
 	if (!step)
@@ -288,6 +321,31 @@ export function calculateNextStatus(
 	// Use agentOutput (raw text) for JSON parsing since textOnly strips JSON
 	const structuredStatus = resolveNextStatusFromAgentOutput(step, agentOutput);
 	if (structuredStatus) {
+		// Audit score gate: when auditor APPROVED but score below threshold,
+		// override to Implementation and attach gate rejection details
+		if (agentName === "auditor" && structuredStatus === "Done" && auditContext) {
+			const parseResult = parseAgentOutput(agentOutput);
+			if (isAgentOutputSuccess(parseResult)) {
+				const output = parseResult as AgentOutput;
+				if (output.action === "APPROVED" && output.findings && output.findings.length > 0) {
+					const dimensions = getActiveAuditDimensions(auditContext.researcherSkipped);
+					const score = computeAuditScoreFromFindings(output.findings, dimensions);
+					const gateResult = evaluateAuditScoreGate(score, auditContext.scoreThreshold);
+					if (!gateResult.passes) {
+						return {
+							status: "Implementation",
+							hadExplicitMarker: true,
+							gateRejected: {
+								score,
+								required: gateResult.required,
+								total: dimensions.length,
+							},
+						};
+					}
+				}
+			}
+		}
+
 		return { status: structuredStatus, hadExplicitMarker: true };
 	}
 
@@ -532,6 +590,7 @@ export async function handlePostAgentSuccess(
 	worktreeBranch: string | undefined,
 	issueTitle: string,
 	collector?: ErrorCollector,
+	gateRejected?: GateRejected,
 ): Promise<boolean> {
 	// Agent comments: architect, test-designer, researcher
 	if (agentName === "architect" || agentName === "test-designer" || agentName === "researcher") {
@@ -732,7 +791,16 @@ export async function handlePostAgentSuccess(
 	// Audit output processing
 	if (agentName === "auditor") {
 		const auditorOutput = result.textOutput || result.output || "";
-		await handleAuditorOutput(pi, ctx, auditorOutput, result, issueNum, config, collector);
+		await handleAuditorOutput(
+			pi,
+			ctx,
+			auditorOutput,
+			result,
+			issueNum,
+			config,
+			collector,
+			gateRejected,
+		);
 	}
 
 	// Default: pipeline should continue
@@ -742,6 +810,8 @@ export async function handlePostAgentSuccess(
 /**
  * Handle auditor-specific output: structured comments for approval/rejection.
  * Uses parseAgentOutput for deterministic comment building.
+ * When gateRejected is set, posts a gate rejection comment explaining the
+ * score threshold failure, overriding the normal approval comment.
  */
 async function handleAuditorOutput(
 	pi: ExtensionAPI,
@@ -751,7 +821,31 @@ async function handleAuditorOutput(
 	issueNum: number,
 	config: SupervisorConfig,
 	collector?: ErrorCollector,
+	gateRejected?: GateRejected,
 ): Promise<void> {
+	// If gate rejected, post gate-specific rejection comment and skip normal processing
+	if (gateRejected) {
+		const gateBody = buildGateRejectionComment(gateRejected);
+		if (gateBody) {
+			try {
+				await postIssueComment(pi, issueNum, config.repo, gateBody);
+				ctx.ui.notify(
+					`Audit score gate rejected: ${gateRejected.score.passing}/${gateRejected.total} < ${gateRejected.required}/${gateRejected.total}`,
+					"warning",
+				);
+			} catch (grErr: unknown) {
+				collector?.push(
+					"stages",
+					"warn",
+					`Failed to post gate rejection comment: ${
+						grErr instanceof Error ? grErr.message : String(grErr)
+					}`,
+				);
+			}
+		}
+		return;
+	}
+
 	// Try structured AgentOutput parsing first
 	const parseResult = parseAgentOutput(agentOutput);
 	let actionFromOutput: "APPROVED" | "REJECTED" | undefined;
@@ -922,4 +1016,29 @@ function buildRejectionCommentFromOutput(agentOutput: string): string | null {
 	}
 
 	return null;
+}
+
+/**
+ * Build a gate rejection comment explaining that the audit score did not
+ * meet the configured threshold.
+ */
+function buildGateRejectionComment(gateRejected: GateRejected): string | null {
+	const lines: string[] = [
+		"## Audit Score Gate Rejected",
+		"",
+		`**Score:** ${gateRejected.score.passing}/${gateRejected.total} — requires at least ${gateRejected.required}/${gateRejected.total} (threshold: ${gateRejected.required}/${gateRejected.total})`,
+		"",
+		"The audit score gate determines whether the audit passes based on the structured findings. " +
+			"The auditor's findings did not cover enough quality dimensions to meet the threshold.",
+		"",
+		"### How to fix",
+		"",
+		"- Review the audit findings below for specific issues",
+		"- Address all 🔴 Critical and 🟡 Warning findings",
+		"- Ensure findings span multiple quality dimensions (architecture-compliance, ticket-fulfillment, test-quality, correctness-safety, code-quality, completeness, duplicate-code, research-incorporation)",
+		"- The score is computed from CRITICAL and WARNING findings only — suggestions do not affect the score",
+		"",
+		"Returning to Implementation for fixes.",
+	];
+	return lines.join("\n");
 }

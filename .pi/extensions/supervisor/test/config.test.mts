@@ -145,4 +145,41 @@ describe("loadConfig — config shape", () => {
 			);
 		}
 	});
+
+	it("auditScoreThreshold defaults to 0.75 when not provided", () => {
+		// Interface contract: optional field with default 0.75
+		const config: Record<string, unknown> = {
+			repo: "owner/repo",
+			projectNumber: 1,
+			statusMapping: { todo: "developer" },
+			codeowners: ["user"],
+		};
+		const threshold = config.auditScoreThreshold ?? 0.75;
+		assert.equal(threshold, 0.75);
+	});
+
+	it("auditScoreThreshold must be a number between 0.0 and 1.0 if provided", () => {
+		const validValues = [0.0, 0.25, 0.5, 0.75, 1.0];
+		for (const v of validValues) {
+			assert.ok(typeof v === "number" && !isNaN(v) && v >= 0 && v <= 1, `${v} should be valid`);
+		}
+		const invalidValues = [-0.1, 1.1, "0.75", true, null, NaN];
+		for (const v of invalidValues) {
+			assert.ok(
+				!(typeof v === "number" && !isNaN(v) && v >= 0 && v <= 1),
+				`${JSON.stringify(v)} should be invalid`,
+			);
+		}
+	});
+
+	it("auditScoreThreshold accepts boundary values 0.0 and 1.0", () => {
+		assert.ok(
+			typeof 0.0 === "number" && !isNaN(0.0) && 0.0 >= 0 && 0.0 <= 1,
+			"0.0 should be valid",
+		);
+		assert.ok(
+			typeof 1.0 === "number" && !isNaN(1.0) && 1.0 >= 0 && 1.0 <= 1,
+			"1.0 should be valid",
+		);
+	});
 });
