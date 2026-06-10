@@ -128,12 +128,12 @@ export function showWelcomeBanner(
 					`                      %%   ${muted("📝 Prompts:")}    ${accent(String(promptCount))} ${dim("(/explain-prompts)")}            =@`,
 					"                      %%   " +
 						muted("🎨 Themes:") +
-						"       " +
+						"      " +
 						accent(String(themeCount)) +
 						"                               #@",
 					"                      %%   " +
 						muted("🔧 Skills:") +
-						"       " +
+						"      " +
 						accent(String(skillCount)) +
 						" " +
 						dim("(/explain-skills)") +
