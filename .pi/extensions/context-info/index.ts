@@ -140,8 +140,8 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		showWelcomeBanner(ctx, startupRef, sessionId, extState.logger, extState.advice);
 	});
 
-	// Clear welcome banner and explain-* widgets on first user input
-	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
+	// Helpers to clear startup widgets
+	function clearStartupWidgets(ctx: ExtensionContext) {
 		if (state && state.startupWidgetActive) {
 			ctx.ui.setWidget("cheasee-pi-welcome", undefined);
 			state.startupWidgetActive = false;
@@ -149,6 +149,21 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		ctx.ui.setWidget("explain-extensions", undefined);
 		ctx.ui.setWidget("explain-prompts", undefined);
 		ctx.ui.setWidget("explain-skills", undefined);
+	}
+
+	// Clear welcome banner and explain-* widgets on first user input
+	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
+		clearStartupWidgets(ctx);
+	});
+
+	// Clear on input event (covers non-command inputs reaching expansion)
+	pi.on("input", async (_event, ctx: ExtensionContext) => {
+		clearStartupWidgets(ctx);
+	});
+
+	// Clear on user bash commands (! and !!)
+	pi.on("user_bash", async (_event, ctx: ExtensionContext) => {
+		clearStartupWidgets(ctx);
 	});
 
 	pi.on("thinking_level_select", async (event, ctx: ExtensionContext) => {
