@@ -208,16 +208,14 @@ function tokenizeBashCommand(command: string): BashToken[] {
  * Excludes known non-path patterns (URLs, npm scoped packages, standalone tilde,
  * option flags, shell operators) and all tokens when command is echo/printf.
  *
- * Safety principle: quoted tokens and backtick content are NOT local file paths.
- * - Single/double-quoted strings are literals (e.g. --body 'comment text')
- * - Backtick content is command substitution (e.g. \`some.command\`)
- * - Real file paths in AI-generated bash are almost never quoted
+ * Safety principle: quoting does not change file identity after bash quote removal.
+ * A quoted "cat .env" resolves to the same file path as unquoted cat .env.
+ * The echo/printf guard and option-flag prefix filter handle the legitimate
+ * string-literal cases (echo "some.log", --body 'comment text').
+ * Backtick content is command substitution (e.g. \`some.command\`).
  */
 function isPathLike(token: BashToken, commandName: string): boolean {
 	const t = token.text;
-
-	// Quoted tokens are string literals, never file paths
-	if (token.quoted) return false;
 
 	// Backtick chars indicate command substitution, not file paths
 	if (t.includes("`")) return false;
@@ -421,16 +419,16 @@ describe("isPathLike", () => {
 	it("accepts unquoted path-like tokens for grep/rg commands", () => {
 		assert.strictEqual(isPathLike({ text: "debug.log", quoted: false }, "rg"), true);
 		assert.strictEqual(isPathLike({ text: "some.log", quoted: false }, "grep"), true);
-		// Quoted versions are rejected (string literals)
-		assert.strictEqual(isPathLike({ text: "debug.log", quoted: true }, "rg"), false);
+		// Quoted versions are also path-like (quote removal preserves path identity)
+		assert.strictEqual(isPathLike({ text: "debug.log", quoted: true }, "rg"), true);
 	});
 
-	it("rejects all quoted tokens regardless of command", () => {
-		// Quoted tokens are string literals, never file paths
-		assert.strictEqual(isPathLike({ text: "some.log", quoted: true }, "cat"), false);
-		assert.strictEqual(isPathLike({ text: ".env", quoted: true }, "cat"), false);
-		assert.strictEqual(isPathLike({ text: "secret.txt", quoted: true }, "rg"), false);
-		assert.strictEqual(isPathLike({ text: "token.file", quoted: true }, "tar"), false);
+	it("accepts quoted path-like tokens for non-echo commands", () => {
+		// Bash quote removal: quoted "cat .env" resolves to same path as unquoted cat .env
+		assert.strictEqual(isPathLike({ text: "some.log", quoted: true }, "cat"), true);
+		assert.strictEqual(isPathLike({ text: ".env", quoted: true }, "cat"), true);
+		assert.strictEqual(isPathLike({ text: "secret.txt", quoted: true }, "rg"), true);
+		assert.strictEqual(isPathLike({ text: "token.file", quoted: true }, "tar"), true);
 	});
 
 	it("rejects tokens containing backtick characters", () => {
@@ -442,6 +440,26 @@ describe("isPathLike", () => {
 		);
 		// Unquoted token without backtick IS path-like (normal case)
 		assert.strictEqual(isPathLike({ text: "some.command", quoted: false }, "gh"), true);
+	});
+
+	it("accepts quoted dotfiles as path-like for non-echo commands", () => {
+		assert.strictEqual(isPathLike({ text: ".env", quoted: true }, "cat"), true);
+	});
+
+	it("accepts quoted paths with slash for non-echo commands", () => {
+		assert.strictEqual(isPathLike({ text: "src/main.ts", quoted: true }, "git"), true);
+	});
+
+	it("accepts quoted relative paths for non-echo commands", () => {
+		assert.strictEqual(isPathLike({ text: "../.env", quoted: true }, "cat"), true);
+	});
+
+	it("accepts quoted absolute paths for non-echo commands", () => {
+		assert.strictEqual(isPathLike({ text: "/absolute/path.env", quoted: true }, "ls"), true);
+	});
+
+	it("rejects quoted path-like tokens after echo command (echo guard overrides)", () => {
+		assert.strictEqual(isPathLike({ text: "file.tar", quoted: true }, "echo"), false);
 	});
 });
 
@@ -565,7 +583,9 @@ describe("checkBashCommand false-positive regression", () => {
 	});
 
 	it("gh issue comment --body with path-like text quoted — not blocked", () => {
-		// Body containing "src/main.ts" type references in quotes
+		// Body containing "src/main.ts" type references in quotes.
+		// Quoted token now path-checked but no pattern match ("see src/main.ts for details"
+		// is path-like but doesn't match any .piignore pattern).
 		assert.strictEqual(
 			checkBashCommand(
 				'gh issue comment 123 --repo owner/repo --body "see src/main.ts for details"',
@@ -620,5 +640,23 @@ describe("checkBashCommand true-positive retention", () => {
 	it("echo ~/file.txt — echo command skips all (acceptable trade-off)", () => {
 		// echo is an echo-like command; all tokens are skipped
 		assert.strictEqual(checkBashCommand("echo ~/file.txt", entries, cwd), null);
+	});
+
+	// ── Phase 4: quoted paths now blocked (fix verification) ─────────
+
+	it('cat ".env" — blocked (quoted dotfile)', () => {
+		assert.strictEqual(checkBashCommand('cat ".env"', entries, cwd), ".env");
+	});
+
+	it('cat ".env.local" — blocked (quoted .env.* pattern)', () => {
+		assert.strictEqual(checkBashCommand('cat ".env.local"', entries, cwd), ".env.local");
+	});
+
+	it('rg "pattern" "debug.log" — blocked (both quoted)', () => {
+		assert.strictEqual(checkBashCommand('rg "pattern" "debug.log"', entries, cwd), "debug.log");
+	});
+
+	it('cat "../.env" — blocked (quoted relative path)', () => {
+		assert.strictEqual(checkBashCommand('cat "../.env"', entries, cwd), "../.env");
 	});
 });
