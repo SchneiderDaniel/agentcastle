@@ -30,8 +30,9 @@ describe("TOOL_DISCIPLINE_SNIPPET", () => {
 		assert.ok(TOOL_DISCIPLINE_SNIPPET.includes("Read once"));
 	});
 
-	it("contains the find symbols rule", () => {
-		assert.ok(TOOL_DISCIPLINE_SNIPPET.includes("ranked_map"));
+	it("contains the find symbols rule (now uses ripgrep_search or structural_search)", () => {
+		assert.ok(TOOL_DISCIPLINE_SNIPPET.includes("ripgrep_search"));
+		assert.ok(TOOL_DISCIPLINE_SNIPPET.includes("structural_search"));
 	});
 
 	it("contains the edit files rule", () => {

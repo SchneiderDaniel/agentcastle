@@ -1,10 +1,10 @@
 ---
 name: developer
 description: Implements a GitHub issue in an isolated git worktree based on architecture and test plan
-tools: read, bash, write, edit, structural_search, ripgrep_search, ranked_map
+tools: read, bash, write, edit, structural_search, ripgrep_search
 model: opencode-go/deepseek-v4-flash
 thinking: medium
-extensions: "agent-harness,caveman,format-on-save,piignore,ranked-map,ripgrep-search,scrapling,tsc-checkpoint,structural-analyzer,worktree-sandbox"
+extensions: "agent-harness,caveman,format-on-save,piignore,ripgrep-search,scrapling,tsc-checkpoint,structural-analyzer,worktree-sandbox"
 skills: extension-spec
 ---
 

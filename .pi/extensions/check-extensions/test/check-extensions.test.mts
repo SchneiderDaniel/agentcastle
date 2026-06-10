@@ -1529,7 +1529,7 @@ describe("ast-scanner", () => {
 	});
 
 	it("multiple root-level .ts files each get correct extensionName (ast)", async () => {
-		writeFileSync(join(tmpDir, "ranked-map.ts"), `pi.on("build", async () => {});\n`);
+		writeFileSync(join(tmpDir, "tsc-checkpoint.ts"), `pi.on("build", async () => {});\n`);
 		writeFileSync(join(tmpDir, "structural-analyzer.ts"), `pi.exec("analyze", []);\n`);
 
 		const execFn = async (
@@ -1551,7 +1551,7 @@ describe("ast-scanner", () => {
 		const result = await scanExtensionsAST(tmpDir, ["pi.on", "pi.exec"], execFn, astGrepPath);
 		assert.strictEqual(result.findings.length, 2);
 		const names = result.findings.map((f) => f.extensionName).sort();
-		assert.deepStrictEqual(names, ["ranked-map", "structural-analyzer"]);
+		assert.deepStrictEqual(names, ["structural-analyzer", "tsc-checkpoint"]);
 	});
 
 	it("subdirectory extension still correct alongside root-level .ts (ast regression)", async () => {

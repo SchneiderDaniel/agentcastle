@@ -45,7 +45,7 @@ export const TOOL_DISCIPLINE_SNIPPET = `🛠 Tool Discipline — Shared Rules
 
 - **Read files:** Use \`read(path, offset?, limit?)\` — NOT \`bash cat\`, \`bash head\`, \`bash tail\`
 - **Search codebase:** Use \`ripgrep_search\` for text, \`structural_search\` for AST patterns — NOT \`bash | grep\`, \`bash | rg\`
-- **Find symbols/file overview:** Use \`ranked_map\` (omit query for full dump) for file/symbol overview — NOT \`bash | grep\` for class/function names
+- **Find symbols/file overview:** Use \`ripgrep_search\` for text, \`structural_search\` for AST-based symbol queries — NOT \`bash | grep\` for class/function names
 - **Edit files:** Use \`edit\` for precise text replacement — NOT \`bash sed\`, \`write\` (full overwrite)
 - **Error means rethink:** If tool errors, change approach — different args, different tool, or ask user. Do NOT retry same tool+args.
 - **Batch same-tool calls:** 3+ consecutive same tool → merge into one (bash with \`&&\`, read larger region)

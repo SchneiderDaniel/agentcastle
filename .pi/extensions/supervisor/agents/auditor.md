@@ -1,10 +1,10 @@
 ---
 name: auditor
 description: Reviews implementation, creates PR if approved, rejects back to Implementation if not
-tools: read, bash, structural_search, ripgrep_search, ranked_map
+tools: read, bash, structural_search, ripgrep_search
 model: opencode-go/deepseek-v4-flash
 thinking: high
-extensions: "agent-harness,caveman,piignore,ranked-map,ripgrep-search,scrapling,structural-analyzer,worktree-sandbox"
+extensions: "agent-harness,caveman,piignore,ripgrep-search,scrapling,structural-analyzer,worktree-sandbox"
 skills: duplicate-code-hunter
 ---
 

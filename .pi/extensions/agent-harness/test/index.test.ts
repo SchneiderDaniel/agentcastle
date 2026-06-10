@@ -53,9 +53,9 @@ describe("AgentHarness — basic pass-through", () => {
 		assert.equal(new AgentHarness().handleToolCall(makeEvent(""), makeCtx()), null);
 	});
 
-	it("pass-through tools (structural_search, ripgrep_search, ranked_map, ask_user) pass through", () => {
+	it("pass-through tools (structural_search, ripgrep_search, ask_user) pass through", () => {
 		const h = new AgentHarness();
-		for (const tool of ["structural_search", "ripgrep_search", "ranked_map", "ask_user"]) {
+		for (const tool of ["structural_search", "ripgrep_search", "ask_user"]) {
 			assert.equal(h.handleToolCall(makeEvent(tool, {}), makeCtx()), null, tool);
 		}
 	});

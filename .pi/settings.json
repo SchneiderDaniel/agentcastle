@@ -5,19 +5,6 @@
 	"contextStatusBar": {
 		"showTps": true
 	},
-	"rankedMap": {
-		"tokenBudget": 4096,
-		"recencyWindowDays": 30,
-		"cacheTtlHours": 24,
-		"autoThreshold": 20000,
-		"frequencyScalingFactor": 0.2,
-		"weights": {
-			"keyword": 0.65,
-			"recency": 0.2,
-			"fileSize": 0.1,
-			"commitCount": 0.05
-		}
-	},
 	"docker": {
 		"memory": "4G",
 		"cpus": "2.0"

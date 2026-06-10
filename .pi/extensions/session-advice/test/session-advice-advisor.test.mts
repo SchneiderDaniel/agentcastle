@@ -56,10 +56,6 @@ function ripgrepSearchEntry(turnIndex: number): SessionEntry {
 	};
 }
 
-function rankedMapEntry(turnIndex: number): SessionEntry {
-	return { type: "tool_use", toolName: "ranked_map", args: { query: "test" }, text: "", turnIndex };
-}
-
 function webSearchEntry(turnIndex: number): SessionEntry {
 	return { type: "tool_use", toolName: "web_search", args: { query: "test" }, text: "", turnIndex };
 }
@@ -462,19 +458,6 @@ describe("detectTurnInefficiency — Phase 2: Expand legitimate discovery tools 
 		assert.strictEqual(inefficient.length, 0, "structural_search is legitimate discovery");
 	});
 
-	it("uses ranked_map → NOT flagged", () => {
-		const entries: SessionEntry[] = [];
-		for (let i = 0; i < 14; i++) {
-			entries.push(readEntry("/repo/file.ts", 0));
-		}
-		entries.push(rankedMapEntry(0));
-
-		const data = makeSession(entries);
-		const signals = analyzeSession(data);
-		const inefficient = signals.filter((s) => s.signal === "turn-inefficiency");
-		assert.strictEqual(inefficient.length, 0, "ranked_map is legitimate discovery");
-	});
-
 	it("uses web_search → NOT flagged", () => {
 		const entries: SessionEntry[] = [];
 		for (let i = 0; i < 14; i++) {
@@ -534,7 +517,6 @@ describe("detectTurnInefficiency — Phase 2: Expand legitimate discovery tools 
 		}
 		entries.push(ripgrepSearchEntry(0));
 		entries.push(structuralSearchEntry(0));
-		entries.push(rankedMapEntry(0));
 
 		const data = makeSession(entries);
 		const signals = analyzeSession(data);

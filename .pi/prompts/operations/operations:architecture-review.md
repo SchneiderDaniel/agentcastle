@@ -36,9 +36,9 @@ Read `.gitmodules` from project root. Parse submodules. If target matches submod
 
 Use Pi tools to walk target:
 
-- `ranked_map` — symbol tree (omit query for full dump on small repos)
+- `structural_search` — symbol tree, function/class definitions, call chains, tightly-coupled patterns
 - `ripgrep_search` — hardcoded strings, leaky dependencies, magic numbers
-- `structural_search` — call chains, tightly-coupled patterns, deep nesting
+- `read` — inspect module interfaces directly
 - `read` — inspect module interfaces directly
 
 Note friction points:

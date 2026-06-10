@@ -47,19 +47,19 @@ describe("validateQuery", () => {
 	it("rejects 'class User' (collision rule)", () => {
 		const result = validateQuery("class User");
 		assert.ok(result !== null, "Expected error for class definition pattern");
-		assert.ok(result!.includes("ranked_map"), "Error should mention ranked_map");
+		assert.ok(result!.includes("structural_search"), "Error should mention structural_search");
 	});
 
 	it("rejects 'def verify_token' (collision rule)", () => {
 		const result = validateQuery("def verify_token");
 		assert.ok(result !== null);
-		assert.ok(result!.includes("ranked_map"));
+		assert.ok(result!.includes("structural_search"));
 	});
 
 	it("rejects 'function bootstrap' (collision rule)", () => {
 		const result = validateQuery("function bootstrap");
 		assert.ok(result !== null);
-		assert.ok(result!.includes("ranked_map"));
+		assert.ok(result!.includes("structural_search"));
 	});
 
 	it("rejects pattern with $ (structural syntax)", () => {

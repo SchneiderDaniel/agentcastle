@@ -42,8 +42,7 @@ This README follows your path from first encounter to daily use. Each section is
 
 AgentCastle is a **Pi agent harness** built on the [Pi coding agent](https://pi.dev) — engineered to save tokens, enforce security boundaries, and drive sub-agents through a Kanban git-oriented workflow. It uses a GitHub Project board to orchestrate an autonomous multi-agent pipeline — Researcher → Architect → TestDesigner → Developer → Auditor — with tools that minimise token waste, enforce security boundaries, and streamline development inside isolated git worktrees. Clone this repo and you get a complete toolchain:
 
-- **Codebase mapping** — `ranked_map` via universal-ctags: auto-mode (query → ranked, no query → full dump for small repos, recency-ranked for large repos)
-- **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching
+- **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching for finding function/class definitions, method calls, try/catch blocks
 - **Text search** — `ripgrep_search` via ripgrep: fast literal/regex code search
 - **Web crawling** — `web_crawl`: Scrapling (progressive fetch with automatic Cloudflare bypass)
 - **Rich TUI** — Custom status bar (branch, model, token usage, TPS, cache stats), welcome banner
@@ -193,8 +192,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 #### 5.3 What's in the box — File Manifest
 
 | File/Path                                           | What it is                                                                                                             |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `.pi/extensions/ranked-map/`                        | `ranked_map` tool — modular (cache, ctags, git, scoring, search). Unified codebase mapper via ctags + rg + git recency |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `.pi/extensions/structural-analyzer.ts`             | `structural_search` tool via ast-grep                                                                                  |
 | `.pi/extensions/ripgrep-search/`                    | `ripgrep_search` tool via ripgrep (modular: args, config, parse, temp, validate)                                       |
 | `.pi/extensions/scrapling/`                         | `web_crawl` tool: Scrapling with progressive fetching (lightweight → stealth)                                           |
@@ -238,7 +236,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `src/`                                              | Library modules — `SplashComponent`, `ProgressEmitter`, `runWithSplash`, splash-integration wiring (`integrate-splash.ts`), startup wrapper (`start-pi.ts`) |
 | `.pi/lib/`                                          | Shared library (bash-command, harness-rules, harness-state, lsp-types, types, github-types)                            |
 | `.pi/state/session-extensions.json`                 | Tracks extension on/off state                                                                                          |
-| `.pi/specs/`                                        | PRD specs (ranked-map, ripgrep-search, supervisor-refactor)                                                            |
+| `.pi/specs/`                                        | PRD specs (ripgrep-search, supervisor-refactor)                                                                        |
 | `.pi/npm/`                                          | Local npm package cache                                                                                                |
 | `flask_blogs/`                                      | Submodule: Flask blog apps                                                                                             |
 
@@ -248,7 +246,6 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 
 | Extension               | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Ranked Repo Map**     | `ranked_map` via ctags + rg + git recency. Auto-mode: query → ranked, no query + small repo → full dump, no query + large repo → recency-ranked. Respects `.gitignore` from root and submodules. Replaces map_codebase.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | **Structural Analyzer** | `structural_search` via ast-grep. AST-aware pattern matching (function calls, try/catch, class defs).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | **Ripgrep Search**      | `ripgrep_search` via ripgrep. Fast literal/regex code search, respects `.gitignore`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Supervisor**          | Kanban-driven multi-agent pipeline. Reads issue from GitHub project, dispatches agents in loop. Registers `/supervisor <issue-number>` command.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -350,9 +347,7 @@ Empirical token consumption comparing tool configurations on a real audit task (
 | 2 — mapper                       | 14,958     | 7,028      | 281,506     | 76,133ms      | baseline            |
 | 3 — mapper + structural          | 24,264     | 5,056      | 299,784     | 62,461ms      | +6%                 |
 | **4 — mapper + structural + rg** | **15,248** | **4,131**  | **204,532** | **51,345ms**  | **-27%**            |
-| **5 — ranked_map (query)**       | **~1,500** | **~500**   | **~2,000**  | **~30,000ms** | **-99%**            |
-
-Config 4 uses **27% fewer total tokens** and runs **33% faster** than mapper-only (config 2). The ripgrep fix resolved the earlier issue where ripgrep made token consumption worse.
+| Config 4 uses **27% fewer total tokens** and runs **33% faster** than mapper-only (config 2). The ripgrep fix resolved the earlier issue where ripgrep made token consumption worse.
 
 The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming, computed from a rolling 30s window, plus **LLM prompt cache** stats (`📦 cacheRead/cacheWrite`) on Row 2 — toggle with `contextStatusBar.showCache` in `.pi/settings.json` (default `true`). The supervisor subagent footer shows cache stats next to the token count. Shows `📦 --/--` before the first assistant response.
 
@@ -367,7 +362,6 @@ Selected extensions from AgentCastle are published as individual npm packages un
 | `@agentcastle/ask-user`            | Interactive ask_user tool with typed dialogs, Q&A log, and `/qna` command                              | `pi install npm:@agentcastle/ask-user`            |
 | `@agentcastle/ripgrep-search`      | Fast literal/regex code search — respects `.gitignore`, structured file:line:column:text output        | `pi install npm:@agentcastle/ripgrep-search`      |
 | `@agentcastle/lsp-auditor`         | Pre-audit code quality via LSP before commit — diagnostics on changed files                            | `pi install npm:@agentcastle/lsp-auditor`         |
-| `@agentcastle/ranked-map`          | Codebase symbol index with auto-mode detection — keyword-ranked, recency-ranked, or full-dump          | `pi install npm:@agentcastle/ranked-map`          |
 | `@agentcastle/piignore`            | Blocks AI access to sensitive files via `.piignore` patterns — keeps secrets safe                      | `pi install npm:@agentcastle/piignore`            |
 | `@agentcastle/structural-analyzer` | AST-aware code search via ast-grep — finds function calls, classes, try/catch, and structural patterns | `pi install npm:@agentcastle/structural-analyzer` |
 
@@ -453,17 +447,14 @@ echo $APIFY_TOKEN   # Should print your token
 #### 6.2 Tool Verification
 
 ```bash
-# Codebase mapper — unified tool (replace old map_codebase use)
-pi "Run ranked_map on the root"
-
-# Ranked search (pass query for keyword scoring)
-pi "Call ranked_map with query='login auth' tokenBudget=2048"
-
-# Structural search
+# Structural search — find symbols, function/class definitions, AST patterns
 pi "Use structural_search to find all console.log calls in TypeScript files"
 
-# Text search
+# Text search — literal patterns, TODOs, error messages
 pi "Use ripgrep_search to find 'TODO' in the project"
+
+# Web search (auto-creates venv + installs ddgs on first call)
+pi "Use web_search to find 'latest rust web framework 2026' with maxResults=5"
 
 # Web search (auto-creates venv + installs ddgs on first call)
 pi "Use web_search to find 'latest rust web framework 2026' with maxResults=5"
@@ -1136,7 +1127,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | Playwright Chromium                               | latest   | Apache-2.0   | venv       | [playwright.dev](https://playwright.dev)                                                                 |
 | markdownify                                        | latest   | MIT          | venv       | [github.com/matthewwithanm/python-markdownify](https://github.com/matthewwithanm/python-markdownify)     |
 | **Project Extensions (`.pi/extensions/`)**        |          |              |            |                                                                                                          |
-| ranked-map.ts                                     | —        | MIT          | project    | This repository (unified ctags mapper)                                                                   |
+| structural-analyzer.ts                            | —        | MIT          | project    | This repository                                                                                          |
 | structural-analyzer.ts                            | —        | MIT          | project    | This repository                                                                                          |
 | ripgrep-search/                                   | —        | MIT          | project    | This repository                                                                                          |
 | caveman/                                          | —        | MIT          | project    | This repository                                                                                          |

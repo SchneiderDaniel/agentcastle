@@ -506,7 +506,6 @@ function detectNoBatch(data: SessionData): WasteSignal[] {
 const DISCOVERY_TOOLS = new Set([
 	"ripgrep_search",
 	"structural_search",
-	"ranked_map",
 	"web_search",
 	"web_crawl",
 	"ask_user",
