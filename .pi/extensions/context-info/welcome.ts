@@ -125,20 +125,20 @@ export function showWelcomeBanner(
 					"                      #@#-:.+%-..                                           %@",
 					"                      %%                                                    @@",
 					`                      %%   ${muted("🧩 Extensions:")} ${accent(String(extCount))} ${dim("(/explain-extensions)")}         #@`,
-					`                      %%   ${muted("📝 Prompts:")}     ${accent(String(promptCount))} ${dim("(/explain-prompts)")}            =@`,
-					"\t\t              %%   " +
+					`                      %%   ${muted("📝 Prompts:")}    ${accent(String(promptCount))} ${dim("(/explain-prompts)")}            =@`,
+					"                      %%   " +
 						muted("🎨 Themes:") +
 						"       " +
 						accent(String(themeCount)) +
 						"                               #@",
-					"\t\t              %%   " +
+					"                      %%   " +
 						muted("🔧 Skills:") +
 						"       " +
 						accent(String(skillCount)) +
 						" " +
 						dim("(/explain-skills)") +
 						"             =@",
-					"\t\t              %@                                                 ## %@",
+					"                      %@                                                 ## %@",
 					"                      #@*==+**#%@@%#+:.@*%%+-.@*%%=@.@*%%+-. *%%+-==*%%+-. *%%",
 					"                      #@*=%==*%%+-.=+**#%%=@.@*%%+-. *%%+-@@%#+:.@*%%+-.@* *%%",
 				];
