@@ -305,16 +305,14 @@ function getCommandNameFromTokens(tokens: BashToken[]): string {
  * Excludes known non-path patterns (URLs, npm scoped packages, standalone tilde,
  * option flags, shell operators) and all tokens when command is echo/printf.
  *
- * Safety principle: quoted tokens and backtick content are NOT local file paths.
- * - Single/double-quoted strings are literals (e.g. --body 'comment text')
- * - Backtick content is command substitution (e.g. \`some.command\`)
- * - Real file paths in AI-generated bash are almost never quoted
+ * Safety principle: quoting does not change file identity after bash quote removal.
+ * A quoted "cat .env" resolves to the same file path as unquoted cat .env.
+ * The echo/printf guard and option-flag prefix filter handle the legitimate
+ * string-literal cases (echo "some.log", --body 'comment text').
+ * Backtick content is command substitution (e.g. \`some.command\`).
  */
 function isPathLike(token: BashToken, commandName: string): boolean {
 	const t = token.text;
-
-	// Quoted tokens are string literals, never file paths
-	if (token.quoted) return false;
 
 	// Backtick chars indicate command substitution, not file paths
 	if (t.includes("`")) return false;
