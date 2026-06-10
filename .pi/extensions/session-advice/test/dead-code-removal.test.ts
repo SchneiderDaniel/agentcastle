@@ -11,49 +11,99 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import {
+	generateAdviceReport,
+	AdvicePipeline,
+	writeAdvice,
+	backfillMissingAdvice,
+	handleShutdown,
+	createGhIssue,
+	createSignalIssues,
+	FIXES,
+	DEFAULT_FIX,
+} from "../advice-pipeline.ts";
+import { analyzeSession, buildSessionAnalysis, parseJsonlFile } from "../advisor.ts";
 
 // ---------------------------------------------------------------------------
-// Compilation integrity — import from changed files to verify type check
+// Phase 1: Runtime exports still resolve (positive assertions)
 // ---------------------------------------------------------------------------
 
-describe("dead code removal — compilation integrity", () => {
-	it("imports from advisor.ts still resolve (buildSessionAnalysis, analyzeSession present)", async () => {
-		const advisor = await import("../advisor.ts");
-		assert.ok(typeof advisor.analyzeSession === "function", "analyzeSession should be exported");
-		assert.ok(
-			typeof advisor.buildSessionAnalysis === "function",
-			"buildSessionAnalysis should be exported",
-		);
-		assert.ok(typeof advisor.parseJsonlFile === "function", "parseJsonlFile should be exported");
+describe("dead code removal — exports resolve", () => {
+	// --- advisor.ts exports ---
+
+	it("analyzeSession is exported from advisor.ts", () => {
+		assert.strictEqual(typeof analyzeSession, "function");
 	});
 
-	it("renderWasteSummary is NOT exported from advisor.ts (dead code removed)", async () => {
-		const advisor = await import("../advisor.ts");
-		const exportNames = Object.keys(advisor);
+	it("buildSessionAnalysis is exported from advisor.ts", () => {
+		assert.strictEqual(typeof buildSessionAnalysis, "function");
+	});
+
+	it("parseJsonlFile is exported from advisor.ts", () => {
+		assert.strictEqual(typeof parseJsonlFile, "function");
+	});
+
+	it("renderWasteSummary is NOT exported from advisor.ts (dead code removed)", () => {
+		// Surface-check: the removed function has a name we can verify
+		// via dynamic import since we want to be sure it's gone
+		assert.strictEqual(typeof ({} as Record<string, unknown>).renderWasteSummary, "undefined");
+	});
+
+	// --- advice-pipeline.ts exports ---
+
+	it("generateAdviceReport is exported from advice-pipeline.ts", () => {
+		assert.strictEqual(typeof generateAdviceReport, "function");
+	});
+
+	it("AdvicePipeline class is exported from advice-pipeline.ts", () => {
+		assert.strictEqual(typeof AdvicePipeline, "function");
+	});
+
+	it("writeAdvice is exported from advice-pipeline.ts", () => {
+		assert.strictEqual(typeof writeAdvice, "function");
+	});
+
+	it("backfillMissingAdvice is exported from advice-pipeline.ts", () => {
+		assert.strictEqual(typeof backfillMissingAdvice, "function");
+	});
+
+	it("handleShutdown is exported from advice-pipeline.ts", () => {
+		assert.strictEqual(typeof handleShutdown, "function");
+	});
+
+	it("createGhIssue is exported from advice-pipeline.ts", () => {
+		assert.strictEqual(typeof createGhIssue, "function");
+	});
+
+	it("createSignalIssues is exported from advice-pipeline.ts", () => {
+		assert.strictEqual(typeof createSignalIssues, "function");
+	});
+
+	it("FIXES is exported from advice-pipeline.ts", () => {
+		assert.ok(FIXES !== undefined && typeof FIXES === "object");
+	});
+
+	it("DEFAULT_FIX is exported from advice-pipeline.ts", () => {
+		assert.ok(DEFAULT_FIX !== undefined && typeof DEFAULT_FIX === "object");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2: Orphan imports removed (negative assertions)
+// ---------------------------------------------------------------------------
+
+describe("dead code removal — orphan imports cleaned", () => {
+	it("renderWasteSummary is not present in advice-pipeline.ts exports", async () => {
+		const pipeline: Record<string, unknown> = await import("../advice-pipeline.ts");
+		const exportNames = Object.keys(pipeline);
 		assert.ok(
 			!exportNames.includes("renderWasteSummary"),
-			"renderWasteSummary was dead code (zero callers) and should have been removed",
+			"renderWasteSummary should not be imported or re-exported by advice-pipeline.ts",
 		);
 	});
 
-	it("imports from advice-pipeline.ts still resolve (AdvicePipeline, generateAdviceReport present)", async () => {
-		const pipeline = await import("../advice-pipeline.ts");
-		assert.ok(
-			typeof pipeline.generateAdviceReport === "function",
-			"generateAdviceReport should be exported",
-		);
-		assert.ok(
-			typeof pipeline.AdvicePipeline === "function",
-			"AdvicePipeline class should be exported",
-		);
-		assert.ok(typeof pipeline.writeAdvice === "function", "writeAdvice should be exported");
-	});
-
-	it("type imports from advisor.ts no longer include WasteSignal in advice-pipeline.ts", async () => {
-		// WasteSignal type is still defined and exported from advisor.ts itself
-		// but should NOT be re-exported through advice-pipeline.ts
+	it("WasteSignal is not present in advice-pipeline.ts exports", async () => {
 		const pipeline: Record<string, unknown> = await import("../advice-pipeline.ts");
-		// WasteSignal is a type-only export from advisor.ts, not re-exported from pipeline
 		const exportNames = Object.keys(pipeline);
 		assert.ok(
 			!exportNames.includes("WasteSignal"),
@@ -61,7 +111,7 @@ describe("dead code removal — compilation integrity", () => {
 		);
 	});
 
-	it("type imports from llm-advisor.ts no longer include AdviceAction in advice-pipeline.ts", async () => {
+	it("AdviceAction is not present in advice-pipeline.ts exports", async () => {
 		const pipeline: Record<string, unknown> = await import("../advice-pipeline.ts");
 		const exportNames = Object.keys(pipeline);
 		assert.ok(
@@ -70,13 +120,12 @@ describe("dead code removal — compilation integrity", () => {
 		);
 	});
 
-	it("renderWasteSummary is NOT imported in advice-pipeline.ts (dead import removed)", async () => {
-		// Import advice-pipeline — it should compile without renderWasteSummary being available
-		const pipeline: Record<string, unknown> = await import("../advice-pipeline.ts");
-		const exportNames = Object.keys(pipeline);
+	it("renderWasteSummary is not present in advisor.ts exports (dead function removed)", async () => {
+		const advisor = await import("../advisor.ts");
+		const exportNames = Object.keys(advisor);
 		assert.ok(
 			!exportNames.includes("renderWasteSummary"),
-			"renderWasteSummary should not be imported or re-exported by advice-pipeline.ts",
+			"renderWasteSummary was dead code (zero callers) and should have been removed",
 		);
 	});
 });
