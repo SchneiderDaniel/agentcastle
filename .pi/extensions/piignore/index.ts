@@ -201,6 +201,11 @@ function tokenizeBashCommand(command: string): BashToken[] {
 		quoted = false;
 	}
 
+	function emit(text: string) {
+		flush();
+		tokens.push({ text, quoted: false });
+	}
+
 	for (let i = 0; i < command.length; i++) {
 		const ch = command[i];
 
@@ -226,6 +231,22 @@ function tokenizeBashCommand(command: string): BashToken[] {
 			inDouble = true;
 		} else if (ch === " " || ch === "\t") {
 			flush();
+		} else if (ch === ";") {
+			emit(";");
+		} else if (ch === "|") {
+			if (command[i + 1] === "|") {
+				emit("||");
+				i++;
+			} else {
+				emit("|");
+			}
+		} else if (ch === "&") {
+			if (command[i + 1] === "&") {
+				emit("&&");
+				i++;
+			} else {
+				current += ch;
+			}
 		} else {
 			current += ch;
 		}
@@ -237,10 +258,39 @@ function tokenizeBashCommand(command: string): BashToken[] {
 }
 
 /**
+ * Split a token array into segments at shell operator boundaries.
+ * Shell operators (&&, ||, ;, |) delimit separate commands.
+ * Operators inside quotes are not boundaries.
+ */
+function segmentTokens(tokens: BashToken[]): BashToken[][] {
+	const segments: BashToken[][] = [];
+	let current: BashToken[] = [];
+
+	for (const t of tokens) {
+		if (!t.quoted && (t.text === "&&" || t.text === "||" || t.text === ";" || t.text === "|")) {
+			segments.push(current);
+			current = [];
+		} else {
+			current.push(t);
+		}
+	}
+	segments.push(current);
+
+	return segments;
+}
+
+/**
  * Extract the command name from a bash command (first non-option token).
  */
 function getCommandName(command: string): string {
 	const tokens = tokenizeBashCommand(command);
+	return getCommandNameFromTokens(tokens);
+}
+
+/**
+ * Extract the command name from a list of tokens (first non-option, non-operator token).
+ */
+function getCommandNameFromTokens(tokens: BashToken[]): string {
 	for (const t of tokens) {
 		if (t.quoted) continue;
 		if (t.text.startsWith("-")) continue;
@@ -305,18 +355,21 @@ function isPathLike(token: BashToken, commandName: string): boolean {
 
 /**
  * Extract potential file/directory paths from a bash command string.
- * Tokenizes the command, extracts the command name, checks each
- * path-like token against ignore patterns.
+ * Tokenizes the command, splits into segments at shell separators,
+ * and checks each segment independently with its own command name.
  */
 function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string): string | null {
 	const tokens = tokenizeBashCommand(command);
-	const commandName = getCommandName(command);
+	const segments = segmentTokens(tokens);
 
-	const pathLike = tokens.filter((t) => isPathLike(t, commandName));
+	for (const segment of segments) {
+		const commandName = getCommandNameFromTokens(segment);
+		const pathLike = segment.filter((t) => isPathLike(t, commandName));
 
-	for (const t of pathLike) {
-		const result = checkPath(t.text, entries, cwd);
-		if (result) return result;
+		for (const t of pathLike) {
+			const result = checkPath(t.text, entries, cwd);
+			if (result) return result;
+		}
 	}
 	return null;
 }

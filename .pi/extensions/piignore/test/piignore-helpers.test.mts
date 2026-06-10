@@ -168,6 +168,11 @@ function tokenizeBashCommand(command: string): BashToken[] {
 		quoted = false;
 	}
 
+	function emit(text: string) {
+		flush();
+		tokens.push({ text, quoted: false });
+	}
+
 	for (let i = 0; i < command.length; i++) {
 		const ch = command[i];
 
@@ -193,6 +198,22 @@ function tokenizeBashCommand(command: string): BashToken[] {
 			inDouble = true;
 		} else if (ch === " " || ch === "\t") {
 			flush();
+		} else if (ch === ";") {
+			emit(";");
+		} else if (ch === "|") {
+			if (command[i + 1] === "|") {
+				emit("||");
+				i++;
+			} else {
+				emit("|");
+			}
+		} else if (ch === "&") {
+			if (command[i + 1] === "&") {
+				emit("&&");
+				i++;
+			} else {
+				current += ch;
+			}
 		} else {
 			current += ch;
 		}
@@ -258,10 +279,39 @@ function isPathLike(token: BashToken, commandName: string): boolean {
 }
 
 /**
+ * Split a token array into segments at shell operator boundaries.
+ * Shell operators (&&, ||, ;, |) delimit separate commands.
+ * Operators inside quotes are not boundaries.
+ */
+function segmentTokens(tokens: BashToken[]): BashToken[][] {
+	const segments: BashToken[][] = [];
+	let current: BashToken[] = [];
+
+	for (const t of tokens) {
+		if (!t.quoted && (t.text === "&&" || t.text === "||" || t.text === ";" || t.text === "|")) {
+			segments.push(current);
+			current = [];
+		} else {
+			current.push(t);
+		}
+	}
+	segments.push(current);
+
+	return segments;
+}
+
+/**
  * Extract the command name from a bash command (first non-option token).
  */
 function getCommandName(command: string): string {
 	const tokens = tokenizeBashCommand(command);
+	return getCommandNameFromTokens(tokens);
+}
+
+/**
+ * Extract the command name from a list of tokens (first non-option, non-operator token).
+ */
+function getCommandNameFromTokens(tokens: BashToken[]): string {
 	for (const t of tokens) {
 		if (t.quoted) continue; // quoted tokens are not the command
 		if (t.text.startsWith("-")) continue; // skip option flags
@@ -273,18 +323,21 @@ function getCommandName(command: string): string {
 
 /**
  * Check a bash command for paths matching piignore patterns.
- * Tokenizes the command, extracts the command name, checks each
- * path-like token against ignore entries.
+ * Tokenizes the command, splits into segments at shell separators,
+ * and checks each segment independently with its own command name.
  */
 function checkBashCommand(command: string, entries: IgnoreEntry[], cwd: string): string | null {
 	const tokens = tokenizeBashCommand(command);
-	const commandName = getCommandName(command);
+	const segments = segmentTokens(tokens);
 
-	const pathLike = tokens.filter((t) => isPathLike(t, commandName));
+	for (const segment of segments) {
+		const commandName = getCommandNameFromTokens(segment);
+		const pathLike = segment.filter((t) => isPathLike(t, commandName));
 
-	for (const t of pathLike) {
-		const result = checkPath(t.text, entries, cwd);
-		if (result) return result;
+		for (const t of pathLike) {
+			const result = checkPath(t.text, entries, cwd);
+			if (result) return result;
+		}
 	}
 	return null;
 }
@@ -458,6 +511,250 @@ describe("getCommandName", () => {
 
 	it("skips quoted tokens", () => {
 		assert.strictEqual(getCommandName('"command" arg1'), "arg1");
+	});
+});
+
+describe("segmentTokens", () => {
+	it("empty token list returns empty segments", () => {
+		assert.deepStrictEqual(segmentTokens([]), [[]]);
+	});
+
+	it("single segment with no separators returns one segment with all tokens", () => {
+		const tokens = tokenizeBashCommand("echo hello world");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 1);
+		assert.strictEqual(segments[0].length, 3);
+	});
+
+	it("single && separator splits into two segments", () => {
+		const tokens = tokenizeBashCommand("echo x && cat .env");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 2);
+		assert.strictEqual(segments[0].length, 2); // echo, x
+		assert.strictEqual(segments[1].length, 2); // cat, .env
+	});
+
+	it("single || separator splits into two segments", () => {
+		const tokens = tokenizeBashCommand("echo x || cat .env");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 2);
+		assert.strictEqual(segments[0].length, 2); // echo, x
+		assert.strictEqual(segments[1].length, 2); // cat, .env
+	});
+
+	it("single ; separator splits into two segments", () => {
+		const tokens = tokenizeBashCommand("echo x; cat .env");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 2);
+		assert.strictEqual(segments[0].length, 2); // echo, x
+		assert.strictEqual(segments[1].length, 2); // cat, .env
+	});
+
+	it("single | separator splits into two segments", () => {
+		const tokens = tokenizeBashCommand("echo x | cat .env");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 2);
+		assert.strictEqual(segments[0].length, 2); // echo, x
+		assert.strictEqual(segments[1].length, 2); // cat, .env
+	});
+
+	it("multiple separators: echo a && printf b; cat .env -> three segments", () => {
+		const tokens = tokenizeBashCommand("echo a && printf b; cat .env");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 3);
+		assert.strictEqual(segments[0].length, 2); // echo, a
+		assert.strictEqual(segments[1].length, 2); // printf, b
+		assert.strictEqual(segments[2].length, 2); // cat, .env
+	});
+
+	it("consecutive separators (&& &&) produces empty segment between", () => {
+		const tokens = tokenizeBashCommand("echo a && && cat .env");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 3);
+		assert.strictEqual(segments[0].length, 2); // echo, a
+		assert.strictEqual(segments[1].length, 0); // empty between && and &&
+		assert.strictEqual(segments[2].length, 2); // cat, .env
+	});
+
+	it("leading separator (&& cat .env) produces empty segment at start", () => {
+		const tokens = tokenizeBashCommand("&& cat .env");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 2);
+		assert.strictEqual(segments[0].length, 0); // empty leading segment
+		assert.strictEqual(segments[1].length, 2); // cat, .env
+	});
+
+	it("trailing separator (cat .env &&) produces empty segment at end", () => {
+		const tokens = tokenizeBashCommand("cat .env &&");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 2);
+		assert.strictEqual(segments[0].length, 2); // cat, .env
+		assert.strictEqual(segments[1].length, 0); // empty trailing segment
+	});
+
+	it("quoted separator inside quotes is NOT a segment boundary", () => {
+		const tokens = tokenizeBashCommand("echo '&&'");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 1);
+		assert.strictEqual(segments[0].length, 2); // echo, '&&'
+		assert.strictEqual(segments[0][1].text, "&&");
+		assert.strictEqual(segments[0][1].quoted, true);
+	});
+
+	it("only separators, no commands (&& ||) produces all empty segments", () => {
+		const tokens = tokenizeBashCommand("&& ||");
+		const segments = segmentTokens(tokens);
+		assert.strictEqual(segments.length, 3);
+		assert.strictEqual(segments[0].length, 0);
+		assert.strictEqual(segments[1].length, 0);
+		assert.strictEqual(segments[2].length, 0);
+	});
+});
+
+describe("checkBashCommand - segment-scoped echo/printf exclusion", () => {
+	const cwd = "/tmp";
+
+	const testPatterns = [
+		"*~",
+		"**/*token*",
+		"*.key",
+		"*.tar",
+		"*.log",
+		"**/*secret*",
+		".env",
+		".env.*",
+	];
+	const entries: IgnoreEntry[] = [
+		{
+			root: "/",
+			patterns: testPatterns.map((p) => patternToRegex(p)),
+		},
+	];
+
+	it("echo x && cat .env — blocked (cat segment checked independently)", () => {
+		assert.strictEqual(checkBashCommand("echo x && cat .env", entries, cwd), ".env");
+	});
+
+	it("echo x; cat .env — blocked", () => {
+		assert.strictEqual(checkBashCommand("echo x; cat .env", entries, cwd), ".env");
+	});
+
+	it("echo x || cat .env — blocked", () => {
+		assert.strictEqual(checkBashCommand("echo x || cat .env", entries, cwd), ".env");
+	});
+
+	it("echo x | cat .env — blocked (pipe is a separator)", () => {
+		assert.strictEqual(checkBashCommand("echo x | cat .env", entries, cwd), ".env");
+	});
+
+	it("printf '%s' 'x' && cat .env — blocked", () => {
+		assert.strictEqual(checkBashCommand("printf '%s' 'x' && cat .env", entries, cwd), ".env");
+	});
+
+	it("echo hello && echo world — not blocked (both echo)", () => {
+		assert.strictEqual(checkBashCommand("echo hello && echo world", entries, cwd), null);
+	});
+
+	it("echo hello && cat public.txt — not blocked (no pattern for public.txt)", () => {
+		assert.strictEqual(checkBashCommand("echo hello && cat public.txt", entries, cwd), null);
+	});
+
+	it("echo .env (single segment) — not blocked (echo exclusion preserved)", () => {
+		assert.strictEqual(checkBashCommand("echo .env", entries, cwd), null);
+	});
+
+	it("printf '%s' 'hello' (single segment) — not blocked (printf exclusion preserved)", () => {
+		assert.strictEqual(checkBashCommand("printf '%s' 'hello'", entries, cwd), null);
+	});
+
+	it("echo ~/file.txt (single segment) — not blocked (existing behavior preserved)", () => {
+		assert.strictEqual(checkBashCommand("echo ~/file.txt", entries, cwd), null);
+	});
+
+	it('echo "file.tar" (single segment, quoted) — not blocked', () => {
+		assert.strictEqual(checkBashCommand('echo "file.tar"', entries, cwd), null);
+	});
+
+	it("echo file.tar && cat .env.local — blocked (.env.local in cat segment)", () => {
+		assert.strictEqual(
+			checkBashCommand("echo file.tar && cat .env.local", entries, cwd),
+			".env.local",
+		);
+	});
+
+	it("bash echo x && cat .env && echo y — blocked (middle segment is cat)", () => {
+		assert.strictEqual(checkBashCommand("echo x && cat .env && echo y", entries, cwd), ".env");
+	});
+
+	it("cat .env (no echo prefix) — blocked (existing behavior preserved)", () => {
+		assert.strictEqual(checkBashCommand("cat .env", entries, cwd), ".env");
+	});
+
+	it("echo x | cat .env — pipe IS a separator, blocked", () => {
+		assert.strictEqual(checkBashCommand("echo x | cat .env", entries, cwd), ".env");
+	});
+
+	it("echo x > .env — redirection > not a separator, .env in echo's segment — not blocked (acceptable trade-off)", () => {
+		// > is redirection, not a command separator; .env is in echo's segment
+		assert.strictEqual(checkBashCommand("echo x > .env", entries, cwd), null);
+	});
+});
+
+describe("checkBashCommand - false-positive regression with separators", () => {
+	const cwd = "/tmp";
+
+	const testPatterns = [
+		"*~",
+		"**/*token*",
+		"*.key",
+		"*.tar",
+		"*.log",
+		"**/*secret*",
+		".env",
+		".env.*",
+	];
+	const entries: IgnoreEntry[] = [
+		{
+			root: "/",
+			patterns: testPatterns.map((p) => patternToRegex(p)),
+		},
+	];
+
+	it("echo x && curl https://api.example.com/v1/token — not blocked (URL in curl segment)", () => {
+		assert.strictEqual(
+			checkBashCommand("echo x && curl https://api.example.com/v1/token", entries, cwd),
+			null,
+		);
+	});
+
+	it("echo x && npm view @scope/pkg.token — not blocked (scoped package in npm segment)", () => {
+		assert.strictEqual(checkBashCommand("echo x && npm view @scope/pkg.token", entries, cwd), null);
+	});
+
+	it("echo x && cd ~ — not blocked (tilde in cd segment)", () => {
+		assert.strictEqual(checkBashCommand("echo x && cd ~", entries, cwd), null);
+	});
+
+	it("echo x && ls -la — not blocked (option flag in ls segment)", () => {
+		assert.strictEqual(checkBashCommand("echo x && ls -la", entries, cwd), null);
+	});
+
+	it("gh issue comment --body with quoted path && echo done — not blocked (quoted body in gh segment)", () => {
+		assert.strictEqual(
+			checkBashCommand(
+				"gh issue comment 123 --repo owner/repo --body 'see src/main.ts' && echo done",
+				entries,
+				cwd,
+			),
+			null,
+		);
+	});
+
+	it("echo x && rg 'pattern' debug.log with *.log pattern — blocked (true positive)", () => {
+		assert.strictEqual(
+			checkBashCommand('echo x && rg "pattern" debug.log', entries, cwd),
+			"debug.log",
+		);
 	});
 });
 
