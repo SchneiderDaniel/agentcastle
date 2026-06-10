@@ -1,4 +1,4 @@
-# AgentCastle: Token-Saving Agent Harness with Kanban Git Sub-Agent Framework
+# Cheasee-Pi: Build Your Own PI. Cheap. Easy. Secure.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.74.0-6e3bf0)](https://pi.dev)
@@ -6,20 +6,20 @@
 
 **Token-saving agent harness with security guardrails and a Kanban git-oriented sub-agent framework.** Docker + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback via git worktrees for parallel development.
 
-![AgentCastle TUI — multi-agent Kanban pipeline](agentcastletui.png)
+![Cheasee-Pi TUI — multi-agent Kanban pipeline](cheasee-pi-tui.png)
 
 ---
 
 ## Table of Contents
 
 - [Your Journey](#your-journey)
-  - [1. Discovery — What is AgentCastle?](#1-discovery--what-is-agentcastle)
+  - [1. Discovery — What is Cheasee-Pi?](#1-discovery--what-is-cheasee-pi)
   - [2. Philosophy — Why build your own?](#2-philosophy--why-build-your-own)
   - [3. Preparation — What you need on your machine](#3-preparation--what-you-need-on-your-machine)
   - [4. Installation — How to set it up](#4-installation--how-to-set-it-up)
   - [5. Orientation — What did I just install?](#5-orientation--what-did-i-just-install)
   - [6. Verification — Does everything work?](#6-verification--does-everything-work)
-  - [7. Daily Use — How to work with AgentCastle](#7-daily-use--how-to-work-with-agentcastle)
+  - [7. Daily Use — How to work with Cheasee-Pi](#7-daily-use--how-to-work-with-cheasee-pi)
   - [8. Power User — The Multi-Agent Pipeline](#8-power-user--the-multi-agent-pipeline)
   - [9. Troubleshooting — Something broke](#9-troubleshooting--something-broke)
   - [10. Contributing — I want to help](#10-contributing--i-want-to-help)
@@ -38,9 +38,9 @@ This README follows your path from first encounter to daily use. Each section is
 
 ---
 
-### 1. Discovery — What is AgentCastle?
+### 1. Discovery — What is Cheasee-Pi?
 
-AgentCastle is a **Pi agent harness** built on the [Pi coding agent](https://pi.dev) — engineered to save tokens, enforce security boundaries, and drive sub-agents through a Kanban git-oriented workflow. It uses a GitHub Project board to orchestrate an autonomous multi-agent pipeline — Researcher → Architect → TestDesigner → Developer → Auditor — with tools that minimise token waste, enforce security boundaries, and streamline development inside isolated git worktrees. Clone this repo and you get a complete toolchain:
+Cheasee-Pi is a **Pi agent harness** built on the [Pi coding agent](https://pi.dev) — engineered to save tokens, enforce security boundaries, and drive sub-agents through a Kanban git-oriented workflow. It uses a GitHub Project board to orchestrate an autonomous multi-agent pipeline — Researcher → Architect → TestDesigner → Developer → Auditor — with tools that minimise token waste, enforce security boundaries, and streamline development inside isolated git worktrees. Clone this repo and you get a complete toolchain:
 
 - **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching for finding function/class definitions, method calls, try/catch blocks
 - **Text search** — `ripgrep_search` via ripgrep: fast literal/regex code search
@@ -54,7 +54,7 @@ AgentCastle is a **Pi agent harness** built on the [Pi coding agent](https://pi.
 - **Format on save** — Auto Prettier + ESLint after every write/edit
 - **Writing voice prompt** — Derive a consistent AI writing voice from sample text (paste, URL, or file), generates `voice-{lang}.md` style guide
 - **Extensions-based** — 12+ secure pi extensions, no MCP servers, no network-exposed endpoints
-- **Custom theme** — Dark cyberpunk TUI (agentcastle)
+- **Custom theme** — Dark cyberpunk TUI (cheasee-pi)
 - **Loading screen** — Extension loading splash with spinner animation, progress events, and extension status visible during startup — integrated into the pi extension loading pipeline
 
 All components run locally. No code leaves your machine (except LLM API calls to your provider).
@@ -92,9 +92,9 @@ Customize ruthlessly. Make it yours.
 #### Quick-start
 
 ```bash
-git clone git@github.com:SchneiderDaniel/agentcastle.git
-cd agentcastle
-./agent-castle.sh
+git clone git@github.com:SchneiderDaniel/cheasee-pi.git
+cd cheasee-pi
+./cheasee-pi.sh
 ```
 
 That's it. The wrapper script:
@@ -108,7 +108,7 @@ That's it. The wrapper script:
 **1. Clone the repo**
 
 ```bash
-git clone git@github.com:SchneiderDaniel/agentcastle.git && cd agentcastle
+git clone git@github.com:SchneiderDaniel/cheasee-pi.git && cd cheasee-pi
 ```
 
 **2. Configure API keys**
@@ -121,7 +121,7 @@ cp docker/agent_env.example .agent_env
 **3. Launch**
 
 ```bash
-./agent-castle.sh
+./cheasee-pi.sh
 ```
 
 **4. Set provider (first session only)**
@@ -134,7 +134,7 @@ Exit with `Ctrl+C` twice. The provider is persisted in `.pi/settings.json`.
 
 #### What happens under the hood
 
-`./agent-castle.sh` runs `docker compose up` with:
+`./cheasee-pi.sh` runs `docker compose up` with:
 
 - Image built from `docker/Dockerfile` (Debian 12-slim, Node.js 22, Python 3, ctags, ripgrep, ast-grep, pi, gosu)
 - Repo root bind-mounted to `/workspaces/main` inside the container
@@ -152,7 +152,7 @@ Exit with `Ctrl+C` twice. The provider is persisted in `.pi/settings.json`.
 ┌────────────────────────────────────────────────────┐
 │  Terminal (Docker)                                  │
 │  ┌──────────────────────────────────────────────┐  │
-│  │  Pi TUI (Terminal) — agentcastle theme       │  │
+│  │  Pi TUI (Terminal) — cheasee-pi theme       │  │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐ │  │
 │  │  │ Exts     │ │ AI Prov │ │ Rich Footer  │ │  │
 │  │  │ .pi/     │ │OpenCode  │ │branch model  │ │  │
@@ -220,7 +220,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `scripts/pr-review.ts`                              | PR review workflow — security checks, philosophy validation, structured comments                                       |
 | `scripts/pi_update`                                 | Updates pi npm package, verifies models.json symlink, extensible step array                                            |
 | `.pi/settings.json`                                 | Supervisor + context status bar config                                                                                 |
-| `.pi/themes/agentcastle.json`                       | Dark cyberpunk TUI theme                                                                                               |
+| `.pi/themes/cheasee-pi.json`                       | Dark cyberpunk TUI theme                                                                                               |
 | `.pi/prompts/issue-cutter.md`                       | Epic → sub-issues with layer labels                                                                                    |
 | `.pi/prompts/issue-refinement.md`                   | Socratic interview + MC refinement                                                                                     |
 | `.pi/prompts/extension-spec.md`                     | Extension design PRD generator                                                                                         |
@@ -280,7 +280,7 @@ All agents use `opencode-go/deepseek-v4-flash` model. Developer additionally use
 
 #### 5.6 Git Worktrees
 
-AgentCastle uses [git worktrees](https://git-scm.com/docs/git-worktree) to give each issue its **own isolated working directory** with its own branch. This keeps `main` clean and prevents agents from interfering with each other.
+Cheasee-Pi uses [git worktrees](https://git-scm.com/docs/git-worktree) to give each issue its **own isolated working directory** with its own branch. This keeps `main` clean and prevents agents from interfering with each other.
 
 **Key concepts:**
 
@@ -355,17 +355,17 @@ The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming
 
 #### 5.9 Published Pi Packages
 
-Selected extensions from AgentCastle are published as individual npm packages under the `@agentcastle` scope. They appear on the [pi.dev package gallery](https://pi.dev/packages) and install via `pi install`.
+Selected extensions from Cheasee-Pi are published as individual npm packages under the `@cheasee-pi` scope. They appear on the [pi.dev package gallery](https://pi.dev/packages) and install via `pi install`.
 
 | Package                            | What it is                                                                                             | Install                                           |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| `@agentcastle/ask-user`            | Interactive ask_user tool with typed dialogs, Q&A log, and `/qna` command                              | `pi install npm:@agentcastle/ask-user`            |
-| `@agentcastle/ripgrep-search`      | Fast literal/regex code search — respects `.gitignore`, structured file:line:column:text output        | `pi install npm:@agentcastle/ripgrep-search`      |
-| `@agentcastle/lsp-auditor`         | Pre-audit code quality via LSP before commit — diagnostics on changed files                            | `pi install npm:@agentcastle/lsp-auditor`         |
-| `@agentcastle/piignore`            | Blocks AI access to sensitive files via `.piignore` patterns — keeps secrets safe                      | `pi install npm:@agentcastle/piignore`            |
-| `@agentcastle/structural-analyzer` | AST-aware code search via ast-grep — finds function calls, classes, try/catch, and structural patterns | `pi install npm:@agentcastle/structural-analyzer` |
+| `@cheasee-pi/ask-user`            | Interactive ask_user tool with typed dialogs, Q&A log, and `/qna` command                              | `pi install npm:@cheasee-pi/ask-user`            |
+| `@cheasee-pi/ripgrep-search`      | Fast literal/regex code search — respects `.gitignore`, structured file:line:column:text output        | `pi install npm:@cheasee-pi/ripgrep-search`      |
+| `@cheasee-pi/lsp-auditor`         | Pre-audit code quality via LSP before commit — diagnostics on changed files                            | `pi install npm:@cheasee-pi/lsp-auditor`         |
+| `@cheasee-pi/piignore`            | Blocks AI access to sensitive files via `.piignore` patterns — keeps secrets safe                      | `pi install npm:@cheasee-pi/piignore`            |
+| `@cheasee-pi/structural-analyzer` | AST-aware code search via ast-grep — finds function calls, classes, try/catch, and structural patterns | `pi install npm:@cheasee-pi/structural-analyzer` |
 
-**Why publish separately?** Not all extensions belong on pi.dev — some are AgentCastle-specific (supervisor, session-logger, context-info). Published packages are self-contained, useful in any Pi setup.
+**Why publish separately?** Not all extensions belong on pi.dev — some are Cheasee-Pi-specific (supervisor, session-logger, context-info). Published packages are self-contained, useful in any Pi setup.
 
 **Package structure:** Each published extension has its own `package.json` with `keywords: ["pi-package"]` and a `pi` manifest pointing to its entry file. The README.md renders as the pi.dev detail page. The `package.json` `description` feeds the gallery card.
 
@@ -375,7 +375,7 @@ Selected extensions from AgentCastle are published as individual npm packages un
 {
 	"packages": [
 		{
-			"source": "npm:@agentcastle/ask-user",
+			"source": "npm:@cheasee-pi/ask-user",
 			"extensions": ["./index.ts"]
 		}
 	]
@@ -397,14 +397,14 @@ This runs the **Extension Packager** prompt which:
 1. Lists all extensions in `.pi/extensions/`
 2. Asks which one to package
 3. Reads the code to discover imports and dependencies
-4. Creates `package.json` with `@agentcastle/` scope, `pi-package` keyword, and pi manifest
+4. Creates `package.json` with `@cheasee-pi/` scope, `pi-package` keyword, and pi manifest
 5. Creates `README.md` (renders as pi.dev gallery detail page)
 6. Shows `npm publish` commands to run manually
 7. Updates this Published Pi Packages table
 
 **Prerequisites:**
 
-- npm account with `@agentcastle` org access ([create org](https://www.npmjs.com/org/create) if needed)
+- npm account with `@cheasee-pi` org access ([create org](https://www.npmjs.com/org/create) if needed)
 - Logged in: `npm login` / `npm whoami`
 - If 2FA enabled: `npm publish --otp=<code>` or use a granular access token with bypass
 
@@ -415,7 +415,7 @@ cd .pi/extensions/<name>
 npm publish --access public
 ```
 
-After publish, verify on [pi.dev/packages](https://pi.dev/packages) and test with `pi install npm:@agentcastle/<name>`.
+After publish, verify on [pi.dev/packages](https://pi.dev/packages) and test with `pi install npm:@cheasee-pi/<name>`.
 
 #### 5.10 Skills
 
@@ -428,7 +428,7 @@ Currently **6 skills installed**:
 | **extension-spec**                | Designs pi extensions — new or refactoring — with full PRD, TypeScript best practices, anti-pattern audit, migration plan.                                                                                     |
 | **improve-codebase-architecture** | Surface architectural friction — shallow modules, leaky seams, low locality. Creates umbrella + sub-issues with Mermaid diagrams.                                                                              |
 | **duplicate-code-hunter**         | Systematic duplicate code detection — exact clones (Type 1), renamed clones (Type 2), near-miss (Type 3), semantic clones (Type 4). Uses jscpd for token-based scanning. Hunt loop with three-way-match proof. |
-| **pr-review**                     | Review external PRs — automated security/quality checks, validates against AgentCastle philosophy + pi docs, formats structured review comment. Asks user confirmation before posting.                         |
+| **pr-review**                     | Review external PRs — automated security/quality checks, validates against Cheasee-Pi philosophy + pi docs, formats structured review comment. Asks user confirmation before posting.                         |
 
 Skills are loaded on-demand via `/skill:<name>` invocation. Every skill's description injects ~50-150 tokens into the context window on every turn, causing [context rot](https://docs.anthropic.com/en/docs/build-with-claude/context-windows). Use sparingly. Prefer extensions (concise prompt snippets) or prompt templates (lazy-loaded) over skills.
 
@@ -436,7 +436,7 @@ Skills are loaded on-demand via `/skill:<name>` invocation. Every skill's descri
 
 ### 6. Verification — Does everything work?
 
-All checks run inside the container (after `./agent-castle.sh`).
+All checks run inside the container (after `./cheasee-pi.sh`).
 
 #### 6.1 Environment
 
@@ -476,7 +476,7 @@ pi -p "Create a file named '.pi/test-file.txt' with the content 'container works
 
 ---
 
-### 7. Daily Use — How to work with AgentCastle
+### 7. Daily Use — How to work with Cheasee-Pi
 
 #### 7.1 Project Setup (one-time per GitHub project)
 
@@ -743,7 +743,7 @@ Each issue gets an **isolated git worktree**. This prevents agents from interfer
 When the repo has submodules, the Developer works on **both repos simultaneously** using a **matched-branch pattern**:
 
 ```
-Main repo (agentcastle)          Submodule (flask_blogs)
+Main repo (cheasee-pi)          Submodule (flask_blogs)
 │                                │
 ├─ Branch: worktree-git-...     ├─ Branch: worktree-git-... (same name)
 ├─ Commit includes submodule    ├─ Actual code changes
@@ -756,7 +756,7 @@ Main repo (agentcastle)          Submodule (flask_blogs)
 ```
 ## Issue #42 "Add user auth"
 
-# 1. Create worktree for agentcastle
+# 1. Create worktree for cheasee-pi
 git worktree add ../worktree-git-issue-42-add-user-authentication main
 cd ../worktree-git-issue-42-add-user-authentication
 
@@ -769,7 +769,7 @@ git checkout -b worktree-git-issue-42-add-user-authentication
 git push -u origin worktree-git-issue-42-add-user-authentication
 cd ..
 
-# 4. Developer edits files in agentcastle AND/OR flask_blogs/
+# 4. Developer edits files in cheasee-pi AND/OR flask_blogs/
 
 # 5. Push submodule FIRST (critical order)
 cd flask_blogs
@@ -777,19 +777,19 @@ git add -A && git commit -m "feat(#42): Add user auth"
 git push origin worktree-git-issue-42-add-user-authentication
 cd ..
 
-# 6. Push agentcastle (includes submodule pointer update)
+# 6. Push cheasee-pi (includes submodule pointer update)
 git add -A
 git commit -m "feat(#42): Add user auth"
 git push origin worktree-git-issue-42-add-user-authentication
 ```
 
-**Why submodule must be pushed first:** The agentcastle commit records a specific submodule SHA. If that SHA only exists locally, teammates get `fatal: reference is not a tree`. The `push.recurseSubmodules check` config blocks the push if submodule commits haven't been pushed — a safety net, not a replacement for correct order.
+**Why submodule must be pushed first:** The cheasee-pi commit records a specific submodule SHA. If that SHA only exists locally, teammates get `fatal: reference is not a tree`. The `push.recurseSubmodules check` config blocks the push if submodule commits haven't been pushed — a safety net, not a replacement for correct order.
 
 **Why submodules start in detached HEAD:** Git submodules pin a specific commit, not a branch. `git submodule update` checks out that exact commit. You must explicitly checkout a branch to make editable changes — standard Git behavior.
 
 **Result:** Two branches with same name exist:
 
-- `agentcastle:worktree-git-issue-42-add-user-authentication`
+- `cheasee-pi:worktree-git-issue-42-add-user-authentication`
 - `flask_blogs:worktree-git-issue-42-add-user-authentication`
 
 **Disk usage note:** Each worktree clones submodules independently (under `.git/worktrees/<name>/modules/`). Not shared across worktrees — known Git design tradeoff.
@@ -802,7 +802,7 @@ Step 1 — Create submodule PR FIRST (if submodule has changes):
   gh pr create --repo owner/flask_blogs --base main --head <branch> --title "feat(#42): ..."
 
 Step 2 — Create main repo PR SECOND (includes submodule pointer):
-  gh pr create --repo owner/agentcastle --base main --head <branch> --title "feat(#42): ..." --body "Closes #42"
+  gh pr create --repo owner/cheasee-pi --base main --head <branch> --title "feat(#42): ..." --body "Closes #42"
 ```
 
 #### 8.5 Quality Gates
@@ -872,7 +872,7 @@ All supervisor settings in `.pi/settings.json` under the `supervisor` key:
 ```jsonc
 {
 	"supervisor": {
-		"repo": "SchneiderDaniel/agentcastle", // REQUIRED — owner/repo format
+		"repo": "SchneiderDaniel/cheasee-pi", // REQUIRED — owner/repo format
 		"projectNumber": 3, // REQUIRED — GitHub Project (v2) number
 		"statusMapping": {
 			// REQUIRED — board status → agent file
@@ -1025,7 +1025,7 @@ Rebuild the image without cache:
 
 ```bash
 docker compose build --no-cache
-./agent-castle.sh
+./cheasee-pi.sh
 ```
 
 #### Web crawl fails with Chromium errors
@@ -1038,7 +1038,7 @@ rm -rf .pi/scrapling-venv    # Next call auto-recreates
 
 #### Permission errors on bind-mounted files
 
-UID/GID mapping is automatic via `agent-castle.sh`. If you need to run manually:
+UID/GID mapping is automatic via `cheasee-pi.sh`. If you need to run manually:
 
 ```bash
 HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up

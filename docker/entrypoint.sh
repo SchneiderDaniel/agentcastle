@@ -2,7 +2,7 @@
 set -e
 
 # ------------------------------------------------------------------
-# AgentCastle entrypoint
+# Cheasee-Pi entrypoint
 #
 # Remaps the non-root user `agentuser` to match the host UID/GID so
 # that bind-mounted volumes have the correct ownership, then drops

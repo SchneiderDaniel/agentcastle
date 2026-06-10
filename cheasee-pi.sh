@@ -2,14 +2,14 @@
 set -e
 
 # ------------------------------------------------------------------
-# AgentCastle — Docker Compose orchestration wrapper
+# Cheasee-Pi — Docker Compose orchestration wrapper
 #
-# Single entry point to build, start, and enter the agentcastle
+# Single entry point to build, start, and enter the cheasee-pi
 # container with workspace mounts and resource limits configured
 # via the project's settings file.
 #
 # Usage:
-#   ./agent-castle.sh
+#   ./cheasee-pi.sh
 # ------------------------------------------------------------------
 
 # --- Step 1: Assert docker is on PATH ---------------------------------
@@ -41,11 +41,11 @@ if ! command -v jq &>/dev/null; then
     exit 1
 fi
 
-AGENTCASTLE_MEMORY=$(jq -r '.docker.memory // "4G"' .pi/settings.json)
-AGENTCASTLE_CPUS=$(jq -r '.docker.cpus // "2.0"' .pi/settings.json)
+CHEASEEPI_MEMORY=$(jq -r '.docker.memory // "4G"' .pi/settings.json)
+CHEASEEPI_CPUS=$(jq -r '.docker.cpus // "2.0"' .pi/settings.json)
 
-export AGENTCASTLE_MEMORY
-export AGENTCASTLE_CPUS
+export CHEASEEPI_MEMORY
+export CHEASEEPI_CPUS
 
 # --- Step 4: Export host identity -------------------------------------
 export HOST_UID
@@ -54,11 +54,11 @@ export HOST_GID
 HOST_GID=$(id -g)
 
 # --- Step 5: Start (or rebuild) the container -------------------------
-echo "Starting agentcastle container..."
+echo "Starting cheasee-pi container..."
 docker compose -f docker/docker-compose.yml up -d --build
 
 # --- Step 6: Launch interactive pi session ----------------------------
 echo "Entering pi agent inside container..."
 # Use the startup wrapper which integrates the splash loading screen
 # setupSplashIntegration() patches DefaultResourceLoader before main() runs
-docker exec -it agentcastle /bin/bash -c 'cd /workspaces/main && node --experimental-strip-types src/start-pi.ts "$@"' --
+docker exec -it cheasee-pi /bin/bash -c 'cd /workspaces/main && node --experimental-strip-types src/start-pi.ts "$@"' --

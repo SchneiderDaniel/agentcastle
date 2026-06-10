@@ -1,7 +1,7 @@
-# AgentCastle — OCI-compliant container image
-# ============================================
-# Build:  docker build -t agentcastle .
-# Run:    docker run agentcastle pi --version
+# Cheasee-Pi — OCI-compliant container image
+# ===========================================
+# Build:  docker build -t cheasee-pi .
+# Run:    docker run cheasee-pi pi --version
 
 FROM debian:12-slim
 

@@ -1,4 +1,4 @@
-# AgentCastle environment variables
+# Cheasee-Pi environment variables
 # Copy this file to .agent_env and fill in your values:
 #   cp .agent_env.example .agent_env
 # .agent_env is gitignored — never commit real keys.

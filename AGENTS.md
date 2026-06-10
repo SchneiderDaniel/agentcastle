@@ -1,4 +1,4 @@
-# Agent Castle: The Pi Stack
+# Cheasee-Pi: The Pi Stack
 
 Pi coding agent for multiple git submodules.
 Core philosophies:

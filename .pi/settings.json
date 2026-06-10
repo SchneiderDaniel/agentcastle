@@ -1,6 +1,6 @@
 {
 	"quietStartup": true,
-	"theme": "agentcastle",
+	"theme": "cheasee-pi",
 	"sessionDir": ".pi/sessions",
 	"contextStatusBar": {
 		"showTps": true
@@ -18,7 +18,7 @@
 		"prompts/misc"
 	],
 	"supervisor": {
-		"repo": "SchneiderDaniel/agentcastle",
+		"repo": "SchneiderDaniel/cheasee-pi",
 		"projectNumber": 3,
 		"statusField": "Status",
 		"statusMapping": {

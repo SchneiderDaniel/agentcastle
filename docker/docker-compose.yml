@@ -1,21 +1,21 @@
-# AgentCastle — Docker Compose orchestration
-# ============================================
-# Builds and runs the agentcastle container with workspace mounts,
+# Cheasee-Pi — Docker Compose orchestration
+# ===========================================
+# Builds and runs the cheasee-pi container with workspace mounts,
 # environment variables, and resource limits driven by .pi/settings.json.
 #
 # Usage (via wrapper):
-#   ./agent-castle.sh
+#   ./cheasee-pi.sh
 #
 # Direct usage (without wrapper — uses defaults):
 #   docker compose -f docker/docker-compose.yml up -d --build
-#   docker exec -it agentcastle /bin/bash -c 'cd /workspaces/main && pi'
+#   docker exec -it cheasee-pi /bin/bash -c 'cd /workspaces/main && pi'
 
 services:
-  agentcastle:
+  cheasee-pi:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: agentcastle
+    container_name: cheasee-pi
     env_file:
       - ../.agent_env
     environment:
@@ -26,8 +26,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${AGENTCASTLE_MEMORY:-4G}
-          cpus: ${AGENTCASTLE_CPUS:-2.0}
+          memory: ${CHEASEEPI_MEMORY:-4G}
+          cpus: ${CHEASEEPI_CPUS:-2.0}
     stdin_open: true
     tty: true
     command: ["sleep", "infinity"]
