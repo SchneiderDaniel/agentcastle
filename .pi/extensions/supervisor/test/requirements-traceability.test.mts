@@ -617,6 +617,113 @@ describe("Test file parity check", () => {
 		}
 	});
 
+	it("src/generated/api.ts changed → excluded, no gap", async () => {
+		const tempDir = createTempDir("parity-generated", {
+			"src/generated/api.ts": "export function api() {}",
+		});
+		try {
+			const exec = mockExecPaths(["src/generated/api.ts"]);
+			const result = await runRequirementsTraceability(
+				exec,
+				tempDir,
+				"main",
+				{ body: "", comments: [] },
+				"",
+			);
+			const testGaps = result.filter((g) => g.check === "test-file-parity");
+			assert.equal(testGaps.length, 0);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("src/vendor/lib.ts changed → excluded, no gap", async () => {
+		const tempDir = createTempDir("parity-vendor", {
+			"src/vendor/lib.ts": "export function lib() {}",
+		});
+		try {
+			const exec = mockExecPaths(["src/vendor/lib.ts"]);
+			const result = await runRequirementsTraceability(
+				exec,
+				tempDir,
+				"main",
+				{ body: "", comments: [] },
+				"",
+			);
+			const testGaps = result.filter((g) => g.check === "test-file-parity");
+			assert.equal(testGaps.length, 0);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("src/foo.ts changed, no test file → warning gap", async () => {
+		const tempDir = createTempDir("parity-missing", {
+			"src/foo.ts": "export function foo() {}",
+		});
+		try {
+			const exec = mockExecPaths(["src/foo.ts"]);
+			const result = await runRequirementsTraceability(
+				exec,
+				tempDir,
+				"main",
+				{ body: "", comments: [] },
+				"",
+			);
+			const testGaps = result.filter((g) => g.check === "test-file-parity");
+			assert.equal(testGaps.length, 1);
+			assert.equal(testGaps[0]!.severity, "warning");
+			assert.ok(testGaps[0]!.detail.includes("foo.ts"));
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("multiple src files, one missing test → warning for that file only", async () => {
+		const tempDir = createTempDir("parity-multi", {
+			"src/foo.ts": "export function foo() {}",
+			"test/foo.test.ts": 'import { foo } from "../src/foo";',
+			"src/bar.ts": "export function bar() {}",
+		});
+		try {
+			const exec = mockExecPaths(["src/foo.ts", "src/bar.ts"]);
+			const result = await runRequirementsTraceability(
+				exec,
+				tempDir,
+				"main",
+				{ body: "", comments: [] },
+				"",
+			);
+			const testGaps = result.filter((g) => g.check === "test-file-parity");
+			assert.equal(testGaps.length, 1);
+			assert.equal(testGaps[0]!.severity, "warning");
+			assert.ok(testGaps[0]!.detail.includes("bar.ts"));
+			assert.equal(testGaps[0]!.detail.includes("foo.ts"), false);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("all changed files are test files only → skip, no gap", async () => {
+		const tempDir = createTempDir("parity-alltests", {
+			"test/foo.test.ts": 'import assert from "node:assert";',
+		});
+		try {
+			const exec = mockExecPaths(["test/foo.test.ts"]);
+			const result = await runRequirementsTraceability(
+				exec,
+				tempDir,
+				"main",
+				{ body: "", comments: [] },
+				"",
+			);
+			const testGaps = result.filter((g) => g.check === "test-file-parity");
+			assert.equal(testGaps.length, 0);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("no changed files → no gap", async () => {
 		const exec = mockExec([]);
 		const result = await runRequirementsTraceability(
@@ -631,8 +738,33 @@ describe("Test file parity check", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 5: Old reference cleanup check
+// Phase 5: Old reference cleanup check — uses mock exec with grep control
 // ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Mock ExecFn that returns given diff lines for --name-status and --name-only,
+ * and returns grepStdout for git grep calls (code 0 if non-null, code 1 if null).
+ */
+function mockExecWithGrep(lines: string[], grepStdout: string | null): ExecFn {
+	return async (cmd: string, args: string[]) => {
+		if (cmd === "git" && args.includes("diff") && args.includes("--name-status")) {
+			return { code: 0, stdout: lines.join("\n") + "\n", stderr: "" };
+		}
+		if (cmd === "git" && args.includes("diff") && args.includes("--name-only")) {
+			const nameOnly = lines
+				.map((l) => l.replace(/^[A-Z]\d*\s+/, "").replace(/\s+.*$/, ""))
+				.filter(Boolean);
+			return { code: 0, stdout: nameOnly.join("\n") + "\n", stderr: "" };
+		}
+		if (cmd === "git" && args.includes("grep")) {
+			if (grepStdout !== null) {
+				return { code: 0, stdout: grepStdout, stderr: "" };
+			}
+			return { code: 1, stdout: "", stderr: "" };
+		}
+		return { code: 0, stdout: "", stderr: "" };
+	};
+}
 
 describe("Old reference cleanup check", () => {
 	it("no deletions or renames → check skipped, no gap", async () => {
@@ -646,6 +778,303 @@ describe("Old reference cleanup check", () => {
 		);
 		const oldRefGaps = result.filter((g) => g.check === "old-reference-cleanup");
 		assert.equal(oldRefGaps.length, 0);
+	});
+
+	it("rename detected, old name still referenced → warning gap", async () => {
+		const exec = mockExecWithGrep(
+			["R100\tsrc/old-name.ts\tsrc/new-name.ts"],
+			"src/other-file.ts\n",
+		);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"",
+		);
+		const oldRefGaps = result.filter((g) => g.check === "old-reference-cleanup");
+		assert.equal(oldRefGaps.length, 1);
+		assert.equal(oldRefGaps[0]!.severity, "warning");
+		assert.ok(oldRefGaps[0]!.detail.includes("old-name"));
+	});
+
+	it("file deleted, imports remain → warning gap", async () => {
+		const exec = mockExecWithGrep(["D src/deleted-module.ts"], "src/remaining-file.ts\n");
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"",
+		);
+		const oldRefGaps = result.filter((g) => g.check === "old-reference-cleanup");
+		assert.equal(oldRefGaps.length, 1);
+		assert.equal(oldRefGaps[0]!.severity, "warning");
+		assert.ok(oldRefGaps[0]!.detail.includes("deleted-module"));
+	});
+
+	it("D+A pair with similar basenames → detected, warning gap", async () => {
+		const exec = mockExecWithGrep(["D src/old-api.ts", "A src/new-api.ts"], "src/config.ts\n");
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"",
+		);
+		const oldRefGaps = result.filter((g) => g.check === "old-reference-cleanup");
+		assert.equal(oldRefGaps.length, 1);
+		assert.equal(oldRefGaps[0]!.severity, "warning");
+		assert.ok(oldRefGaps[0]!.detail.includes("old-api"));
+	});
+
+	it("rename detected, no remaining references → no gap", async () => {
+		const exec = mockExecWithGrep(["R100\tsrc/old-name.ts\tsrc/new-name.ts"], null);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"",
+		);
+		const oldRefGaps = result.filter((g) => g.check === "old-reference-cleanup");
+		assert.equal(oldRefGaps.length, 0);
+	});
+
+	it("file deleted, no remaining references → no gap", async () => {
+		const exec = mockExecWithGrep(["D src/deleted-module.ts"], null);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"",
+		);
+		const oldRefGaps = result.filter((g) => g.check === "old-reference-cleanup");
+		assert.equal(oldRefGaps.length, 0);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 6: Issue title→diff direction check
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Issue title→diff direction check", () => {
+	it("title 'add', diff has net additions (A > D) → no gap", async () => {
+		const exec = mockExec(["A src/new.ts", "A src/another.ts", "D src/old.ts"]);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"add new feature",
+		);
+		const dirGaps = result.filter((g) => g.check === "title-diff-direction");
+		assert.equal(dirGaps.length, 0);
+	});
+
+	it("title 'remove', diff has net deletions (D > A) → no gap", async () => {
+		const exec = mockExec(["D src/old.ts", "A src/new.ts"]);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"remove old code",
+		);
+		const dirGaps = result.filter((g) => g.check === "title-diff-direction");
+		assert.equal(dirGaps.length, 0);
+	});
+
+	it("title 'add', diff has net deletions → info gap", async () => {
+		const exec = mockExec(["D src/old.ts", "D src/another.ts", "A src/new.ts"]);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"add new feature",
+		);
+		const dirGaps = result.filter((g) => g.check === "title-diff-direction");
+		assert.equal(dirGaps.length, 1);
+		assert.equal(dirGaps[0]!.severity, "info");
+	});
+
+	it("title 'remove', diff has net additions (A > D) → info gap", async () => {
+		const exec = mockExec(["A src/new.ts", "A src/another.ts", "D src/old.ts"]);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"remove old code",
+		);
+		const dirGaps = result.filter((g) => g.check === "title-diff-direction");
+		assert.equal(dirGaps.length, 1);
+		assert.equal(dirGaps[0]!.severity, "info");
+		assert.ok(dirGaps[0]!.detail.includes("additions"));
+	});
+
+	it("unrecognized verb → skip, no title-diff-direction gap", async () => {
+		const exec = mockExec(["A src/new.ts", "D src/old.ts"]);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"fix bug in auth",
+		);
+		const dirGaps = result.filter((g) => g.check === "title-diff-direction");
+		assert.equal(dirGaps.length, 0);
+	});
+
+	it("no title → skip, no title-diff-direction gap", async () => {
+		const exec = mockExec(["A src/new.ts"]);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"",
+		);
+		const dirGaps = result.filter((g) => g.check === "title-diff-direction");
+		assert.equal(dirGaps.length, 0);
+	});
+
+	it("only modifications in diff → skip, no title-diff-direction gap", async () => {
+		const exec = mockExec(["M src/file.ts"]);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"add something",
+		);
+		const dirGaps = result.filter((g) => g.check === "title-diff-direction");
+		assert.equal(dirGaps.length, 0);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 7: runRequirementsTraceability — orchestration error handling
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("runRequirementsTraceability — error handling", () => {
+	it("diff failure produces error gap with correct structure", async () => {
+		const failingExec: ExecFn = async () => {
+			return { code: 1, stdout: "", stderr: "fatal: not a git repository" };
+		};
+		const result = await runRequirementsTraceability(
+			failingExec,
+			"/fake/worktree",
+			"main",
+			{ body: "## Tasks\n- [ ] Something", comments: [] },
+			"add something",
+		);
+		assert.ok(result.length > 0);
+		const errorGap = result.find((g) => g.check === "diff");
+		assert.ok(errorGap, "Should return a gap for diff failure");
+		assert.equal(errorGap!.severity, "warning");
+		assert.ok(typeof errorGap!.detail === "string");
+	});
+
+	it("handles exec throwing during checklist keyword check gracefully", async () => {
+		const throwingExec: ExecFn = async (cmd: string, args: string[]) => {
+			if (cmd === "git" && args.includes("diff") && args.includes("--name-status")) {
+				return { code: 0, stdout: "A src/file.ts", stderr: "" };
+			}
+			throw new Error("exec failed unexpectedly");
+		};
+		const result = await runRequirementsTraceability(
+			throwingExec,
+			"/fake/worktree",
+			"main",
+			{ body: "## Tasks\n- [ ] Implement authentication", comments: [] },
+			"add auth",
+		);
+		assert.ok(Array.isArray(result));
+		// Should complete without crashing; grep errors caught internally
+	});
+
+	it("handles exec throwing during old reference cleanup gracefully", async () => {
+		const throwingExec: ExecFn = async (cmd: string, args: string[]) => {
+			if (cmd === "git" && args.includes("diff") && args.includes("--name-status")) {
+				return { code: 0, stdout: "D src/old.ts", stderr: "" };
+			}
+			throw new Error("exec failed unexpectedly");
+		};
+		const result = await runRequirementsTraceability(
+			throwingExec,
+			"/fake/worktree",
+			"main",
+			{ body: "", comments: [] },
+			"",
+		);
+		assert.ok(Array.isArray(result));
+		// Should complete without crashing; git grep errors caught internally
+	});
+
+	it("test-file-parity check handles gracefully when worktree has no test dir", async () => {
+		const tempDir = createTempDir("error-parity", {
+			"src/uncovered.ts": "export function uncovered() {}",
+		});
+		try {
+			const exec = mockExecPaths(["src/uncovered.ts"]);
+			const result = await runRequirementsTraceability(
+				exec,
+				tempDir,
+				"main",
+				{ body: "", comments: [] },
+				"",
+			);
+			assert.ok(Array.isArray(result));
+			const testGaps = result.filter((g) => g.check === "test-file-parity");
+			assert.equal(testGaps.length, 1);
+			assert.equal(testGaps[0]!.severity, "warning");
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("gaps always have correct TraceabilityGap structure", async () => {
+		const exec = mockExec(["A src/new.ts", "D src/old.ts"]);
+		const result = await runRequirementsTraceability(
+			exec,
+			"/fake/worktree",
+			"main",
+			{ body: "## Tasks\n- [ ] Implement login", comments: [] },
+			"add login",
+		);
+		for (const gap of result) {
+			assert.ok(typeof gap.check === "string" && gap.check.length > 0);
+			assert.ok(gap.severity === "info" || gap.severity === "warning");
+			assert.ok(typeof gap.detail === "string" && gap.detail.length > 0);
+		}
+	});
+
+	it("all 4 checks produce correct TraceabilityGap objects when they have findings", async () => {
+		const tempDir = createTempDir("error-all-checks", {
+			"src/uncovered.ts": "export function uncovered() {}",
+		});
+		try {
+			const exec = mockExec(["A src/uncovered.ts", "D src/old-module.ts"]);
+			const result = await runRequirementsTraceability(
+				exec,
+				tempDir,
+				"main",
+				{ body: "## Tasks\n- [ ] Build X-5000 controller", comments: [] },
+				"add new controller",
+			);
+			// gaps may include test-file-parity (warning) and possibly
+			// checklist-keyword-coverage and old-reference-cleanup
+			for (const gap of result) {
+				assert.ok(typeof gap.check === "string");
+				assert.ok(gap.severity === "info" || gap.severity === "warning");
+				assert.ok(typeof gap.detail === "string");
+			}
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
 	});
 });
 

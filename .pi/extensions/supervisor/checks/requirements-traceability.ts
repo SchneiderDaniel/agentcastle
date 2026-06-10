@@ -106,20 +106,6 @@ const STOP_WORDS = new Set([
 	"them",
 ]);
 
-/** Recognized source extensions for testable files. */
-const SOURCE_EXTENSIONS = new Set([
-	".ts",
-	".tsx",
-	".js",
-	".jsx",
-	".mts",
-	".mjs",
-	".py",
-	".go",
-	".rs",
-	".java",
-]);
-
 // ─── Import isTestableFile from tdd-gate.ts ─────────────────────────
 
 import { isTestableFile as _isTestableFile } from "./tdd-gate.ts";
