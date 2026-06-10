@@ -99,4 +99,50 @@ describe("buildPipelineSummary — Closes #N line", () => {
 		assert.ok(closesIdx >= 0, "Closes #N present");
 		assert.ok(closesIdx > issueIdx, "Closes #N appears after issue URL");
 	});
+
+	// ─── Tests: Bug 2 — Skipped PR rendering ───────────────────────
+
+	describe("buildPipelineSummary — skipped PR (Bug 2)", () => {
+		it("skipped PR (ahead_by=0) renders as 'PR creation failed' not 'created'", () => {
+			const prResult: PrCreationResult = {
+				success: false,
+				error: "No commits ahead of base — PR skipped",
+			};
+			const output = buildPipelineSummary(
+				emptyResults,
+				"success",
+				42,
+				"Title",
+				defaultConfig,
+				undefined,
+				prResult,
+			);
+			// Should NOT render "created" or "#undefined"
+			assert.ok(!output.includes("created"), "should NOT say 'created' for skipped PR");
+			assert.ok(!output.includes("#undefined"), "should NOT render '#undefined' for skipped PR");
+			// Should render the error message
+			assert.ok(
+				output.includes("PR creation failed"),
+				"should indicate PR creation failed/skipped",
+			);
+			assert.ok(output.includes("No commits ahead of base"), "should show why PR was skipped");
+		});
+
+		it("skipped PR does not alter Closes #N line", () => {
+			const prResult: PrCreationResult = {
+				success: false,
+				error: "No commits ahead of base — PR skipped",
+			};
+			const output = buildPipelineSummary(
+				emptyResults,
+				"success",
+				42,
+				"Title",
+				defaultConfig,
+				undefined,
+				prResult,
+			);
+			assert.ok(output.includes("Closes #42"), "Closes #N should still be present");
+		});
+	});
 });
