@@ -5,12 +5,7 @@
  * called. The actual recovery logic lives in pipeline.ts::recoverPastSessions(),
  * which calls generateMissingReports directly.
  *
- * waitForFile / WaitForFileOptions were dead code — exported from files.ts but
- * never imported or called in any production code. Only their own test file
- * referenced them.
- *
- * These tests verify the functions/interfaces are no longer exported after
- * removal.
+ * These tests verify the function is no longer exported after removal.
  *
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/session-logger/test/session-logger-dead-code.test.mts
@@ -38,6 +33,10 @@ describe("recoverMissingReports dead code removal", () => {
 		assert.strictEqual(typeof mod.generateMissingReports, "function");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// waitForFile / WaitForFileOptions dead code removal
+// ---------------------------------------------------------------------------
 
 describe("waitForFile dead code removal", () => {
 	// After removal: importing waitForFile from files.ts should yield undefined
