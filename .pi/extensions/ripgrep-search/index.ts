@@ -229,7 +229,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 		parameters: Type.Object({
 			query: Type.String({
 				description:
-					"Literal text/regex. Rejects class/def/function/$/{ patterns — use structural_search/ranked_map instead.",
+					"Literal text/regex. Rejects class/def/function/$/{ patterns — use structural_search instead.",
 			}),
 			directory: Type.Optional(Type.String({ default: "." })),
 			max_count: Type.Optional(Type.Number({ default: 10 })),

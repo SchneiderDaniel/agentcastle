@@ -43,7 +43,7 @@ export function buildRgArgs(
  * Column is set to 1 since standard grep doesn't output column.
  *
  * Excludes cache/ and .cache/ dirs to prevent context-window blowup from
- * large single-line cache files (e.g. ranked-map-index.json at 21MB).
+ * large single-line cache files (e.g. cache-index.json at 21MB).
  */
 export function buildGrepArgs(
 	query: string,

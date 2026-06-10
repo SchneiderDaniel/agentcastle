@@ -18,7 +18,7 @@ import type { RgResult } from "./types.ts";
  * Collision rule:
  * - Empty or whitespace-only strings are rejected
  * - Patterns starting with `class `, `def `, `function ` are rejected —
- *   agent should use ranked_map (ctags) for class/def searches
+ *   agent should use structural_search (ast-grep) for class/def searches
  * - Patterns containing `$` or `{` (structural AST syntax) are rejected —
  *   agent should use structural_search (ast-grep) for structural searches
  *
@@ -36,15 +36,15 @@ export function validateQuery(query: string): string | null {
 
 	// Reject patterns that look like structural/symbol searches
 	if (trimmed.startsWith("class ")) {
-		return `Query "${trimmed}" looks like a class definition search. Use ranked_map (ctags) to find class definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a class definition search. Use structural_search (ast-grep) to find class definitions, not ripgrep_search.`;
 	}
 
 	if (trimmed.startsWith("def ")) {
-		return `Query "${trimmed}" looks like a function definition search. Use ranked_map (ctags) to find function definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a function definition search. Use structural_search (ast-grep) to find function definitions, not ripgrep_search.`;
 	}
 
 	if (trimmed.startsWith("function ")) {
-		return `Query "${trimmed}" looks like a function definition search. Use ranked_map (ctags) to find function definitions, not ripgrep_search.`;
+		return `Query "${trimmed}" looks like a function definition search. Use structural_search (ast-grep) to find function definitions, not ripgrep_search.`;
 	}
 
 	// Reject patterns with structural AST syntax ($ or {)

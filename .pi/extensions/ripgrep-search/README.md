@@ -9,7 +9,7 @@
   - Structured summary output showing top-N results with file counts and truncation indicator
   - Respects `.gitignore` natively when ripgrep is available
   - Falls back to `grep` if ripgrep not installed
-  - Auto-rejects structural patterns — redirects to `structural_search`/`ranked_map`
+  - Auto-rejects structural patterns — redirects to `structural_search`
 - **Result cache** — Same query+directory returns cached result without re-running the CLI
 - **Configurable backend** — Set `searchBackend` to `"auto"` (default), `"ripgrep"`, or `"grep"` in `.pi/settings.json`
 - **Backend indicator** — Injects current search backend into system prompt so LLM knows which tool is active

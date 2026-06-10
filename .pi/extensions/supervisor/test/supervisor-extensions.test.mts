@@ -300,23 +300,21 @@ describe("production agent files — extensions field", () => {
 	const agents = [
 		{
 			name: "architect",
-			expected:
-				"agent-harness,caveman,piignore,ranked-map,ripgrep-search,scrapling,structural-analyzer",
+			expected: "agent-harness,caveman,piignore,ripgrep-search,scrapling,structural-analyzer",
 		},
 		{
 			name: "test-designer",
-			expected:
-				"agent-harness,caveman,piignore,ranked-map,ripgrep-search,scrapling,structural-analyzer",
+			expected: "agent-harness,caveman,piignore,ripgrep-search,scrapling,structural-analyzer",
 		},
 		{
 			name: "developer",
 			expected:
-				"agent-harness,caveman,format-on-save,piignore,ranked-map,ripgrep-search,scrapling,tsc-checkpoint,structural-analyzer,worktree-sandbox",
+				"agent-harness,caveman,format-on-save,piignore,ripgrep-search,scrapling,tsc-checkpoint,structural-analyzer,worktree-sandbox",
 		},
 		{
 			name: "auditor",
 			expected:
-				"agent-harness,caveman,piignore,ranked-map,ripgrep-search,scrapling,structural-analyzer,worktree-sandbox",
+				"agent-harness,caveman,piignore,ripgrep-search,scrapling,structural-analyzer,worktree-sandbox",
 		},
 	];
 

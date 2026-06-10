@@ -20,12 +20,12 @@ Core philosophies:
 - Correct: `ripgrep_search`
 - Wrong: `bash | grep`, `bash | rg`, `bash | find`
 
-**Search** — function/class/struct defs
+**Search** — literal text, function/class/struct defs, error messages, TODOs
 
-- Correct: `ranked_map` (omit query for full dump on small repos)
-- Wrong: `bash | grep`, `ripgrep_search`
+- Correct: `ripgrep_search`
+- Wrong: `bash | grep`, `bash | rg`, `bash | find`
 
-**Search** — AST patterns (try/catch, method calls)
+**Search** — AST patterns (try/catch, method calls), function/class definitions
 
 - Correct: `structural_search`
 - Wrong: `ripgrep_search`, `bash | grep`

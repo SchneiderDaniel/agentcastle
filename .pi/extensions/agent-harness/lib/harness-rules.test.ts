@@ -144,7 +144,6 @@ describe("TOOL_META — web_crawl cascade threshold (Bug 7)", () => {
 		assert.deepEqual(getToolMeta("ask_user"), { passThrough: true });
 		assert.deepEqual(getToolMeta("structural_search"), { passThrough: true });
 		assert.deepEqual(getToolMeta("ripgrep_search"), { passThrough: true });
-		assert.deepEqual(getToolMeta("ranked_map"), { passThrough: true });
 	});
 
 	it("(D) bash still has default cascadeThreshold", () => {
