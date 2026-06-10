@@ -17,6 +17,8 @@ export interface ContextStatusBarConfig {
 	showTimer: boolean;
 	showTps: boolean;
 	showCache: boolean;
+	/** Auto-dismiss welcome banner after N ms. 0 = no timeout (wait for user interaction). */
+	welcomeTimeoutMs: number;
 }
 
 /**
@@ -36,4 +38,5 @@ export interface FooterConfig {
 	toolCallCount: { value: number };
 	cacheRead: number | undefined;
 	cacheWrite: number | undefined;
+	sessionId: string;
 }

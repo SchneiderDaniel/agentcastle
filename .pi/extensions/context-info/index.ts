@@ -126,6 +126,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			const match = sessionFile.match(/_([0-9a-f-]+)\.jsonl$/i);
 			if (match) sessionId = match[1]!;
 		}
+		state.footerConfig.sessionId = sessionId;
 
 		// ── Startup welcome banner ──────────────────────────────
 		const extState = readSessionExtState();
@@ -137,14 +138,23 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				state!.startupWidgetActive = v;
 			},
 		};
-		showWelcomeBanner(ctx, startupRef, sessionId, extState.logger, extState.advice);
+		state!.welcomeDispose = showWelcomeBanner(
+			ctx,
+			startupRef,
+			state!.config?.welcomeTimeoutMs ?? 0,
+			extState.logger,
+			extState.advice,
+		);
 	});
 
 	// Helpers to clear startup widgets
 	function clearStartupWidgets(ctx: ExtensionContext) {
-		if (state && state.startupWidgetActive) {
-			ctx.ui.setWidget("cheasee-pi-welcome", undefined);
-			state.startupWidgetActive = false;
+		if (state) {
+			// Use stored dispose (handles timer cleanup + widget removal)
+			if (state.welcomeDispose) {
+				state.welcomeDispose();
+				state.welcomeDispose = undefined;
+			}
 		}
 		ctx.ui.setWidget("explain-extensions", undefined);
 		ctx.ui.setWidget("explain-prompts", undefined);

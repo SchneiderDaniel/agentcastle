@@ -62,17 +62,39 @@ function listNames(dir: string, suffix: string): string[] {
 	}
 }
 
+/**
+ * Show the startup welcome banner.
+ * If timeoutMs > 0, auto-dismiss after that many ms.
+ * Returns a dispose function to cancel the timeout and remove the widget early.
+ */
 export function showWelcomeBanner(
 	ctx: ExtensionContext,
 	startupWidgetActive: { value: boolean },
-	sessionId: string,
+	timeoutMs: number,
 	loggerState?: boolean | null,
 	adviceState?: boolean | null,
-): void {
+): () => void {
 	const extCount = countExtensions();
 	const promptCount = listNames(".pi/prompts", ".md").length;
 	const themeCount = listNames(".pi/themes", ".json").length;
 	const skillCount = countSkills();
+
+	let timer: ReturnType<typeof setTimeout> | undefined;
+
+	const dispose = () => {
+		if (timer !== undefined) {
+			clearTimeout(timer);
+			timer = undefined;
+		}
+		if (startupWidgetActive.value) {
+			ctx.ui.setWidget("cheasee-pi-welcome", undefined);
+			startupWidgetActive.value = false;
+		}
+	};
+
+	if (timeoutMs > 0) {
+		timer = setTimeout(dispose, timeoutMs);
+	}
 
 	ctx.ui.setWidget("cheasee-pi-welcome", (_tui, theme) => {
 		return {
@@ -91,17 +113,6 @@ export function showWelcomeBanner(
 				const titlePad = Math.max(0, Math.floor((baseW - titleVis) / 2));
 				const titleLine =
 					" ".repeat(titlePad) + accent(titleText) + " ".repeat(baseW - titlePad - titleVis);
-
-				// ── Session ID line ─────────────────────────
-				const sidLabel = muted("SessionID: ");
-				const sidValue = accent(sessionId);
-				const sidRawW = visibleWidth("SessionID: ") + visibleWidth(sessionId);
-				const sidPad = Math.max(0, Math.floor((baseW - sidRawW) / 2));
-				const sidLine =
-					" ".repeat(sidPad) +
-					sidLabel +
-					sidValue +
-					" ".repeat(Math.max(0, baseW - sidPad - sidRawW));
 
 				// ── Castle art with stats embedded ──────────
 				const lIcon = loggerState == null ? "❓" : loggerState ? "🟢" : "🔴";
@@ -149,9 +160,10 @@ export function showWelcomeBanner(
 					return dim(w < baseW ? line + " ".repeat(baseW - w) : line);
 				});
 
-				return [titleLine, sidLine, "", ...castleLines];
+				return [titleLine, "", ...castleLines];
 			},
 		};
 	});
 	startupWidgetActive.value = true;
+	return dispose;
 }

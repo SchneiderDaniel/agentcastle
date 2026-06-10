@@ -56,7 +56,7 @@ function createMockCtx(): any {
 // Import the function under test
 // ---------------------------------------------------------------------------
 
-import { showWelcomeBanner } from "../welcome.ts";
+import { showWelcomeBanner } from "../welcome.js";
 
 // ---------------------------------------------------------------------------
 // Helper: extract the session status line from rendered output
@@ -83,7 +83,7 @@ describe("Welcome banner — session status line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", true, true);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, true, true);
 
 		assert.ok(capturedWidget, "widget should be set");
 		const lines = capturedWidget!.render(64);
@@ -101,7 +101,7 @@ describe("Welcome banner — session status line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", false, true);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, false, true);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -115,7 +115,7 @@ describe("Welcome banner — session status line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", true, false);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, true, false);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -129,7 +129,7 @@ describe("Welcome banner — session status line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", false, false);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, false, false);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -143,7 +143,7 @@ describe("Welcome banner — session status line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", null, true);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, null, true);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -157,7 +157,7 @@ describe("Welcome banner — session status line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", true, null);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, true, null);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -171,7 +171,7 @@ describe("Welcome banner — session status line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", null, null);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, null, null);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -185,22 +185,14 @@ describe("Welcome banner — session status line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		// Default: no params — should show both as unknown/off
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id");
-
-		assert.ok(capturedWidget);
-		const lines = capturedWidget!.render(64);
-		const sessionLine = findSessionLine(lines);
-
-		// Actually, with no params, the default should be... hmm.
-		// Let's instead test with explicit both-on:
+		showWelcomeBanner(ctx, startupWidgetActive, 0, true, true);
 	});
 
 	it("Line appears after castle art, before 🧩 Extensions stat line", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", true, true);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, true, true);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -225,7 +217,7 @@ describe("Welcome banner — session status line styling", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", true, true);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, true, true);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -241,7 +233,7 @@ describe("Welcome banner — session status line styling", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", true, true);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, true, true);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -255,7 +247,7 @@ describe("Welcome banner — session status line styling", () => {
 		const ctx = createMockCtx();
 		const startupWidgetActive = { value: false };
 
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id", true, true);
+		showWelcomeBanner(ctx, startupWidgetActive, 0, true, true);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
@@ -269,7 +261,7 @@ describe("Welcome banner — session status line styling", () => {
 		const startupWidgetActive = { value: false };
 
 		// No loggerState/adviceState params → undefined → should show ❓
-		showWelcomeBanner(ctx, startupWidgetActive, "test-session-id");
+		showWelcomeBanner(ctx, startupWidgetActive, 0);
 
 		assert.ok(capturedWidget);
 		const lines = capturedWidget!.render(64);
