@@ -14,7 +14,7 @@ export interface WorkflowStep {
 	/** Statuses this step can send back to (feedback loop) */
 	canLoopBackTo?: string[];
 	/** Hooks to run before transition */
-	hooks?: ("tsc" | "lsp" | "ci" | "dup" | "tdd")[];
+	hooks?: ("tsc" | "lsp" | "ci" | "dup" | "tdd" | "trace")[];
 	/** Max rejections before forcing human intervention */
 	maxRejections?: number;
 	/** Built-in handler */
@@ -55,7 +55,7 @@ export const WORKFLOW: WorkflowStep[] = [
 		status: "Implementation",
 		agentName: "developer",
 		markerMap: { IMPLEMENTATION_COMPLETE: "Audit" },
-		hooks: ["ci", "tsc", "lsp", "dup", "tdd"],
+		hooks: ["ci", "tsc", "lsp", "dup", "tdd", "trace"],
 	},
 
 	// Audit → Done (approve) or Implementation (reject/loop back)
