@@ -39,7 +39,7 @@ export const API_PATTERNS = [
 ];
 
 /** Known API term aliases for mapping changelog entries to scan patterns */
-const _CHANGELOG_API_TO_PATTERN: Record<string, string[]> = {
+const _CHANGELOG_API_TO_PATTERN: Readonly<Record<string, readonly string[]>> = Object.freeze({
 	on: ["pi.on"],
 	registerCommand: ["pi.registerCommand"],
 	registerTool: ["pi.registerTool"],
@@ -63,10 +63,7 @@ const _CHANGELOG_API_TO_PATTERN: Record<string, string[]> = {
 	config: ["pi.registerFlag", "pi.getFlag"],
 	"config option": ["pi.registerFlag", "pi.getFlag"],
 	export: ["pi.sendUserMessage", "pi.sendMessage"],
-};
-
-export const CHANGELOG_API_TO_PATTERN: Readonly<Record<string, readonly string[]>> =
-	Object.freeze(_CHANGELOG_API_TO_PATTERN);
+});
 
 /** Lowercase-key map for case-insensitive lookup (fixes #600) */
 const _LOWER_CHANGELOG_API_TO_PATTERN: Record<string, readonly string[]> = {};
