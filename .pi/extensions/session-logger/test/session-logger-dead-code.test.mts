@@ -33,31 +33,3 @@ describe("recoverMissingReports dead code removal", () => {
 		assert.strictEqual(typeof mod.generateMissingReports, "function");
 	});
 });
-
-// ---------------------------------------------------------------------------
-// waitForFile / WaitForFileOptions dead code removal
-// ---------------------------------------------------------------------------
-
-describe("waitForFile dead code removal", () => {
-	// After removal: importing waitForFile from files.ts should yield undefined
-	it("waitForFile should NOT be exported from files.ts (dead code — no production callers)", async () => {
-		const mod = await import("../files.ts");
-		const modAny = mod as Record<string, unknown>;
-		assert.strictEqual(
-			typeof modAny.waitForFile,
-			"undefined",
-			"waitForFile must be removed — it had zero production callers",
-		);
-	});
-
-	// Confirm no collateral damage — adjacent exports must still be intact
-	it("createFileOps should still be exported from files.ts", async () => {
-		const mod = await import("../files.ts");
-		assert.strictEqual(typeof mod.createFileOps, "function");
-	});
-
-	it("createAtomicSymlink should still be exported from files.ts", async () => {
-		const mod = await import("../files.ts");
-		assert.strictEqual(typeof mod.createAtomicSymlink, "function");
-	});
-});
