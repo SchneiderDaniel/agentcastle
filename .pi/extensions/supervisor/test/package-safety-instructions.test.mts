@@ -73,68 +73,6 @@ describe("AGENTS.md — Package Safety section", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 2: developer.md content tests
-// ═══════════════════════════════════════════════════════════════════════
-
-describe("developer.md — Package Safety Check instructions", () => {
-	const content = readFile("agents/developer.md");
-
-	it("contains 'Package Safety Check' reference", () => {
-		assert.ok(content.includes("Package Safety"));
-	});
-
-	it("references 'npm view <pkg> time.created' before npm install", () => {
-		assert.ok(content.includes("npm view <pkg> time.created"));
-	});
-
-	it("specifies refusal message with days-old placeholder", () => {
-		assert.ok(
-			content.includes("<X> days old") ||
-				content.includes("X days old") ||
-				content.includes("days old"),
-		);
-	});
-
-	it("specifies fail-closed on command failure", () => {
-		assert.ok(
-			content.includes("fail closed") ||
-				content.includes("fail-closed") ||
-				content.includes("command fails"),
-		);
-	});
-
-	it("mentions scoped packages (@scope/pkg)", () => {
-		assert.ok(content.includes("@scope/pkg") || content.includes("@scope/"));
-	});
-
-	it("exempts git URLs, tarballs, local paths", () => {
-		assert.ok(
-			(content.includes("git URLs") || content.includes("git URL")) &&
-				(content.includes("tarballs") || content.includes("tarball")),
-		);
-	});
-
-	it("states no override or block is absolute", () => {
-		assert.ok(
-			content.includes("No override") ||
-				content.includes("no override") ||
-				content.includes("absolute"),
-		);
-	});
-
-	it("appears after '### 3. Implement the changes' heading", () => {
-		const implIdx = content.indexOf("### 3. Implement the changes");
-		const safetyIdx = content.indexOf("Package Safety");
-		assert.ok(implIdx >= 0, "'### 3. Implement the changes' heading must exist");
-		assert.ok(safetyIdx >= 0, "'Package Safety' reference must exist");
-		assert.ok(
-			safetyIdx > implIdx,
-			"'Package Safety' must appear after '### 3. Implement the changes'",
-		);
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════════
 // Phase 3: researcher.md content tests
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -173,36 +111,34 @@ describe("researcher.md — Package age reference", () => {
 // ═══════════════════════════════════════════════════════════════════════
 // Phase 4: Cross-file consistency tests
 // ═══════════════════════════════════════════════════════════════════════
+// Note: developer.md no longer contains package safety instructions per Issue #700.
+// The Package Safety Check moved to the pipeline gate in stages.ts.
 
 describe("Cross-file consistency", () => {
 	const agentsContent = readFile("../../../AGENTS.md");
-	const devContent = readFile("agents/developer.md");
 	const resContent = readFile("agents/researcher.md");
 
-	it("all three files reference same 14-day threshold", () => {
+	it("AGENTS.md and researcher.md reference same 14-day threshold", () => {
 		for (const [name, c] of [
 			["AGENTS.md", agentsContent],
-			["developer.md", devContent],
 			["researcher.md", resContent],
 		]) {
 			assert.ok(c.includes("14-day"), `${name} must reference 14-day threshold`);
 		}
 	});
 
-	it('all three files reference "npm view" command', () => {
+	it('AGENTS.md and researcher.md reference "npm view" command', () => {
 		for (const [name, c] of [
 			["AGENTS.md", agentsContent],
-			["developer.md", devContent],
 			["researcher.md", resContent],
 		]) {
 			assert.ok(c.includes("npm view"), `${name} must reference npm view command`);
 		}
 	});
 
-	it("all three files specify fail-closed behavior", () => {
+	it("AGENTS.md and researcher.md specify fail-closed behavior", () => {
 		for (const [name, c] of [
 			["AGENTS.md", agentsContent],
-			["developer.md", devContent],
 			["researcher.md", resContent],
 		]) {
 			assert.ok(

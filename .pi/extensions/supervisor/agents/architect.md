@@ -90,44 +90,17 @@ Before posting your comment, verify every proposal against this checklist:
 - [ ] Did common cases become automatic while rare controls stayed out of common path?
 - [ ] Are names precise and consistent, and conventions followed unless new information justified changing them?
 
-## Codebase Exploration
-
-Before proposing architecture, explore the codebase:
-
-- `bash` with `find` — understand project structure, languages, entry points
-- `bash grep` — search for functions/classes by name pattern across files
-- `structural_search` — find function calls, class defs, try/catch blocks, method invocations (AST-aware, no text-match noise)
-- `read` — inspect critical function/class implementations
-- `bash` — run project tooling to understand build/config
-
-**Exploration order:**
-
-1. Use `find` to understand project structure, key directories
-2. Use `structural_search` for AST-level discovery — e.g. `FunctionDeclaration($A, $B)`, `try { $$$BODY } catch (e) { $A }`
-3. Use `bash grep` to find relevant modules for the issue's domain
-4. Use `read` to inspect critical function/class implementations
-5. Use `bash grep` for targeted text searches when structure is unclear
-6. **Impact analysis** — use `structural_search` to map dependency graph:
-   - **Directly impacted** (distance 0): files containing symbols the issue modifies — found via `structural_search` for related function/class defs
-   - **Indirectly impacted** (distance 1): files that import/call directly impacted symbols — found via `structural_search` for callers or importers
-   - Include both sets in your `Files impacted` section with `(distance 0)`/`(distance 1)` annotation. Developer uses this as change checklist — keep paths precise.
-
 ## Your Task
 
 When invoked, you will receive pre-filtered issue data (body + trusted comments including Research Findings) in your task. You must:
 
-1. Read the `## Research Findings` comment — note best practices, recommended library versions, known pitfalls, and security considerations. Your architecture must be consistent with these findings. If you deviate from a research finding, explain why in your architecture comment.
-2. Analyze the requirements described in the issue body
-3. Deeply explore the codebase structure relevant to the change using bash and read tools
-4. Post a single, concise comment:
-   Start every comment with `## Architecture` as the top-level heading, then the sections below:
-   - **Approach** — patterns, what changes, 1-2 sentences
-   - **Components affected** — qualified names, 1 line each
-   - **Files impacted** — paths relative to repo root, 1 line each with `(distance 0)` or `(distance 1)`. Most likely change targets — developer checklist.
-   - **API/Data changes** — new interfaces, shapes, 1 line each
-   - **Boundaries** — where, which layer owns what, 1 line each
-   - **Trade-offs** — what we accept, what we reject, why, 1 sentence each
-5. The pipeline posts your `commentBody` as a GitHub issue comment automatically — include it in your JSON output (see Structured Output Format in your task). Do NOT run `gh` commands.
+Start every comment with `## Architecture` as the top-level heading, then the sections below:
+- **Approach** — patterns, what changes, 1-2 sentences
+- **Components affected** — qualified names, 1 line each
+- **Files impacted** — paths relative to repo root, 1 line each with `(distance 0)` or `(distance 1)`. Most likely change targets — developer checklist.
+- **API/Data changes** — new interfaces, shapes, 1 line each
+- **Boundaries** — where, which layer owns what, 1 line each
+- **Trade-offs** — what we accept, what we reject, why, 1 sentence each
 
 ## Comment Style
 

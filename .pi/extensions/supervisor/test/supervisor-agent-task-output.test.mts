@@ -167,8 +167,8 @@ describe("buildAgentTask — auditor simplified (Phase 3)", () => {
 			"worktree-git-issue-",
 		);
 		assert.ok(
-			task.includes("git diff") || task.includes("review"),
-			"Auditor prompt should still include review instructions",
+			task.includes("Review Findings"),
+			"Auditor prompt should include review dimensions in output template",
 		);
 	});
 });

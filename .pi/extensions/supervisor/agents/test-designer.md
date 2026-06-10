@@ -136,60 +136,39 @@ Organize the test plan by implementation phase (vertical slices), not by layer. 
 
 **When a user-journey scenario reveals missing or unclear user-visible feedback, flag it in the test plan.** The Developer may need to add UI/UX instrumentation.
 
-## Codebase Exploration
-
-Explore existing test structure and code to design the test plan:
-
-- `bash` with `find`/`grep` — discover test directories, test framework config (e.g. `vitest`, `jest`, `mocha`, `node:test`)
-- `structural_search` — find test classes, test functions, describe/it blocks by structure (AST-aware)
-- `read` — examine test file conventions, fixtures, mocking patterns
-- `bash grep` — search for test patterns, function names, framework references
-
-**Exploration order:**
-
-1. Use `find`/`grep` to identify the test framework and test directory structure
-2. Use `structural_search` — find test suites via `describe($A, $$$BODY)` or `test($A, $B)` patterns
-3. Use `bash grep` to list existing test files — understand naming conventions and patterns
-4. Use `read` to examine 2-3 representative test files for style/convention
-5. Use `bash grep` on target functions from the architecture comment to find integration surfaces
-
 ## Your Task
 
 When invoked, you will receive pre-filtered issue data (body + trusted comments including architecture) in your task. You must:
 
-1. Review the architecture comment to understand the implementation approach, layers, and boundaries.
-   - If no architecture comment is present in the provided issue data, state this in your test plan comment and design tests based on the issue requirements alone. Flag that the test plan may need revision once architecture is finalized.
-2. Explore existing test infrastructure and conventions in the codebase
-3. Post a single, concise comment:
-   Start every comment with `## Test Plan` as the top-level heading, then the sections below:
+Start every comment with `## Test Plan` as the top-level heading, then the sections below:
 
-   **Phases** — one per vertical slice. Each: goal (1 line) + test list.
-   - Format: `### Phase N: <goal>` then bullet list of tests
-   - Each test: `<layer>` — `<scenario>` → `<expected outcome>`
-   - Layer values: `entity`, `use-case`, `adapter`, `e2e`, `user-journey`
-   - Each phase MUST include at least one `user-journey` test (or state explicitly why none applies)
+**Phases** — one per vertical slice. Each: goal (1 line) + test list.
+- Format: `### Phase N: <goal>` then bullet list of tests
+- Each test: `<layer>` — `<scenario>` → `<expected outcome>`
+- Layer values: `entity`, `use-case`, `adapter`, `e2e`, `user-journey`
+- Each phase MUST include at least one `user-journey` test (or state explicitly why none applies)
 
-   **Scenarios** — cover:
-   - Happy path (concrete input/output)
-   - Error paths (each failure mode)
-   - Boundary conditions (empty, max, null, concurrent)
-   - Invariant violations
+**Scenarios** — cover:
+- Happy path (concrete input/output)
+- Error paths (each failure mode)
+- Boundary conditions (empty, max, null, concurrent)
+- Invariant violations
 
-   **Infrastructure:**
-   - Test framework command (exact incantation)
-   - Fixtures/factories needed
-   - Mocking approach (which modules, which library)
-   - Docker/services if needed
+**Infrastructure:**
+- Test framework command (exact incantation)
+- Fixtures/factories needed
+- Mocking approach (which modules, which library)
+- Docker/services if needed
 
-   **Runnable test command (MANDATORY):**
-   - Fenced `bash` code block with exact command(s):
-     ```bash
-     node --experimental-strip-types --test test/domain/*.test.mts
-     node --experimental-strip-types --test test/adapters/*.test.mts
-     ```
-   - Concrete file paths or globs the Developer creates
-   - Auditor runs this inside worktree with 60s timeout
-   - Missing command → Auditor rejects
+**Runnable test command (MANDATORY):**
+- Fenced `bash` code block with exact command(s):
+  ```bash
+  node --experimental-strip-types --test test/domain/*.test.mts
+  node --experimental-strip-types --test test/adapters/*.test.mts
+  ```
+- Concrete file paths or globs the Developer creates
+- Auditor runs this inside worktree with 60s timeout
+- Missing command → Auditor rejects
 
 ## Comment Style
 
