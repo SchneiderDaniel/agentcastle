@@ -14,6 +14,8 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveSkillPaths, resolveSkillPathsWithFs } from "../config/extensions.ts";
+import { buildAgentTask } from "../agent/task.ts";
+import type { FilteredIssueData } from "../config/types.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -144,5 +146,194 @@ describe("resolveSkillPaths regression (Phase 2)", () => {
 
 	it("resolveSkillPaths('nonexistent-skill-xyz') throws (regression)", () => {
 		assert.throws(() => resolveSkillPaths("nonexistent-skill-xyz"), /nonexistent-skill-xyz/);
+	});
+});
+
+// ─── Helpers for Phase 3 ────────────────────────────────────────────
+
+function makeFilteredData(overrides?: Partial<FilteredIssueData>): FilteredIssueData {
+	return {
+		body: "Issue body content",
+		comments: [
+			{ author: "architect", body: "## Architecture\nDesign approach" },
+			{ author: "designer", body: "## Test Plan\nTest approach" },
+		],
+		...overrides,
+	};
+}
+
+const DEAD_CODE_CONTEXT =
+	"**1 dead code finding(s) found (1 total lines)**\n\n#1: `src/a.ts` line 10:1 — **unused-export** `unusedFunc` (confidence: 100%)";
+
+// ─── Phase 3: buildAgentTask dead code context for auditor ───────────
+
+describe("buildAgentTask — deadCodeContext (Phase 3)", () => {
+	it("auditor with deadCodeContext → task contains Dead Code Detected heading", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			DEAD_CODE_CONTEXT,
+		);
+		assert.ok(
+			task.includes("### ⚠️ Dead Code Detected (Pre-Audit Gate)"),
+			"Should contain dead code detected heading",
+		);
+		assert.ok(
+			task.includes("1 dead code finding(s) found"),
+			"Should contain dead code finding summary from context",
+		);
+	});
+
+	it("auditor without deadCodeContext (undefined) → no dead code block", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(
+			!task.includes("⚠️ Dead Code Detected"),
+			"Should NOT contain dead code block when no context given",
+		);
+	});
+
+	it("auditor with deadCodeContext null → no dead code block", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			null,
+		);
+		assert.ok(
+			!task.includes("⚠️ Dead Code Detected"),
+			"Should NOT contain dead code block when context is null",
+		);
+	});
+
+	it("developer with deadCodeContext → irrelevant, no dead code block", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			DEAD_CODE_CONTEXT,
+		);
+		assert.ok(
+			!task.includes("⚠️ Dead Code Detected"),
+			"Developer task should NOT have dead code block",
+		);
+	});
+
+	it("auditor task includes audit checklist with dead code item", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(
+			task.includes("Dead code: ← verify findings from pre-audit gate or run ripgrep_search"),
+			"Auditor task checklist should include dead code line",
+		);
+	});
+
+	it("auditor example JSON shows total: 10 (was 9, now +1 for dead code)", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		// Find example JSON for approved flow with auditScore
+		const approvedSection = task.substring(
+			task.indexOf('"action": "APPROVED"'),
+			task.indexOf('"action": "REJECTED"'),
+		);
+		assert.ok(
+			approvedSection.includes('"total": 10'),
+			"Auditor approved example JSON should show total: 10",
+		);
+	});
+
+	it("auditor with deadCodeContext contains formatted finding context", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			DEAD_CODE_CONTEXT,
+		);
+		assert.ok(task.includes("unused-export"), "Should contain the type from dead code context");
+		assert.ok(task.includes("unusedFunc"), "Should contain the symbol from dead code context");
+		assert.ok(task.includes("src/a.ts"), "Should contain the file from dead code context");
 	});
 });

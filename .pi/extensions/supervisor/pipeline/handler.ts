@@ -612,6 +612,14 @@ export async function handleSupervisorCommand(
 						collector,
 					);
 					effectiveNextStatus = auditResult.nextStatus;
+					// Store dead code result in stage state for auditor context injection
+					if (auditResult.deadCodeResult) {
+						stageState.deadCodeResult = auditResult.deadCodeResult;
+					}
+					// Store duplicate code result in stage state for auditor context injection
+					if (auditResult.duplicateCodeResult) {
+						stageState.duplicateCodeResult = auditResult.duplicateCodeResult;
+					}
 					getDebugLogger().info("handler", "Pre-transition hook result", {
 						effectiveNextStatus,
 						note: auditResult.note,
