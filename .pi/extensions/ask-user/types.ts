@@ -39,9 +39,6 @@ export interface QnaEntry {
 	answer: string;
 }
 
-/** Action type for the ask_user_read tool. */
-export type QnaReadAction = "list" | "get" | "query";
-
 /**
  * Schema for the ask_user_read tool parameters.
  * Uses TypeBox for runtime validation.
