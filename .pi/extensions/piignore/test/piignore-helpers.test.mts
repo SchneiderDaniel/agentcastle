@@ -206,10 +206,21 @@ function tokenizeBashCommand(command: string): BashToken[] {
 /**
  * Determine if a token looks like a file path that should be checked.
  * Excludes known non-path patterns (URLs, npm scoped packages, standalone tilde,
- * option flags, shell operators) and tokens that were quoted after echo/printf.
+ * option flags, shell operators) and all tokens when command is echo/printf.
+ *
+ * Safety principle: quoted tokens and backtick content are NOT local file paths.
+ * - Single/double-quoted strings are literals (e.g. --body 'comment text')
+ * - Backtick content is command substitution (e.g. \`some.command\`)
+ * - Real file paths in AI-generated bash are almost never quoted
  */
 function isPathLike(token: BashToken, commandName: string): boolean {
 	const t = token.text;
+
+	// Quoted tokens are string literals, never file paths
+	if (token.quoted) return false;
+
+	// Backtick chars indicate command substitution, not file paths
+	if (t.includes("`")) return false;
 
 	// Option flags and shell operators are never paths
 	if (t.startsWith("-")) return false;
@@ -407,14 +418,30 @@ describe("isPathLike", () => {
 		assert.strictEqual(isPathLike({ text: "file.tar", quoted: false }, "tar"), true);
 	});
 
-	it("accepts path-like tokens for grep/rg commands", () => {
+	it("accepts unquoted path-like tokens for grep/rg commands", () => {
 		assert.strictEqual(isPathLike({ text: "debug.log", quoted: false }, "rg"), true);
 		assert.strictEqual(isPathLike({ text: "some.log", quoted: false }, "grep"), true);
+		// Quoted versions are rejected (string literals)
+		assert.strictEqual(isPathLike({ text: "debug.log", quoted: true }, "rg"), false);
 	});
 
-	it("rejects quoted tokens for echo but not for rg", () => {
-		// For rg, quoted token with path chars IS path-like
-		assert.strictEqual(isPathLike({ text: "pattern", quoted: true }, "rg"), false);
+	it("rejects all quoted tokens regardless of command", () => {
+		// Quoted tokens are string literals, never file paths
+		assert.strictEqual(isPathLike({ text: "some.log", quoted: true }, "cat"), false);
+		assert.strictEqual(isPathLike({ text: ".env", quoted: true }, "cat"), false);
+		assert.strictEqual(isPathLike({ text: "secret.txt", quoted: true }, "rg"), false);
+		assert.strictEqual(isPathLike({ text: "token.file", quoted: true }, "tar"), false);
+	});
+
+	it("rejects tokens containing backtick characters", () => {
+		// Backtick content is command substitution, not a file path
+		assert.strictEqual(isPathLike({ text: "`some.command`", quoted: false }, "gh"), false);
+		assert.strictEqual(
+			isPathLike({ text: "text `with.backtick` inside", quoted: true }, "gh"),
+			false,
+		);
+		// Unquoted token without backtick IS path-like (normal case)
+		assert.strictEqual(isPathLike({ text: "some.command", quoted: false }, "gh"), true);
 	});
 });
 
@@ -500,6 +527,53 @@ describe("checkBashCommand false-positive regression", () => {
 
 	it('echo "file.token" — echo command exclusion', () => {
 		assert.strictEqual(checkBashCommand('echo "file.token"', entries, cwd), null);
+	});
+
+	// ── Regression: gh issue comment with backtick content ────────────
+
+	it("gh issue comment --body with backtick content — not blocked", () => {
+		// Single-quoted body with backtick code reference: quoted token → skipped
+		assert.strictEqual(
+			checkBashCommand(
+				"gh issue comment 123 --repo owner/repo --body 'see \`src/main.ts\` for details'",
+				entries,
+				cwd,
+			),
+			null,
+		);
+	});
+
+	it('gh issue comment --body containing "secret" or "token" — not blocked', () => {
+		// Body text containing common words "secret" or "token" should NOT
+		// be treated as a file path. Quoted token → skipped.
+		assert.strictEqual(
+			checkBashCommand(
+				"gh issue comment 123 --repo owner/repo --body 'the secret is stored in vault'",
+				entries,
+				cwd,
+			),
+			null,
+		);
+		assert.strictEqual(
+			checkBashCommand(
+				"gh issue comment 123 --repo owner/repo --body 'auth token expired'",
+				entries,
+				cwd,
+			),
+			null,
+		);
+	});
+
+	it("gh issue comment --body with path-like text quoted — not blocked", () => {
+		// Body containing "src/main.ts" type references in quotes
+		assert.strictEqual(
+			checkBashCommand(
+				'gh issue comment 123 --repo owner/repo --body "see src/main.ts for details"',
+				entries,
+				cwd,
+			),
+			null,
+		);
 	});
 });
 

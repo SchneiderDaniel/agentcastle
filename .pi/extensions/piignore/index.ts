@@ -254,9 +254,20 @@ function getCommandName(command: string): string {
  * Determine if a token looks like a file path that should be checked.
  * Excludes known non-path patterns (URLs, npm scoped packages, standalone tilde,
  * option flags, shell operators) and all tokens when command is echo/printf.
+ *
+ * Safety principle: quoted tokens and backtick content are NOT local file paths.
+ * - Single/double-quoted strings are literals (e.g. --body 'comment text')
+ * - Backtick content is command substitution (e.g. \`some.command\`)
+ * - Real file paths in AI-generated bash are almost never quoted
  */
 function isPathLike(token: BashToken, commandName: string): boolean {
 	const t = token.text;
+
+	// Quoted tokens are string literals, never file paths
+	if (token.quoted) return false;
+
+	// Backtick chars indicate command substitution, not file paths
+	if (t.includes("`")) return false;
 
 	// Option flags and shell operators are never paths
 	if (t.startsWith("-")) return false;
