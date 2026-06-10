@@ -52,6 +52,21 @@ export const TOOL_DISCIPLINE_SNIPPET = `🛠 Tool Discipline — Shared Rules
 - **Read once:** Use \`offset\`/\`limit\` to page through large files. Do NOT re-read same file within 3 turns.`;
 
 /**
+ * Language-agnostic error handling principles injected into every agent's
+ * system prompt after the tool discipline snippet. These ensure that all
+ * code written by agents (across TypeScript, Python, Go, Rust, shell, etc.)
+ * fails visibly and never silently swallows errors.
+ */
+export const ERROR_HANDLING_PRINCIPLES = `## Error Handling Principles — Apply to ALL code you write
+
+1. **Every error path user-visible** — Never log-only. Surface to user.
+2. **Never empty catch/except/recover** — Surface, re-throw, or return error.
+3. **Check every return code** — Check subprocess/API returns.
+4. **Clean up in finally/defer** — Clean temp state in finally/defer.
+5. **Fail closed** — Precondition fail = stop. Surface/halt.
+6. **Never return partial success** — Partial result as success hides problems.`;
+
+/**
  * Instruction for researcher deduplication scan.
  * Previously embedded in researcher.md, now a shared constant.
  */
@@ -148,6 +163,10 @@ const COMMENT_FORMAT_TEMPLATES = {
  */
 export function buildAgentSystemPrompt(basePrompt: string, agentName: string): string {
 	const parts: string[] = [TOOL_DISCIPLINE_SNIPPET];
+
+	// Add shared error handling principles after tool discipline
+	parts.push("");
+	parts.push(ERROR_HANDLING_PRINCIPLES);
 
 	// Add per-agent overrides
 	const overrides = AGENT_OVERRIDES[agentName];
