@@ -47,6 +47,14 @@ function patternToRegex(pattern: string): Pattern {
 	}
 	if (p === "") return { regex: /(?!)/, negate };
 
+	// Handle gitignore leading escape sequences per spec
+	// \# → literal # (not comment), \! → literal ! (not negation), \\ → literal \
+	if (p.startsWith("\\#") || p.startsWith("\\!")) {
+		p = p.slice(1); // strip backslash, keep escaped char
+	} else if (p.startsWith("\\\\")) {
+		p = p.slice(1); // strip one backslash of the pair, keep one
+	}
+
 	let dirOnly = false;
 	if (p.endsWith("/")) {
 		dirOnly = true;
