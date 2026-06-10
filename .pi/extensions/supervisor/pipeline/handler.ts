@@ -453,13 +453,14 @@ export async function handleSupervisorCommand(
 			}
 
 			// Determine next status — pass result.success so inferForwardStatus
-			// is skipped on agent failure (Bug #643 fix)
-			const { status: nextStatus, stopReason: nsStop } = calculateNextStatus(
-				agentName,
-				result.textOutput,
-				result.textOnly,
-				result.success,
-			);
+			// is skipped on agent failure (Bug #643 fix).
+			// hadExplicitMarker tracks whether the status came from agent output
+			// (structured JSON or text marker) vs. pipeline inference (Bug #711 fix).
+			const {
+				status: nextStatus,
+				stopReason: nsStop,
+				hadExplicitMarker = false,
+			} = calculateNextStatus(agentName, result.textOutput, result.textOnly, result.success);
 
 			getDebugLogger().info("handler", "Next status determined", {
 				nextStatus,
@@ -552,13 +553,18 @@ export async function handleSupervisorCommand(
 				break;
 			}
 
-			if (!result.success && nextStatus !== "Audit") {
-				stopReason = `Agent ${agent.config.name} failed`;
-				ctx.ui.notify(
-					`Agent ${agent.config.name} failed. Pipeline stops before ${nextStatus || "next stage"}.`,
-					"warning",
-				);
-				getDebugLogger().error("handler", "Agent failed, pipeline stopping", {
+			// Bug #711: Replace status-based failure guard with explicit-marker check.
+			// Old guard: !result.success && nextStatus !== "Audit" — only worked for auditor
+			// step because developer's only forward marker IS "Audit".
+			// New guard: if agent failed AND no explicit marker in its output → stop.
+			// Explicit marker means structured JSON action or text marker match,
+			// NOT inferForwardStatus (which is pipeline inference, not agent output).
+			// This prevents the crash-loop: developer crashes (0 tokens, 0 tools),
+			// inferForwardStatus returns "Audit", hadExplicitMarker=false → stop.
+			if (!result.success && !hadExplicitMarker) {
+				stopReason = `Agent ${agent.config.name} failed — no explicit completion marker in output`;
+				ctx.ui.notify(`Agent ${agent.config.name} failed. Pipeline stops.`, "warning");
+				getDebugLogger().error("handler", "Agent failed, pipeline stopping (no explicit marker)", {
 					agentName: agent.config.name,
 					nextStatus,
 				});

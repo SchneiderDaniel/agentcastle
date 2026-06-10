@@ -155,6 +155,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 				state.welcomeDispose();
 				state.welcomeDispose = undefined;
 			}
+			state.startupWidgetActive = false;
 		}
 		ctx.ui.setWidget("explain-extensions", undefined);
 		ctx.ui.setWidget("explain-prompts", undefined);

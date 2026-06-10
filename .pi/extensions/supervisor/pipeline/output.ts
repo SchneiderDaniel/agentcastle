@@ -73,8 +73,16 @@ export function buildPipelineSummary(
 	if (agentResults.length > 0) {
 		for (const ar of agentResults) {
 			const statusIcon = ar.status === "FAILED" ? "✗" : "✓";
+			// Append error output for failed agents to surface crash diagnostics
+			// e.g., "Failed to start: ENOENT" instead of just "FAILED" (Bug #711 fix)
+			let statusDisplay = `${statusIcon} ${ar.status}`;
+			if (ar.status === "FAILED" && ar.errorOutput) {
+				const truncated =
+					ar.errorOutput.length > 80 ? ar.errorOutput.slice(0, 80) + "..." : ar.errorOutput;
+				statusDisplay += ` (${truncated})`;
+			}
 			lines.push(
-				`| ${ar.agentName} | ${statusIcon} ${ar.status} | ${formatDuration(ar.durationMs)} | ${formatTokens(ar.tokenCount)} | ${ar.toolCount} | ${shortModel(ar.model)} |`,
+				`| ${ar.agentName} | ${statusDisplay} | ${formatDuration(ar.durationMs)} | ${formatTokens(ar.tokenCount)} | ${ar.toolCount} | ${shortModel(ar.model)} |`,
 			);
 		}
 	} else {

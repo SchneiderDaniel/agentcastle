@@ -234,6 +234,11 @@ describe("calculateNextStatus()", () => {
 			"Some text\nAUDIT_DECISION: APPROVED\nmore text",
 		);
 		assert.equal(result.status, "Done");
+		assert.equal(
+			result.hadExplicitMarker,
+			true,
+			"explicit marker should set hadExplicitMarker=true",
+		);
 	});
 
 	it("auditor AUDIT_DECISION: REJECTED → Implementation (pipeline loops back, not stops)", () => {
@@ -260,6 +265,28 @@ describe("calculateNextStatus()", () => {
 		// Developer's markerMap has { IMPLEMENTATION_COMPLETE: "Audit" }
 		// inferForwardStatus returns "Audit" as the forward status
 		assert.equal(result.status, "Audit");
+	});
+
+	it("inferForwardStatus sets hadExplicitMarker=false — developer with no markers, success=true", () => {
+		const result = calculateNextStatus("developer", "just some output", "just some text", true);
+		assert.equal(result.status, "Audit", "forward status should be inferred when agent succeeds");
+		assert.equal(
+			result.hadExplicitMarker,
+			false,
+			"inferred status should have hadExplicitMarker=false",
+		);
+	});
+
+	it("Bug 1: success=false with no markers — hadExplicitMarker=false", () => {
+		const result = calculateNextStatus("developer", "", "", false);
+		assert.equal(result.status, null);
+		assert.equal(result.hadExplicitMarker, false);
+	});
+
+	it("unknown agent — hadExplicitMarker=false (status null)", () => {
+		const result = calculateNextStatus("unknown-agent", "some output", "some text");
+		assert.equal(result.status, null);
+		assert.equal(result.hadExplicitMarker, false);
 	});
 
 	it("last occurrence wins (overrides earlier markers) — Architect FEEDBACK_RESEARCH", () => {
@@ -447,6 +474,20 @@ describe("buildAgentResultEntry()", () => {
 		const entry = buildAgentResultEntry(baseResult, false, "anthropic/claude-sonnet-4-20250514");
 		const shortModel = (m?: string) => (m ? m.split("/").pop() || m : "—");
 		assert.equal(shortModel(entry.model), "claude-sonnet-4-20250514");
+	});
+
+	it("threads errorOutput from AgentRunResult when provided", () => {
+		const entry = buildAgentResultEntry(
+			{ ...baseResult, success: false, errorOutput: "Failed to start: ENOENT" },
+			false,
+		);
+		assert.equal(entry.status, "FAILED");
+		assert.equal(entry.errorOutput, "Failed to start: ENOENT");
+	});
+
+	it("errorOutput is undefined when AgentRunResult has empty errorOutput", () => {
+		const entry = buildAgentResultEntry(baseResult, false);
+		assert.equal(entry.errorOutput, undefined);
 	});
 
 	it("model is undefined when not provided, shows dash in output", () => {
