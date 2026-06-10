@@ -14,7 +14,12 @@ import type {
 	PrCreationResult,
 } from "../config/types.ts";
 import { loadConfig, resolveTimeoutMs } from "../config/config.ts";
-import { findIssueItem, getItemStatusName, filterIssueData } from "../github/index.ts";
+import {
+	findIssueItem,
+	getItemStatusName,
+	filterIssueData,
+	postIssueComment,
+} from "../github/index.ts";
 import { buildAgentTask, generateBranchName, summarizeComments } from "../agent/task.ts";
 import { runAgent, runAgentSubprocess } from "../agent/runner.ts";
 import { WORKFLOW } from "../config/workflow.ts";
@@ -469,6 +474,39 @@ export async function handleSupervisorCommand(
 			}
 
 			if (result.budgetExceeded) {
+				// Graceful degradation: researcher stops researching, pipeline continues
+				if (agentName === "researcher") {
+					const budgetExceededMsg = `## Research Findings — Research stopped early: agent exceeded token budget (${result.tokenCount} tokens used). Pipeline continues without full research findings.`;
+					try {
+						await postIssueComment(pi, issueNum, config.repo, budgetExceededMsg);
+						ctx.ui.notify(`Posted researcher degradation notice on issue #${issueNum}`, "info");
+					} catch (commentErr: unknown) {
+						collector?.push(
+							"handler",
+							"warn",
+							`Failed to post researcher degradation notice: ${
+								commentErr instanceof Error ? commentErr.message : String(commentErr)
+							}`,
+						);
+					}
+					const nextStatus = inferForwardStatus(step);
+					if (nextStatus) {
+						loopStatus = await applyStatusTransition(
+							pi,
+							loopItem.id,
+							projectId,
+							fields,
+							statusField.id,
+							nextStatus,
+						);
+						ctx.ui.notify(
+							`Issue #${issueNum} moved: Research → ${nextStatus} (researcher budget exceeded — graceful degradation)`,
+							"info",
+						);
+						getDebugLogger().info("handler", `Research → ${nextStatus} (budget exceeded)`);
+						continue;
+					}
+				}
 				stopReason = `Agent ${result.agentName} exceeded budget (${result.toolCount} tools, ${result.tokenCount} tokens)`;
 				getDebugLogger().warn("handler", "Budget exceeded", {
 					agentName: result.agentName,
