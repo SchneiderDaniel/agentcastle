@@ -8,7 +8,7 @@ import type { FilteredIssueData } from "../config/types.ts";
 
 // ─── Constants ─────────────────────────────────────────────────────
 
-const MAX_COMMENT_CHARS = 2000;
+// No constants needed — agents always see the full picture.
 
 export function generateBranchName(
 	issueNum: number,
@@ -75,62 +75,26 @@ The pipeline extracts it automatically.
 `;
 
 /**
- * Truncate a comment body to `maxLength` chars with an overflow note.
+ * Format all trusted comments verbatim with labels.
+ * Every comment from every trusted author is included in full.
+ * No truncation, no summarization, no size caps — agents always see the full picture.
  */
-export function truncateComment(body: string, maxLength: number = MAX_COMMENT_CHARS): string {
-	if (body.length <= maxLength) return body;
-	const overflow = body.length - maxLength;
-	return body.slice(0, maxLength) + `\n…[+${overflow} more chars]`;
+export function summarizeComments(comments: Array<{ author: string; body: string }>): string {
+	if (comments.length === 0) return "(no trusted comments)";
+
+	return comments
+		.map((c, i) => `--- Comment #${i + 1} by @${c.author} ---\n${c.body}`)
+		.join("\n\n");
 }
 
 /**
- * Summarize a list of trusted comments.
- * When > threshold comments: first n-1 are summarized into bullet list, latest is in full.
- * When ≤ threshold comments: renders all verbatim.
- * Comments > maxCommentChars are truncated with overflow note.
- *
- * @param threshold - Comment count threshold (default 7). Set to 0 to always summarize.
- * @param maxCommentChars - Max chars per comment body before truncation (default 2000).
+ * Truncate a string to `maxLength` chars with overflow notice.
+ * Utility available for pipeline code, not used internally.
  */
-export function summarizeComments(
-	comments: Array<{ author: string; body: string }>,
-	threshold: number = 7,
-	maxCommentChars: number = MAX_COMMENT_CHARS,
-): string {
-	if (comments.length === 0) return "(no trusted comments)";
-
-	if (threshold > 0 && comments.length <= threshold) {
-		// ≤ threshold comments: render all verbatim (threshold=0 = always summarize)
-		return comments
-			.map((c, i) => {
-				const body = truncateComment(c.body, maxCommentChars);
-				return `--- Comment #${i + 1} by @${c.author} ---\n${body}`;
-			})
-			.join("\n\n");
-	}
-
-	// > threshold comments: summarize all but the latest
-	const latest = comments[comments.length - 1];
-	const earlier = comments.slice(0, -1);
-
-	// Build summarized bullet list for earlier comments
-	const bullets = earlier
-		.map((c) => {
-			const preview = truncateComment(c.body, maxCommentChars);
-			// Take first meaningful line for the summary
-			const firstLine =
-				preview.split("\n").find((l) => l.trim() && !l.startsWith("---")) || preview;
-			return `- @${c.author}: ${firstLine.slice(0, 200)}`;
-		})
-		.join("\n");
-
-	const summaryBlock = ["### Previous Comments (summarized)", bullets].join("\n");
-
-	// Latest comment in full (also truncate if needed)
-	const latestBody = truncateComment(latest.body, maxCommentChars);
-	const latestBlock = `--- Comment #${comments.length} by @${latest.author} ---\n${latestBody}`;
-
-	return `${summaryBlock}\n\n${latestBlock}`;
+export function truncateComment(body: string, maxLength: number = 2000): string {
+	if (body.length <= maxLength) return body;
+	const overflow = body.length - maxLength;
+	return body.slice(0, maxLength) + `\n…[+${overflow} more chars]`;
 }
 
 /**
@@ -167,6 +131,7 @@ export function buildAgentTask(
 	summarizedRejections?: string,
 	duplicateCodeContext?: string | null,
 	researchFindings?: string | null,
+	auditFeedback?: string | null,
 ): string {
 	// Build trusted comments block
 	// If summarizedRejections is provided, use it (pre-summarized by pipeline).
@@ -175,12 +140,8 @@ export function buildAgentTask(
 	if (summarizedRejections !== undefined) {
 		commentsBlock = summarizedRejections;
 	} else if (filteredData.comments.length > 0) {
-		commentsBlock = filteredData.comments
-			.map((c, i) => {
-				const body = truncateComment(c.body);
-				return `--- Comment #${i + 1} by @${c.author} ---\n${body}`;
-			})
-			.join("\n\n");
+		// All trusted comments verbatim — no truncation. Agents need full text.
+		commentsBlock = summarizeComments(filteredData.comments);
 	} else {
 		commentsBlock = "(no trusted comments)";
 	}
@@ -200,6 +161,18 @@ export function buildAgentTask(
 
 	// Build the research findings block (injected for architect from issue comments)
 	const researchBlock = researchFindings ? `\n### Research Findings\n\n${researchFindings}\n` : "";
+
+	// Build the audit feedback block (injected for developer when looping back from Audit rejection)
+	// This is a prominent section that tells the developer what the auditor found wrong.
+	// It appears BEFORE the generic task instructions so the developer cannot miss it.
+	const auditFeedbackBlock = auditFeedback
+		? `🔴 **AUDITOR REJECTED YOUR PREVIOUS IMPLEMENTATION — FIX THESE ISSUES**
+
+The previous audit found problems with your implementation. You MUST fix every issue listed below
+before marking the task complete. Do NOT ignore or defer any critical or warning finding.
+
+${auditFeedback}\n`
+		: "";
 
 	switch (agentName) {
 		case "architect":
@@ -221,7 +194,7 @@ export function buildAgentTask(
 				null,
 				2,
 			);
-			return `${issueBlock}\n\n## Task\nFollow your system prompt instructions.\n\n### Setup\nWork from current directory — worktree already set up by supervisor. Branch already created.\n\n⚠️ **This may be a resume after previous failure.** The worktree and branch may already contain\n   partial work from a prior attempt. Always check existing state before starting fresh:\n\n1. Run \`git status\` — if files modified/staged, a previous attempt left work behind\n2. Run \`git log --oneline ${remote}/${defaultBranch}..HEAD\` — if commits exist but unpushed,\n   previous work is sitting on the branch\n3. Run \`git stash list\` — there may be stashed changes from a prior attempt\n\n**If existing work found:** resume from it. Read existing files, check what\'s done, complete what\nremains. Do NOT start over — that wastes time and may discard partial progress.\n\n**If no existing work (clean state):** proceed with fresh implementation.\n\n\n\n**Branch name:** ${branch}\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.\n\n${JSON_OUTPUT_INSTRUCTION}\n\nExample output:\n\n\`\`\`json\n${developerExample}\n\`\`\``;
+			return `${issueBlock}\n\n## Task\nFollow your system prompt instructions.\n\n### Setup\nWork from current directory — worktree already set up by supervisor. Branch already created.\n\n⚠️ **This may be a resume after previous failure.** The worktree and branch may already contain\n   partial work from a prior attempt. Always check existing state before starting fresh:\n\n1. Run \`git status\` — if files modified/staged, a previous attempt left work behind\n2. Run \`git log --oneline ${remote}/${defaultBranch}..HEAD\` — if commits exist but unpushed,\n   previous work is sitting on the branch\n3. Run \`git stash list\` — there may be stashed changes from a prior attempt\n\n**If existing work found:** resume from it. Read existing files, check what\'s done, complete what\nremains. Do NOT start over — that wastes time and may discard partial progress.\n\n**If no existing work (clean state):** proceed with fresh implementation.\n\n${auditFeedbackBlock}\n\n**Branch name:** ${branch}\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.\n\n${JSON_OUTPUT_INSTRUCTION}\n\nExample output:\n\n\`\`\`json\n${developerExample}\n\`\`\``;
 		}
 
 		case "auditor": {

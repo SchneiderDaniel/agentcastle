@@ -254,11 +254,19 @@ export interface NextStatusResult {
  * Uses structured JSON parsing (parseAgentOutput) when possible,
  * falls back to text marker matching for backward compatibility.
  * Returns null if no status can be determined (pipeline should stop).
+ *
+ * @param agentName - Name of the agent that just ran
+ * @param agentOutput - Raw agent output (for JSON parsing)
+ * @param textOnly - Text-only output (for marker matching)
+ * @param success - Whether the agent completed successfully. When false,
+ *                  inferForwardStatus is skipped to prevent a failed
+ *                  agent from advancing the pipeline (Bug #643 fix).
  */
 export function calculateNextStatus(
 	agentName: string,
 	agentOutput: string,
 	textOnly: string,
+	success: boolean = true,
 ): NextStatusResult {
 	const step = WORKFLOW.find((s) => s.agentName === agentName);
 	if (!step) return { status: null, stopReason: `No workflow step for agent '${agentName}'` };
@@ -273,6 +281,16 @@ export function calculateNextStatus(
 	// Fallback: old marker-based detection (for backward compatibility)
 	const nextStatus = resolveNextStatus(step, textOnly) ?? resolveNextStatus(step, agentOutput);
 	if (!nextStatus) {
+		// Bug #643: Only infer forward status when agent succeeded.
+		// A failed agent (0 tools, 0 tokens) should NOT advance the pipeline
+		// via inferForwardStatus — that would bypass failure detection and
+		// send the pipeline to the next stage (e.g., auditor) with empty work.
+		if (!success) {
+			return {
+				status: null,
+				stopReason: `Agent ${agentName} failed — no completion marker found and forward inference skipped`,
+			};
+		}
 		// No marker found — try to infer forward status from step's markerMap
 		// This handles cases where agent completed work but output lacks marker
 		const inferredStatus = inferForwardStatus(step);
@@ -302,6 +320,49 @@ export function inferForwardStatus(step: WorkflowStep): string | null {
 	}
 	// All markers are AUDIT/FEEDBACK — none matched, can't infer forward direction
 	return null;
+}
+
+// ─── Branch Commit Check ────────────────────────────────────────────
+
+/**
+ * Check whether a branch has any commits ahead of a base branch.
+ * Uses `git rev-list --count` to compare.
+ *
+ * Fail-safe: returns true (allows pipeline to continue) if the git command
+ * fails or throws, since this is a pre-condition check that should not
+ * block the pipeline on infrastructure issues.
+ *
+ * @param execFn - Function to execute shell commands
+ * @param worktreePath - Path to the worktree
+ * @param headBranch - Branch name to check (e.g. "feature/my-feature")
+ * @param baseBranch - Base branch to compare against (e.g. "main")
+ * @returns true if branch has commits ahead of base, false if empty
+ */
+export async function hasBranchCommits(
+	execFn: (
+		cmd: string,
+		args: string[],
+		opts?: Record<string, unknown>,
+	) => Promise<{ code: number; stdout: string; stderr: string }>,
+	worktreePath: string,
+	headBranch: string,
+	baseBranch: string,
+): Promise<boolean> {
+	try {
+		const result = await execFn("git", ["rev-list", "--count", `${baseBranch}..${headBranch}`], {
+			cwd: worktreePath,
+			timeout: 10_000,
+		});
+		if (result.code !== 0) {
+			// Command failed — fail-safe: allow pipeline to continue
+			return true;
+		}
+		const count = parseInt(result.stdout?.trim() || "0", 10);
+		return count > 0;
+	} catch {
+		// Exception — fail-safe: allow pipeline to continue
+		return true;
+	}
 }
 
 // ─── Audit Score Tracking ─────────────────────────────────────────
@@ -667,7 +728,7 @@ async function handleAuditorOutput(
 		if (!auditOutput) return;
 
 		if (auditOutput.decision === "APPROVED") {
-			const bodyToPost = auditOutput.commentBody || agentOutput;
+			const bodyToPost = auditOutput.commentBody || buildApprovalCommentFromOutput(agentOutput);
 			if (bodyToPost) {
 				try {
 					await postIssueComment(pi, issueNum, config.repo, bodyToPost);
@@ -683,7 +744,7 @@ async function handleAuditorOutput(
 				}
 			}
 		} else if (auditOutput.decision === "REJECTED") {
-			const bodyToPost = auditOutput.commentBody || agentOutput;
+			const bodyToPost = auditOutput.commentBody || buildRejectionCommentFromOutput(agentOutput);
 			if (bodyToPost) {
 				try {
 					await postIssueComment(pi, issueNum, config.repo, bodyToPost);
@@ -718,7 +779,7 @@ async function handleAuditorOutput(
 			}
 		}
 	} else if (actionFromOutput === "REJECTED") {
-		const bodyToPost = commentBodyFromOutput || agentOutput;
+		const bodyToPost = commentBodyFromOutput || buildRejectionCommentFromOutput(agentOutput);
 		if (bodyToPost) {
 			try {
 				await postIssueComment(pi, issueNum, config.repo, bodyToPost);
@@ -736,7 +797,7 @@ async function handleAuditorOutput(
 			collector?.push(
 				"stages",
 				"warn",
-				`Auditor rejected issue #${issueNum} but no comment body provided in structured output.`,
+				`Auditor rejected issue #${issueNum} but no comment body or structured output available.`,
 			);
 		}
 	}
@@ -775,6 +836,45 @@ function buildApprovalCommentFromOutput(agentOutput: string): string | null {
 		}
 
 		lines.push("Fix and resubmit if issues remain.");
+		return lines.join("\n");
+	}
+
+	return null;
+}
+
+/**
+ * Build a rejection comment from AgentOutput fields when no explicit commentBody provided.
+ * Similar to buildApprovalCommentFromOutput but marks as REJECTED.
+ */
+function buildRejectionCommentFromOutput(agentOutput: string): string | null {
+	const parseResult = parseAgentOutput(agentOutput);
+	if (isAgentOutputSuccess(parseResult)) {
+		const output = parseResult as AgentOutput;
+		const lines: string[] = ["## Audit Rejected", ""];
+
+		if (output.auditScore) {
+			const passing = output.auditScore.passing;
+			const total = output.auditScore.total;
+			lines.push(
+				`**Score:** ${passing}/${total} — ${passing === total ? "All dimensions passing" : `${passing} of ${total} dimensions passing`}`,
+			);
+			lines.push("");
+		}
+
+		if (output.findings && output.findings.length > 0) {
+			lines.push("### Findings");
+			lines.push("");
+			for (const finding of output.findings) {
+				lines.push(`- **${finding.severity} — ${finding.dimension}**`);
+				if (finding.symptom) lines.push(`  - Symptom: ${finding.symptom}`);
+				if (finding.consequence) lines.push(`  - Consequence: ${finding.consequence}`);
+				if (finding.remedy) lines.push(`  - Remedy: ${finding.remedy}`);
+				if (finding.location) lines.push(`  - Location: ${finding.location}`);
+			}
+			lines.push("");
+		}
+
+		lines.push("Fix the issues above and resubmit.");
 		return lines.join("\n");
 	}
 

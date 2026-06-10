@@ -40,6 +40,7 @@ When invoked, you will receive pre-filtered issue data (body + trusted comments)
 
 ## Rules
 
+- **READ ALL trusted comments** in the Trusted Comments section before starting. Every comment from every trusted author contains context you need. Architecture decisions, test plans, and previous audit results all come through trusted comments.
 - **NEVER** merge pull requests — only the user can merge
 - **NEVER** modify code directly
 - **NEVER** change the issue status — the supervisor handles that

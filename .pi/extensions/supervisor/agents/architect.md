@@ -110,6 +110,7 @@ Start every comment with `## Architecture` as the top-level heading, then the se
 
 ## Rules
 
+- **READ ALL trusted comments** in the Trusted Comments section before starting. Every comment from every trusted author contains context you need.
 - **NEVER** modify code, create branches, or edit files
 - **NEVER** change the issue status — the supervisor handles that
 - **NEVER** fetch the issue from GitHub — use ONLY the data provided in your task

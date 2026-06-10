@@ -45,6 +45,7 @@ import {
 	shouldSkipResearcher,
 	checkReadmeUpdated,
 	inferForwardStatus,
+	hasBranchCommits,
 	buildDuplicateCodeContext,
 } from "./stages.ts";
 import {
@@ -329,6 +330,23 @@ export async function handleSupervisorCommand(
 							.map((c) => c.body)
 							.find((body) => /##\s*Research\s*Findings/i.test(body))
 					: undefined;
+			// Extract latest audit rejection comment for developer feedback loop
+			// When audit rejects and pipeline loops back to Implementation, the developer
+			// needs to see EXACTLY what the auditor found wrong — not just a generic
+			// list of trusted comments where audit feedback is buried.
+			const auditFeedback: string | undefined =
+				agentName === "developer"
+					? (() => {
+							// Find the latest comment containing "## Audit Rejected"
+							for (let i = loopFilteredData.comments.length - 1; i >= 0; i--) {
+								const body = loopFilteredData.comments[i]?.body || "";
+								if (/##\s*Audit\s*Rejected/i.test(body)) {
+									return body;
+								}
+							}
+							return undefined;
+						})()
+					: undefined;
 			const task = buildAgentTask(
 				agentName,
 				issueNum,
@@ -342,15 +360,10 @@ export async function handleSupervisorCommand(
 				config.branchPrefix!,
 				worktreePath,
 				worktreeBranch,
-				loopFilteredData.comments.length > 1
-					? summarizeComments(
-							loopFilteredData.comments,
-							config.commentSummaryThreshold,
-							config.maxCommentChars,
-						)
-					: undefined,
+				summarizeComments(loopFilteredData.comments),
 				dupContext,
 				researchFindings,
+				auditFeedback,
 			);
 
 			getDebugLogger().info("handler", `Dispatching agent ${agentName}`, {
@@ -439,17 +452,40 @@ export async function handleSupervisorCommand(
 				}
 			}
 
-			// Determine next status
+			// Determine next status — pass result.success so inferForwardStatus
+			// is skipped on agent failure (Bug #643 fix)
 			const { status: nextStatus, stopReason: nsStop } = calculateNextStatus(
 				agentName,
 				result.textOutput,
 				result.textOnly,
+				result.success,
 			);
 
 			getDebugLogger().info("handler", "Next status determined", {
 				nextStatus,
 				stopReason: nsStop,
 			});
+
+			// Bug #643: Pre-condition check before auditor — if developer produced
+			// no commits (branch is empty ahead of base), skip auditor and stop pipeline.
+			// This prevents the auditor from wasting tokens on an empty worktree.
+			if (agentName === "developer" && nextStatus === "Audit" && worktreePath && result.success) {
+				const hasCommits = await hasBranchCommits(
+					(cmd: string, args: string[], opts?: Record<string, unknown>) => pi.exec(cmd, args, opts),
+					worktreePath,
+					worktreeBranch || config.branchPrefix! + issueNum,
+					config.defaultBranch || "main",
+				);
+				if (!hasCommits) {
+					stopReason = "Developer produced no commits — skipping auditor";
+					ctx.ui.notify("Developer produced no changes. Pipeline stopping.", "warning");
+					getDebugLogger().warn("handler", "No commits from developer", {
+						worktreeBranch,
+						config: config.defaultBranch,
+					});
+					break;
+				}
+			}
 
 			// PR creation on audit approval — capture result for completion summary
 			// (Bug 2, Bug 6 fix: propagate PR creation result to caller)

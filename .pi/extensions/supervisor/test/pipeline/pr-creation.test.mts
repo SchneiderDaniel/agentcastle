@@ -857,4 +857,94 @@ describe("createPrOnApproval()", () => {
 		const prCreateCalls = execCalls.filter((c) => c.cmd === "gh" && c.args[1] === "create");
 		assert.equal(prCreateCalls.length, 2, "should make exactly 2 attempts");
 	});
+
+	// ─── Bug 2: ahead_by=0 ─────────────────────────────────────────
+
+	it("Bug 2: ahead_by=0 returns success=false with 'No commits ahead' error", async () => {
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		const pi = createMockPi(
+			[
+				// 1. git push --force OK
+				{ code: 0, stdout: "push ok", stderr: "" },
+				// 2. gh api compare returns 0 (no commits ahead)
+				{ code: 0, stdout: "0", stderr: "" },
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		assert.ok(result, "should return a PrCreationResult");
+		assert.equal(result.success, false, "should indicate failure when no commits ahead");
+		assert.ok(result.error, "should contain error message");
+		assert.ok(
+			result.error!.toLowerCase().includes("no commits") ||
+				result.error!.toLowerCase().includes("skipped"),
+			`error should mention no commits: ${result.error}`,
+		);
+		assert.equal(result.prNumber, undefined, "prNumber should be undefined when no commits");
+		// Should NOT attempt pr list or pr create after compare check
+		// (gh may be wrapped in bash when GH_TOKEN is set, so check args instead of cmd)
+		const compareCalls = execCalls.filter((c) => c.args.some((a: string) => a.includes("compare")));
+		assert.equal(compareCalls.length, 1, "should have exactly 1 compare call, no pr list/create");
+		const prListCalls = execCalls.filter(
+			(c) => c.args.some((a: string) => a === "list") || c.args.some((a: string) => a === "create"),
+		);
+		assert.equal(prListCalls.length, 0, "should NOT have any pr list or create calls");
+	});
+
+	it("Bug 2: ahead_by=0 does NOT report 'created' in output (no misleading PR #undefined)", async () => {
+		// Verify that the compare check happens and no PR creation is attempted
+		const execCalls: ExecCall[] = [];
+		const notifyCalls: NotifyCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "push ok", stderr: "" },
+				{ code: 0, stdout: "0", stderr: "" }, // ahead_by = 0
+			],
+			execCalls,
+		);
+		const ctx = createMockCtx(notifyCalls);
+
+		const result = await createPrOnApproval(
+			pi,
+			ctx,
+			42,
+			"Test issue",
+			mockConfig as any,
+			[mockAgentResult],
+			"/worktrees/wt-42",
+			"worktree-git-issue-42-test",
+		);
+
+		// No gh pr create or gh pr edit calls (check args, not cmd, since gh may wrap in bash)
+		const prCreateOrEdit = execCalls.filter(
+			(c) => c.args.some((a: string) => a === "create") || c.args.some((a: string) => a === "edit"),
+		);
+		assert.equal(prCreateOrEdit.length, 0, "no PR create or edit should be attempted");
+
+		// Verify the compare API was called with ahead_by
+		const compareCall = execCalls.find((c) => c.args.some((a: string) => a.includes("compare")));
+		assert.ok(compareCall, "should call gh api compare");
+		const compareArgs = compareCall!.args;
+		assert.ok(
+			compareArgs.some((a: string) => a.includes("compare")),
+			"should be compare endpoint",
+		);
+
+		// The result should not be misleading
+		assert.equal(result.success, false, "should not indicate success");
+		assert.equal(result.prNumber, undefined, "prNumber should be undefined");
+	});
 });

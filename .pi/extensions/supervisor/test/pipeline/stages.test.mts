@@ -24,6 +24,7 @@ import {
 	applyStatusTransition,
 	handlePostAgentSuccess,
 	validateResearcherFindings,
+	hasBranchCommits,
 } from "../../pipeline/stages.ts";
 
 // ─── Mock Helpers ──────────────────────────────────────────────────
@@ -277,6 +278,47 @@ describe("calculateNextStatus()", () => {
 		const result = calculateNextStatus("unknown-agent", "some output", "some text");
 		assert.equal(result.status, null);
 		assert.ok(result.stopReason);
+	});
+
+	it("Bug 1: success=false does NOT infer forward status — developer with no output returns null", () => {
+		// When agent fails (success=false), inferForwardStatus must NOT be called.
+		// Without this fix, inferForwardStatus would return "Audit" for the developer step.
+		const result = calculateNextStatus("developer", "", "", false);
+		assert.equal(result.status, null, "forward status must NOT be inferred when agent fails");
+		assert.ok(result.stopReason, "should provide stop reason");
+		assert.ok(
+			result.stopReason!.toLowerCase().includes("no completion marker"),
+			"stopReason should mention missing completion marker",
+		);
+	});
+
+	it("Bug 1: success=false with explicit success marker — still returns marker status", () => {
+		// Even when agent failed, if output contains a completion marker, use it
+		const result = calculateNextStatus(
+			"developer",
+			"IMPLEMENTATION_COMPLETE",
+			"IMPLEMENTATION_COMPLETE",
+			false,
+		);
+		assert.equal(result.status, "Audit", "explicit marker should still be honored despite failure");
+	});
+
+	it("Bug 1: success=true infers forward status when no marker found (backward compat)", () => {
+		// When agent succeeded, backward-compatible inferForwardStatus should still work
+		const result = calculateNextStatus("developer", "just some output", "just some text", true);
+		assert.equal(result.status, "Audit", "forward status should be inferred when agent succeeds");
+	});
+
+	it("Bug 1: success=false for auditor — does not infer Done", () => {
+		// Auditor that fails should not get forward-inferred "Done" status
+		const result = calculateNextStatus("auditor", "", "", false);
+		assert.equal(result.status, null, "forward status must NOT be inferred when auditor fails");
+	});
+
+	it("Bug 1: success=false still allows feedback markers (explicit AUDIT_REJECTED)", () => {
+		// Even on failure, explicit markers in output should still be matched
+		const result = calculateNextStatus("auditor", "AUDIT_REJECTED", "AUDIT_REJECTED", false);
+		assert.equal(result.status, "Implementation", "explicit rejection marker should still work");
 	});
 });
 
@@ -1191,5 +1233,76 @@ describe("validateResearcherFindings()", () => {
 			const result = validateResearcherFindings(msg);
 			assert.equal(result, msg, `Failed for: ${msg}`);
 		}
+	});
+});
+
+// ─── Tests: hasBranchCommits() ───────────────────────────────────
+
+describe("hasBranchCommits()", () => {
+	it("returns true when rev-list shows commits ahead of base", async () => {
+		const calls: Array<{ cmd: string; args: string[] }> = [];
+		const mockExec = async (
+			cmd: string,
+			args: string[],
+			_opts?: Record<string, unknown>,
+		): Promise<{ code: number; stdout: string; stderr: string }> => {
+			calls.push({ cmd, args });
+			return { code: 0, stdout: "3", stderr: "" };
+		};
+
+		const result = await hasBranchCommits(mockExec, "/repo", "feature", "main");
+		assert.equal(result, true);
+
+		// Verify git rev-list was called correctly
+		assert.equal(calls.length, 1);
+		assert.equal(calls[0].cmd, "git");
+		assert.ok(calls[0].args.includes("rev-list"));
+		assert.ok(calls[0].args.includes("--count"));
+	});
+
+	it("returns false when rev-list shows 0 commits ahead", async () => {
+		const mockExec = async (): Promise<{ code: number; stdout: string; stderr: string }> => {
+			return { code: 0, stdout: "0", stderr: "" };
+		};
+
+		const result = await hasBranchCommits(mockExec, "/repo", "feature", "main");
+		assert.equal(result, false);
+	});
+
+	it("returns true when rev-list command fails (fail-safe)", async () => {
+		const mockExec = async (): Promise<{ code: number; stdout: string; stderr: string }> => {
+			return { code: 1, stdout: "", stderr: "fatal: ambiguous argument" };
+		};
+
+		const result = await hasBranchCommits(mockExec, "/repo", "feature", "main");
+		assert.equal(result, true, "should return true on failure (fail-safe)");
+	});
+
+	it("returns true when rev-list throws (fail-safe)", async () => {
+		const mockExec = async (): Promise<never> => {
+			throw new Error("network error");
+		};
+
+		const result = await hasBranchCommits(mockExec, "/repo", "feature", "main");
+		assert.equal(result, true, "should return true on exception (fail-safe)");
+	});
+
+	it("uses correct range syntax: main..feature", async () => {
+		const calls: Array<{ cmd: string; args: string[] }> = [];
+		const mockExec = async (
+			cmd: string,
+			args: string[],
+			_opts?: Record<string, unknown>,
+		): Promise<{ code: number; stdout: string; stderr: string }> => {
+			calls.push({ cmd, args });
+			return { code: 0, stdout: "1", stderr: "" };
+		};
+
+		await hasBranchCommits(mockExec, "/repo", "my-feature", "main");
+		// The range should be "main..my-feature"
+		const revListArgs = calls[0].args;
+		const rangeArg = revListArgs.find((a: string) => a.includes(".."));
+		assert.ok(rangeArg, "should contain a range with ..");
+		assert.equal(rangeArg, "main..my-feature", "range should be baseBranch..headBranch");
 	});
 });

@@ -19,6 +19,19 @@ import { getDebugLogger } from "../config/debug.ts";
 
 // ─── Post Issue Comment ───────────────────────────────────────────
 
+/**
+ * Hard safety limit for GitHub comment body length.
+ * Prevents agent execution logs (fullLog with tool calls, thinking,
+ * results) from being posted as issue comments if upstream extraction
+ * or builder logic has a bug.
+ *
+ * The supervisor config has maxCommentChars (default 2000) for normal
+ * cases. This is a much higher defense-in-depth cap (50KB) that only
+ * catches pathological full-log dumps while allowing legitimate long
+ * comments through.
+ */
+const MAX_COMMENT_CHARS = 50_000;
+
 export async function postIssueComment(
 	pi: ExtensionAPI,
 	issueNum: number,
@@ -30,11 +43,21 @@ export async function postIssueComment(
 	// Catches literal \\n sequences from any extraction path (JSON parsing,
 	// heading fallback, COMMENT_BODY marker, audit output fallback).
 	const normalized = normalizeEscapes(body);
-	const preview = normalized.slice(0, 200).replace(/\n/g, " ");
+	// Truncate as defense-in-depth against full-log dumps.
+	// Full agent logs are typically 100K+ chars; legitimate comments are
+	// under 10K chars. If body exceeds the hard limit, it's almost certainly
+	// a bug — truncate and append overflow notice instead of posting raw log.
+	const truncated =
+		normalized.length > MAX_COMMENT_CHARS
+			? normalized.slice(0, MAX_COMMENT_CHARS) +
+				"\n\n---\n⚠️ **Comment truncated at 50,000 character safety limit** — a bug likely caused the full agent execution log to be included. Please report this."
+			: normalized;
+	const preview = truncated.slice(0, 200).replace(/\n/g, " ");
 	log.info("comment", `Posting comment on #${issueNum} (${repo})`, {
 		issueNum,
 		repo,
 		bodyLen: normalized.length,
+		truncated: normalized.length > MAX_COMMENT_CHARS,
 		preview,
 	});
 
@@ -42,7 +65,7 @@ export async function postIssueComment(
 	// Per AGENTS.md: save to ignore/ folder, delete after use.
 	const tempFile = joinPath("ignore", `comment-body-${issueNum}-${Date.now()}.md`);
 	try {
-		await writeFile(tempFile, normalized, "utf-8");
+		await writeFile(tempFile, truncated, "utf-8");
 	} catch (writeErr: unknown) {
 		const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
 		log.error("comment", `Failed to write comment body temp file: ${writeMsg}`);
@@ -309,11 +332,40 @@ export function extractAgentCommentBody(output: string): string | null {
 		}
 	}
 
+	// Strip tool/thinking/instrumentation metadata lines from extracted content.
+	// The section heading extraction operates on textOutput (full instrumented
+	// log with tool calls, thinking, results, context info). These metadata
+	// lines start with emoji prefixes: 🔧 (tool start), ✓/✗ (tool end),
+	// 📋 (tool result), 💭 (thinking), 📊 (context info).
+	// If the agent's section heading appears before the final text output,
+	// the extraction from heading to end-of-log would include these
+	// metadata lines, making the comment look like "the whole log".
+	// Strip them to produce clean commentBody text.
+	const METADATA_LINE_RE = /^[\u{1F527}\u{2713}\u{2717}\u{1F4CB}\u{1F4CA}\u{1F4AD}]/u;
+	const stripNoise = (text: string): string => {
+		return text
+			.split("\n")
+			.filter((line) => {
+				const trimmed = line.trim();
+				if (!trimmed) return true; // keep blank lines
+				// Skip tool/thinking/instrumentation lines
+				if (METADATA_LINE_RE.test(trimmed)) return false;
+				return true;
+			})
+			.join("\n")
+			.trim();
+	};
+
 	// Normalize escaped newlines in fallback extractions.
 	// When JSON parsing fails and we extract from raw text, literal \\n
 	// sequences from JSON string values survive. Convert to real newlines.
 	if (lastBody) {
 		lastBody = normalizeEscapes(lastBody);
+		// Strip metadata noise unless the result is too short after stripping
+		const stripped = stripNoise(lastBody);
+		if (stripped.length >= 50) {
+			lastBody = stripped;
+		}
 	}
 
 	return lastBody;
