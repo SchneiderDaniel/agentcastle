@@ -240,6 +240,8 @@ export interface PipelineAgentResult {
 	toolCount: number;
 	/** Model identifier from agent frontmatter, e.g. "anthropic/claude-sonnet-4-20250514" */
 	model?: string;
+	/** Error output from agent execution (stderr, crash diagnostics) */
+	errorOutput?: string;
 }
 
 export interface MergeResult {

@@ -247,6 +247,14 @@ export function isRejectionLimitReached(
 export interface NextStatusResult {
 	status: string | null;
 	stopReason?: string;
+	/**
+	 * True when status came from structured JSON parsing or text marker matching.
+	 * False when status is null (no status determined) or from inferForwardStatus
+	 * (pipeline inference, not agent output).
+	 * Used by handler.ts to determine if a failed agent's transition was driven
+	 * by explicit agent output vs. pipeline inference.
+	 */
+	hadExplicitMarker: boolean;
 }
 
 /**
@@ -269,13 +277,18 @@ export function calculateNextStatus(
 	success: boolean = true,
 ): NextStatusResult {
 	const step = WORKFLOW.find((s) => s.agentName === agentName);
-	if (!step) return { status: null, stopReason: `No workflow step for agent '${agentName}'` };
+	if (!step)
+		return {
+			status: null,
+			stopReason: `No workflow step for agent '${agentName}'`,
+			hadExplicitMarker: false,
+		};
 
 	// Phase 2: Try structured AgentOutput parsing first
 	// Use agentOutput (raw text) for JSON parsing since textOnly strips JSON
 	const structuredStatus = resolveNextStatusFromAgentOutput(step, agentOutput);
 	if (structuredStatus) {
-		return { status: structuredStatus };
+		return { status: structuredStatus, hadExplicitMarker: true };
 	}
 
 	// Fallback: old marker-based detection (for backward compatibility)
@@ -289,17 +302,22 @@ export function calculateNextStatus(
 			return {
 				status: null,
 				stopReason: `Agent ${agentName} failed — no completion marker found and forward inference skipped`,
+				hadExplicitMarker: false,
 			};
 		}
 		// No marker found — try to infer forward status from step's markerMap
 		// This handles cases where agent completed work but output lacks marker
 		const inferredStatus = inferForwardStatus(step);
 		if (inferredStatus) {
-			return { status: inferredStatus };
+			return { status: inferredStatus, hadExplicitMarker: false };
 		}
-		return { status: null, stopReason: `No completion marker found in ${agentName} output` };
+		return {
+			status: null,
+			stopReason: `No completion marker found in ${agentName} output`,
+			hadExplicitMarker: false,
+		};
 	}
-	return { status: nextStatus };
+	return { status: nextStatus, hadExplicitMarker: true };
 }
 
 /**
@@ -438,6 +456,7 @@ export function buildAgentResultEntry(
 		tokenCount: result.tokenCount,
 		toolCount: result.toolCount,
 		model,
+		errorOutput: result.errorOutput || undefined,
 	};
 }
 

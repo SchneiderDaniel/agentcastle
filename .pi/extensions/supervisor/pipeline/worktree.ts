@@ -71,17 +71,37 @@ export async function createWorktree(
 export async function installWorktreeDeps(pi: ExtensionAPI, worktreePath: string): Promise<void> {
 	const log = getDebugLogger();
 	log.info("worktree", `Installing deps at ${worktreePath}`);
+
+	// Attempt 1
 	try {
 		await pi.exec("npm", ["ci"], { cwd: worktreePath, timeout: 120_000 });
 		log.info("worktree", "npm ci OK");
-	} catch {
-		log.warn("worktree", "npm ci failed — non-fatal");
-		getErrorCollector().push(
-			"worktree",
-			"warn",
-			`npm ci failed at ${worktreePath} — continuing with potentially missing dependencies`,
-		);
+		return;
+	} catch (err: unknown) {
+		const errMsg = err instanceof Error ? err.message : String(err);
+		log.warn("worktree", `npm ci failed (attempt 1): ${errMsg}`);
 	}
+
+	// Retry once for transient failures (e.g., network flake, registry timeout)
+	try {
+		log.info("worktree", "Retrying npm ci...");
+		await pi.exec("npm", ["ci"], { cwd: worktreePath, timeout: 120_000 });
+		log.info("worktree", "npm ci OK on retry");
+		return;
+	} catch (retryErr: unknown) {
+		const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+		log.warn("worktree", `npm ci failed (attempt 2): ${retryMsg}`);
+	}
+
+	// Both attempts failed — push error-level entry to collector.
+	// Missing dependencies will cause the subprocess pi to crash immediately
+	// (0 tokens, 0 tools, 2-3s). Error severity surfaces this in the pipeline
+	// summary so users see the real cause (Bug #711 fix).
+	getErrorCollector().push(
+		"worktree",
+		"error",
+		`npm ci failed at ${worktreePath} after 2 attempts — continuing with potentially missing dependencies`,
+	);
 }
 
 // ─── Cleanup Worktree ────────────────────────────────────────────
