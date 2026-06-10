@@ -728,7 +728,7 @@ async function handleAuditorOutput(
 		if (!auditOutput) return;
 
 		if (auditOutput.decision === "APPROVED") {
-			const bodyToPost = auditOutput.commentBody || agentOutput;
+			const bodyToPost = auditOutput.commentBody || buildApprovalCommentFromOutput(agentOutput);
 			if (bodyToPost) {
 				try {
 					await postIssueComment(pi, issueNum, config.repo, bodyToPost);
@@ -744,7 +744,7 @@ async function handleAuditorOutput(
 				}
 			}
 		} else if (auditOutput.decision === "REJECTED") {
-			const bodyToPost = auditOutput.commentBody || agentOutput;
+			const bodyToPost = auditOutput.commentBody || buildRejectionCommentFromOutput(agentOutput);
 			if (bodyToPost) {
 				try {
 					await postIssueComment(pi, issueNum, config.repo, bodyToPost);
@@ -779,7 +779,7 @@ async function handleAuditorOutput(
 			}
 		}
 	} else if (actionFromOutput === "REJECTED") {
-		const bodyToPost = commentBodyFromOutput || agentOutput;
+		const bodyToPost = commentBodyFromOutput || buildRejectionCommentFromOutput(agentOutput);
 		if (bodyToPost) {
 			try {
 				await postIssueComment(pi, issueNum, config.repo, bodyToPost);
@@ -797,7 +797,7 @@ async function handleAuditorOutput(
 			collector?.push(
 				"stages",
 				"warn",
-				`Auditor rejected issue #${issueNum} but no comment body provided in structured output.`,
+				`Auditor rejected issue #${issueNum} but no comment body or structured output available.`,
 			);
 		}
 	}
@@ -836,6 +836,45 @@ function buildApprovalCommentFromOutput(agentOutput: string): string | null {
 		}
 
 		lines.push("Fix and resubmit if issues remain.");
+		return lines.join("\n");
+	}
+
+	return null;
+}
+
+/**
+ * Build a rejection comment from AgentOutput fields when no explicit commentBody provided.
+ * Similar to buildApprovalCommentFromOutput but marks as REJECTED.
+ */
+function buildRejectionCommentFromOutput(agentOutput: string): string | null {
+	const parseResult = parseAgentOutput(agentOutput);
+	if (isAgentOutputSuccess(parseResult)) {
+		const output = parseResult as AgentOutput;
+		const lines: string[] = ["## Audit Rejected", ""];
+
+		if (output.auditScore) {
+			const passing = output.auditScore.passing;
+			const total = output.auditScore.total;
+			lines.push(
+				`**Score:** ${passing}/${total} — ${passing === total ? "All dimensions passing" : `${passing} of ${total} dimensions passing`}`,
+			);
+			lines.push("");
+		}
+
+		if (output.findings && output.findings.length > 0) {
+			lines.push("### Findings");
+			lines.push("");
+			for (const finding of output.findings) {
+				lines.push(`- **${finding.severity} — ${finding.dimension}**`);
+				if (finding.symptom) lines.push(`  - Symptom: ${finding.symptom}`);
+				if (finding.consequence) lines.push(`  - Consequence: ${finding.consequence}`);
+				if (finding.remedy) lines.push(`  - Remedy: ${finding.remedy}`);
+				if (finding.location) lines.push(`  - Location: ${finding.location}`);
+			}
+			lines.push("");
+		}
+
+		lines.push("Fix the issues above and resubmit.");
 		return lines.join("\n");
 	}
 

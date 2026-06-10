@@ -309,11 +309,40 @@ export function extractAgentCommentBody(output: string): string | null {
 		}
 	}
 
+	// Strip tool/thinking/instrumentation metadata lines from extracted content.
+	// The section heading extraction operates on textOutput (full instrumented
+	// log with tool calls, thinking, results, context info). These metadata
+	// lines start with emoji prefixes: 🔧 (tool start), ✓/✗ (tool end),
+	// 📋 (tool result), 💭 (thinking), 📊 (context info).
+	// If the agent's section heading appears before the final text output,
+	// the extraction from heading to end-of-log would include these
+	// metadata lines, making the comment look like "the whole log".
+	// Strip them to produce clean commentBody text.
+	const METADATA_LINE_RE = /^[\u{1F527}\u{2713}\u{2717}\u{1F4CB}\u{1F4CA}\u{1F4AD}]/u;
+	const stripNoise = (text: string): string => {
+		return text
+			.split("\n")
+			.filter((line) => {
+				const trimmed = line.trim();
+				if (!trimmed) return true; // keep blank lines
+				// Skip tool/thinking/instrumentation lines
+				if (METADATA_LINE_RE.test(trimmed)) return false;
+				return true;
+			})
+			.join("\n")
+			.trim();
+	};
+
 	// Normalize escaped newlines in fallback extractions.
 	// When JSON parsing fails and we extract from raw text, literal \\n
 	// sequences from JSON string values survive. Convert to real newlines.
 	if (lastBody) {
 		lastBody = normalizeEscapes(lastBody);
+		// Strip metadata noise unless the result is too short after stripping
+		const stripped = stripNoise(lastBody);
+		if (stripped.length >= 50) {
+			lastBody = stripped;
+		}
 	}
 
 	return lastBody;
