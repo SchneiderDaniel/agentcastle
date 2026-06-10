@@ -22,7 +22,7 @@ function createMockPi(execResult: { code: number; stdout: string; stderr: string
 // ─── Tests: postIssueComment() ────────────────────────────────────
 
 describe("postIssueComment()", () => {
-	it("calls gh issue comment with correct args", async () => {
+	it("calls gh issue comment with --body-file (not --body)", async () => {
 		const calls: Array<{ cmd: string; args: string[] }> = [];
 		const pi = {
 			exec: ((cmd: string, args: string[]) => {
@@ -33,15 +33,18 @@ describe("postIssueComment()", () => {
 		await postIssueComment(pi, 123, "owner/repo", "Comment body");
 		assert.equal(calls.length, 1);
 		assert.equal(calls[0].cmd, "gh");
-		assert.deepEqual(calls[0].args, [
-			"issue",
-			"comment",
-			"123",
-			"--repo",
-			"owner/repo",
-			"--body",
-			"Comment body",
-		]);
+		// Must use --body-file to avoid shell interpretation of special chars
+		const bodyFileIdx = calls[0].args.indexOf("--body-file");
+		assert.notEqual(bodyFileIdx, -1, "should use --body-file instead of --body");
+		assert.equal(calls[0].args.indexOf("--body"), -1, "should NOT use --body");
+		// Verify temp file path is in ignore/ folder
+		const tempFilePath = calls[0].args[bodyFileIdx + 1];
+		assert.ok(tempFilePath, "temp file path should exist");
+		assert.ok(
+			tempFilePath.startsWith("ignore/comment-body-123-"),
+			`temp file should be in ignore/ folder: ${tempFilePath}`,
+		);
+		assert.ok(tempFilePath.endsWith(".md"), "temp file should end with .md");
 	});
 });
 

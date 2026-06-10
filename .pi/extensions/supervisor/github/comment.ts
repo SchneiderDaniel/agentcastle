@@ -5,6 +5,8 @@
 // The old regex-based builders (buildAuditCommentFallback, etc.) have been
 // removed. All audit comment construction now goes through parseAgentOutput.
 
+import { writeFile, unlink } from "node:fs/promises";
+import { join as joinPath } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FilteredIssueData, AgentOutput } from "../config/types.ts";
 import { gh } from "./gh-client.ts";
@@ -35,8 +37,20 @@ export async function postIssueComment(
 		bodyLen: normalized.length,
 		preview,
 	});
+
+	// Write body to temp file to avoid shell interpreting special characters.
+	// Per AGENTS.md: save to ignore/ folder, delete after use.
+	const tempFile = joinPath("ignore", `comment-body-${issueNum}-${Date.now()}.md`);
 	try {
-		await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body", normalized]);
+		await writeFile(tempFile, normalized, "utf-8");
+	} catch (writeErr: unknown) {
+		const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+		log.error("comment", `Failed to write comment body temp file: ${writeMsg}`);
+		throw new Error(`Failed to write comment body temp file: ${writeMsg}`);
+	}
+
+	try {
+		await gh(pi, ["issue", "comment", String(issueNum), "--repo", repo, "--body-file", tempFile]);
 		log.info("comment", `Comment posted on #${issueNum}`);
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
@@ -46,6 +60,15 @@ export async function postIssueComment(
 			repo,
 		});
 		throw err;
+	} finally {
+		// Clean up temp file
+		try {
+			await unlink(tempFile);
+			log.debug("comment", `Temp file deleted: ${tempFile}`);
+		} catch (cleanupErr: unknown) {
+			const cleanupMsg = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+			log.warn("comment", `Failed to delete temp file ${tempFile}: ${cleanupMsg}`);
+		}
 	}
 }
 
