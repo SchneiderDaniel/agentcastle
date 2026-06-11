@@ -85,26 +85,6 @@ export function loadConfig(): SupervisorConfig {
 		}
 	}
 
-	// Validate commentSummaryThreshold (optional, non-negative integer)
-	const commentSummaryThreshold = cfg.commentSummaryThreshold ?? 7;
-	if (
-		typeof commentSummaryThreshold !== "number" ||
-		!Number.isInteger(commentSummaryThreshold) ||
-		commentSummaryThreshold < 0
-	) {
-		throw new Error("supervisor.commentSummaryThreshold must be a non-negative integer");
-	}
-
-	// Validate maxCommentChars (optional, positive integer)
-	const maxCommentChars = cfg.maxCommentChars ?? 2000;
-	if (
-		typeof maxCommentChars !== "number" ||
-		!Number.isInteger(maxCommentChars) ||
-		maxCommentChars < 1
-	) {
-		throw new Error("supervisor.maxCommentChars must be a positive integer");
-	}
-
 	// Validate enableExperimentalFeatures (optional boolean)
 	const enableExperimentalFeatures = cfg.enableExperimentalFeatures;
 	if (enableExperimentalFeatures !== undefined && typeof enableExperimentalFeatures !== "boolean") {
@@ -143,8 +123,6 @@ export function loadConfig(): SupervisorConfig {
 		bellOnComplete: cfg.bellOnComplete ?? false,
 		agentTokenBudget: agentTokenBudget,
 		maxToolCalls: maxToolCalls,
-		commentSummaryThreshold,
-		maxCommentChars,
 		enableExperimentalFeatures: enableExperimentalFeatures ?? false,
 		auditScoreThreshold: auditScoreThreshold ?? 0.75,
 	};

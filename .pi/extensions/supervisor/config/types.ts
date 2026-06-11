@@ -23,14 +23,6 @@ export interface SupervisorConfig {
 	agentTokenBudget?: number;
 	/** Hard cap on tool invocations per agent session. 0 = unlimited. */
 	maxToolCalls?: number;
-	/**
-	 * Comment count threshold — when trusted comments exceed this, summarize
-	 * earlier comments into bullets instead of rendering all verbatim.
-	 * Default: 7. Set to 0 to always summarize (except the latest).
-	 */
-	commentSummaryThreshold?: number;
-	/** Max characters per comment body before truncation with overflow note. Default: 2000. */
-	maxCommentChars?: number;
 	/** Custom assertion function names for TDD gate.
 	 *  When set, checkTestAssertions and checkTestCoversSymbols will also
 	 *  recognize these function names as valid assertion patterns. */

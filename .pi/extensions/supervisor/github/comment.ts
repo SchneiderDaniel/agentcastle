@@ -25,10 +25,8 @@ import { getDebugLogger } from "../config/debug.ts";
  * results) from being posted as issue comments if upstream extraction
  * or builder logic has a bug.
  *
- * The supervisor config has maxCommentChars (default 2000) for normal
- * cases. This is a much higher defense-in-depth cap (50KB) that only
- * catches pathological full-log dumps while allowing legitimate long
- * comments through.
+ * This is a defense-in-depth cap (50KB) that only catches pathological
+ * full-log dumps while allowing legitimate long comments through.
  */
 const MAX_COMMENT_CHARS = 50_000;
 
