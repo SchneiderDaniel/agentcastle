@@ -13,6 +13,9 @@ import { determineTscCheckpointDecision, getRunTscCheckpoint } from "../checks/t
 import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-decisions.ts";
 import { pollCiChecks } from "../checks/ci-gating.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
+import type { DuplicateCodeResult } from "../checks/duplicate-code.ts";
+import { runDeadCodeCheck } from "../checks/dead-code.ts";
+import type { DeadCodeResult } from "../checks/dead-code.ts";
 import { runPackageSafetyAudit } from "../checks/package-safety.ts";
 import { postIssueComment } from "../github/index.ts";
 import { runTddGate } from "../checks/tdd-gate.ts";
@@ -34,7 +37,12 @@ export async function runTscAndLspAudit(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	collector?: ErrorCollector,
-): Promise<{ nextStatus: string; note: string }> {
+): Promise<{
+	nextStatus: string;
+	note: string;
+	duplicateCodeResult?: DuplicateCodeResult;
+	deadCodeResult?: DeadCodeResult;
+}> {
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 
 	// Shared exec function for running shell commands via pi.exec
@@ -118,6 +126,31 @@ export async function runTscAndLspAudit(
 		} else if (dupResult.status === "error") {
 			getDebugLogger().warn("pipeline-audit", "Duplicate check error", {
 				message: dupResult.message,
+			});
+		}
+
+		// Step 1b: Dead code detection gate
+		// Runs after duplicate code check, before TSC checkpoint.
+		// Non-blocking — dead code found is surfaced as warning and
+		// verified by the auditor agent.
+		ctx.ui.setStatus("supervisor", "Checking for dead code...");
+		getDebugLogger().info("pipeline-audit", "Running dead code check", { worktreePath });
+		const deadResult = await runDeadCodeCheck(execFn, worktreePath, config.defaultBranch || "main");
+
+		if (deadResult.status === "dead_found") {
+			ctx.ui.notify(
+				`Dead code detected: ${deadResult.findings.length} finding(s) found (${deadResult.totalDeadLines} lines). Auditor will verify.`,
+				"warning",
+			);
+			getDebugLogger().info("pipeline-audit", "Dead code found", {
+				findingCount: deadResult.findings.length,
+				totalLines: deadResult.totalDeadLines,
+			});
+		} else if (deadResult.status === "no_knip") {
+			getDebugLogger().info("pipeline-audit", "knip not available, skipping dead code check");
+		} else if (deadResult.status === "error") {
+			getDebugLogger().warn("pipeline-audit", "Dead code check error", {
+				message: deadResult.message,
 			});
 		}
 
@@ -300,7 +333,11 @@ export async function runTscAndLspAudit(
 			nextStatus: result.nextStatus,
 			note: result.note,
 		});
-		return result;
+		return {
+			...result,
+			duplicateCodeResult: dupResult,
+			deadCodeResult: deadResult,
+		};
 	} finally {
 		ctx.ui.setStatus("supervisor", undefined);
 	}

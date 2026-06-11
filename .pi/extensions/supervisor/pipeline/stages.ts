@@ -34,6 +34,11 @@ import type { AgentOutput } from "../config/types.ts";
 import { hasResearchFindings } from "../config/workflow.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
 import type { DuplicateCodeResult } from "../checks/duplicate-code.ts";
+import {
+	runDeadCodeCheck,
+	buildDeadCodeContext as buildDeadCodeContextInner,
+} from "../checks/dead-code.ts";
+import type { DeadCodeResult } from "../checks/dead-code.ts";
 
 // ─── Constants ────────────────────────────────────────────────────
 
@@ -48,6 +53,8 @@ export interface StageState {
 	auditCycleCount: number;
 	/** Duplicate code check result, set during Implementation→Audit hooks */
 	duplicateCodeResult: DuplicateCodeResult | null;
+	/** Dead code check result, set during Implementation→Audit hooks */
+	deadCodeResult: DeadCodeResult | null;
 }
 
 export function createStageState(initialStatus: string): StageState {
@@ -56,6 +63,7 @@ export function createStageState(initialStatus: string): StageState {
 		lastAuditScore: null,
 		auditCycleCount: 0,
 		duplicateCodeResult: null,
+		deadCodeResult: null,
 	};
 }
 
@@ -227,6 +235,36 @@ export function buildDuplicateCodeContext(result: DuplicateCodeResult | null): s
 	}
 
 	return lines.join("\n");
+}
+
+// ─── Dead Code Gate ─────────────────────────────────────────────────
+
+/**
+ * Run dead code check on the worktree and return result.
+ * Updates the stage state with the result for later auditor context injection.
+ */
+export async function handleDeadCodeCheck(
+	execFn: (
+		cmd: string,
+		args: string[],
+		opts?: Record<string, unknown>,
+	) => Promise<{ code: number; stdout: string; stderr: string }>,
+	worktreePath: string,
+	defaultBranch: string,
+	state: StageState,
+): Promise<DeadCodeResult> {
+	const result = await runDeadCodeCheck(execFn, worktreePath, defaultBranch);
+	state.deadCodeResult = result;
+	return result;
+}
+
+/**
+ * Build a formatted string from DeadCodeResult for injection into auditor task context.
+ * Wraps the inner implementation from checks/dead-code.ts.
+ * Returns null if no dead code found or result is null.
+ */
+export function buildDeadCodeContext(result: DeadCodeResult | null): string | null {
+	return buildDeadCodeContextInner(result);
 }
 
 // ─── Check Rejection Limit ────────────────────────────────────────

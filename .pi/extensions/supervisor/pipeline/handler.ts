@@ -47,6 +47,7 @@ import {
 	inferForwardStatus,
 	hasBranchCommits,
 	buildDuplicateCodeContext,
+	buildDeadCodeContext,
 } from "./stages.ts";
 import {
 	fetchIssue,
@@ -364,6 +365,11 @@ export async function handleSupervisorCommand(
 							return undefined;
 						})()
 					: undefined;
+			// Build dead code context for auditor
+			const deadContext: string | undefined =
+				agentName === "auditor"
+					? (buildDeadCodeContext(stageState.deadCodeResult) ?? undefined)
+					: undefined;
 			const task = buildAgentTask(
 				agentName,
 				issueNum,
@@ -381,6 +387,7 @@ export async function handleSupervisorCommand(
 				dupContext,
 				researchFindings,
 				auditFeedback,
+				deadContext,
 			);
 
 			getDebugLogger().info("handler", `Dispatching agent ${agentName}`, {
@@ -623,6 +630,14 @@ export async function handleSupervisorCommand(
 						collector,
 					);
 					effectiveNextStatus = auditResult.nextStatus;
+					// Store dead code result in stage state for auditor context injection
+					if (auditResult.deadCodeResult) {
+						stageState.deadCodeResult = auditResult.deadCodeResult;
+					}
+					// Store duplicate code result in stage state for auditor context injection
+					if (auditResult.duplicateCodeResult) {
+						stageState.duplicateCodeResult = auditResult.duplicateCodeResult;
+					}
 					getDebugLogger().info("handler", "Pre-transition hook result", {
 						effectiveNextStatus,
 						note: auditResult.note,
