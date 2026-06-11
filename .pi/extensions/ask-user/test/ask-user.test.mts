@@ -1171,11 +1171,12 @@ describe("ask_user_read execute — error signaling", () => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	});
 
-	function makeCtx(): any {
+	function makeCtx(trusted?: boolean): any {
 		return {
 			sessionManager: {
 				getCwd: () => tmpDir,
 			},
+			isProjectTrusted: async () => trusted ?? true,
 		};
 	}
 

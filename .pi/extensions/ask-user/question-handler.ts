@@ -45,10 +45,12 @@ export type ExecuteResponse = Promise<{
 export class QuestionHandler {
 	private projectDir: string;
 	private ctx: ExtensionContext;
+	private mode: string;
 
 	constructor(projectDir: string, ctx: ExtensionContext) {
 		this.projectDir = projectDir;
 		this.ctx = ctx;
+		this.mode = (ctx as unknown as { mode?: string }).mode ?? "tui";
 	}
 
 	/**
@@ -73,6 +75,12 @@ export class QuestionHandler {
 	// -----------------------------------------------------------------------
 
 	private async handleFreetext(question: string): ExecuteResponse {
+		// In JSON/print mode, return cancel immediately — no interactive UI
+		if (this.mode === "json" || this.mode === "print") {
+			return this.cancelResponse();
+		}
+
+		// TUI and RPC modes both support ctx.ui.input()
 		const answer = await this.ctx.ui.input(question, "");
 		if (answer === undefined || answer.trim() === "") {
 			return this.cancelResponse();
@@ -88,7 +96,7 @@ export class QuestionHandler {
 					text: `User answered: "${trimmedAnswer}"`,
 				},
 			],
-			details: { answer: trimmedAnswer },
+			details: { format: "qna-result-v1", answer: trimmedAnswer },
 		};
 	}
 
@@ -118,11 +126,20 @@ export class QuestionHandler {
 			items.push({ value: otherLabel, label: otherLabel });
 		}
 
-		// Use custom scrollable dialog so long questions (with code
-		// blocks) can be scrolled independently from the option list.
-		const selectedLabel = (await this.ctx.ui.custom((tui, theme, _keybindings, done) =>
-			renderChoiceDialog(tui, theme as any, done, question, items),
-		)) as string | undefined;
+		// Mode-aware UI dispatch
+		let selectedLabel: string | undefined;
+
+		if (this.mode === "tui") {
+			// Use custom scrollable dialog for TUI mode so long questions
+			// (with code blocks) can be scrolled independently from the option list.
+			selectedLabel = await this.presentChoiceTui(question, items);
+		} else if (this.mode === "rpc") {
+			// Use flat select list for RPC mode — ctx.ui.custom() returns undefined in RPC
+			selectedLabel = await this.presentChoiceRpc(question, items);
+		} else {
+			// JSON or print mode — no interactive UI available
+			return this.cancelResponse();
+		}
 
 		// User cancelled (Esc)
 		if (selectedLabel === undefined) {
@@ -147,7 +164,7 @@ export class QuestionHandler {
 					text: `User selected: "${selectedLabel}"`,
 				},
 			],
-			details: { selected: selectedValue, label: selectedLabel },
+			details: { format: "qna-result-v1", selected: selectedValue, label: selectedLabel },
 		};
 	}
 
@@ -165,7 +182,7 @@ export class QuestionHandler {
 						text: "User cancelled or left 'Other' empty. Re-ask or mark this topic as unresolved.",
 					},
 				],
-				details: {} as Record<string, unknown>,
+				details: { format: "qna-result-v1" },
 			};
 		}
 
@@ -179,7 +196,7 @@ export class QuestionHandler {
 					text: `User chose "Other" and answered: "${trimmedCustom}"`,
 				},
 			],
-			details: { selected: "__other__", customAnswer: trimmedCustom },
+			details: { format: "qna-result-v1", selected: "__other__", customAnswer: trimmedCustom },
 		};
 	}
 
@@ -190,13 +207,51 @@ export class QuestionHandler {
 	/**
 	 * Log the Q&A entry. Notifies on failure rather than throwing.
 	 */
+	/**
+	 * Log the Q&A entry. Skips persistence when project trust not granted.
+	 * Notifies on failure rather than throwing.
+	 */
 	private async logAnswer(question: string, answer: string): Promise<void> {
+		// Skip persistence if project trust not granted
+		if (!(await (this.ctx as any).isProjectTrusted())) {
+			return;
+		}
+
 		const timestamp = new Date().toISOString();
 		try {
 			await appendQnaEntry(this.projectDir, timestamp, question, answer);
 		} catch (err) {
 			this.ctx.ui.notify(`Failed to save Q&A entry: ${(err as Error).message}`, "error");
 		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Mode-specific choice dispatch
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Present a choice dialog in TUI mode using the scrollable dialog.
+	 */
+	private async presentChoiceTui(
+		question: string,
+		items: Array<{ value: string; label: string }>,
+	): Promise<string | undefined> {
+		return this.ctx.ui.custom<string | undefined>((tui, theme, _keybindings, done) =>
+			renderChoiceDialog(tui, theme as any, done, question, items),
+		);
+	}
+
+	/**
+	 * Present a choice in RPC mode using ctx.ui.select() with flat string options.
+	 * Options are encoded as display strings with index prefix and recommended suffix;
+	 * the selected label is returned directly (reverse-mapped in handleChoice).
+	 */
+	private async presentChoiceRpc(
+		question: string,
+		items: Array<{ value: string; label: string }>,
+	): Promise<string | undefined> {
+		const labels = items.map((i) => i.label);
+		return this.ctx.ui.select(question, labels);
 	}
 
 	/**
@@ -213,7 +268,7 @@ export class QuestionHandler {
 					text: "User cancelled the question. Ask if they want to skip this topic and move on.",
 				},
 			],
-			details: {} as Record<string, unknown>,
+			details: { format: "qna-result-v1" },
 		};
 	}
 }

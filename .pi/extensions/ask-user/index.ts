@@ -60,7 +60,17 @@ export default function askUser(pi: ExtensionAPI): void {
 	// when CSV has many rows.
 	pi.on("session_start", async (_event, ctx) => {
 		const projectDir = ctx.sessionManager.getCwd();
-		await migrateIfCsvExists(projectDir);
+
+		// Gate Q&A history migration on project trust.
+		// In non-interactive modes (JSON, RPC, print), no trust prompt is shown,
+		// so project-local resources like .pi/context/qna.jsonl should be gated.
+		if (await (ctx as any).isProjectTrusted()) {
+			await migrateIfCsvExists(projectDir);
+		} else {
+			console.warn(
+				"Q&A history CSV migration skipped — project trust not granted. Q&A will not be persisted.",
+			);
+		}
 	});
 
 	// ── ask_user tool (unchanged except storage backend) ──────────────
@@ -99,6 +109,15 @@ export default function askUser(pi: ExtensionAPI): void {
 			"Query Q&A history. Usage: /qna list [--limit N], /qna get <id>, /qna search <text>",
 		handler: async (args: string, ctx) => {
 			const projectDir = ctx.sessionManager.getCwd();
+
+			// Gate Q&A history access on project trust
+			if (!(await (ctx as any).isProjectTrusted())) {
+				pi.sendUserMessage?.("Q&A history is not available — project trust not granted", {
+					deliverAs: "followUp",
+				});
+				return;
+			}
+
 			const trimmed = args.trim();
 
 			// No args or just whitespace
@@ -246,7 +265,7 @@ export default function askUser(pi: ExtensionAPI): void {
 					}),
 				},
 			],
-			details: { entries, count },
+			details: { format: "qna-result-v1", entries, count },
 		};
 	}
 
@@ -274,6 +293,29 @@ export default function askUser(pi: ExtensionAPI): void {
 			details: Record<string, unknown>;
 		}> {
 			const projectDir = ctx.sessionManager.getCwd();
+
+			// Gate Q&A history access on project trust
+			if (!(await (ctx as any).isProjectTrusted())) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: JSON.stringify({
+								entries: [],
+								count: 0,
+								message: "Q&A history is not available — project trust not granted",
+							}),
+						},
+					],
+					details: {
+						format: "qna-result-v1",
+						entries: [],
+						count: 0,
+						untrusted: true,
+					},
+				};
+			}
+
 			const {
 				action,
 				limit = 20,
