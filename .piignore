@@ -24,7 +24,6 @@ credentials.*
 # --------------------------------------------------------------------
 # Pi agent sessions & internals (huge, irrelevant for coding)
 # --------------------------------------------------------------------
-.pi/npm/
 .pi/chromium-deps/
 .pi/crawl4ai-venv/
 

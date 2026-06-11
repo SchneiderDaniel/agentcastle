@@ -1,4 +1,6 @@
 {
+	"defaultProvider": "opencode-go",
+	"defaultModel": "deepseek-v4-flash",
 	"quietStartup": true,
 	"theme": "cheasee-pi",
 	"sessionDir": ".pi/sessions",

@@ -10,8 +10,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import ts from "typescript";
-import { parseArgs } from "@earendil-works/pi-coding-agent";
-import type { Args } from "@earendil-works/pi-coding-agent";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -67,7 +65,7 @@ export interface TscWatchAdapter {
 // Real Adapter: TypeScript Watch Compiler API
 // ═══════════════════════════════════════════════════════════════════════
 
-export class TypeScriptWatchAdapter implements TscWatchAdapter {
+class TypeScriptWatchAdapter implements TscWatchAdapter {
 	private watchProgram: ts.WatchOfConfigFile<ts.BuilderProgram> | undefined;
 	private diagnostics: TscDiagnostic[] = [];
 	private running = false;
@@ -110,27 +108,10 @@ export class TypeScriptWatchAdapter implements TscWatchAdapter {
 	}
 
 	private handleDiagnostic(diagnostic: ts.Diagnostic): void {
-		const file = diagnostic.file;
-		if (!file) return;
-
-		const start = diagnostic.start ?? 0;
-		const { line, character } = file.getLineAndCharacterOfPosition(start);
-		const message =
-			typeof diagnostic.messageText === "string"
-				? diagnostic.messageText
-				: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
-
-		const diag: TscDiagnostic = {
-			file: file.fileName,
-			line: line + 1,
-			column: character + 1,
-			severity: "Error",
-			message,
-			code: `TS${diagnostic.code}`,
-			filePath: file.fileName,
-		};
-
-		this.diagnostics.push(diag);
+		const diag = diagnosticToTscDiagnostic(diagnostic, this.tsconfigDir);
+		if (diag) {
+			this.diagnostics.push(diag);
+		}
 	}
 
 	private notifyListeners(): void {
@@ -370,9 +351,38 @@ export function formatTscDiagnostics(diagnostics: TscDiagnostic[]): string {
 }
 
 /**
- * @deprecated Use `DiagnosticsWatcher` for incremental watch mode.
- * Kept for backward compatibility with supervisor pipeline.
+ * Map a TypeScript diagnostic to the TscDiagnostic shape.
+ * Returns undefined if the diagnostic has no source file (e.g. global errors).
+ */
+export function diagnosticToTscDiagnostic(
+	diagnostic: ts.Diagnostic,
+	configDir: string,
+): TscDiagnostic | undefined {
+	const file = diagnostic.file;
+	if (!file) return undefined;
+
+	const start = diagnostic.start ?? 0;
+	const { line, character } = file.getLineAndCharacterOfPosition(start);
+	const message =
+		typeof diagnostic.messageText === "string"
+			? diagnostic.messageText
+			: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+
+	return {
+		file: file.fileName,
+		line: line + 1,
+		column: character + 1,
+		severity: "Error",
+		message,
+		code: `TS${diagnostic.code}`,
+		filePath: resolveDiagnosticFilePath(file.fileName, configDir),
+	};
+}
+
+/**
  * Runs a one-shot tsc check using the TypeScript compiler API.
+ * Uses ts.createProgram() instead of watch mode — no file watchers,
+ * no incremental state, no lingering callbacks.
  */
 export async function runTscCheckpoint(worktreePath: string): Promise<TscCheckpointResult> {
 	const configPath = resolve(worktreePath, "tsconfig.json");
@@ -381,28 +391,34 @@ export async function runTscCheckpoint(worktreePath: string): Promise<TscCheckpo
 		return { diagnostics: [], hasErrors: false };
 	}
 
-	// Use a one-shot adapter for backward compatibility
-	const adapter = createDefaultAdapter();
+	// Parse tsconfig — fallback gracefully on parse failure
+	const parsedConfig = ts.getParsedCommandLineOfConfigFile(
+		configPath,
+		{ noEmit: true },
+		ts.sys as unknown as ts.ParseConfigFileHost,
+	);
 
-	// Wait for initial diagnostics with a timeout
-	const diagnostics = await new Promise<TscDiagnostic[]>((resolvePromise) => {
-		adapter.onDiagnosticsChange((diags) => {
-			resolvePromise(diags);
-		});
-		adapter.start(configPath);
+	if (!parsedConfig) {
+		return { diagnostics: [], hasErrors: false };
+	}
 
-		// Timeout after 30s if no diagnostics received
-		setTimeout(() => {
-			resolvePromise(adapter.getDiagnostics());
-		}, 30_000);
+	const configDir = dirname(configPath);
+	const program = ts.createProgram({
+		rootNames: parsedConfig.fileNames,
+		options: parsedConfig.options,
 	});
 
-	adapter.stop();
+	const allDiagnostics = ts.getPreEmitDiagnostics(program);
+	const hasErrors = allDiagnostics.some((d) => d.category === ts.DiagnosticCategory.Error);
 
-	return {
-		diagnostics,
-		hasErrors: diagnostics.length > 0,
-	};
+	const mapped: TscDiagnostic[] = hasErrors
+		? allDiagnostics
+				.filter((d) => d.category === ts.DiagnosticCategory.Error)
+				.map((d) => diagnosticToTscDiagnostic(d, configDir))
+				.filter((d): d is TscDiagnostic => d !== undefined)
+		: [];
+
+	return { diagnostics: mapped, hasErrors };
 }
 
 // ═══════════════════════════════════════════════════════════════════════

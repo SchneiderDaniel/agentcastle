@@ -85,6 +85,9 @@ export async function runTscAndLspAudit(
 					`CI checks failing: ${failedNames}. Skipping audit — returning to Implementation.`,
 					"warning",
 				);
+				// Uncommit developer's work so worktree preserves changes
+				// Prevents developer from starting fresh on next iteration
+				await uncommitDeveloperWork(execFn, worktreePath);
 				return { nextStatus: "Implementation", note: `CI_FAILED: ${ciResult.message}` };
 			}
 
@@ -169,6 +172,10 @@ export async function runTscAndLspAudit(
 			} catch {
 				// Comment posting is best-effort
 			}
+
+			// Uncommit developer's work so worktree preserves changes
+			// Prevents developer from starting fresh on next iteration
+			await uncommitDeveloperWork(execFn, worktreePath);
 
 			return { nextStatus: "Implementation", note: msg, deadCodeResult: deadResult };
 		} else if (deadResult.status === "no_knip") {
@@ -260,6 +267,9 @@ export async function runTscAndLspAudit(
 				} catch {
 					// Comment posting is best-effort
 				}
+				// Uncommit developer's work so worktree preserves changes
+				// Prevents developer from starting fresh on next iteration
+				await uncommitDeveloperWork(execFn, worktreePath);
 				return { nextStatus: "Implementation", note: msg };
 			}
 
@@ -339,7 +349,7 @@ export async function runTscAndLspAudit(
 				getDebugLogger().warn("pipeline-audit", "TSC checkpoint threw", { error: tscMsg });
 				collector?.push("pipeline-audit", "warn", `TSC checkpoint threw: ${tscMsg}`);
 			}
-			const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
+			const tscDecision = await determineTscCheckpointDecision(tscResult, "Audit");
 
 			getDebugLogger().info("pipeline-audit", "TSC result", {
 				nextStatus: tscDecision.nextStatus,
@@ -351,6 +361,8 @@ export async function runTscAndLspAudit(
 				if (tscDecision.note) {
 					ctx.ui.notify(tscDecision.note, "warning");
 				}
+				// Uncommit developer's work so worktree preserves changes
+				await uncommitDeveloperWork(execFn, worktreePath);
 				return { nextStatus: tscDecision.nextStatus, note: tscDecision.note };
 			}
 
@@ -366,6 +378,10 @@ export async function runTscAndLspAudit(
 			nextStatus: result.nextStatus,
 			note: result.note,
 		});
+		// If LSP pre-audit blocks, uncommit developer's work
+		if (result.nextStatus !== "Audit") {
+			await uncommitDeveloperWork(execFn, worktreePath);
+		}
 		return {
 			...result,
 			duplicateCodeResult: dupResult,
@@ -456,5 +472,42 @@ async function runLspPreAudit(
 		return { nextStatus: decision.nextStatus, note: decision.note };
 	} finally {
 		ctx.ui.setStatus("supervisor", undefined);
+	}
+}
+
+/**
+ * Uncommit the developer's most recent commit in the worktree.
+ * Uses `git reset --soft HEAD~1` to preserve changes as staged modifications
+ * so the developer resumes with context intact when a pre-transition gate fails.
+ *
+ * Gate failures (dead code, CI, TDD, TSC, LSP) should NOT result in fresh context
+ * for the developer — only auditor rejections should. By uncommitting, the
+ * worktree keeps the changes, and the developer sees them on next dispatch.
+ *
+ * Fail-safe: if no commit exists (e.g., developer made no changes), the error
+ * is silently caught — the worktree is already in the desired state.
+ */
+async function uncommitDeveloperWork(
+	execFn: (
+		cmd: string,
+		args: string[],
+		opts?: Record<string, unknown>,
+	) => Promise<{ code: number; stdout: string; stderr: string }>,
+	worktreePath: string,
+): Promise<void> {
+	try {
+		await execFn("git", ["reset", "--soft", "HEAD~1"], {
+			cwd: worktreePath,
+			timeout: 10_000,
+		});
+		getDebugLogger().info("pipeline-audit", "Uncommitted developer work after gate failure", {
+			worktreePath,
+		});
+	} catch {
+		// No commit to uncommit — developer may not have made changes, or
+		// there are edge cases (initial commit, detached HEAD). Silent skip.
+		getDebugLogger().debug("pipeline-audit", "No commit to uncommit — worktree clean or error", {
+			worktreePath,
+		});
 	}
 }

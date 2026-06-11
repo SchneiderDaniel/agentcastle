@@ -51,6 +51,26 @@ export const CACHE_TTL_TURNS = 6;
 export const CASCADE_THRESHOLD = 8;
 
 /**
+ * Resolved harness rules — the merged result of default rules + project-local config.
+ * Used by AgentHarness for tool metadata lookup and cascade threshold.
+ */
+export interface ResolvedHarnessRules {
+	toolMeta: Record<string, ToolMeta>;
+	cascadeThreshold: number;
+}
+
+/**
+ * Factory: returns a fresh copy of the default resolved rules.
+ * Creates a shallow copy of TOOL_META so callers can mutate without affecting the original.
+ */
+export function loadDefaultRules(): ResolvedHarnessRules {
+	return {
+		toolMeta: { ...TOOL_META },
+		cascadeThreshold: CASCADE_THRESHOLD,
+	};
+}
+
+/**
  * Multi-verb CLIs where first 2 tokens form the sub-key
  * (e.g., "git status" vs "git diff").
  * Single-verb commands use only the first token.
