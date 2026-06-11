@@ -207,7 +207,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/piignore.ts`                        | `.piignore` path blocking                                                                                              |
 | `.pi/extensions/tsc-checkpoint.ts`                  | `/check` command: `tsc --noEmit`                                                                                       |
 | `.pi/extensions/session-advice/`                    | Session advice — improvement recommendations per session                                                               |
-| `.pi/extensions/check-extensions/`                  | `/check-extensions` — AST-based extension audit with migration snippets + impact scoring                               |
+| `.pi/extensions/check-extensions/`                  | `/check-extensions` — AST-based extension audit with migration snippets + impact scoring; trust-gated (skips on untrusted projects with guidance), mode-adaptive notifications (TUI: ui.notify, other: sendMessage structured messages) |
 | `.pi/extensions/worktree-sandbox/`                  | Enforces agents operate only within assigned git worktree (path rewriting, cd enforcement)                             |
 | `.pi/extensions/supervisor/agents/researcher.md`    | Researcher agent (pipeline step 1)                                                                                     |
 | `.pi/extensions/supervisor/agents/architect.md`     | Architect agent (pipeline step 2)                                                                                      |
