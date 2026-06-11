@@ -1179,6 +1179,12 @@ describe("ask_user_read execute — error signaling", () => {
 		};
 	}
 
+	// ── Export smoke test ─────────────────────────────────────────--
+
+	it("exports askUser as a function", () => {
+		assert.strictEqual(typeof askUser, "function");
+	});
+
 	// Entity tests — validation errors, no I/O needed
 
 	it("throws for get action with undefined id", async () => {
