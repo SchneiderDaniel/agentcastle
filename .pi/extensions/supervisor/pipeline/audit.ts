@@ -177,7 +177,8 @@ export async function runTscAndLspAudit(
 			// Prevents developer from starting fresh on next iteration
 			await uncommitDeveloperWork(execFn, worktreePath);
 
-			return { nextStatus: "Implementation", note: msg, deadCodeResult: deadResult };
+			// Use full dead code context as note so developer sees exact findings
+			return { nextStatus: "Implementation", note: deadContext || msg, deadCodeResult: deadResult };
 		} else if (deadResult.status === "no_knip") {
 			getDebugLogger().info("pipeline-audit", "knip not available, skipping dead code check");
 		} else if (deadResult.status === "error") {
@@ -270,7 +271,15 @@ export async function runTscAndLspAudit(
 				// Uncommit developer's work so worktree preserves changes
 				// Prevents developer from starting fresh on next iteration
 				await uncommitDeveloperWork(execFn, worktreePath);
-				return { nextStatus: "Implementation", note: msg };
+				// Build detailed gate failure context for developer prompt
+				const detailLines = tddResult.checks
+					.map((c) => {
+						const icon = c.passed ? "✅" : "❌";
+						return `${icon} ${c.name}${c.detail ? ": " + c.detail : ""}`;
+					})
+					.join("\n");
+				const fullMsg = `TDD gate failed.\n\nChecks:\n${detailLines}\n\n${tddResult.rejectionReason || ""}`;
+				return { nextStatus: "Implementation", note: fullMsg };
 			}
 
 			if (tddResult.status === "error") {
