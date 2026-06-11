@@ -24,9 +24,9 @@ import {
 	BashCommand,
 	buildRedirectMessage,
 	MULTI_VERB_TOOLS,
-	CASCADE_THRESHOLD,
-	getToolMeta,
+	loadDefaultRules,
 } from "./lib/harness-rules.ts";
+import type { ResolvedHarnessRules, ToolMeta } from "./lib/harness-rules.ts";
 
 // ── Types ──
 
@@ -49,9 +49,17 @@ interface ToolCallContext {
 	ui?: {
 		notify?: (message: string, type?: "info" | "warning" | "error") => void;
 	};
+	/** Context mode: "tui", "rpc", "json", "print", etc. */
+	mode?: string;
+	/** True if there is an interactive user to respond to prompts. */
+	hasUI?: boolean;
+	/** Check if the current project is trusted. Returns false when undefined. */
+	isProjectTrusted?: () => boolean;
 }
 
 // ── Helpers ──
+
+export type { ResolvedHarnessRules } from "./lib/harness-rules.ts";
 
 /**
  * Extract bash sub-key for sub-command-aware cascade detection.
@@ -103,9 +111,34 @@ export function getBashSubKey(command: string): string | undefined {
  */
 export class AgentHarness {
 	private state: HarnessState;
+	/** True when there is an interactive user (set per handleToolCall invocation). */
+	#hasUI: boolean = true;
+	/** Resolved harness rules (defaults or merged with project config). */
+	#resolvedRules: ResolvedHarnessRules;
 
-	constructor() {
+	constructor(rules?: ResolvedHarnessRules) {
 		this.state = createHarnessState();
+		this.#resolvedRules = rules ?? loadDefaultRules();
+	}
+
+	/**
+	 * Set resolved harness rules (called on session_start after config loading).
+	 */
+	setRules(rules: ResolvedHarnessRules): void {
+		this.#resolvedRules = rules;
+	}
+
+	/**
+	 * Get tool meta from resolved rules with fallback to cascadeThreshold.
+	 * Unlisted tools get { passThrough: false, cascadeThreshold: defaultThreshold }.
+	 */
+	#getToolMeta(toolName: string): ToolMeta {
+		return (
+			this.#resolvedRules.toolMeta[toolName] ?? {
+				passThrough: false,
+				cascadeThreshold: this.#resolvedRules.cascadeThreshold,
+			}
+		);
 	}
 
 	/**
@@ -128,13 +161,16 @@ export class AgentHarness {
 		const toolCallIndex = this.state.toolCallIndex;
 		const sessionTurn = this.state.sessionTurn;
 
+		// ── Extract hasUI from context (backward-compatible cast) ──
+		this.#hasUI = (_ctx as any).hasUI !== false;
+
 		// ── Guard: undefined/empty toolName → skip recording, pass through ──
 		if (!toolName) {
 			this.state.toolCallIndex++;
 			return null;
 		}
 
-		const meta = getToolMeta(toolName);
+		const meta = this.#getToolMeta(toolName);
 
 		// ── 1. Pass-through tools → always pass, but record for cascade reset ──
 		if (meta.passThrough) {
@@ -179,7 +215,7 @@ export class AgentHarness {
 				};
 			}
 
-			// ── 4. Read caching ──
+			// ── 4. Read caching (mode-aware: bypass in non-UI modes) ──
 			else if (toolName === "read") {
 				const path = (args.path ?? "") as string;
 				if (path) {
@@ -191,6 +227,9 @@ export class AgentHarness {
 						// Same-turn [pending] → pass through (let re-read happen)
 						if (cached.content === "[pending]" && cached.turn === toolCallIndex) {
 							// result stays null, pass through
+						} else if (!this.#hasUI) {
+							// Non-TUI mode: bypass read cache block, pass through
+							// Cache store still happens for non-UI reads (written below in else branch)
 						} else {
 							result = {
 								block: true,
@@ -215,7 +254,7 @@ export class AgentHarness {
 		// without recording it (if blocked, call is not real).
 		// Uses bashSubKey for sub-command-aware cascade (Bug 3 fix).
 		if (!result && toolName !== "read") {
-			const cascadeThreshold = meta.cascadeThreshold ?? CASCADE_THRESHOLD;
+			const cascadeThreshold = meta.cascadeThreshold ?? this.#resolvedRules.cascadeThreshold;
 			const consecutive = this.state.callCounter.getConsecutive(toolName, bashSubKey);
 			// Add 1 for current call (not yet recorded)
 			const effectiveCount = consecutive.count + 1;
