@@ -105,6 +105,19 @@ export function loadConfig(): SupervisorConfig {
 		throw new Error("supervisor.maxCommentChars must be a positive integer");
 	}
 
+	// Validate auditScoreThreshold (optional, 0.0–1.0 range)
+	const auditScoreThreshold = cfg.auditScoreThreshold;
+	if (auditScoreThreshold !== undefined) {
+		if (
+			typeof auditScoreThreshold !== "number" ||
+			isNaN(auditScoreThreshold) ||
+			auditScoreThreshold < 0 ||
+			auditScoreThreshold > 1
+		) {
+			throw new Error("supervisor.auditScoreThreshold must be a number between 0.0 and 1.0");
+		}
+	}
+
 	return {
 		repo: cfg.repo,
 		projectNumber: cfg.projectNumber,
@@ -124,6 +137,7 @@ export function loadConfig(): SupervisorConfig {
 		maxToolCalls: maxToolCalls,
 		commentSummaryThreshold,
 		maxCommentChars,
+		auditScoreThreshold: auditScoreThreshold ?? 0.75,
 	};
 }
 

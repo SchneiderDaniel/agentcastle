@@ -35,6 +35,13 @@ export interface SupervisorConfig {
 	 *  When set, checkTestAssertions and checkTestCoversSymbols will also
 	 *  recognize these function names as valid assertion patterns. */
 	assertFunctionNames?: string[];
+	/**
+	 * Minimum passing ratio (0.0–1.0) for audit score gate.
+	 * When the auditor approves but score < ceil(total * threshold), the gate
+	 * rejects the audit and returns to Implementation.
+	 * Default: 0.75
+	 */
+	auditScoreThreshold?: number;
 }
 
 export interface AgentFrontmatter {

@@ -218,7 +218,7 @@ export function extractAuditScore(agentOutput: string): AuditScore | null {
  * A dimension is passing if there are no 🔴 Critical or 🟡 Warning findings in it.
  * 🟢 Suggestions do NOT fail a dimension.
  */
-const KNOWN_AUDIT_DIMENSIONS = [
+export const KNOWN_AUDIT_DIMENSIONS = [
 	"architecture-compliance",
 	"ticket-fulfillment",
 	"test-quality",
@@ -230,6 +230,20 @@ const KNOWN_AUDIT_DIMENSIONS = [
 ] as const;
 
 /**
+ * Get the active set of audit dimensions, optionally excluding
+ * research-incorporation when the researcher agent was skipped.
+ *
+ * @param researcherSkipped - Whether the researcher was skipped via dedup gate
+ * @returns Active dimensions list
+ */
+export function getActiveAuditDimensions(researcherSkipped: boolean): readonly string[] {
+	if (researcherSkipped) {
+		return KNOWN_AUDIT_DIMENSIONS.filter((d) => d !== "research-incorporation");
+	}
+	return KNOWN_AUDIT_DIMENSIONS;
+}
+
+/**
  * Compute audit score from structured findings.
  * This replaces LLM-reasoned scoring with deterministic computation.
  *
@@ -239,29 +253,53 @@ const KNOWN_AUDIT_DIMENSIONS = [
  * 3. Score = (dimensions without failing findings) / total dimensions.
  *
  * @param findings - Structured audit findings from agent output
+ * @param dimensions - Optional explicit dimension list (uses KNOWN_AUDIT_DIMENSIONS by default)
  * @returns Computed audit score
  */
-export function computeAuditScoreFromFindings(findings: Finding[]): AuditScore {
+export function computeAuditScoreFromFindings(
+	findings: Finding[],
+	dimensions?: readonly string[],
+): AuditScore {
+	const activeDimensions = dimensions ?? KNOWN_AUDIT_DIMENSIONS;
 	const failedDimensions = new Set<string>();
 
 	for (const finding of findings) {
 		// Only critical and warning findings fail a dimension, and only
-		// if the dimension is in KNOWN_AUDIT_DIMENSIONS — unknown/custom
+		// if the dimension is in the active dimension list — unknown/custom
 		// dimensions (e.g., "tests-passed", user-defined ones) do not
 		// affect the score.
 		if (
 			(finding.severity === "critical" || finding.severity === "warning") &&
-			KNOWN_AUDIT_DIMENSIONS.includes(finding.dimension as (typeof KNOWN_AUDIT_DIMENSIONS)[number])
+			(activeDimensions as readonly string[]).includes(finding.dimension)
 		) {
 			failedDimensions.add(finding.dimension);
 		}
 	}
 
-	// The total is always the number of known dimensions
-	const total = KNOWN_AUDIT_DIMENSIONS.length;
+	const total = activeDimensions.length;
 	const passing = total - failedDimensions.size;
 
 	return { passing: Math.max(0, passing), total };
+}
+
+/**
+ * Evaluate whether an audit score meets the configured threshold ratio.
+ *
+ * A score passes if `score.passing >= ceil(score.total * thresholdRatio)`.
+ *
+ * @param score - The computed audit score
+ * @param thresholdRatio - Minimum ratio (0.0–1.0), e.g. 0.75 means at least 75%
+ * @returns Object with passes flag and required minimum passing count
+ */
+export function evaluateAuditScoreGate(
+	score: AuditScore,
+	thresholdRatio: number,
+): { passes: boolean; required: number } {
+	const required = Math.ceil(score.total * Math.max(0, Math.min(1, thresholdRatio)));
+	return {
+		passes: score.passing >= required,
+		required,
+	};
 }
 
 /**

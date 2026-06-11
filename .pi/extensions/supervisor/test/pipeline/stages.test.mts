@@ -21,6 +21,8 @@ import {
 	buildAgentResultEntry,
 	createStageState,
 	type StageState,
+	type AuditGateContext,
+	type GateRejected,
 	handleBacklogTransition,
 	applyStatusTransition,
 	handlePostAgentSuccess,
@@ -347,6 +349,361 @@ describe("calculateNextStatus()", () => {
 		// Even on failure, explicit markers in output should still be matched
 		const result = calculateNextStatus("auditor", "AUDIT_REJECTED", "AUDIT_REJECTED", false);
 		assert.equal(result.status, "Implementation", "explicit rejection marker should still work");
+	});
+
+	// ─── Audit Score Gate tests (Bug #648) ───────────────────────
+
+	it("auditor APPROVED + score meets threshold (5/7 with 0.75) → Done, no gateRejected", () => {
+		// 5 passing out of 7 with threshold 0.75 → required = ceil(7*0.75) = 6 → 5 < 6 → fails
+		// Use 6/7 passing to meet threshold
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "suggestion",
+					dimension: "code-quality",
+					symptom: "Minor",
+					consequence: "Minor",
+					remedy: "Fix",
+				},
+			],
+		});
+		// 1 suggestion finding only → 7/7 passing → meets 6 required
+		const auditContext: AuditGateContext = { researcherSkipped: true, scoreThreshold: 0.75 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Done");
+		assert.equal(result.gateRejected, undefined);
+	});
+
+	it("auditor APPROVED + score below threshold (5/7 with 0.75) → Implementation, gateRejected", () => {
+		// 5 passing out of 7 with threshold 0.75 → required = ceil(7*0.75) = 6 → 5 < 6 → fails
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "critical",
+					dimension: "architecture-compliance",
+					symptom: "Bad arch",
+					consequence: "Hard",
+					remedy: "Fix",
+				},
+				{
+					severity: "warning",
+					dimension: "ticket-fulfillment",
+					symptom: "Missing scope",
+					consequence: "Incomplete",
+					remedy: "Add",
+				},
+				{
+					severity: "critical",
+					dimension: "test-quality",
+					symptom: "No tests",
+					consequence: "Bugs",
+					remedy: "Add",
+				},
+			],
+		});
+		// 3 critical/warning findings → 3 dimensions failed → 4/7 passing → required=6 → FAILS
+		const auditContext: AuditGateContext = { researcherSkipped: true, scoreThreshold: 0.75 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Implementation");
+		assert.ok(result.gateRejected, "gateRejected should be populated");
+		assert.equal(result.gateRejected!.score.passing, 4);
+		assert.equal(result.gateRejected!.total, 7);
+		assert.equal(result.gateRejected!.required, 6);
+	});
+
+	it("auditor REJECTED → Implementation unchanged (no gate logic)", () => {
+		const agentOutput = JSON.stringify({
+			action: "REJECTED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "critical",
+					dimension: "architecture-compliance",
+					symptom: "Bad arch",
+					consequence: "Hard",
+					remedy: "Fix",
+				},
+			],
+		});
+		const auditContext: AuditGateContext = { researcherSkipped: false, scoreThreshold: 0.75 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Implementation");
+		assert.equal(result.gateRejected, undefined, "gateRejected should not be set for REJECTED");
+	});
+
+	it("auditor with no action in structured output falls through to text marker", () => {
+		const agentOutput = JSON.stringify({
+			action: "COMPLETE",
+			agentName: "auditor",
+		});
+		const result = calculateNextStatus("auditor", agentOutput, "SOME_OTHER_MARKER");
+		// Falls through from structured parsing, then no markers match, then inferForwardStatus
+		// Auditor step has no forward markers (all AUDIT_*) → inferForwardStatus returns null
+		// but success=true so it tries inferForwardStatus → null
+		assert.equal(result.status, null);
+	});
+
+	it("developer → audit gate NOT evaluated even with auditContext", () => {
+		const agentOutput = JSON.stringify({
+			action: "COMPLETE",
+			agentName: "developer",
+		});
+		const auditContext: AuditGateContext = { researcherSkipped: false, scoreThreshold: 0.75 };
+		const result = calculateNextStatus("developer", agentOutput, "", true, auditContext);
+		// Gate logic only triggers for agentName === "auditor"
+		// Developer with no markers and success=true → inferForwardStatus → Audit
+		assert.equal(result.status, "Audit");
+		assert.equal(result.gateRejected, undefined);
+	});
+
+	it("architect → audit gate NOT evaluated", () => {
+		const agentOutput = JSON.stringify({
+			action: "COMPLETE",
+			agentName: "architect",
+		});
+		const auditContext: AuditGateContext = { researcherSkipped: false, scoreThreshold: 0.75 };
+		const result = calculateNextStatus(
+			"architect",
+			agentOutput,
+			"ARCHITECTURE_COMPLETE",
+			true,
+			auditContext,
+		);
+		assert.equal(result.status, "TestDesign");
+		assert.equal(result.gateRejected, undefined);
+	});
+
+	it("researcher → audit gate NOT evaluated", () => {
+		const agentOutput = JSON.stringify({
+			action: "COMPLETE",
+			agentName: "researcher",
+		});
+		const auditContext: AuditGateContext = { researcherSkipped: false, scoreThreshold: 0.75 };
+		const result = calculateNextStatus(
+			"researcher",
+			agentOutput,
+			"RESEARCH_COMPLETE",
+			true,
+			auditContext,
+		);
+		assert.equal(result.status, "Architecture");
+		assert.equal(result.gateRejected, undefined);
+	});
+
+	it("gate rejects when researcherSkipped=true → denominator is 7", () => {
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "critical",
+					dimension: "architecture-compliance",
+					symptom: "Bad",
+					consequence: "Hard",
+					remedy: "Fix",
+				},
+				{
+					severity: "critical",
+					dimension: "test-quality",
+					symptom: "No tests",
+					consequence: "Bugs",
+					remedy: "Add",
+				},
+			],
+		});
+		// 2 dimensions failed out of 7 → 5/7 < required 6 → fails
+		const auditContext: AuditGateContext = { researcherSkipped: true, scoreThreshold: 0.75 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Implementation");
+		assert.ok(result.gateRejected, "gateRejected should be set");
+		assert.equal(result.gateRejected!.total, 7);
+		assert.equal(result.gateRejected!.required, 6);
+	});
+
+	it("gate rejects when researcherSkipped=false → denominator is 8", () => {
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "critical",
+					dimension: "architecture-compliance",
+					symptom: "Bad",
+					consequence: "Hard",
+					remedy: "Fix",
+				},
+				{
+					severity: "critical",
+					dimension: "test-quality",
+					symptom: "No tests",
+					consequence: "Bugs",
+					remedy: "Add",
+				},
+			],
+		});
+		// 2 dimensions failed out of 8 → 6/8 = required 6 → passes (6 >= 6)
+		// So use 3 failed to fail: 5/8 < 6
+		const threeFailures = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "critical",
+					dimension: "architecture-compliance",
+					symptom: "Bad",
+					consequence: "Hard",
+					remedy: "Fix",
+				},
+				{
+					severity: "warning",
+					dimension: "test-quality",
+					symptom: "No tests",
+					consequence: "Bugs",
+					remedy: "Add",
+				},
+				{
+					severity: "critical",
+					dimension: "code-quality",
+					symptom: "Lint",
+					consequence: "Debt",
+					remedy: "Fix",
+				},
+			],
+		});
+		const auditContext: AuditGateContext = { researcherSkipped: false, scoreThreshold: 0.75 };
+		const result = calculateNextStatus("auditor", threeFailures, "", true, auditContext);
+		assert.equal(result.status, "Implementation");
+		assert.ok(result.gateRejected);
+		assert.equal(result.gateRejected!.total, 8);
+		assert.equal(result.gateRejected!.required, 6);
+	});
+
+	it("auditContext with scoreThreshold=1.0 → only perfect score passes", () => {
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "suggestion",
+					dimension: "code-quality",
+					symptom: "Minor",
+					consequence: "Minor",
+					remedy: "Fix",
+				},
+			],
+		});
+		// 1 suggestion → no dimensions failed → 7/7 with researcher skipped
+		// required = ceil(7 * 1.0) = 7 → passes
+		const auditContext: AuditGateContext = { researcherSkipped: true, scoreThreshold: 1.0 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Done");
+		assert.equal(result.gateRejected, undefined);
+	});
+
+	it("auditContext with scoreThreshold=1.0 → non-perfect score fails", () => {
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "critical",
+					dimension: "architecture-compliance",
+					symptom: "Bad",
+					consequence: "Hard",
+					remedy: "Fix",
+				},
+			],
+		});
+		const auditContext: AuditGateContext = { researcherSkipped: true, scoreThreshold: 1.0 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Implementation");
+		assert.ok(result.gateRejected);
+	});
+
+	it("auditContext with scoreThreshold=0.0 → any score passes", () => {
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "critical",
+					dimension: "architecture-compliance",
+					symptom: "Bad",
+					consequence: "Hard",
+					remedy: "Fix",
+				},
+			],
+		});
+		const auditContext: AuditGateContext = { researcherSkipped: true, scoreThreshold: 0.0 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Done");
+		assert.equal(result.gateRejected, undefined);
+	});
+
+	it("no auditContext → no gate evaluation (backward compat)", () => {
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "critical",
+					dimension: "architecture-compliance",
+					symptom: "Bad",
+					consequence: "Hard",
+					remedy: "Fix",
+				},
+			],
+		});
+		// No auditContext passed — gate is NOT evaluated, original behavior preserved
+		const result = calculateNextStatus("auditor", agentOutput, "", true);
+		// resolveNextStatusFromAgentOutput finds APPROVED → Done (no gate check)
+		assert.equal(result.status, "Done");
+		assert.equal(result.gateRejected, undefined);
+	});
+
+	it("auditor APPROVED with no findings → score computed is 8/8 (no failed dims) → passes", () => {
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [],
+		});
+		// Empty findings → all dimensions passing → 8/8 > 6 required → passes
+		const auditContext: AuditGateContext = { researcherSkipped: false, scoreThreshold: 0.75 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Done");
+		assert.equal(result.gateRejected, undefined);
+	});
+
+	it("auditor APPROVED with findings but only suggestions → all dimensions pass → gate passes", () => {
+		const agentOutput = JSON.stringify({
+			action: "APPROVED",
+			agentName: "auditor",
+			findings: [
+				{
+					severity: "suggestion",
+					dimension: "architecture-compliance",
+					symptom: "Could be better",
+					consequence: "Minor",
+					remedy: "Improve",
+				},
+				{
+					severity: "suggestion",
+					dimension: "code-quality",
+					symptom: "Style",
+					consequence: "Readability",
+					remedy: "Refactor",
+				},
+			],
+		});
+		// Suggestions don't fail dimensions → 7/7 (researcher skipped) → passes
+		const auditContext: AuditGateContext = { researcherSkipped: true, scoreThreshold: 0.75 };
+		const result = calculateNextStatus("auditor", agentOutput, "", true, auditContext);
+		assert.equal(result.status, "Done");
+		assert.equal(result.gateRejected, undefined);
 	});
 });
 
@@ -1233,6 +1590,7 @@ describe("handlePostAgentSuccess()", () => {
 			"feature-branch",
 			"Test issue",
 			undefined, // collector
+			undefined, // gateRejected
 			notify, // notify
 		);
 
@@ -1283,6 +1641,7 @@ describe("handlePostAgentSuccess()", () => {
 			"feature-branch",
 			"Test issue",
 			undefined, // collector
+			undefined, // gateRejected
 			notify, // notify
 		);
 
@@ -1291,7 +1650,181 @@ describe("handlePostAgentSuccess()", () => {
 		// Then handlePostAgentSuccess sees !commitResult.ok and returns false
 		assert.equal(success, false, "push failure should return false — pipeline stops");
 	});
-});
+
+	it("gateRejected passed to auditor → posts gate rejection comment instead of approval", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // post issue comment for gate rejection
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "auditor",
+			textOutput: JSON.stringify({
+				action: "APPROVED",
+				agentName: "auditor",
+				commentBody: "## Audit Approved\nAll good",
+			}),
+			textOnly: "",
+		};
+		const filteredData: FilteredIssueData = { body: "", comments: [] };
+		const gateRejected = {
+			score: { passing: 4, total: 7 },
+			required: 6,
+			total: 7,
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"auditor",
+			42,
+			mockConfig,
+			filteredData,
+			undefined,
+			undefined,
+			"Test issue",
+			undefined,
+			gateRejected,
+		);
+
+		assert.equal(success, true, "gate rejection should still allow pipeline to continue");
+		// Should call gh issue comment
+		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("comment"));
+		assert.ok(ghCall, "should post gate rejection comment");
+		// Verify the comment body contains gate rejection info
+		const commentIdx = calls.findIndex((c) => c.cmd === "gh" && c.args.includes("comment"));
+		assert.ok(commentIdx >= 0, "comment should be posted");
+	});
+
+	it("gateRejected with auditor REJECTED action → gate still posted (gate takes priority)", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // post issue comment for gate rejection
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "auditor",
+			textOutput: JSON.stringify({
+				action: "REJECTED",
+				agentName: "auditor",
+				commentBody: "## Audit Rejected\nBad code",
+			}),
+			textOnly: "",
+		};
+		const filteredData: FilteredIssueData = { body: "", comments: [] };
+		const gateRejected = {
+			score: { passing: 3, total: 8 },
+			required: 6,
+			total: 8,
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"auditor",
+			42,
+			mockConfig,
+			filteredData,
+			undefined,
+			undefined,
+			"Test issue",
+			undefined,
+			gateRejected,
+		);
+
+		assert.equal(success, true);
+		// Gate rejection should still be posted even though auditor said REJECTED
+		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("comment"));
+		assert.ok(ghCall, "should post gate rejection comment");
+	});
+
+	it("no gateRejected + auditor APPROVED → normal approval comment posted", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // post issue comment
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "auditor",
+			textOutput: JSON.stringify({
+				action: "APPROVED",
+				agentName: "auditor",
+				commentBody: "## Audit Approved\nAll good",
+			}),
+			textOnly: "",
+		};
+		const filteredData: FilteredIssueData = { body: "", comments: [] };
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"auditor",
+			42,
+			mockConfig,
+			filteredData,
+			undefined,
+			undefined,
+			"Test issue",
+		);
+
+		assert.equal(success, true);
+		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("comment"));
+		assert.ok(ghCall, "should post normal approval comment");
+	});
+
+	it("no gateRejected + auditor REJECTED → normal rejection comment posted", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // post issue comment
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "auditor",
+			textOutput: JSON.stringify({
+				action: "REJECTED",
+				agentName: "auditor",
+				commentBody: "## Audit Rejected\nBad code",
+			}),
+			textOnly: "",
+		};
+		const filteredData: FilteredIssueData = { body: "", comments: [] };
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"auditor",
+			42,
+			mockConfig,
+			filteredData,
+			undefined,
+			undefined,
+			"Test issue",
+		);
+
+		assert.equal(success, true);
+		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("comment"));
+		assert.ok(ghCall, "should post normal rejection comment");
+	});
 
 // ─── Tests: MAX_PIPELINE_LOOPS constant ───────────────────────────
 
@@ -1305,6 +1838,7 @@ describe("MAX_PIPELINE_LOOPS", () => {
 		// Explicit value check — changing this has implications for loop limits
 		assert.equal(MAX_PIPELINE_LOOPS, 20);
 	});
+});
 });
 
 // ─── Tests: createStageState() ────────────────────────────────────
@@ -1320,6 +1854,16 @@ describe("createStageState()", () => {
 	it("creates state with 'Done' status", () => {
 		const state = createStageState("Done");
 		assert.equal(state.loopStatus, "Done");
+	});
+
+	it("initializes researcherSkipped to false", () => {
+		const state = createStageState("Research");
+		assert.equal(state.researcherSkipped, false);
+	});
+
+	it("initializes duplicateCodeResult to null", () => {
+		const state = createStageState("Implementation");
+		assert.equal(state.duplicateCodeResult, null);
 	});
 });
 
