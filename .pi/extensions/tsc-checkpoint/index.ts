@@ -10,8 +10,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import ts from "typescript";
-import { parseArgs } from "@earendil-works/pi-coding-agent";
-import type { Args } from "@earendil-works/pi-coding-agent";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -67,7 +65,7 @@ export interface TscWatchAdapter {
 // Real Adapter: TypeScript Watch Compiler API
 // ═══════════════════════════════════════════════════════════════════════
 
-export class TypeScriptWatchAdapter implements TscWatchAdapter {
+class TypeScriptWatchAdapter implements TscWatchAdapter {
 	private watchProgram: ts.WatchOfConfigFile<ts.BuilderProgram> | undefined;
 	private diagnostics: TscDiagnostic[] = [];
 	private running = false;
