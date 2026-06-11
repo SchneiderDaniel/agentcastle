@@ -16,8 +16,8 @@ TASK="Audit test coverage of chart/figure generation methods in flask_planhead/a
 
 CONFIGS=(
   "1-no-tools|--no-tools --no-extensions"
-  "2-builtin-mapper-structural|--no-extensions -e $PROJECT_DIR/.pi/extensions/structural-analyzer/index.ts"
-  "3-builtin-mapper-structural-rg|--no-extensions -e $PROJECT_DIR/.pi/extensions/structural-analyzer/index.ts -e $PROJECT_DIR/.pi/extensions/ripgrep-search/index.ts"
+  "2-structural-only|--no-extensions -e $PROJECT_DIR/.pi/extensions/structural-analyzer/index.ts"
+  "3-structural-rg|--no-extensions -e $PROJECT_DIR/.pi/extensions/structural-analyzer/index.ts -e $PROJECT_DIR/.pi/extensions/ripgrep-search/index.ts"
 )
 
 GREEN='\033[0;32m'
@@ -114,7 +114,7 @@ echo ""
 echo -e "${BLUE}=== Averages per Config ===${NC}"
 printf "%-30s %-12s %-12s %-12s %-12s\n" "Config" "Avg Input" "Avg Output" "Avg Total" "Avg Duration"
 printf "%-30s %-12s %-12s %-12s %-12s\n" "-----" "--------" "---------" "---------" "----------"
-for cfg_name in "1-no-tools" "2-builtin-mapper" "3-builtin-mapper-structural" "4-builtin-mapper-structural-rg"; do
+for cfg_name in "1-no-tools" "2-structural-only" "3-structural-rg"; do
   awk -F',' -v cfg="$cfg_name" '
     $1 == cfg { tin+=$3; tout+=$4; ttotal+=$5; dur+=$7; n++ }
     END {

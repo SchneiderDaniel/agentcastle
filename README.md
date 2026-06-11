@@ -335,15 +335,19 @@ Invocable via `/name` in Pi's editor. Files stored in `.pi/prompts/` organized b
 
 #### 5.8 Tool Benchmark
 
-Empirical token consumption comparing tool configurations on a real audit task ("Audit test coverage of chart/figure generation methods"). Config 4 (ripgrep) is the most token-efficient tool-enabled config.
+Empirical token consumption comparing tool configurations on a real audit task ("Audit test coverage of chart/figure generation methods in `flask_planhead/app/services/`"). 5 runs per config.
 
-| Config                           | Avg Input  | Avg Output | Avg Total   | Avg Duration  | vs Config 2 (total) |
-| -------------------------------- | ---------- | ---------- | ----------- | ------------- | ------------------- |
-| 1 — no tools                     | 15         | 959        | 1,870       | 15,842ms      | —                   |
-| 2 — mapper                       | 14,958     | 7,028      | 281,506     | 76,133ms      | baseline            |
-| 3 — mapper + structural          | 24,264     | 5,056      | 299,784     | 62,461ms      | +6%                 |
-| **4 — mapper + structural + rg** | **15,248** | **4,131**  | **204,532** | **51,345ms**  | **-27%**            |
-| Config 4 uses **27% fewer total tokens** and runs **33% faster** than mapper-only (config 2). The ripgrep fix resolved the earlier issue where ripgrep made token consumption worse.
+| Config | Avg In | Avg Out | Avg Total | Avg Cost | Avg Duration |
+|--------|--------|---------|-----------|----------|-------------|
+| 1 — no tools | 1,351 | 1,272 | 2,623 | $0.00055 | 13.5s |
+| 2 — structural-only | 15,231 | 5,075 | 178,438 | $0.00400 | 62.3s |
+| 3 — structural + ripgrep | 13,769 | 5,850 | 177,700 | $0.00401 | 67.6s |
+
+**Key takeaways:**
+- **No-tools** cheap ($0.0005 avg) but agent can't do task — thin/empty results.
+- **Structural-analyzer** massively improves quality. Cost ~$0.004/run, duration ~62s.
+- **Adding ripgrep** (config 3) doesn't significantly change token count or cost vs structural-only for this task. Structural-analyzer handles needed patterns.
+- **All tool configs** show high variance in input tokens (different exploration paths). Duration more stable than token count.
 
 The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming, computed from a rolling 30s window, plus **LLM prompt cache** stats (`📦 cacheRead/cacheWrite`) on Row 2 — toggle with `contextStatusBar.showCache` in `.pi/settings.json` (default `true`). The supervisor subagent footer shows cache stats next to the token count. Shows `📦 --/--` before the first assistant response.
 

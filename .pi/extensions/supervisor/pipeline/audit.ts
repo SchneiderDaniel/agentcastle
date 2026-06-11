@@ -14,7 +14,7 @@ import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-deci
 import { pollCiChecks } from "../checks/ci-gating.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
 import type { DuplicateCodeResult } from "../checks/duplicate-code.ts";
-import { runDeadCodeCheck } from "../checks/dead-code.ts";
+import { runDeadCodeCheck, buildDeadCodeContext } from "../checks/dead-code.ts";
 import type { DeadCodeResult } from "../checks/dead-code.ts";
 import { runPackageSafetyAudit } from "../checks/package-safety.ts";
 import { postIssueComment } from "../github/index.ts";
@@ -131,21 +131,42 @@ export async function runTscAndLspAudit(
 
 		// Step 1b: Dead code detection gate
 		// Runs after duplicate code check, before TSC checkpoint.
-		// Non-blocking — dead code found is surfaced as warning and
-		// verified by the auditor agent.
+		// BLOCKING — dead code found rejects transition back to Implementation.
+		// Developer must remove dead code before audit can proceed.
 		ctx.ui.setStatus("supervisor", "Checking for dead code...");
 		getDebugLogger().info("pipeline-audit", "Running dead code check", { worktreePath });
 		const deadResult = await runDeadCodeCheck(execFn, worktreePath, config.defaultBranch || "main");
 
 		if (deadResult.status === "dead_found") {
+			const findingCount = deadResult.findings.length;
+			const totalLines = deadResult.totalDeadLines;
+			const msg = `DEAD_CODE_FOUND: ${findingCount} finding(s) found (${totalLines} lines)`;
 			ctx.ui.notify(
-				`Dead code detected: ${deadResult.findings.length} finding(s) found (${deadResult.totalDeadLines} lines). Auditor will verify.`,
+				`Dead code detected: ${findingCount} finding(s) found (${totalLines} lines). Fix before audit.`,
 				"warning",
 			);
-			getDebugLogger().info("pipeline-audit", "Dead code found", {
-				findingCount: deadResult.findings.length,
-				totalLines: deadResult.totalDeadLines,
+			getDebugLogger().info("pipeline-audit", "Blocking — dead code found", {
+				findingCount,
+				totalLines,
 			});
+
+			// Post issue comment with dead code details for developer feedback
+			const deadContext = buildDeadCodeContext(deadResult);
+			try {
+				const commentLines = [
+					"## 🔴 Dead Code Gate — Implementation Rejected",
+					"",
+					"The automated dead code check found potential dead code in changed files.",
+					"Remove all confirmed dead code before requesting audit.",
+					"",
+					deadContext || "(see pre-audit gate output for details)",
+				];
+				await postIssueComment(pi, issueNum, config.repo, commentLines.join("\n"));
+			} catch {
+				// Comment posting is best-effort
+			}
+
+			return { nextStatus: "Implementation", note: msg, deadCodeResult: deadResult };
 		} else if (deadResult.status === "no_knip") {
 			getDebugLogger().info("pipeline-audit", "knip not available, skipping dead code check");
 		} else if (deadResult.status === "error") {

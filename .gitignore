@@ -4,6 +4,7 @@
 node_modules
 tmp
 ignore/
+benchmarks/benchmark-results/
 
 # scrapling auto-setup (venv + lock file)
 .pi/scrapling-venv/
