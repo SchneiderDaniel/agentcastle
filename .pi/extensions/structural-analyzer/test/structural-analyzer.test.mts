@@ -886,7 +886,7 @@ describe("cache integration (adapter)", () => {
 		assert.strictEqual(scanCalls.length, 0, "special characters pattern should cache correctly");
 	});
 
-	it("error responses are NOT cached", async () => {
+	it("error responses are NOT cached (throw-based)", async () => {
 		const errorExec = async (cmd: string, args: string[]) => {
 			if (cmd === "ast-grep" && args[0] === "--version") {
 				return { stdout: "ast-grep 0.42.2", stderr: "", code: 0, killed: false };
@@ -899,29 +899,36 @@ describe("cache integration (adapter)", () => {
 		const pi = makePi(errorExec);
 		structuralAnalyzer(pi as any);
 
-		const r1 = await capturedExecute!(
-			"id1",
-			{ pattern: "console.log($A)", language: "xyz" },
-			undefined,
-			undefined,
-			{ cwd: "/tmp" },
-		);
-		assert.strictEqual(r1.isError, true, "first call should be error");
+		// First call — should throw (error, not cached)
+		await assert.rejects(async () => {
+			await capturedExecute!(
+				"id1",
+				{ pattern: "console.log($A)", language: "xyz" },
+				undefined,
+				undefined,
+				{ cwd: "/tmp" },
+			);
+		});
+
+		const scanCalls1 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls1.length, 1, "first call should exec scan");
 
 		execCalls.length = 0;
 
-		const r2 = await capturedExecute!(
-			"id2",
-			{ pattern: "console.log($A)", language: "xyz" },
-			undefined,
-			undefined,
-			{ cwd: "/tmp" },
-		);
+		// Second call — should throw again (re-executes, misses cache)
+		await assert.rejects(async () => {
+			await capturedExecute!(
+				"id2",
+				{ pattern: "console.log($A)", language: "xyz" },
+				undefined,
+				undefined,
+				{ cwd: "/tmp" },
+			);
+		});
 
-		// Error should NOT be cached - second call should exec again
-		const scanCalls = execCalls.filter((c) => c.args[0] === "scan");
-		assert.strictEqual(scanCalls.length, 1, "error response should NOT be cached - must re-exec");
-		assert.strictEqual(r2.isError, true);
+		// Error should NOT be cached — second call should exec again
+		const scanCalls2 = execCalls.filter((c) => c.args[0] === "scan");
+		assert.strictEqual(scanCalls2.length, 1, "error response should NOT be cached — must re-exec");
 	});
 
 	it("collision scenario: pattern with :: vs language with :: get different cached results", async () => {
@@ -1445,7 +1452,7 @@ describe("error propagation (adapter)", () => {
 		};
 	}
 
-	it("exit code 1 with stderr → isError", async () => {
+	it("exit code 1 with stderr → throws", async () => {
 		const pi = makePi((cmd: string, args: string[]) => {
 			if (cmd === "ast-grep" && args[0] === "--version")
 				return { stdout: "ok", stderr: "", code: 0, killed: false };
@@ -1454,18 +1461,24 @@ describe("error propagation (adapter)", () => {
 		});
 		structuralAnalyzer(pi as any);
 
-		const result = await capturedExecute!(
-			"id1",
-			{ pattern: "console.log($A)", language: "xyz" },
-			undefined,
-			undefined,
-			{ cwd: "/tmp" },
+		await assert.rejects(
+			async () => {
+				await capturedExecute!(
+					"id1",
+					{ pattern: "console.log($A)", language: "xyz" },
+					undefined,
+					undefined,
+					{ cwd: "/tmp" },
+				);
+			},
+			(error: any) => {
+				assert.ok(error.message.includes("unknown language: xyz"));
+				return true;
+			},
 		);
-		assert.strictEqual(result.isError, true);
-		assert.ok((result.content[0].text as string).includes("unknown language: xyz"));
 	});
 
-	it("exit code 126 → isError", async () => {
+	it("exit code 126 → throws", async () => {
 		const pi = makePi((cmd: string, args: string[]) => {
 			if (cmd === "ast-grep" && args[0] === "--version")
 				return { stdout: "ok", stderr: "", code: 0, killed: false };
@@ -1474,18 +1487,24 @@ describe("error propagation (adapter)", () => {
 		});
 		structuralAnalyzer(pi as any);
 
-		const result = await capturedExecute!(
-			"id1",
-			{ pattern: "console.log($A)", language: "ts" },
-			undefined,
-			undefined,
-			{ cwd: "/tmp" },
+		await assert.rejects(
+			async () => {
+				await capturedExecute!(
+					"id1",
+					{ pattern: "console.log($A)", language: "ts" },
+					undefined,
+					undefined,
+					{ cwd: "/tmp" },
+				);
+			},
+			(error: any) => {
+				assert.ok(error.message.includes("126"));
+				return true;
+			},
 		);
-		assert.strictEqual(result.isError, true);
-		assert.ok((result.content[0].text as string).includes("126"));
 	});
 
-	it("exit code 2 → isError", async () => {
+	it("exit code 2 → throws", async () => {
 		const pi = makePi((cmd: string, args: string[]) => {
 			if (cmd === "ast-grep" && args[0] === "--version")
 				return { stdout: "ok", stderr: "", code: 0, killed: false };
@@ -1494,14 +1513,15 @@ describe("error propagation (adapter)", () => {
 		});
 		structuralAnalyzer(pi as any);
 
-		const result = await capturedExecute!(
-			"id1",
-			{ pattern: "console.log($A)", language: "ts" },
-			undefined,
-			undefined,
-			{ cwd: "/tmp" },
-		);
-		assert.strictEqual(result.isError, true);
+		await assert.rejects(async () => {
+			await capturedExecute!(
+				"id1",
+				{ pattern: "console.log($A)", language: "ts" },
+				undefined,
+				undefined,
+				{ cwd: "/tmp" },
+			);
+		});
 	});
 
 	it("no-match (exit code 1, empty stderr) → success with 0 matches", async () => {
@@ -1543,6 +1563,36 @@ describe("error propagation (adapter)", () => {
 		assert.strictEqual(result.isError, undefined);
 		const details = result.details as Record<string, unknown>;
 		assert.strictEqual(details.matches, 2);
+	});
+
+	it("invalid pattern 'TODO' → throws before pi.exec", async () => {
+		let execCalled = false;
+		const pi = makePi((_cmd: string, _args: string[]) => {
+			execCalled = true;
+			return { stdout: "", stderr: "", code: 0, killed: false };
+		});
+		structuralAnalyzer(pi as any);
+
+		await assert.rejects(
+			async () => {
+				await capturedExecute!("id1", { pattern: "TODO", language: "ts" }, undefined, undefined, {
+					cwd: "/tmp",
+				});
+			},
+			(error: any) => {
+				assert.ok(
+					error.message.includes("TODO") && error.message.includes("ripgrep"),
+					`Error should mention TODO and ripgrep, got: ${error.message}`,
+				);
+				return true;
+			},
+		);
+
+		assert.strictEqual(
+			execCalled,
+			false,
+			"pi.exec should not be called when pattern validation fails",
+		);
 	});
 });
 
