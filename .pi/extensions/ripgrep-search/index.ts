@@ -3,12 +3,13 @@
  * Business logic extracted to submodules (config, args, parse) and internal.ts.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { mkdtemp, rm, stat, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import type { RgResult, SearchConfig } from "./types.ts";
 import { loadSearchConfig, resolveBackend, ripgrepAvailable } from "./config.ts";
@@ -26,6 +27,18 @@ import {
 const MAX_TOTAL_RESULTS = 500;
 const DEFAULT_DISPLAY_RESULTS = 10;
 const MAX_LINE_LENGTH = 500; // truncate individual match lines to prevent context-window blowup
+
+// ---------------------------------------------------------------------------
+// Mode awareness — ExtensionMode mirrors upstream type for mode gating
+// ---------------------------------------------------------------------------
+
+type ExtensionMode = "tui" | "rpc" | "json" | "print";
+let _ctxMode: ExtensionMode | undefined;
+
+/** @internal Test-only: override ctx mode for rendering tests. */
+export function _setTestCtxMode(mode: ExtensionMode | undefined): void {
+	_ctxMode = mode;
+}
 
 export function buildSearchErrorText(
 	searcherName: string,
@@ -165,6 +178,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 	let backendNoteInjected = false;
 
 	pi.on("session_start", async (_event, ctx) => {
+		_ctxMode = ctx.mode as ExtensionMode;
 		searchConfig = loadSearchConfig(ctx.cwd);
 		rgAvailable = searchConfig.searchBackend !== "grep" ? await ripgrepAvailable(pi.exec) : false;
 		backendNoteInjected = false;
@@ -216,7 +230,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			const validationError = validateQuery(query);
 			if (validationError) throw new Error(validationError);
 
-			await verifyDirectory(ctx.cwd, directory);
+			const resolvedDir = await verifyDirectory(ctx.cwd, directory);
 
 			const config = searchConfig ?? loadSearchConfig(ctx.cwd);
 			searchConfig = config;
@@ -240,7 +254,10 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				);
 				return {
 					content: [{ type: "text" as const, text: summary.text }],
-					details: summary.details as Record<string, unknown>,
+					details: {
+						...summary.details,
+						searchDirectory: resolvedDir,
+					} as Record<string, unknown>,
 				};
 			}
 
@@ -259,10 +276,12 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 								text: `No matches found for query "${query}" in "${directory}" (${searcherName}).`,
 							},
 						],
-						details: { success: true, total_returned: 0, searcher: searcherName } as Record<
-							string,
-							unknown
-						>,
+						details: {
+							success: true,
+							total_returned: 0,
+							searcher: searcherName,
+							searchDirectory: resolvedDir,
+						} as Record<string, unknown>,
 					};
 				}
 				const stderr = result.stderr || "";
@@ -306,6 +325,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			let text = summary.text;
 			const details: Record<string, unknown> = {
 				...summary.details,
+				searchDirectory: resolvedDir,
 			};
 			if (fullOutputPath) {
 				text += ` Full output saved to: ${fullOutputPath}]`;
@@ -320,50 +340,116 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 				details,
 			};
 		},
-		renderCall(args, theme, _context) {
-			let text = theme.fg("toolTitle", theme.bold("rg "));
-			text += theme.fg("accent", `"${args.query}"`);
-			if (args.directory && args.directory !== ".")
-				text += theme.fg("muted", ` in ${args.directory}`);
-			return new Text(text, 0, 0);
-		},
-		renderResult(
-			result,
-			{ expanded, isPartial }: { expanded?: boolean; isPartial?: boolean },
-			theme,
-			_context,
-		) {
-			const d = result.details as
-				| {
-						total_returned?: number;
-						searcher?: string;
-						truncated?: boolean;
-						fullOutputPath?: string;
-						success?: boolean;
-				  }
-				| undefined;
-			if (isPartial) return new Text(theme.fg("warning", "Searching..."), 0, 0);
-			if (!d || d.success === false)
-				return new Text(
-					theme.fg("error", (result.content[0] as { text?: string })?.text ?? "Search failed"),
-					0,
-					0,
-				);
-			if (!d.total_returned) return new Text(theme.fg("dim", "No matches found"), 0, 0);
-			let text = theme.fg("success", `${d.total_returned} matches`);
-			text += theme.fg("muted", ` (${d.searcher ?? "?"})`);
-			if (d.truncated) text += theme.fg("warning", " [truncated]");
-			if (expanded) {
-				const c = result.content[0] as { text?: string } | undefined;
-				if (c?.text) {
-					const lines = c.text.split("\n").slice(0, 20);
-					for (const line of lines) text += "\n" + theme.fg("dim", line);
-					if (c.text.split("\n").length > 20)
-						text += "\n" + theme.fg("muted", "... (use read tool to see full output)");
-				}
-				if (d.fullOutputPath) text += "\n" + theme.fg("dim", `Full output: ${d.fullOutputPath}`);
-			}
-			return new Text(text, 0, 0);
-		},
+		renderCall: renderCallImpl,
+		renderResult: renderResultImpl,
 	});
+}
+
+// ---------------------------------------------------------------------------
+// Renderers — exported for testing
+// ---------------------------------------------------------------------------
+
+/** Render the tool call. */
+export function renderCallImpl(
+	args: { query: string; directory?: string },
+	theme: Theme,
+	_context: unknown,
+): Text {
+	if (_ctxMode && _ctxMode !== "tui") {
+		return new Text(args.query, 0, 0);
+	}
+
+	let text = theme.fg("toolTitle", theme.bold("rg "));
+	text += theme.fg("accent", `"${args.query}"`);
+	if (args.directory && args.directory !== ".") text += theme.fg("muted", ` in ${args.directory}`);
+	return new Text(text, 0, 0);
+}
+
+/** Render the tool result. */
+export function renderResultImpl(
+	result: {
+		content: Array<{ type: string; text?: string }>;
+		details?: Record<string, unknown>;
+	},
+	options: { expanded?: boolean; isPartial?: boolean },
+	theme: Theme,
+	_context: unknown,
+): Text {
+	const { expanded, isPartial } = options;
+
+	// Non-TUI mode: pass through raw text content without theme
+	if (_ctxMode && _ctxMode !== "tui") {
+		const textContent = (result.content[0] as { text?: string })?.text ?? "";
+		return new Text(textContent, 0, 0);
+	}
+
+	const d = result.details as
+		| {
+				total_returned?: number;
+				searcher?: string;
+				truncated?: boolean;
+				fullOutputPath?: string;
+				success?: boolean;
+				searchDirectory?: string;
+		  }
+		| undefined;
+
+	if (isPartial) return new Text(theme.fg("warning", "Searching..."), 0, 0);
+	if (!d || d.success === false)
+		return new Text(
+			theme.fg("error", (result.content[0] as { text?: string })?.text ?? "Search failed"),
+			0,
+			0,
+		);
+	if (!d.total_returned) return new Text(theme.fg("dim", "No matches found"), 0, 0);
+
+	let text = theme.fg("success", `${d.total_returned} matches`);
+	text += theme.fg("muted", ` (${d.searcher ?? "?"})`);
+	if (d.truncated) text += theme.fg("warning", " [truncated]");
+
+	if (expanded) {
+		const c = result.content[0] as { text?: string } | undefined;
+		if (c?.text) {
+			const lines = c.text.split("\n").slice(0, 20);
+			for (const line of lines) {
+				// Apply OSC 8 file:// hyperlink when searchDirectory is available
+				const formattedLine = d.searchDirectory ? wrapOsc8Link(line, d.searchDirectory) : line;
+				text += "\n" + theme.fg("dim", formattedLine);
+			}
+			if (c.text.split("\n").length > 20)
+				text += "\n" + theme.fg("muted", "... (use read tool to see full output)");
+		}
+		if (d.fullOutputPath) text += "\n" + theme.fg("dim", `Full output: ${d.fullOutputPath}`);
+	}
+
+	return new Text(text, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
+// OSC 8 hyperlink helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Wrap file path in a result line with an OSC 8 file:// hyperlink.
+ *
+ * Input format (from buildStructuredSummary):
+ *   "1. file:line:column:text"
+ * Output:
+ *   "1. \x1b]8;;file:///path#L42\x1b\\file:42:16\x1b]8;;\x1b\\:text"
+ */
+export function wrapOsc8Link(line: string, searchDirectory: string): string {
+	const resultLineRe = /^(\d+\.\s+)([^:]+):(\d+):(\d+):/;
+	const match = line.match(resultLineRe);
+	if (!match) return line;
+
+	const [, prefix, file, lineNum] = match;
+	const fileUrl = pathToFileURL(join(searchDirectory, file)).href + "#L" + lineNum;
+	const osc8 = `\x1b]8;;${fileUrl}\x1b\\`;
+	const osc8End = `\x1b]8;;\x1b\\`;
+
+	// Build: "N. ${OSC8}file:line:column${OSC8_END}:text"
+	const matchedPart = match[0]; // e.g. "1. src/app.ts:42:16:"
+	const prefixLen = prefix.length; // "1. "
+	const filePart = matchedPart.slice(prefixLen, -1); // "src/app.ts:42:16" (without trailing colon)
+	return `${prefix}${osc8}${filePart}${osc8End}:${line.slice(matchedPart.length)}`;
 }
