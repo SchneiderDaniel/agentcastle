@@ -64,9 +64,13 @@ type CheckPathFn = (
 ) => string | null;
 type CheckBashCommandFn = (command: string, entries: IgnoreEntry[], cwd: string) => string | null;
 
-const PATH_TOOLS = ["read", "write", "edit"];
-const OPT_PATH_TOOLS = ["grep", "find", "ls"];
-const COMMAND_TOOLS = ["bash"];
+/**
+ * Local isToolCallEventType mirroring the package implementation:
+ * event.toolName === toolName
+ */
+function isToolCallEventType(toolName: string, event: ToolCallEvent): boolean {
+	return event.toolName === toolName;
+}
 
 /**
  * handlerWrapper wraps the tool_call handler body in try/catch.
@@ -84,11 +88,19 @@ async function handlerWrapper(
 		const ignoreEntries = getEntries(ctx.cwd);
 		let blockedPath: string | null = null;
 
-		if (PATH_TOOLS.includes(event.toolName)) {
+		if (isToolCallEventType("read", event)) {
 			blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
-		} else if (OPT_PATH_TOOLS.includes(event.toolName)) {
+		} else if (isToolCallEventType("write", event)) {
 			blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
-		} else if (COMMAND_TOOLS.includes(event.toolName)) {
+		} else if (isToolCallEventType("edit", event)) {
+			blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
+		} else if (isToolCallEventType("grep", event)) {
+			blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
+		} else if (isToolCallEventType("find", event)) {
+			blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
+		} else if (isToolCallEventType("ls", event)) {
+			blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
+		} else if (isToolCallEventType("bash", event)) {
 			blockedPath = checkBashCommand(
 				(event.input as { command?: string }).command ?? "",
 				ignoreEntries,
