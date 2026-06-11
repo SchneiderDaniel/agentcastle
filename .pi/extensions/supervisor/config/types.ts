@@ -42,6 +42,13 @@ export interface SupervisorConfig {
 	 * Default: 0.75
 	 */
 	auditScoreThreshold?: number;
+
+	/**
+	 * Enable experimental pipeline features (auto-forking, advanced parallelism).
+	 * When false or undefined, only core stages run.
+	 * Default: false
+	 */
+	enableExperimentalFeatures?: boolean;
 }
 
 export interface AgentFrontmatter {
