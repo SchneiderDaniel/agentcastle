@@ -48,20 +48,36 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			// 🔒 Trust gate: skip formatting/linting on untrusted projects
+			// Reading and executing project-local config files (prettier, eslint)
+			// could be dangerous on untrusted projects, so bail out early.
+			if (!ctx.isProjectTrusted()) return;
+
 			// Step 1: Format the file in-place with --write
 			const { command, args } = buildPrettierArgs(ctx.cwd, absolutePath);
 			const result = await pi.exec.bind(pi)(command, args, { cwd: ctx.cwd, timeout: 15_000 });
 			const ok = result.code === 0;
-			if (ok && ctx.hasUI) {
-				ctx.ui.notify(`Formatted: ${filePath}`, "info");
+
+			// Mode-adaptive notification for format result
+			if (ok) {
+				if (ctx.mode === "tui") {
+					ctx.ui.notify(`Formatted: ${filePath}`, "info");
+				} else if (ctx.mode === "rpc") {
+					pi.sendUserMessage(`Formatted: ${filePath}`, { deliverAs: "followUp" });
+				}
+				// JSON and print modes: no notification for format
 			}
 
 			// Step 2: ESLint on saved file (Tier 1 diagnostics, advisory only)
 			if (shouldLint(absolutePath)) {
 				const lintMsg = await runEslintOnFile(pi.exec.bind(pi), absolutePath, ctx.cwd);
-				if (lintMsg && ctx.hasUI) {
+
+				// Mode-adaptive notification for ESLint ran
+				if (lintMsg && ctx.mode === "tui") {
 					ctx.ui.notify(`ESLint ran: ${filePath}`, "info");
 				}
+
+				// Send diagnostic details as followUp in all modes (if any issues found)
 				if (lintMsg) {
 					// Non-blocking — deliver as followUp, Developer can proceed
 					const followUp = [
