@@ -131,6 +131,7 @@ describe("buildAgentTask — systemPromptOptions parameter", () => {
 			undefined, // researchFindings
 			undefined, // auditFeedback
 			undefined, // deadCodeContext
+			undefined, // gateFailureContext
 			{ selectedTools: ["read", "bash", "edit"] }, // systemPromptOptions
 		);
 		assert.ok(task.includes("## Available Tools"), "should inject Available Tools section");
@@ -158,6 +159,7 @@ describe("buildAgentTask — systemPromptOptions parameter", () => {
 			undefined,
 			undefined,
 			undefined, // deadCodeContext
+			undefined, // gateFailureContext
 			{ contextFiles: [".pi/agents.md", ".pi/skills/writing-voice/SKILL.md"] },
 		);
 		assert.ok(task.includes("## Available Tools"), "should inject Available Tools section");
@@ -183,6 +185,7 @@ describe("buildAgentTask — systemPromptOptions parameter", () => {
 			undefined,
 			undefined,
 			undefined, // deadCodeContext
+			undefined, // gateFailureContext
 			{ skills: ["writing-voice", "extension-spec"] },
 		);
 		assert.ok(task.includes("## Available Tools"), "should inject Available Tools section");
@@ -227,6 +230,7 @@ describe("buildAgentTask — systemPromptOptions parameter", () => {
 			undefined,
 			undefined,
 			undefined, // deadCodeContext
+			undefined, // gateFailureContext
 			{ selectedTools: [], contextFiles: [], skills: [] },
 		);
 		assert.ok(
@@ -256,6 +260,7 @@ describe("buildAgentTask — systemPromptOptions parameter", () => {
 				undefined,
 				undefined,
 				undefined, // deadCodeContext
+				undefined, // gateFailureContext
 				{ selectedTools: ["read", "bash"], contextFiles: ["config.json"] },
 			);
 			assert.ok(task.includes("## Available Tools"), `${agent} should include section`);
@@ -281,6 +286,7 @@ describe("buildAgentTask — systemPromptOptions parameter", () => {
 			undefined,
 			undefined,
 			undefined, // deadCodeContext
+			undefined, // gateFailureContext
 			{ selectedTools: undefined, contextFiles: undefined, skills: undefined },
 		);
 		assert.ok(!task.includes("## Available Tools"), "no section when all fields undefined");

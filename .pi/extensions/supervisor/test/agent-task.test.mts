@@ -618,3 +618,297 @@ describe("buildAgentTask — auditor worktree path + branch name (Phase 4)", () 
 		assert.ok(task.includes('"action"'), "JSON action key present");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Phase 5: buildAgentTask gateFailureContext (Phase 3 of #787)
+// ---------------------------------------------------------------------------
+
+describe("buildAgentTask — gateFailureContext (Phase 3, Issue #787)", () => {
+	it("developer without gateFailureContext — no <previous_gate_failure> tag", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+		);
+		assert.ok(!task.includes("<previous_gate_failure>"), "No XML tag when no context");
+	});
+
+	it("developer with gateFailureContext — contains <previous_gate_failure> XML tag", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined, // worktreePath
+			undefined, // branchName
+			undefined, // summarizedRejections
+			undefined, // duplicateCodeContext
+			undefined, // researchFindings
+			undefined, // auditFeedback
+			undefined, // deadCodeContext
+			"CI_FAILED: check build", // gateFailureContext
+		);
+		assert.ok(task.includes("<previous_gate_failure>"), "Should contain XML opening tag");
+		assert.ok(task.includes("</previous_gate_failure>"), "Should contain XML closing tag");
+	});
+
+	it("developer with gateFailureContext — contains the exact note text", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"CI_FAILED: check build",
+		);
+		assert.ok(task.includes("CI_FAILED: check build"), "Contains the exact note text");
+	});
+
+	it("developer with gateFailureContext — contains action items with git status instruction", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"TDD gate failed",
+		);
+		assert.ok(task.includes("Action items:"), "Contains Action items section");
+		assert.ok(task.includes("git status"), "Contains git status instruction");
+	});
+
+	it("developer with gateFailureContext — contains git log --oneline instruction", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"TDD gate failed",
+		);
+		assert.ok(task.includes("git log --oneline"), "Contains git log --oneline instruction");
+	});
+
+	it("developer with gateFailureContext AND auditFeedback — both blocks present", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"## Audit Rejected\nCritical issue found", // auditFeedback
+			undefined,
+			"TDD gate failed", // gateFailureContext
+		);
+		assert.ok(task.includes("<previous_gate_failure>"), "Gate failure block present");
+		assert.ok(
+			task.includes("AUDITOR REJECTED YOUR PREVIOUS IMPLEMENTATION"),
+			"Audit feedback block present",
+		);
+	});
+
+	it("architect with gateFailureContext — no XML block", () => {
+		const task = buildAgentTask(
+			"architect",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"CI_FAILED",
+		);
+		assert.ok(!task.includes("<previous_gate_failure>"), "Architect should not have XML block");
+	});
+
+	it("auditor with gateFailureContext — no XML block", () => {
+		const task = buildAgentTask(
+			"auditor",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"CI_FAILED",
+		);
+		assert.ok(!task.includes("<previous_gate_failure>"), "Auditor should not have XML block");
+	});
+
+	it("researcher with gateFailureContext — no XML block", () => {
+		const task = buildAgentTask(
+			"researcher",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"CI_FAILED",
+		);
+		assert.ok(!task.includes("<previous_gate_failure>"), "Researcher should not have XML block");
+	});
+
+	it("test-designer with gateFailureContext — no XML block", () => {
+		const task = buildAgentTask(
+			"test-designer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"CI_FAILED",
+		);
+		assert.ok(!task.includes("<previous_gate_failure>"), "Test-designer should not have XML block");
+	});
+
+	it("developer with gateFailureContext — existing resume instructions still present (no regression)", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"TDD gate failed",
+		);
+		assert.ok(task.includes("git stash list"), "Existing resume instructions still present");
+		assert.ok(task.includes("resume from it"), "Resume instruction still present");
+	});
+
+	it("developer with gateFailureContext — JSON_OUTPUT_INSTRUCTION still present (no regression)", () => {
+		const task = buildAgentTask(
+			"developer",
+			42,
+			"owner/repo",
+			"Fix bug",
+			makeFilteredData(),
+			[],
+			"main",
+			"origin",
+			"../",
+			"worktree-git-issue-",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			"TDD gate failed",
+		);
+		assert.ok(task.includes('"action": "COMPLETE"'), "JSON output instruction present");
+		assert.ok(task.includes("SECURITY RULE"), "SECURITY RULE section present");
+	});
+});
