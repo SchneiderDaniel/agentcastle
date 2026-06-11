@@ -126,6 +126,49 @@ describe("worktree-sandbox gates", () => {
 		sandboxDir = mkdtempSync(join(tmpdir(), "sandbox-gate-test-"));
 	});
 
+	// ═════════════════════════════════════════════════════════════
+	// Export reference tests (satisfy TDD gate: exported symbols
+	// must appear in test assertions)
+	// ═════════════════════════════════════════════════════════════
+
+	describe("exports", () => {
+		it("exports rewritePath as a function", () => {
+			assert.equal(typeof mod.rewritePath, "function");
+		});
+
+		it("exports default as a function (extension factory)", () => {
+			assert.equal(typeof mod.default, "function");
+		});
+
+		it("rewritePath blocks absolute path outside sandbox when called directly", () => {
+			const event = { input: { path: "/etc/passwd" } };
+			const ctx = makeCtx({ hasUI: false });
+			const result = mod.rewritePath(
+				"read",
+				event,
+				"/tmp/sandbox-test-root",
+				ctx,
+				"file operations",
+			);
+			assert.ok(result !== undefined);
+			assert.equal(result.block, true);
+		});
+
+		it("rewritePath allows relative path inside sandbox when called directly", () => {
+			const event = { input: { path: "relative/file.txt" } };
+			const ctx = makeCtx({ hasUI: false });
+			const result = mod.rewritePath(
+				"read",
+				event,
+				"/tmp/sandbox-test-root",
+				ctx,
+				"file operations",
+			);
+			assert.equal(result, undefined);
+			assert.equal(event.input.path, join("/tmp/sandbox-test-root", "relative/file.txt"));
+		});
+	});
+
 	beforeEach(() => {
 		// Ensure sandbox path is set for tests that reach getSandboxRoot()
 		process.env[ENV_KEY] = sandboxDir;
