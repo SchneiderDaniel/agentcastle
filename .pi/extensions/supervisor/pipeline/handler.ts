@@ -76,13 +76,60 @@ import {
 /**
  * Main supervisor handler — processes a GitHub issue through the full Kanban pipeline.
  * Supports --debug flag for structured JSONL logging to /tmp/.
+ *
+ * Mode adaptation: checks ctx.hasUI before calling dialog methods (confirm/select).
+ * Trust gate: checks ctx.isProjectTrusted() before reading config or creating issues.
+ * System prompt options: extracts via ctx.getSystemPromptOptions() for agent context.
+ * Experimental features: gated behind config.enableExperimentalFeatures.
  */
 export async function handleSupervisorCommand(
 	args: string | undefined,
 	ctx: ExtensionCommandContext,
 	pi: ExtensionAPI,
 ): Promise<void> {
-	// Parse args: "--debug 103", "103 --debug", "103"
+	// ── Project Trust Gate ────────────────────────────────────────────
+	// Check project trust BEFORE reading config or making any gh calls.
+	// Note: only consumption-side check — supervisor cannot register
+	// project_trust event handler (it's a project-local extension).
+	// #3 (auto-trust via project_trust event) must live in a separate
+	// global extension.
+	if (typeof ctx.isProjectTrusted === "function" && !ctx.isProjectTrusted()) {
+		const msg = "Project not trusted. Skipping issue operations.";
+		if (ctx.hasUI) {
+			ctx.ui.notify(msg, "error");
+		} else {
+			pi.sendMessage({ customType: "supervisor", content: `⚠️ ${msg}`, display: true });
+		}
+		return;
+	}
+
+	// ── System Prompt Options ─────────────────────────────────────────
+	// Capture current system prompt options at pipeline start so we can
+	// pass relevant context (tools, skills, context files) to sub-agents.
+	// This avoids token waste from redundant context loading.
+	let systemPromptOptions:
+		| {
+				selectedTools?: string[];
+				contextFiles?: string[];
+				skills?: string[];
+		  }
+		| undefined;
+	if (typeof ctx.getSystemPromptOptions === "function") {
+		try {
+			const opts = ctx.getSystemPromptOptions();
+			if (opts) {
+				systemPromptOptions = {
+					selectedTools: opts.selectedTools as string[] | undefined,
+					contextFiles: opts.contextFiles as string[] | undefined,
+					skills: opts.skills as string[] | undefined,
+				};
+			}
+		} catch {
+			// Non-critical — proceed without prompt options
+		}
+	}
+
+	// Parse args using parseSupervisorArgs (parseArgs-compatible wrapper)
 	const parsed = parseSupervisorArgs(args);
 	const issueNum = parsed.issueNum;
 	const isDebug = parsed.isDebug;
@@ -95,11 +142,18 @@ export async function handleSupervisorCommand(
 			parsedIssueNum: issueNum,
 			cwd: ctx.cwd,
 		});
-		ctx.ui.notify(`Debug logging enabled → ${logger.getLogPath()}`, "info");
+		if (ctx.hasUI) {
+			ctx.ui.notify(`Debug logging enabled → ${logger.getLogPath()}`, "info");
+		}
 	}
 
 	if (!issueNum || issueNum < 1) {
-		ctx.ui.notify("Usage: /supervisor [--debug] <issue-number>", "error");
+		const usageMsg = "Usage: /supervisor [--debug] <issue-number>";
+		if (ctx.hasUI) {
+			ctx.ui.notify(usageMsg, "error");
+		} else {
+			pi.sendMessage({ customType: "supervisor", content: `⚠️ ${usageMsg}`, display: true });
+		}
 		if (isDebug) {
 			getDebugLogger().error("handler", "Invalid issue number", { args, parsed });
 		}
@@ -120,10 +174,21 @@ export async function handleSupervisorCommand(
 	let collector: ErrorCollector;
 
 	// Build ExecFn and NotifyFn from pi/ctx for helpers
+	// Mode adaptation: ctx.ui.notify is fire-and-forget (safe in all modes,
+	// silently drops in print/json mode). Dialog methods (confirm/select)
+	// need ctx.hasUI check before calling.
 	const exec: ExecFn = (cmd, args, opts) => pi.exec(cmd, args, opts);
 	const notify: NotifyFn = {
-		info: (msg) => ctx.ui.notify(msg, "info"),
-		error: (msg) => ctx.ui.notify(msg, "error"),
+		info: (msg) => {
+			if (ctx.hasUI) {
+				ctx.ui.notify(msg, "info");
+			}
+		},
+		error: (msg) => {
+			if (ctx.hasUI) {
+				ctx.ui.notify(msg, "error");
+			}
+		},
 	};
 
 	// Create ErrorCollector for this pipeline run
@@ -138,8 +203,22 @@ export async function handleSupervisorCommand(
 			submodules: config.submodules?.length,
 		});
 
+		// Experimental features gate
+		// When enableExperimentalFeatures is false/undefined, advanced
+		// pipeline features (auto-forking, advanced parallelism) are skipped.
+		// Currently no experimental stages exist in the WORKFLOW — this flag
+		// is forward-looking for future stages that can opt in.
+		const experimentalEnabled = config.enableExperimentalFeatures === true;
+		if (!experimentalEnabled) {
+			getDebugLogger().info("handler", "Experimental features disabled — running core stages only");
+		} else {
+			getDebugLogger().info("handler", "Experimental features enabled");
+		}
+
 		// Fetch issue
-		ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
+		if (ctx.hasUI) {
+			ctx.ui.notify(`Fetching issue #${issueNum}...`, "info");
+		}
 		const issueData = await fetchIssue(exec, notify, config, issueNum, collector);
 		if (!issueData) return;
 		issueTitle = (issueData?.title as string) || `Issue #${issueNum}`;
@@ -397,6 +476,7 @@ export async function handleSupervisorCommand(
 				researchFindings,
 				auditFeedback,
 				deadContext,
+				systemPromptOptions,
 			);
 
 			getDebugLogger().info("handler", `Dispatching agent ${agentName}`, {

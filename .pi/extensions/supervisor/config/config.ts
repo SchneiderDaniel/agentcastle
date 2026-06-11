@@ -105,6 +105,14 @@ export function loadConfig(): SupervisorConfig {
 		throw new Error("supervisor.maxCommentChars must be a positive integer");
 	}
 
+	// Validate enableExperimentalFeatures (optional boolean)
+	const enableExperimentalFeatures = cfg.enableExperimentalFeatures;
+	if (enableExperimentalFeatures !== undefined && typeof enableExperimentalFeatures !== "boolean") {
+		throw new Error(
+			"supervisor.enableExperimentalFeatures must be a boolean (true/false) if provided",
+		);
+	}
+
 	// Validate auditScoreThreshold (optional, 0.0–1.0 range)
 	const auditScoreThreshold = cfg.auditScoreThreshold;
 	if (auditScoreThreshold !== undefined) {
@@ -137,6 +145,7 @@ export function loadConfig(): SupervisorConfig {
 		maxToolCalls: maxToolCalls,
 		commentSummaryThreshold,
 		maxCommentChars,
+		enableExperimentalFeatures: enableExperimentalFeatures ?? false,
 		auditScoreThreshold: auditScoreThreshold ?? 0.75,
 	};
 }

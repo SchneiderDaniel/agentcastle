@@ -894,13 +894,25 @@ All supervisor settings in `.pi/settings.json` under the `supervisor` key:
 			"researcher": 10,
 			"developer": 30,
 		},
+		"enableExperimentalFeatures": false, // Gate experimental pipeline features (auto-forking, advanced parallelism)
 		"submodules": [
 			// Auto-parsed from .gitmodules if absent
 			{ "path": "flask_blogs", "repo": "Owner/flask_blogs" },
 		],
 	},
 }
-```
+
+### New in Changelog Check (v0.78.0–v0.79.1)
+
+| Improvement | Description |
+|---|---|
+| **Autocomplete trigger** | `#` trigger in editor opens issue autocomplete from configured repo. Registered in `session_start` handler. |
+| **Mode adaptation** | UI dialog methods (confirm/select) gated behind `ctx.hasUI`. Notify calls use `pi.sendMessage()` fallback in non-UI modes. |
+| **Trust gate** | Pipeline checks `ctx.isProjectTrusted()` before reading config or making GitHub calls. Early return with warning if untrusted. |
+| **System prompt options** | `ctx.getSystemPromptOptions()` called at pipeline start; tools, skills, context files injected into agent tasks via `## Available Tools` section. |
+| **Experimental features** | `enableExperimentalFeatures` config field gates advanced pipeline stages. |
+| **parseArgs interface** | `parseSupervisorArgs` updated to mirror `parseArgs` API with `unknownFlags` Map and `messages` array. |
+| **Prompt template defaults** | Developer agent prompt includes thinking effort default (`${1:-medium}`) using pi's prompt template syntax. |
 
 #### 8.9 Complete Walkthrough
 

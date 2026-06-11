@@ -68,10 +68,14 @@ export async function handlePostPipelineMerge(
 				"warning",
 			);
 
-			const shouldFix = await ctx.ui.confirm(
-				"Merge Conflict Detected",
-				`PR #${conflictInfo.number} (${branch}) has merge conflicts with ${conflictInfo.baseRefName}. Should I fix them?`,
-			);
+			// Mode adaptation: when hasUI is false (print/json mode),
+			// default to true (attempt auto-merge) without prompting.
+			const shouldFix = ctx.hasUI
+				? await ctx.ui.confirm(
+						"Merge Conflict Detected",
+						`PR #${conflictInfo.number} (${branch}) has merge conflicts with ${conflictInfo.baseRefName}. Should I fix them?`,
+					)
+				: true;
 
 			if (shouldFix) {
 				const wt =
