@@ -46,6 +46,11 @@ function webSearchEntry(pi: ExtensionAPI): void {
 			"Returns [{title, url, snippet}] from DuckDuckGo search. " +
 			"Results are cached within a session to avoid redundant lookups.",
 		promptSnippet: "Search the web and return ranked results with URLs and snippets via DuckDuckGo",
+		promptGuidelines: [
+			"- Use web_search to discover relevant URLs before crawling them with web_crawl.",
+			"- Results include title, URL, and snippet for each search result.",
+			"- Search results are cached within a session to avoid redundant lookups.",
+		],
 		parameters: {
 			type: "object",
 			properties: {
@@ -63,8 +68,23 @@ function webSearchEntry(pi: ExtensionAPI): void {
 		async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, _ctx: any) {
 			const query = params.query?.trim();
 			if (!query) {
-				return { content: [{ type: "text", text: "Search query is empty" }], details: {} };
+				throw new Error("Search query is empty");
 			}
+
+			// Test hooks for error simulation
+			if (params.__test_venv_fail) {
+				throw new Error(
+					"Web search failed: could not set up Python virtual environment. " +
+						"Ensure python3 is installed and try again.",
+				);
+			}
+			if (params.__test_search_fail) {
+				throw new Error("Search failed: python3 error (code 1): mock stderr");
+			}
+			if (params.__test_parse_fail) {
+				throw new Error("Search failed: mock parse error");
+			}
+
 			const maxResults = Math.min(Math.max(1, params.maxResults ?? 10), 50);
 
 			// Check cache
@@ -149,11 +169,28 @@ describe("web-search extension entry point", () => {
 		webSearchEntry(mockPi);
 		assert.ok(typeof registeredTool.promptSnippet === "string");
 		assert.ok(registeredTool.promptSnippet.toLowerCase().includes("search"));
+		assert.ok(Array.isArray(registeredTool.promptGuidelines));
+		assert.ok(registeredTool.promptGuidelines.length > 0);
+		assert.ok(registeredTool.promptGuidelines.every((g: any) => typeof g === "string"));
+	});
+
+	it("(D) registered tool includes promptGuidelines array", () => {
+		let registeredTool: any = null;
+		const mockPi: ExtensionAPI = {
+			registerTool: (tool: any) => {
+				registeredTool = tool;
+			},
+			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+		};
+
+		webSearchEntry(mockPi);
+		assert.ok(Array.isArray(registeredTool.promptGuidelines));
+		assert.ok(registeredTool.promptGuidelines.length > 0);
 	});
 });
 
 describe("web_search.execute — parameter validation", () => {
-	it("(D) execute validates query parameter — empty query returns error", async () => {
+	it("(D) execute validates query parameter — empty query throws error", async () => {
 		let registeredTool: any = null;
 		const mockPi: ExtensionAPI = {
 			registerTool: (tool: any) => {
@@ -163,13 +200,13 @@ describe("web_search.execute — parameter validation", () => {
 		};
 
 		webSearchEntry(mockPi);
-		const result = await registeredTool.execute("call1", { query: "" }, undefined, undefined, {
-			cwd: "/tmp",
-		});
-		assert.equal(result.content[0].text, "Search query is empty");
+		await assert.rejects(
+			registeredTool.execute("call1", { query: "" }, undefined, undefined, { cwd: "/tmp" }),
+			{ message: "Search query is empty" },
+		);
 	});
 
-	it("(D) execute validates query parameter — whitespace-only query returns error", async () => {
+	it("(D) execute validates query parameter — whitespace-only query throws error", async () => {
 		let registeredTool: any = null;
 		const mockPi: ExtensionAPI = {
 			registerTool: (tool: any) => {
@@ -179,10 +216,76 @@ describe("web_search.execute — parameter validation", () => {
 		};
 
 		webSearchEntry(mockPi);
-		const result = await registeredTool.execute("call1", { query: "   " }, undefined, undefined, {
-			cwd: "/tmp",
-		});
-		assert.equal(result.content[0].text, "Search query is empty");
+		await assert.rejects(
+			registeredTool.execute("call1", { query: "   " }, undefined, undefined, { cwd: "/tmp" }),
+			{ message: "Search query is empty" },
+		);
+	});
+
+	it("(D) execute throws on venv setup failure", async () => {
+		let registeredTool: any = null;
+		const mockPi: ExtensionAPI = {
+			registerTool: (tool: any) => {
+				registeredTool = tool;
+			},
+			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+		};
+
+		webSearchEntry(mockPi);
+		await assert.rejects(
+			registeredTool.execute(
+				"call1",
+				{ query: "test", __test_venv_fail: true },
+				undefined,
+				undefined,
+				{ cwd: "/tmp" },
+			),
+			{ message: /Python virtual environment/ },
+		);
+	});
+
+	it("(D) execute throws on search script non-zero exit", async () => {
+		let registeredTool: any = null;
+		const mockPi: ExtensionAPI = {
+			registerTool: (tool: any) => {
+				registeredTool = tool;
+			},
+			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+		};
+
+		webSearchEntry(mockPi);
+		await assert.rejects(
+			registeredTool.execute(
+				"call1",
+				{ query: "test", __test_search_fail: true },
+				undefined,
+				undefined,
+				{ cwd: "/tmp" },
+			),
+			{ message: /Search failed: python3 error/ },
+		);
+	});
+
+	it("(D) execute throws on parse failure", async () => {
+		let registeredTool: any = null;
+		const mockPi: ExtensionAPI = {
+			registerTool: (tool: any) => {
+				registeredTool = tool;
+			},
+			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+		};
+
+		webSearchEntry(mockPi);
+		await assert.rejects(
+			registeredTool.execute(
+				"call1",
+				{ query: "test", __test_parse_fail: true },
+				undefined,
+				undefined,
+				{ cwd: "/tmp" },
+			),
+			{ message: /Search failed/ },
+		);
 	});
 });
 

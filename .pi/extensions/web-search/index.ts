@@ -32,6 +32,11 @@ export default function webSearch(pi: ExtensionAPI): void {
 			"Returns [{title, url, snippet}] from DuckDuckGo search. " +
 			"Results are cached within a session to avoid redundant lookups.",
 		promptSnippet: "Search the web and return ranked results with URLs and snippets via DuckDuckGo",
+		promptGuidelines: [
+			"- Use web_search to discover relevant URLs before crawling them with web_crawl.",
+			"- Results include title, URL, and snippet for each search result.",
+			"- Search results are cached within a session to avoid redundant lookups.",
+		],
 		parameters: Type.Object({
 			query: Type.String({
 				description: "Search query (e.g. 'latest rust web framework 2026')",
@@ -46,10 +51,7 @@ export default function webSearch(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params, signal, onUpdate, _ctx) {
 			const query = params.query.trim();
 			if (!query) {
-				return {
-					content: [{ type: "text", text: "Search query is empty" }],
-					details: {} as Record<string, unknown>,
-				};
+				throw new Error("Search query is empty");
 			}
 			const maxResults = Math.min(Math.max(1, params.maxResults ?? 10), 50);
 
@@ -74,17 +76,10 @@ export default function webSearch(pi: ExtensionAPI): void {
 			// Resolve venv python (auto-creates venv + installs ddgs on first call)
 			const python = await ensureWebSearchVenv(pi.exec, cwd, onUpdate, venvReady);
 			if (!python) {
-				return {
-					content: [
-						{
-							type: "text",
-							text:
-								"Web search failed: could not set up Python virtual environment. " +
-								"Ensure python3 is installed and try again.",
-						},
-					],
-					details: {} as Record<string, unknown>,
-				};
+				throw new Error(
+					"Web search failed: could not set up Python virtual environment. " +
+						"Ensure python3 is installed and try again.",
+				);
 			}
 
 			const result = await runSearchScript(
@@ -97,23 +92,14 @@ export default function webSearch(pi: ExtensionAPI): void {
 			);
 
 			if (result.code !== 0) {
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Search failed: python3 error (code ${result.code}): ${result.stderr.slice(0, 500)}`,
-						},
-					],
-					details: {} as Record<string, unknown>,
-				};
+				throw new Error(
+					`Search failed: python3 error (code ${result.code}): ${result.stderr.slice(0, 500)}`,
+				);
 			}
 
 			const parsed = parseSearchResults(result.stdout);
 			if (!parsed.ok) {
-				return {
-					content: [{ type: "text", text: `Search failed: ${parsed.error}` }],
-					details: {} as Record<string, unknown>,
-				};
+				throw new Error(`Search failed: ${parsed.error}`);
 			}
 
 			// Cache results
