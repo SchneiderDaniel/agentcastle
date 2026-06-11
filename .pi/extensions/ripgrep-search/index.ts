@@ -27,14 +27,6 @@ const MAX_TOTAL_RESULTS = 500;
 const DEFAULT_DISPLAY_RESULTS = 10;
 const MAX_LINE_LENGTH = 500; // truncate individual match lines to prevent context-window blowup
 
-function errResponse(text: string, extra: Record<string, unknown> = {}) {
-	return {
-		content: [{ type: "text" as const, text }],
-		details: { success: false, error: text, ...extra } as Record<string, unknown>,
-		isError: true,
-	};
-}
-
 export function buildSearchErrorText(
 	searcherName: string,
 	exitCode: number | null,
@@ -64,28 +56,17 @@ export function buildSearchErrorText(
 	return errorText;
 }
 
-export async function verifyDirectory(
-	cwd: string,
-	directory: string,
-): Promise<
-	{ ok: true; resolvedDir: string } | { ok: false; response: ReturnType<typeof errResponse> }
-> {
+export async function verifyDirectory(cwd: string, directory: string): Promise<string> {
 	const resolvedDir = resolve(cwd, directory);
 	// Security: prevent path traversal — reject directories outside project root
 	const resolvedCwd = resolve(cwd);
 	if (resolvedDir !== resolvedCwd && !resolvedDir.startsWith(resolvedCwd + "/")) {
-		return {
-			ok: false,
-			response: errResponse(
-				`Directory traversal detected: "${directory}" resolves outside project root.`,
-			),
-		};
+		throw new Error(`Directory traversal detected: "${directory}" resolves outside project root.`);
 	}
 	try {
 		const dirStat = await stat(resolvedDir);
-		if (!dirStat.isDirectory())
-			return { ok: false, response: errResponse(`"${directory}" is a file, not a directory.`) };
-		return { ok: true, resolvedDir };
+		if (!dirStat.isDirectory()) throw new Error(`"${directory}" is a file, not a directory.`);
+		return resolvedDir;
 	} catch (err: unknown) {
 		const nodeErr = err as { code?: string };
 		if (nodeErr.code === "ENOENT") {
@@ -100,18 +81,11 @@ export async function verifyDirectory(
 				/* ignore */
 			}
 			const dirList = validDirs.length > 0 ? ` Valid directories: ${validDirs.join(", ")}` : "";
-			return {
-				ok: false,
-				response: errResponse(`Directory "${directory}" not found in project root.${dirList}`),
-			};
+			throw new Error(`Directory "${directory}" not found in project root.${dirList}`);
 		}
-		if (nodeErr.code === "ENOTDIR")
-			return { ok: false, response: errResponse(`"${directory}" is a file, not a directory.`) };
+		if (nodeErr.code === "ENOTDIR") throw new Error(`"${directory}" is a file, not a directory.`);
 		const errorCode = nodeErr.code ? ` (${nodeErr.code})` : "";
-		return {
-			ok: false,
-			response: errResponse(`Failed to access directory "${directory}": ${err}${errorCode}`),
-		};
+		throw new Error(`Failed to access directory "${directory}": ${err}${errorCode}`);
 	}
 }
 
@@ -240,17 +214,16 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 			const maxCount = params.max_count ?? 10;
 
 			const validationError = validateQuery(query);
-			if (validationError) return errResponse(validationError);
+			if (validationError) throw new Error(validationError);
 
-			const dirCheck = await verifyDirectory(ctx.cwd, directory);
-			if (!dirCheck.ok) return dirCheck.response;
+			await verifyDirectory(ctx.cwd, directory);
 
 			const config = searchConfig ?? loadSearchConfig(ctx.cwd);
 			searchConfig = config;
 			if (rgAvailable === null) rgAvailable = await ripgrepAvailable(pi.exec);
 
 			const resolved = resolveBackend(config, rgAvailable);
-			if (resolved.error) return errResponse(resolved.error);
+			if (resolved.error) throw new Error(resolved.error);
 
 			const useRipgrep = resolved.backend === "ripgrep";
 			const searcherName = useRipgrep ? "ripgrep" : "grep";
@@ -303,11 +276,7 @@ export default function ripgrepSearch(pi: ExtensionAPI): void {
 					engineStr,
 					directory,
 				);
-				return errResponse(errorText, {
-					exitCode: result.code,
-					stderr: result.stderr,
-					searcher: searcherName,
-				});
+				throw new Error(errorText);
 			}
 
 			const searchResult = useRipgrep

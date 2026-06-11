@@ -26,7 +26,7 @@ import type { RgMatch, RgResult, SearchConfig } from "../types.ts";
 import { loadSearchConfig, resolveBackend, ripgrepAvailable } from "../config.ts";
 import { buildRgArgs, buildGrepArgs } from "../args.ts";
 import { parseVimgrepOutput } from "../parse.ts";
-import { buildStructuredSummary, verifyDirectory } from "../index.ts";
+import { buildStructuredSummary, buildSearchErrorText, verifyDirectory } from "../index.ts";
 import {
 	validateQuery,
 	registerTempDir,
@@ -685,132 +685,108 @@ describe("verifyDirectory", () => {
 		}
 	}
 
-	// ── Tests for directories INSIDE cwd (should pass) ──
+	// ── Phase 1: Success cases — returns resolved string, not discriminated union ──
 
 	describe("valid directories (inside cwd)", () => {
-		it('returns { ok: true, resolvedDir } for directory inside cwd (e.g. "subdir/")', async () => {
+		it('returns resolved absolute string for "subdir/"', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "subdir");
-				assert.ok(result.ok);
-				if (result.ok) {
-					assert.strictEqual(result.resolvedDir, resolve(dir, "subdir"));
-				}
+				const resolved = await verifyDirectory(dir, "subdir");
+				assert.strictEqual(resolved, resolve(dir, "subdir"));
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it('returns { ok: true, resolvedDir } for directory "." (current dir)', async () => {
+		it('returns cwd string for "."', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, ".");
-				assert.ok(result.ok);
-				if (result.ok) {
-					assert.strictEqual(result.resolvedDir, resolve(dir));
-				}
+				const resolved = await verifyDirectory(dir, ".");
+				assert.strictEqual(resolved, resolve(dir));
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it("returns { ok: true, resolvedDir } for directory equal to cwd itself", async () => {
+		it("returns cwd string for directory equal to cwd itself", async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, dir);
-				assert.ok(result.ok);
-				if (result.ok) {
-					assert.strictEqual(result.resolvedDir, resolve(dir));
-				}
+				const resolved = await verifyDirectory(dir, dir);
+				assert.strictEqual(resolved, resolve(dir));
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it('returns { ok: true, resolvedDir } for "subdir/.." (normalizes to cwd)', async () => {
+		it('"subdir/.." normalizes to cwd string', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "subdir/..");
-				assert.ok(result.ok);
-				if (result.ok) {
-					assert.strictEqual(result.resolvedDir, resolve(dir));
-				}
+				const resolved = await verifyDirectory(dir, "subdir/..");
+				assert.strictEqual(resolved, resolve(dir));
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it('returns { ok: true, resolvedDir } for nested subdirectory "a/b/c" inside cwd', async () => {
+		it('nested "a/b/c" returns resolved absolute string', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "a/b/c");
-				assert.ok(result.ok);
-				if (result.ok) {
-					assert.strictEqual(result.resolvedDir, resolve(dir, "a", "b", "c"));
-				}
+				const resolved = await verifyDirectory(dir, "a/b/c");
+				assert.strictEqual(resolved, resolve(dir, "a", "b", "c"));
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it("returns { ok: true, resolvedDir } for empty string (resolves to cwd)", async () => {
+		it("empty string returns cwd string", async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "");
-				assert.ok(result.ok);
-				if (result.ok) {
-					assert.strictEqual(result.resolvedDir, resolve(dir));
-				}
+				const resolved = await verifyDirectory(dir, "");
+				assert.strictEqual(resolved, resolve(dir));
+			} finally {
+				cleanupTmpDir(dir);
+			}
+		});
+
+		it('path with trailing "/" like "subdir/" returns normalized path', async () => {
+			const dir = setupTmpDir();
+			try {
+				const resolved = await verifyDirectory(dir, "subdir/");
+				assert.strictEqual(resolved, resolve(dir, "subdir"));
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 	});
 
-	// ── Tests for directories OUTSIDE cwd (should reject) ──
+	// ── Phase 2: Path traversal rejection via thrown Error ──
 
 	describe("path traversal (outside cwd)", () => {
-		it('rejects "../../etc" with error containing "Directory traversal detected" and the original directory value', async () => {
+		it('rejects "../../etc" with Error containing "Directory traversal detected"', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "../../etc");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(
-						result.response.content[0]?.text?.includes("Directory traversal detected"),
-						"Should mention 'Directory traversal detected'",
-					);
-					assert.ok(
-						result.response.content[0]?.text?.includes("../../etc"),
-						"Should include the original directory value",
-					);
-				}
+				await assert.rejects(verifyDirectory(dir, "../../etc"), /Directory traversal detected/);
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it('rejects ".." with traversal message (parent of cwd)', async () => {
+		it('rejects ".." with traversal message', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "..");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
-				}
+				await assert.rejects(verifyDirectory(dir, ".."), /Directory traversal detected/);
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it('rejects "../../../../tmp" (deep traversal) with traversal message', async () => {
+		it('rejects "../../../../tmp" (deep) with traversal message', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "../../../../tmp");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
-				}
+				await assert.rejects(
+					verifyDirectory(dir, "../../../../tmp"),
+					/Directory traversal detected/,
+				);
 			} finally {
 				cleanupTmpDir(dir);
 			}
@@ -819,104 +795,158 @@ describe("verifyDirectory", () => {
 		it('rejects "subdir/../../../../etc" (nested traversal) with traversal message', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "subdir/../../../../etc");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
-				}
+				await assert.rejects(
+					verifyDirectory(dir, "subdir/../../../../etc"),
+					/Directory traversal detected/,
+				);
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it('rejects root "/" with traversal message (unless cwd is /, which is impossible in practice)', async () => {
+		it('rejects root "/" with traversal message', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "/");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
-				}
+				await assert.rejects(verifyDirectory(dir, "/"), /Directory traversal detected/);
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it('rejects "../sibling/../etc" (cross-directory traversal) with traversal message', async () => {
+		it('rejects "../sibling/../etc" (cross-directory) with traversal message', async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "../sibling/../etc");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(result.response.content[0]?.text?.includes("Directory traversal detected"));
-				}
+				await assert.rejects(
+					verifyDirectory(dir, "../sibling/../etc"),
+					/Directory traversal detected/,
+				);
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 	});
 
-	// ── Existing behavior preservation ──
+	// ── Phase 3: Filesystem error paths via thrown Error ──
 
-	describe("existing error behavior preserved", () => {
-		it("ENOENT: non-existent dir returns { ok: false, response } with 'not found' message", async () => {
+	describe("filesystem errors", () => {
+		it("ENOENT: nonexistent directory throws Error with 'not found'", async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "nonexistent_dir_xyz");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(
-						result.response.content[0]?.text?.includes("not found"),
-						"Should mention 'not found'",
-					);
-				}
+				await assert.rejects(verifyDirectory(dir, "nonexistent_dir_xyz"), /not found/);
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it("ENOTDIR: directory pointing to a file returns { ok: false, response } with 'is a file' message", async () => {
+		it("ENOTDIR: file path throws Error with 'is a file'", async () => {
 			const dir = setupTmpDir();
 			try {
-				// Create a file inside the temp dir
 				writeFileSync(join(dir, "afile.txt"), "content");
-				const result = await verifyDirectory(dir, "afile.txt");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(
-						result.response.content[0]?.text?.includes("is a file"),
-						"Should mention 'is a file'",
-					);
-				}
+				await assert.rejects(verifyDirectory(dir, "afile.txt"), /is a file/);
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it("ENOTDIR: directory pointing to a file via relative path returns { ok: false, response } with 'is a file' message", async () => {
+		it("ENOTDIR: file via relative path throws Error with 'is a file'", async () => {
 			const dir = setupTmpDir();
 			try {
 				writeFileSync(join(dir, "bfile.txt"), "content");
-				const result = await verifyDirectory(dir, "./bfile.txt");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(result.response.content[0]?.text?.includes("is a file"));
-				}
+				await assert.rejects(verifyDirectory(dir, "./bfile.txt"), /is a file/);
 			} finally {
 				cleanupTmpDir(dir);
 			}
 		});
 
-		it("nonexistent dir inside cwd returns not-found error", async () => {
+		it("nonexistent child directory throws Error with 'not found'", async () => {
 			const dir = setupTmpDir();
 			try {
-				const result = await verifyDirectory(dir, "subdir/nonexistent_child");
-				assert.ok(!result.ok);
-				if (!result.ok) {
-					assert.ok(result.response.content[0]?.text?.includes("not found"));
-				}
+				await assert.rejects(verifyDirectory(dir, "subdir/nonexistent_child"), /not found/);
 			} finally {
 				cleanupTmpDir(dir);
+			}
+		});
+
+		it("EACCES: permission-denied throws Error with error info", async () => {
+			const tmpDir = setupTmpDir();
+			try {
+				const parentDir = join(tmpDir, "noexec-parent");
+				const childDir = join(parentDir, "child");
+				mkdirSync(childDir, { recursive: true });
+				const { chmodSync } = await import("node:fs");
+				chmodSync(parentDir, 0o000);
+				try {
+					await verifyDirectory(tmpDir, "noexec-parent/child");
+					assert.fail("Should have thrown");
+				} catch (err) {
+					const msg = (err as Error).message;
+					const hasErrorInfo =
+						msg.includes("EACCES") ||
+						msg.toLowerCase().includes("permission denied") ||
+						msg.toLowerCase().includes("access");
+					assert.ok(hasErrorInfo, `Message should mention error (got: "${msg}")`);
+				}
+			} finally {
+				try {
+					const { chmodSync } = await import("node:fs");
+					chmodSync(join(tmpDir, "noexec-parent"), 0o755);
+				} catch {
+					/* ignore */
+				}
+				cleanupTmpDir(tmpDir);
+			}
+		});
+
+		it("ELOOP: circular symlink throws Error with non-empty message", async () => {
+			const tmpDir = setupTmpDir();
+			try {
+				const { symlinkSync } = await import("node:fs");
+				const dirA = join(tmpDir, "loop-a");
+				const dirB = join(tmpDir, "loop-b");
+				mkdirSync(dirA);
+				mkdirSync(dirB);
+				symlinkSync("../b/link", join(dirA, "link"));
+				symlinkSync("../a/link", join(dirB, "link"));
+				try {
+					await verifyDirectory(tmpDir, "loop-a/link");
+					assert.fail("Should have thrown");
+				} catch (err) {
+					assert.ok((err as Error).message.length > 0, "Error message should not be empty");
+				}
+			} finally {
+				cleanupTmpDir(tmpDir);
+			}
+		});
+
+		it("unknown stat error includes directory name and error code/description", async () => {
+			const tmpDir = setupTmpDir();
+			try {
+				const parentDir = join(tmpDir, "msg-test-parent");
+				const childDir = join(parentDir, "child");
+				mkdirSync(childDir, { recursive: true });
+				const { chmodSync } = await import("node:fs");
+				chmodSync(parentDir, 0o000);
+				try {
+					await verifyDirectory(tmpDir, "msg-test-parent/child");
+					assert.fail("Should have thrown");
+				} catch (err) {
+					const msg = (err as Error).message;
+					assert.ok(
+						msg.includes("EACCES") ||
+							msg.toLowerCase().includes("permission denied") ||
+							msg.toLowerCase().includes("access"),
+						`Message should include error info (got: "${msg}")`,
+					);
+					assert.ok(msg.includes("msg-test-parent/child"), "Message should include directory name");
+				}
+			} finally {
+				try {
+					const { chmodSync } = await import("node:fs");
+					chmodSync(join(tmpDir, "msg-test-parent"), 0o755);
+				} catch {
+					/* ignore */
+				}
+				cleanupTmpDir(tmpDir);
 			}
 		});
 	});
@@ -1339,174 +1369,67 @@ describe("buildStructuredSummary", () => {
 	});
 });
 
+// buildSearchErrorText
 // ═══════════════════════════════════════════════════════════════════════
-// verifyDirectory
-// ═══════════════════════════════════════════════════════════════════════
 
-describe("verifyDirectory", () => {
-	function setupTmpDir(): string {
-		const dir = mkdtempSync(join(tmpdir(), "ripgrep-vd-test-"));
-		mkdirSync(dir, { recursive: true });
-		return dir;
-	}
-
-	function cleanupTmpDir(dir: string) {
-		for (const d of [dir]) {
-			try {
-				rmSync(d, { recursive: true, force: true });
-			} catch {
-				/* ignore */
-			}
-		}
-	}
-
-	it("valid directory returns { ok: true, resolvedDir }", async () => {
-		const tmpDir = setupTmpDir();
-		try {
-			const result = await verifyDirectory(tmpDir, ".");
-			assert.ok(result.ok);
-			if (result.ok) {
-				assert.ok(result.resolvedDir.startsWith("/"), "resolvedDir should be absolute");
-			}
-		} finally {
-			cleanupTmpDir(tmpDir);
-		}
+describe("buildSearchErrorText", () => {
+	it("buildSearchErrorText is exported function", () => {
+		assert.strictEqual(typeof buildSearchErrorText, "function");
 	});
 
-	it("non-existent directory (ENOENT) returns { ok: false } with 'not found'", async () => {
-		const tmpDir = setupTmpDir();
-		try {
-			const result = await verifyDirectory(tmpDir, "does-not-exist-12345");
-			assert.ok(!result.ok);
-			if (!result.ok) {
-				assert.ok(
-					result.response.content[0]!.text.includes("not found"),
-					"Error should mention 'not found'",
-				);
-			}
-		} finally {
-			cleanupTmpDir(tmpDir);
-		}
+	it("killed process produces 'killed' in message", () => {
+		const result = buildSearchErrorText("ripgrep", 9, true, "", "ripgrep (\`rg --version\`)", ".");
+		assert.ok(result.includes("killed"), "Should mention killed");
 	});
 
-	it("file path instead of directory returns { ok: false } with 'is a file'", async () => {
-		const tmpDir = setupTmpDir();
-		try {
-			const filePath = join(tmpDir, "testfile.txt");
-			writeFileSync(filePath, "hello", "utf8");
-			const result = await verifyDirectory(tmpDir, "testfile.txt");
-			assert.ok(!result.ok);
-			if (!result.ok) {
-				assert.ok(
-					result.response.content[0]!.text.includes("is a file"),
-					"Error should mention 'is a file'",
-				);
-			}
-		} finally {
-			cleanupTmpDir(tmpDir);
-		}
+	it("empty stderr produces 'no error output' in message", () => {
+		const result = buildSearchErrorText("grep", 2, false, "", "grep", ".");
+		assert.ok(result.includes("no error output"), "Should mention no error output");
 	});
 
-	it("permission-denied parent directory (EACCES) returns { ok: false } with error message", async () => {
-		const tmpDir = setupTmpDir();
-		try {
-			// Create parent/child where parent has no permissions
-			const parentDir = join(tmpDir, "noexec-parent");
-			const childDir = join(parentDir, "child");
-			mkdirSync(childDir, { recursive: true });
-			// Remove execute permission from parent so stat on child fails
-			const { chmodSync } = await import("node:fs");
-			chmodSync(parentDir, 0o000);
-			// stat on parentDir/child should fail with EACCES
-			const result = await verifyDirectory(tmpDir, "noexec-parent/child");
-			assert.ok(!result.ok, "EACCES should return ok: false");
-			if (!result.ok) {
-				const msg = result.response.content[0]!.text;
-				const hasErrorInfo =
-					msg.includes("EACCES") ||
-					msg.toLowerCase().includes("permission denied") ||
-					msg.toLowerCase().includes("access");
-				assert.ok(hasErrorInfo, `Message should mention error (got: "${msg}")`);
-			}
-		} finally {
-			// Reset permissions so cleanup can remove it
-			try {
-				const { chmodSync } = await import("node:fs");
-				chmodSync(join(tmpDir, "noexec-parent"), 0o755);
-			} catch {
-				/* ignore */
-			}
-			cleanupTmpDir(tmpDir);
-		}
+	it("stderr matching 'command not found' produces install hint", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			127,
+			false,
+			"bash: rg: command not found",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(result.includes("Ensure"));
 	});
 
-	it("circular symlink (ELOOP) returns { ok: false } with error message", async () => {
-		const tmpDir = setupTmpDir();
-		try {
-			const { symlinkSync } = await import("node:fs");
-			// Create a circular symlink chain: a/link -> ../b/link -> ../a/link
-			const dirA = join(tmpDir, "loop-a");
-			const dirB = join(tmpDir, "loop-b");
-			mkdirSync(dirA);
-			mkdirSync(dirB);
-			// a/link points to ../b/link  (relative symlink)
-			symlinkSync("../b/link", join(dirA, "link"));
-			// b/link points to ../a/link  (relative symlink — completes the circle)
-			symlinkSync("../a/link", join(dirB, "link"));
-			// stat on a/link should follow: a/link -> ../b/link -> ../a/link -> ... (ELOOP)
-			const result = await verifyDirectory(tmpDir, "loop-a/link");
-			assert.ok(!result.ok, "ELOOP should return ok: false");
-			if (!result.ok) {
-				assert.ok(result.response.content[0]!.text.length > 0, "Error message should not be empty");
-			}
-		} finally {
-			cleanupTmpDir(tmpDir);
-		}
+	it("stderr matching 'No such file or directory' produces not-found hint", () => {
+		const result = buildSearchErrorText(
+			"grep",
+			2,
+			false,
+			"grep: foo: No such file or directory",
+			"grep",
+			"foo",
+		);
+		assert.ok(
+			result.includes("not found or inaccessible"),
+			"Should mention directory not accessible",
+		);
 	});
 
-	it("error message includes directory name and error code/description for unknown stat errors", async () => {
-		const tmpDir = setupTmpDir();
-		try {
-			const parentDir = join(tmpDir, "msg-test-parent");
-			const childDir = join(parentDir, "child");
-			mkdirSync(childDir, { recursive: true });
-			const { chmodSync } = await import("node:fs");
-			chmodSync(parentDir, 0o000);
-			const result = await verifyDirectory(tmpDir, "msg-test-parent/child");
-			assert.ok(!result.ok);
-			if (!result.ok) {
-				const msg = result.response.content[0]!.text;
-				assert.ok(
-					msg.includes("EACCES") ||
-						msg.toLowerCase().includes("permission denied") ||
-						msg.toLowerCase().includes("access"),
-					`Message should include error info (got: "${msg}")`,
-				);
-				assert.ok(msg.includes("msg-test-parent/child"), "Message should include directory name");
-			}
-		} finally {
-			try {
-				const { chmodSync } = await import("node:fs");
-				chmodSync(join(tmpDir, "msg-test-parent"), 0o755);
-			} catch {
-				/* ignore */
-			}
-			cleanupTmpDir(tmpDir);
-		}
+	it("fallback generic error includes stderr text and exit code", () => {
+		const result = buildSearchErrorText(
+			"ripgrep",
+			13,
+			false,
+			"something went wrong",
+			"ripgrep (\`rg --version\`)",
+			".",
+		);
+		assert.ok(result.includes("something went wrong"), "Should include stderr");
+		assert.ok(result.includes("exit 13"), "Should include exit code");
 	});
 
-	it("empty string directory resolves relative to cwd to the cwd itself", async () => {
-		const tmpDir = setupTmpDir();
-		try {
-			// resolve(cwd, "") === cwd, which is a valid directory
-			const result = await verifyDirectory(tmpDir, "");
-			assert.ok(result.ok, "Empty string resolves to cwd which is a valid directory");
-			if (result.ok) {
-				assert.strictEqual(result.resolvedDir, resolve(tmpDir, ""));
-			}
-		} finally {
-			cleanupTmpDir(tmpDir);
-		}
+	it("exit code 1 (no matches) does not call buildSearchErrorText in execute — characterization", () => {
+		const result = buildSearchErrorText("ripgrep", 1, false, "", "ripgrep (\`rg --version\`)", ".");
+		assert.ok(result.includes("no error output"), "Code 1 with empty stderr -> no error output");
 	});
 });
 
