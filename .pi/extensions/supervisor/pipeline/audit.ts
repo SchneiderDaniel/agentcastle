@@ -26,10 +26,15 @@ import { runTddGate } from "../checks/tdd-gate.ts";
 import { runRequirementsTraceability } from "../checks/requirements-traceability.ts";
 
 /**
- * Run pre-transition checks during Implementation → Audit transition.
+ * Run ALL pre-transition checks during Implementation → Audit transition.
  * Includes CI gating, duplicate code check, package safety, TDD gate,
  * requirements traceability, TSC checkpoint, and LSP pre-audit.
- * Returns the effective next status ("Audit" or "Implementation") and any note.
+ *
+ * Unlike previous behavior (short-circuit on first failure), this runs ALL
+ * blocking gates and aggregates every failure into one combined note.
+ * The developer sees ALL issues in one pass instead of fixing one gate at a time.
+ * Returns "Implementation" + aggregated note if any gate fails,
+ * or "Audit" + last gate note if all pass.
  */
 export async function runTscAndLspAudit(
 	issueNum: number,
@@ -52,6 +57,11 @@ export async function runTscAndLspAudit(
 	// Shared exec function for running shell commands via pi.exec
 	const execFn = (cmd: string, args: string[], opts?: Record<string, unknown>) =>
 		pi.exec(cmd, args, opts);
+
+	// Collect ALL gate failures across every blocking gate.
+	// Gates run to completion regardless of individual failures.
+	// Developer gets one combined context with every issue at once.
+	const gateFailures: string[] = [];
 
 	try {
 		// Step 0: CI gating — poll check runs before running local hooks
@@ -81,14 +91,8 @@ export async function runTscAndLspAudit(
 					)
 					.map((c) => c.name)
 					.join(", ");
-				ctx.ui.notify(
-					`CI checks failing: ${failedNames}. Skipping audit — returning to Implementation.`,
-					"warning",
-				);
-				// Uncommit developer's work so worktree preserves changes
-				// Prevents developer from starting fresh on next iteration
-				await uncommitDeveloperWork(execFn, worktreePath);
-				return { nextStatus: "Implementation", note: `CI_FAILED: ${ciResult.message}` };
+				ctx.ui.notify(`CI checks failing: ${failedNames}. Continuing with other gates.`, "warning");
+				gateFailures.push(`--- CI Gate ---\n${ciResult.message}`);
 			}
 
 			if (ciResult.status === "pending") {
@@ -173,12 +177,7 @@ export async function runTscAndLspAudit(
 				// Comment posting is best-effort
 			}
 
-			// Uncommit developer's work so worktree preserves changes
-			// Prevents developer from starting fresh on next iteration
-			await uncommitDeveloperWork(execFn, worktreePath);
-
-			// Use full dead code context as note so developer sees exact findings
-			return { nextStatus: "Implementation", note: deadContext || msg, deadCodeResult: deadResult };
+			gateFailures.push(`--- Dead Code Gate ---\n${deadContext || msg}`);
 		} else if (deadResult.status === "no_knip") {
 			getDebugLogger().info("pipeline-audit", "knip not available, skipping dead code check");
 		} else if (deadResult.status === "error") {
@@ -241,7 +240,7 @@ export async function runTscAndLspAudit(
 					.map((c) => c.name)
 					.join(", ");
 				const msg = `TDD gate failed: ${failedCheckNames}. ${tddResult.rejectionReason || ""}`;
-				ctx.ui.notify(`TDD gate: ${msg} — returning to Implementation.`, "warning");
+				ctx.ui.notify(`TDD gate: ${msg} — continuing with other gates.`, "warning");
 				getDebugLogger().info("pipeline-audit", "TDD gate failed", {
 					failedChecks: failedCheckNames,
 					rejectionReason: tddResult.rejectionReason,
@@ -268,9 +267,7 @@ export async function runTscAndLspAudit(
 				} catch {
 					// Comment posting is best-effort
 				}
-				// Uncommit developer's work so worktree preserves changes
-				// Prevents developer from starting fresh on next iteration
-				await uncommitDeveloperWork(execFn, worktreePath);
+
 				// Build detailed gate failure context for developer prompt
 				const detailLines = tddResult.checks
 					.map((c) => {
@@ -279,7 +276,7 @@ export async function runTscAndLspAudit(
 					})
 					.join("\n");
 				const fullMsg = `TDD gate failed.\n\nChecks:\n${detailLines}\n\n${tddResult.rejectionReason || ""}`;
-				return { nextStatus: "Implementation", note: fullMsg };
+				gateFailures.push(`--- TDD Gate ---\n${fullMsg}`);
 			}
 
 			if (tddResult.status === "error") {
@@ -366,13 +363,11 @@ export async function runTscAndLspAudit(
 			});
 
 			if (tscDecision.nextStatus !== "Audit") {
-				// TSC has errors — stay in Implementation, skip LSP
+				// TSC has errors — add to gate failures, continue to LSP
 				if (tscDecision.note) {
 					ctx.ui.notify(tscDecision.note, "warning");
 				}
-				// Uncommit developer's work so worktree preserves changes
-				await uncommitDeveloperWork(execFn, worktreePath);
-				return { nextStatus: tscDecision.nextStatus, note: tscDecision.note };
+				gateFailures.push(`--- TypeScript Checkpoint ---\n${tscDecision.note}`);
 			}
 
 			// TSC clean — proceed to LSP pre-audit
@@ -382,17 +377,31 @@ export async function runTscAndLspAudit(
 		}
 
 		// Step 5: LSP pre-audit (Tier 3)
-		const result = await runLspPreAudit(issueNum, issueTitle, config, pi, ctx, worktreePath);
+		const lspResult = await runLspPreAudit(issueNum, issueTitle, config, pi, ctx, worktreePath);
 		getDebugLogger().info("pipeline-audit", "LSP pre-audit result", {
-			nextStatus: result.nextStatus,
-			note: result.note,
+			nextStatus: lspResult.nextStatus,
+			note: lspResult.note,
 		});
-		// If LSP pre-audit blocks, uncommit developer's work
-		if (result.nextStatus !== "Audit") {
-			await uncommitDeveloperWork(execFn, worktreePath);
+		if (lspResult.nextStatus !== "Audit") {
+			gateFailures.push(`--- LSP Pre-Audit ---\n${lspResult.note}`);
 		}
+
+		// After ALL gates: if any blocking failure, uncommit once and return combined context
+		if (gateFailures.length > 0) {
+			await uncommitDeveloperWork(execFn, worktreePath);
+			const combinedNote = gateFailures.join("\n\n");
+			return {
+				nextStatus: "Implementation",
+				note: `The following gates blocked the transition from Implementation to Audit:\n\n${combinedNote}`,
+				duplicateCodeResult: dupResult,
+				deadCodeResult: deadResult,
+			};
+		}
+
+		// All gates passed — proceed to Audit
 		return {
-			...result,
+			nextStatus: "Audit",
+			note: lspResult.note || "",
 			duplicateCodeResult: dupResult,
 			deadCodeResult: deadResult,
 		};
