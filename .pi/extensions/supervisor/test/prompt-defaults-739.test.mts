@@ -4,10 +4,19 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { buildAgentTask, generateBranchName } from "../agent/task.ts";
 
 // ─── Default value syntax tests ──────────────────────────────────
 
 describe("Prompt template defaults — JS default-param equivalents", () => {
+	it("buildAgentTask is a function from agent/task.ts", () => {
+		assert.equal(typeof buildAgentTask, "function", "buildAgentTask should be imported");
+	});
+
+	it("generateBranchName is a function from agent/task.ts", () => {
+		assert.equal(typeof generateBranchName, "function", "generateBranchName should be imported");
+	});
+
 	it("undefined values use default in destructuring", () => {
 		const fn = (opts: { effort?: string } = {}) => {
 			const effort = opts.effort ?? "medium";

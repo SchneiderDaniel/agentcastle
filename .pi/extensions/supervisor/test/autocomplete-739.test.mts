@@ -4,12 +4,17 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import {
+	ISSUE_TOKEN_RE,
+	fetchOpenIssues,
+	resetIssueCache,
+	createIssueAutocompleteProvider,
+	type IssueItem,
+} from "../event/autocomplete.ts";
 
 // ─── extractIssueToken regex test ─────────────────────────────────
 // The regex is defined in event/autocomplete.ts but we test its behavior here.
 // Pattern: /(?:^|[ \t])#([^\s#]*)$/
-
-const ISSUE_TOKEN_RE = /(?:^|[ \t])#([^\s#]*)$/;
 
 describe("extractIssueToken regex", () => {
 	it("matches `#` at start of input", () => {
@@ -80,6 +85,26 @@ describe("extractIssueToken regex", () => {
 // ─── Autocomplete provider factory contract ───────────────────────
 
 describe("Autocomplete provider contract", () => {
+	it("ISSUE_TOKEN_RE is a RegExp imported from event/autocomplete.ts", () => {
+		assert.ok(ISSUE_TOKEN_RE instanceof RegExp, "ISSUE_TOKEN_RE should be a RegExp");
+	});
+
+	it("fetchOpenIssues is a function imported from event/autocomplete.ts", () => {
+		assert.equal(typeof fetchOpenIssues, "function", "fetchOpenIssues should be a function");
+	});
+
+	it("resetIssueCache is a function imported from event/autocomplete.ts", () => {
+		assert.equal(typeof resetIssueCache, "function", "resetIssueCache should be a function");
+	});
+
+	it("createIssueAutocompleteProvider is a function imported from event/autocomplete.ts", () => {
+		assert.equal(
+			typeof createIssueAutocompleteProvider,
+			"function",
+			"createIssueAutocompleteProvider should be a function",
+		);
+	});
+
 	it("provider factory returns a function that takes AutocompleteContext", () => {
 		// Contract test: the factory signature is
 		// (config: SupervisorConfig) => AutocompleteProviderFactory

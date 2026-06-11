@@ -3,7 +3,10 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, writeFileSync, unlinkSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { loadConfig } from "../config/config.ts";
 
 // ─── enableExperimentalFeatures type contract ─────────────────────
 
@@ -17,6 +20,86 @@ describe("SupervisorConfig — enableExperimentalFeatures", () => {
 		};
 		// Undefined — backward compatible
 		assert.equal(config.enableExperimentalFeatures, undefined);
+	});
+
+	it("loadConfig is a function exported from config module", () => {
+		assert.equal(typeof loadConfig, "function", "loadConfig should be exported");
+	});
+
+	it("loadConfig reads enableExperimentalFeatures from settings.json", () => {
+		const testDir = join(tmpdir(), "pi-test-loadConfig-" + Date.now());
+		try {
+			rmSync(testDir, { recursive: true, force: true });
+			mkdirSync(join(testDir, ".pi"), { recursive: true });
+			const settings = {
+				supervisor: {
+					repo: "owner/repo",
+					projectNumber: 1,
+					statusField: "Status",
+					statusMapping: {
+						Backlog: "",
+						Research: "researcher",
+						Architecture: "architect",
+						TestDesign: "test-designer",
+						Implementation: "developer",
+						Audit: "auditor",
+						Done: "",
+					},
+					codeowners: ["owner"],
+					enableExperimentalFeatures: true,
+				},
+			};
+			writeFileSync(join(testDir, ".pi", "settings.json"), JSON.stringify(settings), "utf-8");
+			const origCwd = process.cwd();
+			process.chdir(testDir);
+			try {
+				assert.equal(loadConfig().enableExperimentalFeatures, true, "loadConfig should read true");
+			} finally {
+				process.chdir(origCwd);
+			}
+		} finally {
+			rmSync(testDir, { recursive: true, force: true });
+		}
+	});
+
+	it("loadConfig defaults enableExperimentalFeatures to false when missing", () => {
+		const testDir = join(tmpdir(), "pi-test-loadConfig-missing-" + Date.now());
+		try {
+			rmSync(testDir, { recursive: true, force: true });
+			mkdirSync(join(testDir, ".pi"), { recursive: true });
+			const settings = {
+				supervisor: {
+					repo: "owner/repo",
+					projectNumber: 1,
+					statusField: "Status",
+					statusMapping: {
+						Backlog: "",
+						Research: "researcher",
+						Architecture: "architect",
+						TestDesign: "test-designer",
+						Implementation: "developer",
+						Audit: "auditor",
+						Done: "",
+					},
+					codeowners: ["owner"],
+					// enableExperimentalFeatures intentionally missing
+				},
+			};
+			writeFileSync(join(testDir, ".pi", "settings.json"), JSON.stringify(settings), "utf-8");
+			const origCwd = process.cwd();
+			process.chdir(testDir);
+			try {
+				assert.equal(
+					loadConfig().enableExperimentalFeatures,
+					false,
+					"loadConfig should default to false",
+				);
+			} finally {
+				process.chdir(origCwd);
+			}
+		} finally {
+			rmSync(testDir, { recursive: true, force: true });
+		}
 	});
 
 	it("accepts enableExperimentalFeatures as true", () => {

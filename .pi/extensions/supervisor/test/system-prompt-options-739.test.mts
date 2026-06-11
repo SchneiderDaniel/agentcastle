@@ -4,7 +4,12 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildAgentTask } from "../agent/task.ts";
+import {
+	buildAgentTask,
+	generateBranchName,
+	summarizeComments,
+	truncateComment,
+} from "../agent/task.ts";
 import type { FilteredIssueData } from "../config/types.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -68,6 +73,28 @@ describe("getSystemPromptOptions — contract", () => {
 // NOTE: systemPromptOptions is the 18th parameter (after deadCodeContext).
 
 describe("buildAgentTask — systemPromptOptions parameter", () => {
+	it("buildAgentTask is a function exported from agent/task.ts", () => {
+		assert.equal(typeof buildAgentTask, "function", "buildAgentTask should be exported");
+	});
+
+	it("generateBranchName is a function exported from agent/task.ts", () => {
+		assert.equal(typeof generateBranchName, "function", "generateBranchName should be exported");
+	});
+
+	it("summarizeComments is a function exported from agent/task.ts", () => {
+		assert.equal(typeof summarizeComments, "function", "summarizeComments should be exported");
+	});
+
+	it("truncateComment is a function exported from agent/task.ts", () => {
+		assert.equal(typeof truncateComment, "function", "truncateComment should be exported");
+	});
+
+	it("generateBranchName returns correct branch name", () => {
+		const branch = generateBranchName(42, "Fix bug", "worktree-git-issue-");
+		assert.ok(branch.includes("42"), "branch should contain issue number");
+		assert.ok(branch.includes("fix-bug"), "branch should contain slugified title");
+	});
+
 	it("buildAgentTask accepts new optional systemPromptOptions parameter", () => {
 		// Test that existing call without the param still works (backward compat)
 		const task = buildAgentTask(

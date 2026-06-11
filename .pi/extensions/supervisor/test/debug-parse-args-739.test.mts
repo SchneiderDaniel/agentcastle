@@ -12,6 +12,14 @@ import assert from "node:assert/strict";
 import { parseSupervisorArgs } from "../config/debug.ts";
 
 describe("parseSupervisorArgs — parseArgs-compatible interface", () => {
+	it("parseSupervisorArgs is a function exported from debug.ts", () => {
+		assert.equal(typeof parseSupervisorArgs, "function", "parseSupervisorArgs should be exported");
+	});
+
+	it("parseSupervisorArgs('103').issueNum is 103 (inline assertion)", () => {
+		assert.equal(parseSupervisorArgs("103").issueNum, 103);
+	});
+
 	it("returns issueNum and isDebug from '103'", () => {
 		const result = parseSupervisorArgs("103");
 		assert.equal(result.issueNum, 103);
