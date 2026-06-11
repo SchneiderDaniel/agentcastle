@@ -477,6 +477,10 @@ describe("args splitting pattern (for parseArgs integration)", () => {
 });
 
 describe("formatForMode function selection per mode", () => {
+	it("formatForMode is an exported function", () => {
+		assert.strictEqual(typeof formatForMode, "function");
+	});
+
 	it("TUI mode returns string type", () => {
 		const diags: LspDiagnostic[] = [
 			{ file: "test.ts", line: 1, column: 1, severity: "Error", message: "test" },

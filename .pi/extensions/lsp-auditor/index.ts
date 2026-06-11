@@ -26,7 +26,7 @@ export default function lspAuditor(pi: ExtensionAPI): void {
 			const cwd = sm.getCwd();
 
 			// Parse args for future subcommand support (e.g., /lsp-auditor --files src/)
-			const parsedArgs = parseArgs(_args.split(/\s+/), new Map());
+			const parsedArgs = parseArgs(_args.split(/\s+/));
 
 			// Read defaultBranch from supervisor config if available
 			let defaultBranch = "main";
@@ -53,15 +53,8 @@ export default function lspAuditor(pi: ExtensionAPI): void {
 			const hasUI = ctx.hasUI ?? false;
 
 			if (mode === "tui" && hasUI) {
-				// TUI mode: show progress via notify, then send clickable results
-				ctx.ui?.notify?.({
-					title: "LSP Audit",
-					message: `Result: ${result.note}`,
-					type: result.proceed ? "info" : "warning",
-					primaryAction: result.proceed
-						? undefined
-						: { label: "View Details", action: result.note },
-				});
+				// TUI mode: show notification via ctx.ui.notify, then send clickable results
+				ctx.ui?.notify?.(result.note, result.proceed ? "info" : "warning");
 				pi.sendMessage?.({
 					content: `## LSP Audit Result\n\n${result.note}`,
 					display: true,
