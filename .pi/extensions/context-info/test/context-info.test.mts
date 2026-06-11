@@ -18,10 +18,13 @@ import { describe, it, beforeEach } from "node:test";
 
 interface MockCtx {
 	getContextUsage: () => { tokens?: number; contextWindow?: number } | undefined;
+	mode?: string;
+	isProjectTrusted?: () => boolean | undefined;
 }
 
 interface MockPi {
 	on: (event: string, handler: (...args: any[]) => void) => void;
+	getSessionName?: () => string | undefined;
 }
 
 function createContextInfoExtension(): {
@@ -30,6 +33,10 @@ function createContextInfoExtension(): {
 	mockCtx: MockCtx;
 	getCacheRead: () => number | undefined;
 	getCacheWrite: () => number | undefined;
+	getCacheHitRate: () => number | undefined;
+	getSessionName: () => string | undefined;
+	getTrustStatus: () => string | undefined;
+	getUiSetFooterCalls: () => number;
 } {
 	const logCalls: string[] = [];
 	const handlers = new Map<string, (...args: any[]) => void>();
@@ -38,11 +45,16 @@ function createContextInfoExtension(): {
 	};
 	let _cacheRead: number | undefined;
 	let _cacheWrite: number | undefined;
+	let _cacheHitRate: number | undefined;
+	let _sessionName: string | undefined;
+	let _trustStatus: "trusted" | "untrusted" | undefined;
+	let _uiSetFooterCalls = 0;
 
 	const mockPi: MockPi = {
 		on(event, handler) {
 			handlers.set(event, handler);
 		},
+		getSessionName: () => _sessionName,
 	};
 
 	// Simulate the extension's default export logic
@@ -70,6 +82,26 @@ function createContextInfoExtension(): {
 		emitted = false;
 		_cacheRead = undefined;
 		_cacheWrite = undefined;
+		_cacheHitRate = undefined;
+		_trustStatus = undefined;
+
+		// Read session name from pi.getSessionName()
+		if (mockPi.getSessionName) {
+			_sessionName = mockPi.getSessionName();
+		}
+
+		// Read trust status from ctx.isProjectTrusted()
+		if (typeof mockCtx.isProjectTrusted === "function") {
+			const trusted = mockCtx.isProjectTrusted();
+			if (trusted === true) _trustStatus = "trusted";
+			else if (trusted === false) _trustStatus = "untrusted";
+			else _trustStatus = undefined;
+		}
+
+		// Mode guard: only do UI operations in TUI mode
+		if (mockCtx.mode === undefined || mockCtx.mode === "tui") {
+			_uiSetFooterCalls++;
+		}
 	});
 
 	handlers.set("model_select", (event: any) => {
@@ -78,10 +110,17 @@ function createContextInfoExtension(): {
 			contextWindow = cw;
 			tryEmit();
 		}
+		// Reset cache hit rate on model change (per research finding)
+		_cacheHitRate = undefined;
+		// Re-read session name (in case setSessionName was called mid-session)
+		if (mockPi.getSessionName) {
+			_sessionName = mockPi.getSessionName();
+		}
 	});
 
 	// Match production: use ctx.getContextUsage() instead of event.message.usage
 	// Also capture cacheRead/cacheWrite from event.message.usage
+	// Also compute cache hit rate (Improvement #1)
 	handlers.set("message_end", (event: any) => {
 		const msg = event.message;
 		if (!msg || msg.role !== "assistant") return;
@@ -90,11 +129,23 @@ function createContextInfoExtension(): {
 		if (usage) {
 			if (typeof usage.cacheRead === "number") _cacheRead = usage.cacheRead;
 			if (typeof usage.cacheWrite === "number") _cacheWrite = usage.cacheWrite;
+
+			// Compute cache hit rate: cacheRead/(cacheRead+cacheWrite)*100
+			if (typeof _cacheRead === "number" && typeof _cacheWrite === "number") {
+				_cacheHitRate = Math.round((_cacheRead / (_cacheRead + _cacheWrite)) * 100);
+			}
 		}
 		const ctxUsage = mockCtx.getContextUsage();
 		if (ctxUsage && typeof ctxUsage.tokens === "number" && ctxUsage.tokens > 0) {
 			contextTokens = ctxUsage.tokens;
 			tryEmit();
+		}
+	});
+
+	handlers.set("turn_end", () => {
+		// Re-read session name (in case setSessionName was called mid-session)
+		if (mockPi.getSessionName) {
+			_sessionName = mockPi.getSessionName();
 		}
 	});
 
@@ -109,6 +160,10 @@ function createContextInfoExtension(): {
 		mockCtx,
 		getCacheRead: () => _cacheRead,
 		getCacheWrite: () => _cacheWrite,
+		getCacheHitRate: () => _cacheHitRate,
+		getSessionName: () => _sessionName,
+		getTrustStatus: () => _trustStatus,
+		getUiSetFooterCalls: () => _uiSetFooterCalls,
 		_handlers: handlers,
 		_invoke: invoke,
 	} as unknown as {
@@ -117,6 +172,10 @@ function createContextInfoExtension(): {
 		mockCtx: MockCtx;
 		getCacheRead: () => number | undefined;
 		getCacheWrite: () => number | undefined;
+		getCacheHitRate: () => number | undefined;
+		getSessionName: () => string | undefined;
+		getTrustStatus: () => string | undefined;
+		getUiSetFooterCalls: () => number;
 		_invoke: (e: string, ...a: any[]) => void;
 	};
 }
@@ -133,6 +192,22 @@ function getCacheRead(ctx: TestCtx): number | undefined {
 
 function getCacheWrite(ctx: TestCtx): number | undefined {
 	return ctx.getCacheWrite();
+}
+
+function getCacheHitRate(ctx: TestCtx): number | undefined {
+	return ctx.getCacheHitRate();
+}
+
+function getSessionName(ctx: TestCtx): string | undefined {
+	return ctx.getSessionName();
+}
+
+function getTrustStatus(ctx: TestCtx): string | undefined {
+	return ctx.getTrustStatus();
+}
+
+function getUiSetFooterCalls(ctx: TestCtx): number {
+	return ctx.getUiSetFooterCalls();
 }
 
 function invoke(ctx: TestCtx, event: string, ...args: any[]) {
@@ -164,6 +239,12 @@ function formatCacheStats(
 		return "\u{1F4E6} --/--";
 	}
 	return `\u{1F4E6} ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`;
+}
+
+/** Format cache hit rate: 75 → "CH: 75%" */
+function formatCacheHitRate(rate: number | undefined): string {
+	if (rate === undefined || rate === null || Number.isNaN(rate)) return "";
+	return `CH: ${Math.round(rate)}%`;
 }
 
 /** Format elapsed ms → "⏱ Xh Ym Zs" */
@@ -443,7 +524,7 @@ describe("context-info extension — error resilience", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cache stats capture tests
+// Cache stats capture tests (existing + CH)
 // ---------------------------------------------------------------------------
 
 describe("context-info extension — cache stats capture", () => {
@@ -517,6 +598,279 @@ describe("context-info extension — cache stats capture", () => {
 		});
 		assert.strictEqual(getCacheRead(ctx), undefined);
 		assert.strictEqual(getCacheWrite(ctx), undefined);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// CH computation tests (Improvement #1)
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — cache hit rate computation", () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = createContextInfoExtension();
+	});
+
+	it("message_end with cacheRead=76288, cacheWrite=1024 → cacheHitRate=99", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 76288, cacheWrite: 1024 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 99);
+	});
+
+	it("message_end with cacheRead=0, cacheWrite=100 → cacheHitRate=0", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 0, cacheWrite: 100 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 0);
+	});
+
+	it("message_end with cacheRead=100, cacheWrite=0 → cacheHitRate=100", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100, cacheWrite: 0 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 100);
+	});
+
+	it("message_end with both cacheRead and cacheWrite undefined → cacheHitRate stays undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+
+	it("message_end without usage object → cacheHitRate stays undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: { role: "assistant", content: "hello" },
+		});
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+
+	it("message_end with only cacheRead (cacheWrite undefined) → cacheHitRate stays undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+
+	it("model_select resets cacheHitRate to undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100, cacheWrite: 0 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 100);
+
+		// model_select resets CH
+		invoke(ctx, "model_select", { model: { contextWindow: 512000 } });
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+
+	it("session_start resets cacheHitRate", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100, cacheWrite: 0 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 100);
+
+		// New session resets
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatCacheHitRate tests
+// ---------------------------------------------------------------------------
+
+describe("formatCacheHitRate", () => {
+	it("formatCacheHitRate(75) → CH: 75%", () => {
+		assert.strictEqual(formatCacheHitRate(75), "CH: 75%");
+	});
+
+	it("formatCacheHitRate(0) → CH: 0%", () => {
+		assert.strictEqual(formatCacheHitRate(0), "CH: 0%");
+	});
+
+	it("formatCacheHitRate(100) → CH: 100%", () => {
+		assert.strictEqual(formatCacheHitRate(100), "CH: 100%");
+	});
+
+	it("formatCacheHitRate(33.333) → CH: 33% (rounded integer)", () => {
+		assert.strictEqual(formatCacheHitRate(33.333), "CH: 33%");
+	});
+
+	it("formatCacheHitRate(undefined) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(undefined), "");
+	});
+
+	it("formatCacheHitRate(null) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(null as any), "");
+	});
+
+	it("formatCacheHitRate(NaN) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(NaN), "");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Mode guard tests (Improvement #3)
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — mode guard", () => {
+	it("session_start with ctx.mode === 'rpc' does not increment UI calls", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.mode = "rpc";
+		invoke(ctx, "session_start", { mode: "rpc" });
+		// In TUI mode, setFooter would be called; in RPC it should not
+		assert.strictEqual(getUiSetFooterCalls(ctx), 0, "should not call UI setFooter in RPC mode");
+	});
+
+	it("session_start with ctx.mode === 'tui' does increment UI calls", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.mode = "tui";
+		invoke(ctx, "session_start", { mode: "tui" });
+		assert.strictEqual(getUiSetFooterCalls(ctx), 1, "should call UI setFooter in TUI mode");
+	});
+
+	it("session_start with ctx.mode undefined (backward compat) does increment UI calls", () => {
+		const ctx = createContextInfoExtension();
+		// mode is undefined by default
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(
+			getUiSetFooterCalls(ctx),
+			1,
+			"should call UI setFooter when mode is undefined",
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Session name tests (Improvement #2)
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — session name", () => {
+	it("session_start calls pi.getSessionName() and stores result", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => "my-session";
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getSessionName(ctx), "my-session");
+	});
+
+	it("session_start with pi.getSessionName() returning undefined → sessionName = undefined", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => undefined;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getSessionName(ctx), undefined);
+	});
+
+	it("session_start with pi.getSessionName() returning string → sessionName = that string", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => "dev-session";
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getSessionName(ctx), "dev-session");
+	});
+
+	it("model_select re-reads pi.getSessionName() → picks up mid-session rename", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => "original-name";
+		invoke(ctx, "session_start", {});
+
+		// Mid-session rename
+		(ctx.pi as any).getSessionName = () => "renamed-session";
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+
+		assert.strictEqual(getSessionName(ctx), "renamed-session");
+	});
+
+	it("turn_end re-reads pi.getSessionName() → picks up mid-session rename", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => "original-name";
+		invoke(ctx, "session_start", {});
+
+		// Mid-session rename
+		(ctx.pi as any).getSessionName = () => "renamed-session";
+		invoke(ctx, "turn_end", {});
+
+		assert.strictEqual(getSessionName(ctx), "renamed-session");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Trust status tests (Improvement #4)
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — trust status", () => {
+	it("session_start calls ctx.isProjectTrusted() → trusted", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.isProjectTrusted = () => true;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), "trusted");
+	});
+
+	it("ctx.isProjectTrusted() returns false → trustStatus = 'untrusted'", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.isProjectTrusted = () => false;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), "untrusted");
+	});
+
+	it("ctx.isProjectTrusted() returns undefined → trustStatus = undefined", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.isProjectTrusted = () => undefined;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), undefined);
+	});
+
+	it("ctx.isProjectTrusted() not defined → trustStatus stays undefined", () => {
+		const ctx = createContextInfoExtension();
+		// isProjectTrusted not set on mockCtx
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), undefined);
+	});
+
+	it("session_start resets trustStatus, then re-reads", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.isProjectTrusted = () => true;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), "trusted");
+
+		// New session with different trust
+		ctx.mockCtx.isProjectTrusted = () => false;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), "untrusted");
 	});
 });
 

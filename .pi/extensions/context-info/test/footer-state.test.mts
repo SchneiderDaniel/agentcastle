@@ -70,6 +70,10 @@ describe("FooterState — construction & defaults", () => {
 		assert.strictEqual(state.startupWidgetActive, false);
 		assert.strictEqual(state.footerConfig.cacheRead, undefined);
 		assert.strictEqual(state.footerConfig.cacheWrite, undefined);
+		// ── New fields (Improvements #1, #2, #4) ───────────────
+		assert.strictEqual(state.footerConfig.cacheHitRate, undefined);
+		assert.strictEqual(state.footerConfig.sessionName, undefined);
+		assert.strictEqual(state.footerConfig.trustStatus, undefined);
 	});
 
 	it("stores ExtensionContext reference", () => {
@@ -257,6 +261,10 @@ describe("FooterState — reset", () => {
 		state.footerConfig.toolCallCount.value = 5;
 		state.footerConfig.cacheRead = 76288;
 		state.footerConfig.cacheWrite = 0;
+		// ── New fields (Improvements #1, #2, #4) ───────────────
+		state.footerConfig.cacheHitRate = 99;
+		state.footerConfig.sessionName = "my-session";
+		state.footerConfig.trustStatus = "trusted";
 
 		state.resetProperties();
 
@@ -271,6 +279,10 @@ describe("FooterState — reset", () => {
 		assert.strictEqual(state.footerConfig.toolCallCount.value, 0);
 		assert.strictEqual(state.footerConfig.cacheRead, undefined);
 		assert.strictEqual(state.footerConfig.cacheWrite, undefined);
+		// ── New fields reset ──────────────────────────────────
+		assert.strictEqual(state.footerConfig.cacheHitRate, undefined);
+		assert.strictEqual(state.footerConfig.sessionName, undefined);
+		assert.strictEqual(state.footerConfig.trustStatus, undefined);
 	});
 
 	it("resetProperties does not clear timerInterval", () => {

@@ -17,6 +17,7 @@ import {
 	thinkingColor,
 	formatTps,
 	formatCacheStats,
+	formatCacheHitRate,
 	computeTps,
 } from "./formatting.js";
 
@@ -28,6 +29,14 @@ export function installFooter(
 	config: ContextStatusBarConfig | null,
 	footerConfig: FooterConfig,
 ): void {
+	// ── Mode guard (Improvement #3): skip footer in non-TUI modes ──
+	// ctx.mode is available in pi >=0.78.1; cast for backward compat with v0.74.0 types
+	const mode = (ctx as any).mode as string | undefined;
+	if (mode !== undefined && mode !== "tui") {
+		ctx.ui.setFooter(undefined);
+		return;
+	}
+
 	const { worktreeName, thinkingLevel } = footerConfig;
 	if (!config || config.enabled === false) {
 		ctx.ui.setFooter(undefined);
@@ -186,16 +195,38 @@ export function installFooter(
 				if (config.showCache) {
 					const cacheStr = formatCacheStats(footerConfig.cacheRead, footerConfig.cacheWrite);
 					rightParts.push(theme.fg("dim", cacheStr));
+					// ── CH display (Improvement #1) ────────────
+					const chStr = formatCacheHitRate(footerConfig.cacheHitRate);
+					if (chStr) {
+						rightParts.push(theme.fg("dim", chStr));
+					}
 				}
 				const right2 = rightParts.join(" " + sep + " ");
 
-				// ── Build row 3: session ID ─────────────────────────
+				// ── Build row 3: session name/ID + trust status ──
 				let row3 = "";
-				if (footerConfig.sessionId) {
-					const label = theme.fg("dim", "SessionID:");
-					const id = theme.fg("muted", footerConfig.sessionId);
-					row3 = label + " " + id;
+				const row3Parts: string[] = [];
+
+				// Session name (Improvement #2) or session ID fallback
+				if (footerConfig.sessionName) {
+					row3Parts.push(
+						theme.fg("dim", "Session:") + " " + theme.fg("muted", footerConfig.sessionName),
+					);
+				} else if (footerConfig.sessionId) {
+					row3Parts.push(
+						theme.fg("dim", "SessionID:") + " " + theme.fg("muted", footerConfig.sessionId),
+					);
 				}
+
+				// Trust status (Improvement #4)
+				if (footerConfig.trustStatus !== undefined) {
+					const trustIcon = footerConfig.trustStatus === "trusted" ? "\u{1F512}" : "\u{1F513}";
+					row3Parts.push(theme.fg("dim", trustIcon));
+				} else {
+					row3Parts.push(theme.fg("dim", "\u2753"));
+				}
+
+				row3 = row3Parts.join(" " + sep + " ");
 
 				// ── Assemble rows ───────────────────────────────────
 				const rows: string[] = [row1];

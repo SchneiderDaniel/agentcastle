@@ -44,6 +44,11 @@ interface FooterConfig {
 	toolCallCount: { value: number };
 	cacheRead: number | undefined;
 	cacheWrite: number | undefined;
+	// ── New fields (Improvements #1, #2, #4) ───────────────
+	cacheHitRate: number | undefined;
+	sessionName: string | undefined;
+	trustStatus: "trusted" | "untrusted" | undefined;
+	sessionId: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +168,12 @@ function formatCacheStats(
 	return `\u{1F4E6} ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`;
 }
 
+/** Format cache hit rate: 75 → "CH: 75%" */
+function formatCacheHitRate(rate: number | undefined): string {
+	if (rate === undefined || rate === null || Number.isNaN(rate)) return "";
+	return `CH: ${Math.round(rate)}%`;
+}
+
 /** Simplified visibleWidth for tests — uses string length */
 function visibleWidth(s: string): number {
 	return s.length;
@@ -180,6 +191,12 @@ function installFooter(
 	config: ContextStatusBarConfig | null,
 	footerConfig: FooterConfig,
 ): void {
+	// ── Mode guard (Improvement #3): skip footer install in non-TUI modes ──
+	if (ctx.mode !== undefined && ctx.mode !== "tui") {
+		ctx.ui.setFooter(undefined);
+		return;
+	}
+
 	const { worktreeName, thinkingLevel } = footerConfig;
 	if (!config || config.enabled === false) {
 		ctx.ui.setFooter(undefined);
@@ -320,7 +337,7 @@ function installFooter(
 
 				row1 = truncateToWidth(row1, width);
 
-				// ── Build row 2 ────────────────────────────────
+				// ── Build row 2 (ext statuses left, TPS + cache + CH right) ──
 				const left2 = extStr || "";
 				const rightParts: string[] = [];
 				if (config.showTps) {
@@ -330,8 +347,41 @@ function installFooter(
 				if (config.showCache) {
 					const cacheStr = formatCacheStats(footerConfig.cacheRead, footerConfig.cacheWrite);
 					rightParts.push(theme.fg("dim", cacheStr));
+					// ── CH display (Improvement #1) ────────────
+					const chStr = formatCacheHitRate(footerConfig.cacheHitRate);
+					if (chStr) {
+						rightParts.push(theme.fg("dim", chStr));
+					}
 				}
 				const right2 = rightParts.join(" " + sep + " ");
+
+				// ── Build row 3: session name/ID + trust status ──
+				let row3 = "";
+				const row3Parts: string[] = [];
+
+				// Session name (Improvement #2) or session ID fallback
+				if (footerConfig.sessionName) {
+					row3Parts.push(
+						theme.fg("dim", "Session:") + " " + theme.fg("muted", footerConfig.sessionName),
+					);
+				} else if (footerConfig.sessionId) {
+					row3Parts.push(
+						theme.fg("dim", "SessionID:") + " " + theme.fg("muted", footerConfig.sessionId),
+					);
+				}
+
+				// Trust status (Improvement #4)
+				if (footerConfig.trustStatus !== undefined) {
+					const trustIcon = footerConfig.trustStatus === "trusted" ? "🔒" : "🔓";
+					row3Parts.push(theme.fg("dim", trustIcon));
+				} else {
+					row3Parts.push(theme.fg("dim", "❓"));
+				}
+
+				row3 = row3Parts.join(" " + sep + " ");
+
+				// ── Assemble rows ───────────────────────────────────
+				const rows: string[] = [row1];
 
 				if (left2 || right2) {
 					const lw = visibleWidth(left2);
@@ -340,10 +390,14 @@ function installFooter(
 					const row2 = right2
 						? left2 + " ".repeat(gap) + right2
 						: left2 + " ".repeat(Math.max(0, width - lw));
-					return [row1, truncateToWidth(row2, width)];
+					rows.push(truncateToWidth(row2, width));
 				}
 
-				return [row1];
+				if (row3) {
+					rows.push(truncateToWidth(row3, width));
+				}
+
+				return rows;
 			},
 		};
 	});
@@ -366,7 +420,11 @@ describe("FooterConfig", () => {
 			toolCallCount: { value: 0 },
 			cacheRead: undefined,
 			cacheWrite: undefined,
-		};
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
 
 		assert.strictEqual(config.worktreeName, null);
 		assert.strictEqual(config.thinkingLevel, "");
@@ -376,6 +434,9 @@ describe("FooterConfig", () => {
 		assert.strictEqual(config.toolCallCount.value, 0);
 		assert.strictEqual(config.cacheRead, undefined);
 		assert.strictEqual(config.cacheWrite, undefined);
+		assert.strictEqual(config.cacheHitRate, undefined);
+		assert.strictEqual(config.sessionName, undefined);
+		assert.strictEqual(config.trustStatus, undefined);
 	});
 
 	it("value wrappers allow mutation through shared reference", () => {
@@ -388,7 +449,11 @@ describe("FooterConfig", () => {
 			toolCallCount: { value: 0 },
 			cacheRead: undefined,
 			cacheWrite: undefined,
-		};
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
 
 		// Simulate passing footerConfig by reference and mutating
 		const ref = config;
@@ -399,6 +464,9 @@ describe("FooterConfig", () => {
 		ref.thinkingLevel = "high";
 		ref.cacheRead = 76288;
 		ref.cacheWrite = 0;
+		ref.cacheHitRate = 99;
+		ref.sessionName = "my-session";
+		ref.trustStatus = "trusted";
 
 		// Original reflects all mutations
 		assert.strictEqual(config.worktreeName, "my-feature");
@@ -408,6 +476,9 @@ describe("FooterConfig", () => {
 		assert.strictEqual(config.toolCallCount.value, 5);
 		assert.strictEqual(config.cacheRead, 76288);
 		assert.strictEqual(config.cacheWrite, 0);
+		assert.strictEqual(config.cacheHitRate, 99);
+		assert.strictEqual(config.sessionName, "my-session");
+		assert.strictEqual(config.trustStatus, "trusted");
 	});
 
 	it("tpsSamples array mutations are visible through reference", () => {
@@ -420,7 +491,11 @@ describe("FooterConfig", () => {
 			toolCallCount: { value: 0 },
 			cacheRead: undefined,
 			cacheWrite: undefined,
-		};
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
 
 		const ref = config;
 		ref.tpsSamples.push({ time: 1000, cumulativeTokens: 50 });
@@ -440,21 +515,116 @@ describe("FooterConfig", () => {
 			toolCallCount: { value: 3 },
 			cacheRead: 50000,
 			cacheWrite: 20000,
-		};
+			cacheHitRate: 71,
+			sessionName: "my-session",
+			trustStatus: "trusted",
+			sessionId: "",
+		}
 
 		assert.strictEqual(config.worktreeName, "main");
 		assert.strictEqual(config.thinkingLevel, "medium");
 		assert.strictEqual(config.tpsSamples.length, 1);
 		assert.strictEqual(config.lastComputedTps.value, 15.3);
+		assert.strictEqual(config.cacheHitRate, 71);
+		assert.strictEqual(config.sessionName, "my-session");
+		assert.strictEqual(config.trustStatus, "trusted");
 	});
 });
 
 // ---------------------------------------------------------------------------
-// installFooter with FooterConfig
+// formatCacheHitRate tests
 // ---------------------------------------------------------------------------
 
-describe("installFooter with FooterConfig", () => {
-	it("calls setFooter with a function when config is enabled", () => {
+describe("formatCacheHitRate", () => {
+	it("formatCacheHitRate(75) → CH: 75%", () => {
+		assert.strictEqual(formatCacheHitRate(75), "CH: 75%");
+	});
+
+	it("formatCacheHitRate(0) → CH: 0%", () => {
+		assert.strictEqual(formatCacheHitRate(0), "CH: 0%");
+	});
+
+	it("formatCacheHitRate(100) → CH: 100%", () => {
+		assert.strictEqual(formatCacheHitRate(100), "CH: 100%");
+	});
+
+	it("formatCacheHitRate(33.333) → CH: 33% (rounded integer)", () => {
+		assert.strictEqual(formatCacheHitRate(33.333), "CH: 33%");
+	});
+
+	it("formatCacheHitRate(undefined) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(undefined), "");
+	});
+
+	it("formatCacheHitRate(null) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(null as any), "");
+	});
+
+	it("formatCacheHitRate(NaN) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(NaN), "");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// installFooter with mode guard (Improvement #3)
+// ---------------------------------------------------------------------------
+
+describe("installFooter — mode guard", () => {
+	const modeScenarios = [
+		{ mode: "rpc", expectedFn: undefined },
+		{ mode: "json", expectedFn: undefined },
+		{ mode: "print", expectedFn: undefined },
+		{ mode: "headless", expectedFn: undefined },
+	];
+
+	for (const { mode, expectedFn } of modeScenarios) {
+		it(`ctx.mode === "${mode}" → setFooter(undefined), no render function registered`, () => {
+			const config: ContextStatusBarConfig = {
+				enabled: true,
+				thresholds: [],
+				showTimer: true,
+				showTps: true,
+				showCache: true,
+			};
+
+			const footerConfig: FooterConfig = {
+				worktreeName: null,
+				thinkingLevel: "",
+				tpsSamples: [],
+				lastComputedTps: { value: null },
+				lastContextWindow: { value: undefined },
+				toolCallCount: { value: 0 },
+				cacheRead: undefined,
+				cacheWrite: undefined,
+				cacheHitRate: undefined,
+				sessionName: undefined,
+				trustStatus: undefined,
+				sessionId: "",
+			}
+
+			let setFooterArg: unknown = undefined;
+			const ctx = {
+				mode,
+				ui: {
+					setFooter: (fn: unknown) => {
+						setFooterArg = fn;
+					},
+					setStatus: () => {},
+				},
+				getContextUsage: () => undefined,
+			};
+
+			installFooter(ctx, config, footerConfig);
+
+			assert.strictEqual(
+				setFooterArg,
+				undefined,
+				"setFooter should receive undefined for non-TUI mode",
+			);
+		});
+	}
+
+	it(`ctx.mode === "tui" → setFooter receives a function (render registered)`, () => {
 		const config: ContextStatusBarConfig = {
 			enabled: true,
 			thresholds: [],
@@ -472,10 +642,109 @@ describe("installFooter with FooterConfig", () => {
 			toolCallCount: { value: 0 },
 			cacheRead: undefined,
 			cacheWrite: undefined,
-		};
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
 
 		let setFooterArg: unknown = undefined;
 		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					setFooterArg = fn;
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+		};
+
+		installFooter(ctx, config, footerConfig);
+
+		assert.ok(
+			typeof setFooterArg === "function",
+			"setFooter should receive a function for TUI mode",
+		);
+	});
+
+	it("ctx.mode undefined (backward compat) → setFooter receives a function", () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [],
+			showTimer: true,
+			showTps: true,
+			showCache: true,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let setFooterArg: unknown = undefined;
+		const ctx = {
+			// mode undefined — old pi version compatibility
+			ui: {
+				setFooter: (fn: unknown) => {
+					setFooterArg = fn;
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+		};
+
+		installFooter(ctx, config, footerConfig);
+
+		assert.ok(
+			typeof setFooterArg === "function",
+			"setFooter should receive a function when mode is undefined",
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// installFooter with FooterConfig
+// ---------------------------------------------------------------------------
+
+describe("installFooter with FooterConfig", () => {
+	it("calls setFooter with a function when config is enabled and mode is tui", () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [],
+			showTimer: true,
+			showTps: true,
+			showCache: true,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let setFooterArg: unknown = undefined;
+		const ctx = {
+			mode: "tui",
 			ui: {
 				setFooter: (fn: unknown) => {
 					setFooterArg = fn;
@@ -508,10 +777,15 @@ describe("installFooter with FooterConfig", () => {
 			toolCallCount: { value: 0 },
 			cacheRead: undefined,
 			cacheWrite: undefined,
-		};
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
 
 		let setFooterArg: unknown = undefined;
 		const ctx = {
+			mode: "tui",
 			ui: {
 				setFooter: (fn: unknown) => {
 					setFooterArg = fn;
@@ -536,10 +810,15 @@ describe("installFooter with FooterConfig", () => {
 			toolCallCount: { value: 0 },
 			cacheRead: undefined,
 			cacheWrite: undefined,
-		};
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
 
 		let setFooterArg: unknown = undefined;
 		const ctx = {
+			mode: "tui",
 			ui: {
 				setFooter: (fn: unknown) => {
 					setFooterArg = fn;
@@ -579,10 +858,15 @@ describe("installFooter with FooterConfig", () => {
 			toolCallCount: { value: 3 },
 			cacheRead: 5000,
 			cacheWrite: 1000,
-		};
+			cacheHitRate: 83,
+			sessionName: "test-session",
+			trustStatus: "trusted",
+			sessionId: "",
+		}
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
+			mode: "tui",
 			ui: {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
@@ -635,10 +919,15 @@ describe("installFooter with FooterConfig", () => {
 			toolCallCount: { value: 0 },
 			cacheRead: undefined,
 			cacheWrite: undefined,
-		};
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
+			mode: "tui",
 			ui: {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
@@ -675,5 +964,535 @@ describe("installFooter with FooterConfig", () => {
 
 		// Fields destructured at call time (worktreeName, thinkingLevel) are not expected
 		// to reflect after-install mutations — they're updated by re-installing footer
+	});
+});
+
+// ---------------------------------------------------------------------------
+// CH display tests (Improvement #1)
+// ---------------------------------------------------------------------------
+
+describe("footer — CH display", () => {
+	it("render output includes CH string when showCache=true and cacheHitRate is a number", () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: true,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: 76288,
+			cacheWrite: 1024,
+			cacheHitRate: 99,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		assert.ok(allRows.includes("CH: 99%"), `render output should include CH: 99%, got: ${allRows}`);
+	});
+
+	it("render output omits CH when showCache=false", () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: false,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: 76288,
+			cacheWrite: 1024,
+			cacheHitRate: 99,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		assert.ok(!allRows.includes("CH:"), "render output should not include CH when showCache=false");
+	});
+
+	it("render output omits CH when cacheHitRate is undefined", () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: true,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		assert.ok(
+			!allRows.includes("CH:"),
+			"render output should not include CH when cacheHitRate is undefined",
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Session name display tests (Improvement #2)
+// ---------------------------------------------------------------------------
+
+describe("footer — session name display", () => {
+	it('render row3 shows "Session: <name>" when sessionName set', () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: false,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: "my-session",
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		// Need to set sessionId for render to have content in addition to sessionName
+		(footerConfig as any).sessionId = "abc-123";
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		assert.ok(
+			allRows.includes("Session:") && allRows.includes("my-session"),
+			"render output should include session name",
+		);
+	});
+
+	it('render row3 shows "SessionID: <id>" fallback when sessionName is undefined', () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: false,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		(footerConfig as any).sessionId = "abc-123";
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		assert.ok(
+			allRows.includes("SessionID:") && allRows.includes("abc-123"),
+			"render output should include session ID fallback",
+		);
+	});
+
+	it("row3 shows trust indicator when both sessionName and sessionId are empty/falsy", () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: false,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		(footerConfig as any).sessionId = "";
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		// Row3 always shows trust indicator (❓ when undefined)
+		assert.ok(allRows.includes("❓"), "should show trust indicator even without session info");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Trust status display tests (Improvement #4)
+// ---------------------------------------------------------------------------
+
+describe("footer — trust status display", () => {
+	it('render output includes 🔒 lock icon when trustStatus="trusted"', () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: false,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: "trusted",
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		assert.ok(allRows.includes("🔒"), "render output should include lock emoji when trusted");
+	});
+
+	it('render output includes 🔓 unlock icon when trustStatus="untrusted"', () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: false,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: "untrusted",
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		assert.ok(allRows.includes("🔓"), "render output should include unlock emoji when untrusted");
+	});
+
+	it("render output includes ❓ when trustStatus is undefined", () => {
+		const config: ContextStatusBarConfig = {
+			enabled: true,
+			thresholds: [{ maxTokens: null }],
+			showTimer: false,
+			showTps: false,
+			showCache: false,
+		};
+
+		const footerConfig: FooterConfig = {
+			worktreeName: null,
+			thinkingLevel: "",
+			tpsSamples: [],
+			lastComputedTps: { value: null },
+			lastContextWindow: { value: undefined },
+			toolCallCount: { value: 0 },
+			cacheRead: undefined,
+			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
+			sessionId: "",
+		}
+
+		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				setFooter: (fn: unknown) => {
+					if (typeof fn === "function") {
+						footerComponent = fn(
+							{ requestRender: () => {} },
+							{
+								fg: (_color: string, text: string) => text,
+							},
+							{
+								onBranchChange: () => () => {},
+								getGitBranch: () => "main",
+								getExtensionStatuses: () => new Map(),
+							},
+						);
+					}
+				},
+				setStatus: () => {},
+			},
+			getContextUsage: () => undefined,
+			model: { id: "test-model" },
+		};
+
+		installFooter(ctx, config, footerConfig);
+		const result = footerComponent!.render(80);
+		const allRows = result.join(" ");
+		assert.ok(
+			allRows.includes("❓"),
+			"render output should include question mark when trustStatus undefined",
+		);
 	});
 });

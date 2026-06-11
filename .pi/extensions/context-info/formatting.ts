@@ -145,3 +145,9 @@ export function formatCacheStats(
 	}
 	return `\u{1F4E6} ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`;
 }
+
+/** Format cache hit rate: 75 → "CH: 75%", undefined → "" */
+export function formatCacheHitRate(rate: number | undefined): string {
+	if (rate === undefined || rate === null || Number.isNaN(rate)) return "";
+	return `CH: ${Math.round(rate)}%`;
+}
