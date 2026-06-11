@@ -34,6 +34,12 @@ import { runTscAndLspAudit } from "../pipeline/audit.ts";
 import { buildPipelineSummary, validateAgentResult } from "../pipeline/output.ts";
 import { handlePostPipelineMerge } from "../pipeline/merge.ts";
 import { createWorktree, installWorktreeDeps, cleanupWorktree } from "./worktree.ts";
+import {
+	createCrashCleanup,
+	setupCrashCleanup,
+	type CrashCleanup,
+	type CleanupOnExitDeps,
+} from "./crash-cleanup.ts";
 import { createPrOnApproval } from "./pr-creation.ts";
 import { sendPipelineSummary, sendAgentResultMessage, sendPipelineError } from "./notifications.ts";
 import { ErrorCollector, setErrorCollector, getErrorCollector } from "./error-collector.ts";
@@ -187,6 +193,7 @@ export async function handleSupervisorCommand(
 	let worktreeBranch: string | undefined;
 	let prCreationResult: PrCreationResult | undefined;
 	let collector: ErrorCollector;
+	let crashCleanup: CrashCleanup | undefined;
 
 	// Build ExecFn and NotifyFn from pi/ctx for helpers
 	// Mode adaptation: ctx.ui.notify is fire-and-forget (safe in all modes,
@@ -329,6 +336,23 @@ export async function handleSupervisorCommand(
 			collector?.push("worktree", "warn", `npm ci failed: ${depsResult.error}`);
 		}
 		getDebugLogger().info("handler", "Worktree ready", { worktreePath });
+
+		// ── Signal Handlers for Crash Cleanup ──────────────────────────
+		// Register before pipeline loop so accidental process termination
+		// (SIGTERM from orchestrator, SIGINT from Ctrl+C) still cleans up
+		// the worktree. Unregister in finally block below.
+		{
+			const cleanupDeps: CleanupOnExitDeps = {
+				worktreePath,
+				worktreeBranch,
+				pi,
+				cwd: ctx.cwd,
+				notify,
+				debugLogger: getDebugLogger(),
+			};
+			crashCleanup = setupCrashCleanup(cleanupDeps);
+			getDebugLogger().info("handler", "Crash cleanup handlers registered (SIGTERM/SIGINT)");
+		}
 
 		for (let i = 0; i < MAX_PIPELINE_LOOPS; i++) {
 			ctx.ui.notify(`Issue #${issueNum}: "${issueTitle}" — Status: ${loopStatus}`, "info");
@@ -898,6 +922,11 @@ export async function handleSupervisorCommand(
 		}
 		sendPipelineError(pi, ctx, agentResults, issueNum, issueTitle, config, errMsg);
 	} finally {
+		// Teardown signal handlers so they don't leak beyond pipeline
+		if (crashCleanup) {
+			crashCleanup.teardown();
+			getDebugLogger().info("handler", "Crash cleanup handlers removed");
+		}
 		if (isDebug) {
 			const logPath = getDebugLogger().getLogPath();
 			ctx.ui.notify(`Debug log: ${logPath}`, "info");

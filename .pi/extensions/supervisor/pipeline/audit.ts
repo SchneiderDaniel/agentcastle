@@ -267,6 +267,7 @@ export async function runTscAndLspAudit(
 				} catch {
 					// Comment posting is best-effort
 				}
+
 				// Build detailed gate failure context for developer prompt
 				const detailLines = tddResult.checks
 					.map((c) => {
