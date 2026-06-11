@@ -203,7 +203,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/agent-harness/`                     | Runtime tool call validation — blocks `bash                                                                            | grep`, `cat` file reads, redundant reads, error retry loops, same-tool cascades |
 | `.pi/extensions/ask-user/`                          | Interactive MC questions + CSV logger                                                                                  |
 | `.pi/extensions/caveman/`                           | Token-efficient communication protocol; mode-adaptive compression, project-trust gating, `/caveman status` command    |
-| `.pi/extensions/format-on-save/`                    | Auto Prettier + ESLint after write/edit                                                                                |
+| `.pi/extensions/format-on-save/`                    | Auto Prettier + ESLint after write/edit; trust-gated (skips on untrusted projects), mode-adaptive notifications (TUI: ui.notify, RPC: followUp, JSON/print: silent) |
 | `.pi/extensions/lsp-auditor/`                       | LSP diagnostics pre-audit for supervisor                                                                               |
 | `.pi/extensions/piignore.ts`                        | `.piignore` path blocking                                                                                              |
 | `.pi/extensions/tsc-checkpoint.ts`                  | `/check` command: `tsc --noEmit`                                                                                       |
