@@ -11,8 +11,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ensureScraplingVenv } from "./venv-setup";
-import { SCRAPLING_SCRIPT } from "./python-script";
+import { ensureScraplingVenv } from "./venv-setup.ts";
+import { SCRAPLING_SCRIPT } from "./python-script.ts";
 
 // Concurrency lock: Max 2 simultaneous web crawls to protect 8GB RAM
 let activeCrawls = 0;

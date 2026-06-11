@@ -5,7 +5,8 @@
  */
 
 import assert from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { describe, it, mock, before } from "node:test";
+import webCrawlExtension from "../index.ts";
 
 // ===========================================================================
 // Test helper — result formatting
@@ -30,17 +31,18 @@ function formatResults(results: Array<ResultItem>): string {
 
 describe("web_crawl tool registration — shape contract", () => {
 	it("(entity) registers tool with name 'web_crawl'", () => {
-		const registered: Array<{ name: string }> = [];
+		const registered: Array<any> = [];
 		const mockPi = {
-			registerTool: (tool: { name: string }) => {
+			registerTool: (tool: any) => {
 				registered.push(tool);
 			},
 			exec: async () => ({ code: 0, stdout: "{}", stderr: "" }),
 		};
 
-		// Dynamic import — will fail until index.ts is rewritten
-		// We test the registration shape via a simulated module
-		assert.ok(true, "placeholder");
+		webCrawlExtension(mockPi as any);
+
+		assert.equal(registered.length, 1, "should register exactly one tool");
+		assert.equal(registered[0].name, "web_crawl");
 	});
 
 	it("(entity) tool has url and optional maxPages parameters", () => {
@@ -288,34 +290,27 @@ describe("error signaling — throws instead of returning error content", () => 
 });
 
 describe("promptSnippet and promptGuidelines", () => {
-	it("(entity) tool definition has promptSnippet field", () => {
-		const tool = {
-			name: "web_crawl",
-			label: "Web Crawl",
-			description: "Crawl web pages.",
-			promptSnippet:
-				"Crawl web pages and extract content as Markdown, with automatic Cloudflare bypass",
-			promptGuidelines: [
-				"Use web_crawl for public web pages, especially behind Cloudflare or bot protection; prefer read for local files and bash curl for simple API calls without anti-bot measures.",
-			],
-		};
+	let tool: any;
 
+	before(() => {
+		const registered: any[] = [];
+		const mockPi = {
+			registerTool: (t: any) => {
+				registered.push(t);
+			},
+			exec: async () => ({ code: 0, stdout: "{}", stderr: "" }),
+		};
+		webCrawlExtension(mockPi as any);
+		tool = registered[0];
+	});
+
+	it("(entity) tool definition has promptSnippet field", () => {
 		assert.ok(tool.promptSnippet, "promptSnippet should be present");
 		assert.equal(typeof tool.promptSnippet, "string", "promptSnippet should be a string");
 		assert.ok(tool.promptSnippet.length > 0, "promptSnippet should not be empty");
 	});
 
 	it("(entity) tool definition has promptGuidelines field", () => {
-		const tool = {
-			name: "web_crawl",
-			label: "Web Crawl",
-			description: "Crawl web pages.",
-			promptSnippet: "Crawl web pages...",
-			promptGuidelines: [
-				"Use web_crawl for public web pages, especially behind Cloudflare or bot protection; prefer read for local files and bash curl for simple API calls without anti-bot measures.",
-			],
-		};
-
 		assert.ok(Array.isArray(tool.promptGuidelines), "promptGuidelines should be an array");
 		assert.ok(tool.promptGuidelines.length >= 1, "promptGuidelines should have at least one entry");
 		assert.ok(
@@ -325,19 +320,6 @@ describe("promptSnippet and promptGuidelines", () => {
 	});
 
 	it("(entity) promptSnippet and promptGuidelines present alongside name, label, description, parameters, execute", () => {
-		const tool = {
-			name: "web_crawl",
-			label: "Web Crawl",
-			description: "Crawl web pages.",
-			promptSnippet:
-				"Crawl web pages and extract content as Markdown, with automatic Cloudflare bypass",
-			promptGuidelines: [
-				"Use web_crawl for public web pages, especially behind Cloudflare or bot protection; prefer read for local files and bash curl for simple API calls without anti-bot measures.",
-			],
-			parameters: { type: "object", properties: { url: { type: "string" } } },
-			execute: async () => ({ content: [], details: {} }),
-		};
-
 		const requiredFields = [
 			"name",
 			"label",
