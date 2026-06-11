@@ -41,7 +41,7 @@ If you absolutely cannot output JSON, fall back to the text completion marker me
   "action": "COMPLETE",
   "agentName": "<agent-name>",
   "summary": "<one-line summary of what was accomplished>",
-  "commentBody": "<full comment body to post on GitHub issue (optional)>",
+  "commentBody": "<full comment body to post on GitHub issue>",
   "refusal": "<if you cannot complete the task, explain why here>"
 }
 \`\`\`

@@ -777,13 +777,43 @@ export async function handlePostAgentSuccess(
 				);
 			}
 		} else {
-			collector?.push(
-				"stages",
-				"warn",
-				`${agentName} completed but no commentBody found. ` +
-					`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
-					`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
-			);
+			// Graceful degradation: researcher with no commentBody still
+			// posts a "no findings" comment so issue has visible researcher output.
+			// Prevents silent skip when LLM treats commentBody as optional and omits it.
+			if (agentName === "researcher") {
+				const fallbackComment = "## Research Findings — No relevant results found for this topic.";
+				collector?.push(
+					"stages",
+					"warn",
+					`${agentName} completed but no commentBody in JSON output. ` +
+						`Posting graceful degradation comment. ` +
+						`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
+						`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
+				);
+				try {
+					await postIssueComment(pi, issueNum, config.repo, fallbackComment);
+					ctx.ui.notify(
+						`Posted ${agentName} comment (graceful degradation) on issue #${issueNum}`,
+						"info",
+					);
+				} catch (commentErr: unknown) {
+					collector?.push(
+						"stages",
+						"warn",
+						`Failed to post ${agentName} graceful degradation comment: ${
+							commentErr instanceof Error ? commentErr.message : String(commentErr)
+						}`,
+					);
+				}
+			} else {
+				collector?.push(
+					"stages",
+					"warn",
+					`${agentName} completed but no commentBody found. ` +
+						`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
+						`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
+				);
+			}
 		}
 	}
 
