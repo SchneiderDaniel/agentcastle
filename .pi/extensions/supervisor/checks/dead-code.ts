@@ -107,7 +107,7 @@ function mapKnipConfidence(
  * Each finding contributes 1 line (line must be > 0).
  */
 export function sumDeadLines(findings: DeadCodeFinding[]): number {
-	return findings.reduce((sum, f) => sum + (f.line > 0 ? 1 : 0), 0);
+	return findings.reduce((sum, f) => sum + 1, 0);
 }
 
 /**

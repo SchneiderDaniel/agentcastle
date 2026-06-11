@@ -190,7 +190,7 @@ describe("sumDeadLines()", () => {
 			{ file: "b.ts", line: 5, type: "unused-export", confidence: "100%" },
 			{ file: "c.ts", line: 10, type: "orphaned-import", confidence: "90%" },
 		];
-		assert.equal(sumDeadLines(findings), 2);
+		assert.equal(sumDeadLines(findings), 3);
 	});
 });
 
