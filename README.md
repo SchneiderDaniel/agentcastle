@@ -293,6 +293,8 @@ Cheasee-Pi uses [git worktrees](https://git-scm.com/docs/git-worktree) to give e
 4. Supervisor:  git worktree remove --force ../<branch> (post-pipeline)
 ```
 
+**Crash cleanup:** If the pipeline is terminated via SIGTERM (orchestrator) or SIGINT (Ctrl+C), signal handlers registered before the pipeline loop call `cleanupWorktree` automatically. An `isCleaningUp` guard prevents concurrent cleanup from a second signal. A 10-second timeout with `.unref()` prevents hanging on stalled `git worktree remove`. Errors are logged via the debug logger. Signals are unregistered in the `finally` block so they never leak beyond a pipeline run.
+
 **Working with worktrees manually (outside supervisor):**
 
 ```bash
