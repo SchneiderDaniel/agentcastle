@@ -337,4 +337,8 @@ describe("buildMetadata() — pure function unit tests", () => {
 		// Tool stats still merged correctly
 		assert.strictEqual(meta.toolStats!.read.totalDurationMs, 150);
 	});
+
+	it("buildMetadata is a function (exported from report.ts)", () => {
+		assert.strictEqual(typeof buildMetadata, "function", "buildMetadata should be a function");
+	});
 });

@@ -427,13 +427,8 @@ describe("parseSessionStats — perTurnTokens characterization", () => {
 	afterEach(() => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	});
-
 	it("parseSessionStats is a function", () => {
-		assert.strictEqual(
-			typeof parseSessionStats,
-			"function",
-			"parseSessionStats should be a function",
-		);
+		assert.strictEqual(typeof parseSessionStats, "function", "parseSessionStats should be a function");
 	});
 
 	function writeJsonl(entries: Record<string, unknown>[]): string {
@@ -682,11 +677,7 @@ describe("renderSessionToMarkdown — header name/mode overrides", () => {
 	}
 
 	it("renderSessionToMarkdown is a function that accepts overrides", () => {
-		assert.strictEqual(
-			typeof renderSessionToMarkdown,
-			"function",
-			"renderSessionToMarkdown should be a function",
-		);
+		assert.strictEqual(typeof renderSessionToMarkdown, "function", "renderSessionToMarkdown should be a function");
 	});
 
 	it("with mode override renders Mode row between Start and CWD", () => {

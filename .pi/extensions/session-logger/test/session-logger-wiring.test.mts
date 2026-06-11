@@ -10,7 +10,13 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import defaultExport from "../index.ts";
+import defaultExport, {
+	createSessionLoggerGate,
+	toggleSessionLoggerGate,
+	beginSessionLoggerSession,
+	getSessionLoggerState,
+	generateMissingReports,
+} from "../index.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // ---------------------------------------------------------------------------
@@ -228,5 +234,71 @@ describe("index.ts — session_shutdown trust gate", () => {
 
 		// Should not throw
 		await handler.fn({}, ctx);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Named exports from index.ts — gate factory functions
+// ---------------------------------------------------------------------------
+
+describe("index.ts — named exports", () => {
+	it("createSessionLoggerGate is a function and returns gate with defaults", () => {
+		assert.strictEqual(typeof createSessionLoggerGate, "function", "createSessionLoggerGate should be a function");
+		const gate = createSessionLoggerGate();
+		assert.strictEqual(gate.enabledForNextSession, true);
+		assert.strictEqual(gate.sessionEnabled, true);
+	});
+
+	it("createSessionLoggerGate accepts initial value", () => {
+		const gate = createSessionLoggerGate(false);
+		assert.strictEqual(gate.enabledForNextSession, false);
+	});
+
+	it("toggleSessionLoggerGate toggles and sets gate", () => {
+		assert.strictEqual(typeof toggleSessionLoggerGate, "function", "toggleSessionLoggerGate should be a function");
+		const gate = createSessionLoggerGate();
+		const result = toggleSessionLoggerGate(gate);
+		assert.strictEqual(result, false, "toggle should flip from true to false");
+	});
+
+	it("toggleSessionLoggerGate with 'on' sets enabled", () => {
+		const gate = createSessionLoggerGate(false);
+		const result = toggleSessionLoggerGate(gate, "on");
+		assert.strictEqual(result, true);
+	});
+
+	it("toggleSessionLoggerGate with 'off' sets disabled", () => {
+		const gate = createSessionLoggerGate(true);
+		const result = toggleSessionLoggerGate(gate, "off");
+		assert.strictEqual(result, false);
+	});
+
+	it("beginSessionLoggerSession is a function and copies enabledForNextSession", () => {
+		assert.strictEqual(typeof beginSessionLoggerSession, "function", "beginSessionLoggerSession should be a function");
+		const gate = createSessionLoggerGate();
+		const result = beginSessionLoggerSession(gate);
+		assert.strictEqual(result, true);
+		assert.strictEqual(gate.sessionEnabled, true);
+	});
+
+	it("getSessionLoggerState returns sessionEnabled when gate is provided", () => {
+		assert.strictEqual(typeof getSessionLoggerState, "function", "getSessionLoggerState should be a function");
+		const gate = createSessionLoggerGate();
+		const state = getSessionLoggerState(gate);
+		assert.strictEqual(state, true);
+	});
+
+	it("getSessionLoggerState returns null for null gate", () => {
+		const state = getSessionLoggerState(null);
+		assert.strictEqual(state, null);
+	});
+
+	it("getSessionLoggerState returns null for undefined gate", () => {
+		const state = getSessionLoggerState(undefined);
+		assert.strictEqual(state, null);
+	});
+
+	it("generateMissingReports is a function (re-exported)", () => {
+		assert.strictEqual(typeof generateMissingReports, "function", "generateMissingReports should be a function");
 	});
 });
