@@ -135,8 +135,6 @@ export async function openConfigDialog(
 			if (nextIndex === -1) return;
 
 			const item = items[selectedIndex];
-			if (!item) return;
-
 			const newValue = item.values![nextIndex]!;
 			item.currentValue = newValue;
 			settingsList.updateValue(item.id, newValue);

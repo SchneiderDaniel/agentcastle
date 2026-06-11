@@ -13,6 +13,7 @@ import type {
 	FilteredIssueData,
 } from "../config/types.ts";
 import type { ErrorCollector } from "./error-collector.ts";
+import type { NotifyFn } from "./helpers.ts";
 import {
 	resolveNextStatus,
 	resolveNextStatusFromAgentOutput,
@@ -36,6 +37,11 @@ import { parseAgentOutput, isSuccess as isAgentOutputSuccess } from "../agent/ou
 import type { AgentOutput } from "../config/types.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
 import type { DuplicateCodeResult } from "../checks/duplicate-code.ts";
+import {
+	runDeadCodeCheck,
+	buildDeadCodeContext as buildDeadCodeContextInner,
+} from "../checks/dead-code.ts";
+import type { DeadCodeResult } from "../checks/dead-code.ts";
 
 // ─── Constants ────────────────────────────────────────────────────
 
@@ -52,6 +58,8 @@ export interface StageState {
 	duplicateCodeResult: DuplicateCodeResult | null;
 	/** Whether the researcher agent was skipped by the dedup gate */
 	researcherSkipped: boolean;
+	/** Dead code check result, set during Implementation→Audit hooks */
+	deadCodeResult: DeadCodeResult | null;
 }
 
 export function createStageState(initialStatus: string): StageState {
@@ -61,6 +69,7 @@ export function createStageState(initialStatus: string): StageState {
 		auditCycleCount: 0,
 		duplicateCodeResult: null,
 		researcherSkipped: false,
+		deadCodeResult: null,
 	};
 }
 
@@ -232,6 +241,36 @@ export function buildDuplicateCodeContext(result: DuplicateCodeResult | null): s
 	}
 
 	return lines.join("\n");
+}
+
+// ─── Dead Code Gate ─────────────────────────────────────────────────
+
+/**
+ * Run dead code check on the worktree and return result.
+ * Updates the stage state with the result for later auditor context injection.
+ */
+export async function handleDeadCodeCheck(
+	execFn: (
+		cmd: string,
+		args: string[],
+		opts?: Record<string, unknown>,
+	) => Promise<{ code: number; stdout: string; stderr: string }>,
+	worktreePath: string,
+	defaultBranch: string,
+	state: StageState,
+): Promise<DeadCodeResult> {
+	const result = await runDeadCodeCheck(execFn, worktreePath, defaultBranch);
+	state.deadCodeResult = result;
+	return result;
+}
+
+/**
+ * Build a formatted string from DeadCodeResult for injection into auditor task context.
+ * Wraps the inner implementation from checks/dead-code.ts.
+ * Returns null if no dead code found or result is null.
+ */
+export function buildDeadCodeContext(result: DeadCodeResult | null): string | null {
+	return buildDeadCodeContextInner(result);
 }
 
 // ─── Check Rejection Limit ────────────────────────────────────────
@@ -591,6 +630,7 @@ export async function handlePostAgentSuccess(
 	issueTitle: string,
 	collector?: ErrorCollector,
 	gateRejected?: GateRejected,
+	notify?: NotifyFn,
 ): Promise<boolean> {
 	// Agent comments: architect, test-designer, researcher
 	if (agentName === "architect" || agentName === "test-designer" || agentName === "researcher") {
@@ -750,24 +790,28 @@ export async function handlePostAgentSuccess(
 	// Commit and push for developer
 	if (agentName === "developer" && worktreePath && worktreeBranch) {
 		const commitMsg = `feat(#${issueNum}): ${issueTitle}`;
-		try {
-			const committed = await commitAndPush(
-				pi,
-				worktreePath,
-				config.remote!,
-				worktreeBranch,
-				commitMsg,
-			);
-			if (committed) {
-				ctx.ui.notify("Changes committed and pushed to branch", "info");
-			} else {
-				ctx.ui.notify("No changes to commit — pipeline continues", "info");
-			}
-		} catch (cpErr: unknown) {
-			const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr);
-			ctx.ui.notify(`commitAndPush failed: ${cpMsg}`, "warning");
-			collector?.push("stages", "error", `commitAndPush failed: ${cpMsg}`);
+		// Use provided notify or create a null-safe fallback
+		const pushNotify: NotifyFn = notify || {
+			info: (msg) => ctx.ui.notify(msg, "info"),
+			error: (msg) => ctx.ui.notify(msg, "error"),
+		};
+		const commitResult = await commitAndPush(
+			pi,
+			worktreePath,
+			config.remote!,
+			worktreeBranch,
+			commitMsg,
+			pushNotify,
+		);
+		if (!commitResult.ok) {
+			ctx.ui.notify(`commitAndPush failed: ${commitResult.error}`, "warning");
+			collector?.push("stages", "error", `commitAndPush failed: ${commitResult.error}`);
 			return false;
+		}
+		if (commitResult.value) {
+			ctx.ui.notify("Changes committed and pushed to branch", "info");
+		} else {
+			ctx.ui.notify("No changes to commit — pipeline continues", "info");
 		}
 
 		// README change detection: warn if README was not updated for user-facing changes

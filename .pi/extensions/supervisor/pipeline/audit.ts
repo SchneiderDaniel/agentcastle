@@ -13,26 +13,36 @@ import { determineTscCheckpointDecision, getRunTscCheckpoint } from "../checks/t
 import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-decisions.ts";
 import { pollCiChecks } from "../checks/ci-gating.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
+import type { DuplicateCodeResult } from "../checks/duplicate-code.ts";
+import { runDeadCodeCheck } from "../checks/dead-code.ts";
+import type { DeadCodeResult } from "../checks/dead-code.ts";
 import { runPackageSafetyAudit } from "../checks/package-safety.ts";
 import { postIssueComment } from "../github/index.ts";
 import { runTddGate } from "../checks/tdd-gate.ts";
+import { runRequirementsTraceability } from "../checks/requirements-traceability.ts";
 
 /**
- * Run TSC checkpoint, LSP pre-audit, and duplicate code check during
- * Implementation → Audit transition. Returns the effective next status
- * ("Audit" or "Implementation") and any note.
+ * Run pre-transition checks during Implementation → Audit transition.
+ * Includes CI gating, duplicate code check, package safety, TDD gate,
+ * requirements traceability, TSC checkpoint, and LSP pre-audit.
+ * Returns the effective next status ("Audit" or "Implementation") and any note.
  */
 export async function runTscAndLspAudit(
 	issueNum: number,
 	issueTitle: string,
 	config: SupervisorConfig,
 	agentName: string,
-	filteredData: { comments: Array<{ body: string }> },
+	filteredData: { body?: string; comments: Array<{ body: string }> },
 	worktreePath: string,
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	collector?: ErrorCollector,
-): Promise<{ nextStatus: string; note: string }> {
+): Promise<{
+	nextStatus: string;
+	note: string;
+	duplicateCodeResult?: DuplicateCodeResult;
+	deadCodeResult?: DeadCodeResult;
+}> {
 	const branch = generateBranchName(issueNum, issueTitle, config.branchPrefix!);
 
 	// Shared exec function for running shell commands via pi.exec
@@ -116,6 +126,31 @@ export async function runTscAndLspAudit(
 		} else if (dupResult.status === "error") {
 			getDebugLogger().warn("pipeline-audit", "Duplicate check error", {
 				message: dupResult.message,
+			});
+		}
+
+		// Step 1b: Dead code detection gate
+		// Runs after duplicate code check, before TSC checkpoint.
+		// Non-blocking — dead code found is surfaced as warning and
+		// verified by the auditor agent.
+		ctx.ui.setStatus("supervisor", "Checking for dead code...");
+		getDebugLogger().info("pipeline-audit", "Running dead code check", { worktreePath });
+		const deadResult = await runDeadCodeCheck(execFn, worktreePath, config.defaultBranch || "main");
+
+		if (deadResult.status === "dead_found") {
+			ctx.ui.notify(
+				`Dead code detected: ${deadResult.findings.length} finding(s) found (${deadResult.totalDeadLines} lines). Auditor will verify.`,
+				"warning",
+			);
+			getDebugLogger().info("pipeline-audit", "Dead code found", {
+				findingCount: deadResult.findings.length,
+				totalLines: deadResult.totalDeadLines,
+			});
+		} else if (deadResult.status === "no_knip") {
+			getDebugLogger().info("pipeline-audit", "knip not available, skipping dead code check");
+		} else if (deadResult.status === "error") {
+			getDebugLogger().warn("pipeline-audit", "Dead code check error", {
+				message: deadResult.message,
 			});
 		}
 
@@ -222,7 +257,49 @@ export async function runTscAndLspAudit(
 			getDebugLogger().warn("pipeline-audit", "TDD gate threw", { error: tddMsg });
 		}
 
-		// Step 4: TSC checkpoint (Tier 2)
+		// Step 4: Requirements traceability check (non-blocking — informational)
+		// Runs deterministic checks cross-referencing issue requirements against the diff.
+		// Produces structured gap list surfaced to the auditor agent.
+		ctx.ui.setStatus("supervisor", "Running requirements traceability checks...");
+		getDebugLogger().info("pipeline-audit", "Running requirements traceability", { worktreePath });
+		try {
+			const traceGaps = await runRequirementsTraceability(
+				execFn,
+				worktreePath,
+				config.defaultBranch || "main",
+				{
+					body: filteredData?.body || "",
+					comments: (filteredData?.comments || []).map((c: { body: string }) => ({
+						author: "unknown",
+						body: c.body,
+					})),
+				},
+				issueTitle,
+			);
+			if (traceGaps.length > 0) {
+				const gapSummary = traceGaps
+					.map((g) => `[${g.severity}] ${g.check}: ${g.detail}`)
+					.join("; ");
+				ctx.ui.notify(
+					`Requirements traceability: ${traceGaps.length} gap(s) found. Auditor will review.`,
+					"info",
+				);
+				getDebugLogger().info("pipeline-audit", "Traceability gaps found", {
+					gapCount: traceGaps.length,
+					summary: gapSummary,
+				});
+			} else {
+				getDebugLogger().info("pipeline-audit", "No traceability gaps found");
+			}
+		} catch (traceErr: unknown) {
+			const traceMsg = traceErr instanceof Error ? traceErr.message : String(traceErr);
+			ctx.ui.notify(`Requirements traceability check threw: ${traceMsg}`, "info");
+			getDebugLogger().warn("pipeline-audit", "Requirements traceability threw", {
+				error: traceMsg,
+			});
+		}
+
+		// Step 5: TSC checkpoint (Tier 2)
 		const runTscCheckpointFn = await getRunTscCheckpoint();
 
 		if (runTscCheckpointFn) {
@@ -256,7 +333,11 @@ export async function runTscAndLspAudit(
 			nextStatus: result.nextStatus,
 			note: result.note,
 		});
-		return result;
+		return {
+			...result,
+			duplicateCodeResult: dupResult,
+			deadCodeResult: deadResult,
+		};
 	} finally {
 		ctx.ui.setStatus("supervisor", undefined);
 	}

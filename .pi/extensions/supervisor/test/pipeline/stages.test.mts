@@ -11,6 +11,7 @@ import type {
 	FilteredIssueData,
 } from "../../config/types.ts";
 import {
+	MAX_PIPELINE_LOOPS,
 	resolveAgentName,
 	isDoneStatus,
 	isWorktreeAgent,
@@ -1546,6 +1547,110 @@ describe("handlePostAgentSuccess()", () => {
 		assert.equal(calls.length, 0);
 	});
 
+	// ─── notify parameter tests (Result<T> pattern) ────────────────
+
+	it("developer with notify parameter — commitAndPush success returns true", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // git add -A
+				{ code: 0, stdout: "committed", stderr: "" }, // git commit
+				{ code: 0, stdout: "", stderr: "" }, // git push
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		// Provide a notify function and verify it's used correctly
+		const notifyCalls: Array<{ level: string; msg: string }> = [];
+		const notify = {
+			info: (msg: string) => notifyCalls.push({ level: "info", msg }),
+			error: (msg: string) => notifyCalls.push({ level: "error", msg }),
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			"/repo/worktree",
+			"feature-branch",
+			"Test issue",
+			undefined, // collector
+			undefined, // gateRejected
+			notify, // notify
+		);
+
+		assert.equal(success, true, "commit/push with notify should succeed");
+		// notify.error should NOT be called on success
+		assert.equal(notifyCalls.filter((c) => c.level === "error").length, 0);
+		// git calls: add + commit + push
+		assert.ok(calls.length >= 3);
+	});
+
+	it("developer with notify parameter — commitAndPush returns Result.ok=false on push failure, handlePostAgentSuccess returns false", async () => {
+		const calls: ExecCall[] = [];
+		const pi = createMockPi(
+			[
+				{ code: 0, stdout: "", stderr: "" }, // git add -A
+				{ code: 0, stdout: "committed", stderr: "" }, // git commit
+				{ code: 1, stdout: "", stderr: "push rejected" }, // git push fails
+			],
+			calls,
+		);
+		const ctx = createMockCtx();
+		const result: AgentRunResult = {
+			...baseResult,
+			agentName: "developer",
+			textOutput: "IMPLEMENTATION_COMPLETE",
+			textOnly: "IMPLEMENTATION_COMPLETE",
+		};
+		const filteredData: FilteredIssueData = {
+			body: "",
+			comments: [],
+		};
+
+		const notifyCalls: Array<{ level: string; msg: string }> = [];
+		const notify = {
+			info: (msg: string) => notifyCalls.push({ level: "info", msg }),
+			error: (msg: string) => notifyCalls.push({ level: "error", msg }),
+		};
+
+		const success = await handlePostAgentSuccess(
+			pi,
+			ctx,
+			result,
+			"developer",
+			42,
+			mockConfig,
+			filteredData,
+			"/repo/worktree",
+			"feature-branch",
+			"Test issue",
+			undefined, // collector
+			undefined, // gateRejected
+			notify, // notify
+		);
+
+		// commitAndPush now returns Result<boolean> with ok=false on push failure
+		// commitAndPush internally calls pushBranch which uses withNotify/notify.error
+		// Then handlePostAgentSuccess sees !commitResult.ok and returns false
+		assert.equal(success, false, "push failure should return false — pipeline stops");
+	});
+
 	it("gateRejected passed to auditor → posts gate rejection comment instead of approval", async () => {
 		const calls: ExecCall[] = [];
 		const pi = createMockPi(
@@ -1720,6 +1825,20 @@ describe("handlePostAgentSuccess()", () => {
 		const ghCall = calls.find((c) => c.cmd === "gh" && c.args.includes("comment"));
 		assert.ok(ghCall, "should post normal rejection comment");
 	});
+
+// ─── Tests: MAX_PIPELINE_LOOPS constant ───────────────────────────
+
+describe("MAX_PIPELINE_LOOPS", () => {
+	it("is a positive integer", () => {
+		assert.equal(typeof MAX_PIPELINE_LOOPS, "number");
+		assert.ok(MAX_PIPELINE_LOOPS > 0);
+	});
+
+	it("equals 20", () => {
+		// Explicit value check — changing this has implications for loop limits
+		assert.equal(MAX_PIPELINE_LOOPS, 20);
+	});
+});
 });
 
 // ─── Tests: createStageState() ────────────────────────────────────
