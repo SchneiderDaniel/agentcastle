@@ -228,22 +228,6 @@ export default function askUser(pi: ExtensionAPI): void {
 		},
 	});
 
-	// ── ask_user_read response helpers ─────────────────────────────
-	function readError(message: string): {
-		content: Array<{ type: "text"; text: string }>;
-		details: Record<string, unknown>;
-	} {
-		return {
-			content: [
-				{
-					type: "text" as const,
-					text: JSON.stringify({ entries: [], count: 0, error: message }),
-				},
-			],
-			details: { entries: [], count: 0, error: message },
-		};
-	}
-
 	function successResult<T extends { datetime: string; question: string; answer: string }>(
 		entries: T[],
 		count: number,
@@ -310,15 +294,15 @@ export default function askUser(pi: ExtensionAPI): void {
 
 				if (action === "get") {
 					if (id === undefined || id === null) {
-						return readError("id parameter is required for get action");
+						throw new Error("id parameter is required for get action");
 					}
 
 					const entry = await getQnaEntry(projectDir, id);
 					if (entry === undefined) {
-						return readError("No Q&A history yet");
+						throw new Error("No Q&A history yet");
 					}
 					if (entry === null) {
-						return readError(`Entry #${id} not found`);
+						throw new Error(`Entry #${id} not found`);
 					}
 
 					return successResult([entry], 1);
@@ -326,7 +310,7 @@ export default function askUser(pi: ExtensionAPI): void {
 
 				if (action === "query") {
 					if (!text) {
-						return readError("text parameter is required for query action");
+						throw new Error("text parameter is required for query action");
 					}
 
 					const entries = await queryQnaEntries(projectDir, text);
@@ -334,9 +318,9 @@ export default function askUser(pi: ExtensionAPI): void {
 				}
 
 				// Unknown action
-				return readError(`Unknown action: ${action}`);
+				throw new Error(`Unknown action: ${action}`);
 			} catch (err) {
-				return readError(`Error reading Q&A history: ${(err as Error).message}`);
+				throw err;
 			}
 		},
 	});
