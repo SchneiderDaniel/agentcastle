@@ -40,5 +40,6 @@ export const CAVEMAN_COMMAND_OPTIONS = [
 	{ value: "off", label: "off", description: "Disable caveman mode" },
 	{ value: "stop", label: "stop", description: "Disable caveman mode" },
 	{ value: "quit", label: "quit", description: "Disable caveman mode" },
+	{ value: "status", label: "status", description: "Show caveman and prompt context info" },
 	{ value: "config", label: "config", description: "Open settings dialog" },
 ] as const;

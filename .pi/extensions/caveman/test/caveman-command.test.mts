@@ -158,10 +158,10 @@ describe("command.ts — getArgumentCompletions", () => {
 		assert.strictEqual(result, null);
 	});
 
-	it("empty prefix returns all 7 options", () => {
+	it("empty prefix returns all 8 options", () => {
 		const { def } = setupTest();
 		const result = def.getArgumentCompletions("");
 		assert.ok(result !== null);
-		assert.strictEqual(result!.length, 7);
+		assert.strictEqual(result!.length, 8);
 	});
 });

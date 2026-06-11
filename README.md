@@ -202,7 +202,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/session-logger/`                    | Session logging to JSONL                                                                                               |
 | `.pi/extensions/agent-harness/`                     | Runtime tool call validation — blocks `bash                                                                            | grep`, `cat` file reads, redundant reads, error retry loops, same-tool cascades |
 | `.pi/extensions/ask-user/`                          | Interactive MC questions + CSV logger                                                                                  |
-| `.pi/extensions/caveman/`                           | Token-efficient communication protocol                                                                                 |
+| `.pi/extensions/caveman/`                           | Token-efficient communication protocol; mode-adaptive compression, project-trust gating, `/caveman status` command    |
 | `.pi/extensions/format-on-save/`                    | Auto Prettier + ESLint after write/edit                                                                                |
 | `.pi/extensions/lsp-auditor/`                       | LSP diagnostics pre-audit for supervisor                                                                               |
 | `.pi/extensions/piignore.ts`                        | `.piignore` path blocking                                                                                              |
@@ -501,7 +501,7 @@ Switch the project to **Board** layout in the browser and change **Group by** to
 | Session advice report   | `/session-advice report` — generates report, prompts cleanup + GitHub issue creation |
 | Batch advice analysis   | `npx tsx scripts/session-advice.ts` (all) or `--latest`                              |
 | Toggle session logger   | `/session-logger on` / `/session-logger off`                                         |
-| Toggle caveman level    | `/caveman` (cycle: lite → full → off) or `/caveman lite`                             |
+| Toggle caveman level    | `/caveman` (cycle: lite → full → off) or `/caveman lite`; `/caveman status` for prompt context; `/caveman config` for settings |
 | Query session logs      | `./scripts/session-query.sh 'select(.role == "user")'`                               |
 | Design an extension     | `/extension-spec <idea>`                                                             |
 | Write handover          | `/handover`                                                                          |
