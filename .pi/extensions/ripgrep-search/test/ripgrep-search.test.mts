@@ -1373,6 +1373,10 @@ describe("buildStructuredSummary", () => {
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("buildSearchErrorText", () => {
+	it("buildSearchErrorText is exported function", () => {
+		assert.strictEqual(typeof buildSearchErrorText, "function");
+	});
+
 	it("killed process produces 'killed' in message", () => {
 		const result = buildSearchErrorText("ripgrep", 9, true, "", "ripgrep (\`rg --version\`)", ".");
 		assert.ok(result.includes("killed"), "Should mention killed");
