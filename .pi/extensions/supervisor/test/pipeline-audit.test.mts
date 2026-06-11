@@ -293,3 +293,111 @@ describe("pipeline-audit.ts — non-standard worktreeBase config (Phase 6)", () 
 		assert.ok(auditSrc.includes(auditPathPattern), "pipeline-audit.ts uses resolvePath");
 	});
 });
+
+// ===========================================================================
+// Phase 7: TSC checkpoint try/catch error boundary (Issue #788)
+// ===========================================================================
+
+describe("pipeline-audit.ts — TSC checkpoint try/catch error boundary (Phase 7)", () => {
+	it("tscResult declared with let outside try block (visible after catch)", () => {
+		const src = readAuditSource();
+		// Verify let-declared tscResult before try block, not const inside it
+		const letDecl = "let tscResult: TscCheckpointResult | null = null;";
+		assert.ok(src.includes(letDecl), "tscResult should be declared with let outside try block");
+		// Verify it appears before the try block in Step 5
+		const step5Idx = src.indexOf("// Step 5: TSC checkpoint (Tier 2)");
+		const tryIdx = src.indexOf("try {", step5Idx);
+		const declIdx = src.indexOf(letDecl, step5Idx);
+		assert.ok(
+			declIdx > step5Idx && declIdx < tryIdx,
+			"let tscResult should appear between Step 5 comment and try block",
+		);
+	});
+
+	it("runTscCheckpointFn call wrapped in try block", () => {
+		const src = readAuditSource();
+		const callIdx = src.indexOf("runTscCheckpointFn(worktreePath)");
+		assert.ok(callIdx >= 0, "runTscCheckpointFn(worktreePath) call exists");
+		// try block should contain the call
+		const beforeCall = src.substring(callIdx - 30, callIdx);
+		assert.ok(beforeCall.includes("try {"), "call should be inside try block");
+	});
+
+	it("catch block calls ctx.ui.notify with warning level", () => {
+		const src = readAuditSource();
+		const catchBlock = src.substring(
+			src.indexOf("catch (tscErr: unknown)"),
+			src.indexOf("catch (tscErr: unknown)") + 400,
+		);
+		assert.ok(
+			catchBlock.includes("ctx.ui.notify(`TSC checkpoint threw:"),
+			"catch block should call ctx.ui.notify with TSC checkpoint message",
+		);
+		assert.ok(
+			catchBlock.includes(', "warning")'),
+			"ctx.ui.notify should be called with warning level",
+		);
+	});
+
+	it("catch block calls getDebugLogger().warn with pipeline-audit module", () => {
+		const src = readAuditSource();
+		const catchBlock = src.substring(
+			src.indexOf("catch (tscErr: unknown)"),
+			src.indexOf("catch (tscErr: unknown)") + 400,
+		);
+		assert.ok(
+			catchBlock.includes('getDebugLogger().warn("pipeline-audit"'),
+			"catch block should call getDebugLogger().warn with pipeline-audit module",
+		);
+	});
+
+	it("catch block calls collector?.push with pipeline-audit module and warn level", () => {
+		const src = readAuditSource();
+		const catchBlock = src.substring(
+			src.indexOf("catch (tscErr: unknown)"),
+			src.indexOf("catch (tscErr: unknown)") + 500,
+		);
+		const pattern1 = 'collector?.push("pipeline-audit", "warn"';
+		const pattern2 = 'collector.push("pipeline-audit", "warn"';
+		assert.ok(
+			catchBlock.includes(pattern1) || catchBlock.includes(pattern2),
+			"catch block should call collector?.push with pipeline-audit module and warn level",
+		);
+	});
+
+	it("determineTscCheckpointDecision call is outside the catch block (no early return)", () => {
+		const src = readAuditSource();
+		const catchIdx = src.indexOf("catch (tscErr: unknown)");
+		assert.ok(catchIdx >= 0, "catch (tscErr: unknown) block exists");
+		const decisionIdx = src.indexOf(
+			'const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");',
+		);
+		assert.ok(decisionIdx >= 0, "determineTscCheckpointDecision call exists");
+		// Decision must come after catch block
+		assert.ok(
+			decisionIdx > catchIdx,
+			"determineTscCheckpointDecision should be after the catch block",
+		);
+	});
+
+	it("determineTscCheckpointDecision and if/else are not wrapped inside try/catch", () => {
+		const src = readAuditSource();
+		const decisionLine = 'const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");';
+		const decisionIdx = src.indexOf(decisionLine);
+		assert.ok(decisionIdx >= 0, "determineTscCheckpointDecision call exists");
+		// Find the catch block closing brace before the decision line
+		const beforeDecision = src.substring(0, decisionIdx);
+		const lastCatchIdx = beforeDecision.lastIndexOf("catch (tscErr: unknown)");
+		assert.ok(lastCatchIdx >= 0, "catch block found before decision call");
+		// Text between catch block end and decision should not contain 'try {'
+		const afterCatch = beforeDecision.substring(lastCatchIdx);
+		// Find the catch block's closing '}'
+		const catchCloseIdx = afterCatch.lastIndexOf("}");
+		assert.ok(catchCloseIdx >= 0, "catch block has closing brace");
+		const between = afterCatch.substring(catchCloseIdx, afterCatch.length);
+		assert.ok(
+			!between.includes("try {"),
+			"determineTscCheckpointDecision should not be inside a try block",
+		);
+	});
+});

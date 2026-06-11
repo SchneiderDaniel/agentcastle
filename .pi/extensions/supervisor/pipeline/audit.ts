@@ -9,7 +9,11 @@ import { resolve as resolvePath } from "node:path";
 import { getDebugLogger } from "../config/debug.ts";
 import { generateBranchName } from "../agent/task.ts";
 import type { ErrorCollector } from "./error-collector.ts";
-import { determineTscCheckpointDecision, getRunTscCheckpoint } from "../checks/tsc-decisions.ts";
+import {
+	determineTscCheckpointDecision,
+	getRunTscCheckpoint,
+	type TscCheckpointResult,
+} from "../checks/tsc-decisions.ts";
 import { determineLspPreAuditDecision, getRunPreAudit } from "../checks/lsp-decisions.ts";
 import { pollCiChecks } from "../checks/ci-gating.ts";
 import { runDuplicateCheck } from "../checks/duplicate-code.ts";
@@ -305,7 +309,15 @@ export async function runTscAndLspAudit(
 		if (runTscCheckpointFn) {
 			ctx.ui.setStatus("supervisor", "Running TSC checkpoint...");
 			getDebugLogger().info("pipeline-audit", "Running TSC checkpoint", { worktreePath });
-			const tscResult = await runTscCheckpointFn(worktreePath);
+			let tscResult: TscCheckpointResult | null = null;
+			try {
+				tscResult = await runTscCheckpointFn(worktreePath);
+			} catch (tscErr: unknown) {
+				const tscMsg = tscErr instanceof Error ? tscErr.message : String(tscErr);
+				ctx.ui.notify(`TSC checkpoint threw: ${tscMsg}. Proceeding to audit.`, "warning");
+				getDebugLogger().warn("pipeline-audit", "TSC checkpoint threw", { error: tscMsg });
+				collector?.push("pipeline-audit", "warn", `TSC checkpoint threw: ${tscMsg}`);
+			}
 			const tscDecision = determineTscCheckpointDecision(tscResult, "Audit");
 
 			getDebugLogger().info("pipeline-audit", "TSC result", {
