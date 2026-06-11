@@ -487,16 +487,7 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 			// Validate pattern first (collision rule)
 			const validationError = validatePattern(pattern);
 			if (validationError) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: validationError,
-						},
-					],
-					details: { success: false, error: validationError } as Record<string, unknown>,
-					isError: true,
-				};
+				throw new Error(validationError);
 			}
 
 			// Check cache before executing
@@ -525,10 +516,13 @@ export default function structuralAnalyzer(pi: ExtensionAPI): void {
 				language,
 			);
 
-			// Cache the result (only cache successful, non-error responses)
-			if (!response.isError) {
-				setCache(cacheKey, response);
+			// If the response indicates an error, throw so pi sets the isError flag
+			if (response.isError) {
+				throw new Error(response.content[0].text);
 			}
+
+			// Cache the result
+			setCache(cacheKey, response);
 
 			return response;
 		},

@@ -60,10 +60,12 @@ structural_search(pattern="class $A extends $B", language="py")
 
 - **Exit code 0** — Success. Results parsed from JSONL output.
 - **Exit code 1, empty stderr** — No matches found (legitimate, returns `matches: 0`).
-- **Exit code 1, non-empty stderr** — ast-grep error (returns `isError: true` with the stderr message).
-- **Exit code ≥ 2** — Process error (permission denied, segfault, OOM kill, etc.). Always returns `isError: true`.
+- **Exit code 1, non-empty stderr** — ast-grep error (thrown so pi sets `isError: true` on the result).
+- **Exit code ≥ 2** — Process error (permission denied, segfault, OOM kill, etc.). Always thrown as error.
 
-This replaces the old keyword-heuristic approach that only caught stderr messages containing "unknown", "error", or "not found".
+Invalid patterns (single-word text patterns like `TODO`) are also thrown before execution — pi catches the error and reports it to the LLM with the error flag set.
+
+This replaces the old keyword-heuristic approach that only caught stderr messages containing "unknown", "error", or "not found". Errors are signaled via `throw` rather than `return { isError: true }` to match pi's framework contract — only `throw` sets the `isError` flag on tool results.
 
 ### When to use structural_search vs ripgrep_search
 
