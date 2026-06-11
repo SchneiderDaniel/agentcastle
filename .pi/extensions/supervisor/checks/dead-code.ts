@@ -36,7 +36,7 @@ export interface DeadCodeResult {
 
 // ─── Knip Output Types ──────────────────────────────────────────────
 
-/** A single knip issue entry. */
+/** A single knip issue entry (knip v5 flat format). */
 export interface KnipIssue {
 	file: string;
 	line: number;
@@ -46,10 +46,34 @@ export interface KnipIssue {
 	message?: string;
 }
 
+/** A nested knip entry (export, type, dependency, etc. — knip v6+). */
+interface KnipNestedEntry {
+	name: string;
+	line: number;
+	col?: number;
+	pos?: number;
+}
+
+/** Per-file issue block in knip v6+ JSON output. */
+interface KnipFileIssue {
+	file: string;
+	exports?: KnipNestedEntry[];
+	types?: KnipNestedEntry[];
+	dependencies?: KnipNestedEntry[];
+	devDependencies?: KnipNestedEntry[];
+	binaries?: KnipNestedEntry[];
+	// Also supports flat KnipIssue fields for backward compat
+	line?: number;
+	col?: number;
+	symbol?: string;
+	symbolType?: string;
+	message?: string;
+}
+
 /** Top-level knip JSON output structure. */
 export interface KnipOutput {
 	files?: string[];
-	issues?: KnipIssue[];
+	issues?: (KnipIssue | KnipFileIssue)[];
 }
 
 // ─── Exec function type ─────────────────────────────────────────────
@@ -187,6 +211,7 @@ export function buildDeadCodeContext(result: DeadCodeResult | null): string | nu
 
 /**
  * Parse knip JSON stdout into DeadCodeFinding[].
+ * Supports both knip v5 flat format and knip v6+ nested format.
  * Returns null if parsing fails.
  */
 export function parseKnipOutput(stdout: string): DeadCodeFinding[] | null {
@@ -201,7 +226,7 @@ export function parseKnipOutput(stdout: string): DeadCodeFinding[] | null {
 
 	const findings: DeadCodeFinding[] = [];
 
-	// Parse unused files
+	// Parse unused files (knip v5 format)
 	if (parsed.files && Array.isArray(parsed.files)) {
 		for (const file of parsed.files) {
 			findings.push({
@@ -217,17 +242,84 @@ export function parseKnipOutput(stdout: string): DeadCodeFinding[] | null {
 	// Parse issues
 	if (parsed.issues && Array.isArray(parsed.issues)) {
 		for (const issue of parsed.issues) {
-			const findingType = mapKnipFindingType(issue.symbolType);
-			const confidence = mapKnipConfidence(issue.symbolType, false);
-			findings.push({
-				file: issue.file,
-				line: issue.line,
-				column: issue.col,
-				type: findingType,
-				symbol: issue.symbol,
-				confidence,
-				snippet: issue.message,
-			});
+			const file = issue.file;
+
+			// Knip v6+ nested format: exports[], types[], dependencies[], devDependencies[]
+			const fileIssue = issue as KnipFileIssue;
+			const hasNested =
+				Array.isArray(fileIssue.exports) ||
+				Array.isArray(fileIssue.types) ||
+				Array.isArray(fileIssue.dependencies) ||
+				Array.isArray(fileIssue.devDependencies);
+
+			if (hasNested) {
+				// Iterate nested exports
+				if (fileIssue.exports) {
+					for (const exp of fileIssue.exports) {
+						findings.push({
+							file,
+							line: exp.line ?? 0,
+							column: exp.col,
+							type: "unused-export",
+							symbol: exp.name,
+							confidence: "100%",
+						});
+					}
+				}
+				// Iterate nested types (also exports)
+				if (fileIssue.types) {
+					for (const t of fileIssue.types) {
+						findings.push({
+							file,
+							line: t.line ?? 0,
+							column: t.col,
+							type: "unused-export",
+							symbol: t.name,
+							confidence: "100%",
+						});
+					}
+				}
+				// Iterate unused dependencies
+				if (fileIssue.dependencies) {
+					for (const d of fileIssue.dependencies) {
+						findings.push({
+							file,
+							line: d.line ?? 0,
+							column: d.col,
+							type: "zombie-dependency",
+							symbol: d.name,
+							confidence: "100%",
+						});
+					}
+				}
+				// Iterate unused devDependencies
+				if (fileIssue.devDependencies) {
+					for (const d of fileIssue.devDependencies) {
+						findings.push({
+							file,
+							line: d.line ?? 0,
+							column: d.col,
+							type: "zombie-dependency",
+							symbol: d.name,
+							confidence: "100%",
+						});
+					}
+				}
+			} else {
+				// Old format (knip v5 flat): symbol/symbolType at top level
+				const flatIssue = issue as KnipIssue;
+				const findingType = mapKnipFindingType(flatIssue.symbolType);
+				const confidence = mapKnipConfidence(flatIssue.symbolType, false);
+				findings.push({
+					file,
+					line: flatIssue.line ?? 0,
+					column: flatIssue.col,
+					type: findingType,
+					symbol: flatIssue.symbol,
+					confidence,
+					snippet: flatIssue.message,
+				});
+			}
 		}
 	}
 

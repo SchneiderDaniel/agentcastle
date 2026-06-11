@@ -24,5 +24,14 @@
 		"boxen": "^7.1.1",
 		"typebox": "^1.2.8",
 		"vscode-jsonrpc": "^8.2.1"
+	},
+	"knip": {
+		"entry": [
+			".pi/extensions/*/index.ts"
+		],
+		"ignoreDependencies": [
+			"boxen",
+			"prettier"
+		]
 	}
 }

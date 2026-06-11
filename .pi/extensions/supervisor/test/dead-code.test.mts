@@ -434,6 +434,149 @@ describe("parseKnipOutput()", () => {
 		assert.equal(result![0]!.file, "src/a.ts");
 		assert.equal(result![0]!.line, 10);
 	});
+
+	// ── Knip v6+ nested format ──
+
+	it("parses knip v6+ nested exports", () => {
+		const stdout = JSON.stringify({
+			issues: [
+				{
+					file: "src/a.ts",
+					exports: [{ name: "unusedFunc", line: 10, col: 14 }],
+					types: [],
+					dependencies: [],
+					devDependencies: [],
+				},
+			],
+		});
+		const result = parseKnipOutput(stdout);
+		assert.ok(result, "should parse v6+ format");
+		assert.equal(result!.length, 1);
+		assert.equal(result![0]!.file, "src/a.ts");
+		assert.equal(result![0]!.line, 10);
+		assert.equal(result![0]!.column, 14);
+		assert.equal(result![0]!.type, "unused-export");
+		assert.equal(result![0]!.symbol, "unusedFunc");
+		assert.equal(result![0]!.confidence, "100%");
+	});
+
+	it("parses knip v6+ nested types", () => {
+		const stdout = JSON.stringify({
+			issues: [
+				{
+					file: "src/types.ts",
+					exports: [],
+					types: [{ name: "UnusedType", line: 15, col: 10 }],
+					dependencies: [],
+					devDependencies: [],
+				},
+			],
+		});
+		const result = parseKnipOutput(stdout);
+		assert.ok(result);
+		assert.equal(result!.length, 1);
+		assert.equal(result![0]!.symbol, "UnusedType");
+		assert.equal(result![0]!.type, "unused-export");
+	});
+
+	it("parses knip v6+ nested dependencies as zombie-dependency", () => {
+		const stdout = JSON.stringify({
+			issues: [
+				{
+					file: "package.json",
+					exports: [],
+					types: [],
+					dependencies: [{ name: "boxen", line: 24, col: 4 }],
+					devDependencies: [],
+				},
+			],
+		});
+		const result = parseKnipOutput(stdout);
+		assert.ok(result);
+		assert.equal(result!.length, 1);
+		assert.equal(result![0]!.symbol, "boxen");
+		assert.equal(result![0]!.type, "zombie-dependency");
+		assert.equal(result![0]!.line, 24);
+	});
+
+	it("parses knip v6+ nested devDependencies as zombie-dependency", () => {
+		const stdout = JSON.stringify({
+			issues: [
+				{
+					file: "package.json",
+					exports: [],
+					types: [],
+					dependencies: [],
+					devDependencies: [{ name: "prettier", line: 18, col: 4 }],
+				},
+			],
+		});
+		const result = parseKnipOutput(stdout);
+		assert.ok(result);
+		assert.equal(result!.length, 1);
+		assert.equal(result![0]!.symbol, "prettier");
+		assert.equal(result![0]!.type, "zombie-dependency");
+	});
+
+	it("handles mixed exports, types, deps — all in same file", () => {
+		const stdout = JSON.stringify({
+			issues: [
+				{
+					file: "src/all.ts",
+					exports: [{ name: "fn1", line: 5, col: 14 }],
+					types: [{ name: "T1", line: 10, col: 10 }],
+					dependencies: [],
+					devDependencies: [],
+				},
+			],
+		});
+		const result = parseKnipOutput(stdout);
+		assert.ok(result);
+		assert.equal(result!.length, 2);
+	});
+
+	it("prefers nested format over flat when both present", () => {
+		// If nested arrays exist (even empty), use v6+ parser, not flat
+		const stdout = JSON.stringify({
+			issues: [
+				{
+					file: "src/a.ts",
+					line: 99, // flat fields present but should be ignored
+					col: 1,
+					symbol: "ignored",
+					symbolType: "function",
+					message: "should be ignored",
+					exports: [{ name: "realFn", line: 10, col: 14 }],
+					types: [],
+					dependencies: [],
+					devDependencies: [],
+				},
+			],
+		});
+		const result = parseKnipOutput(stdout);
+		assert.ok(result);
+		// Should use nested parser (exports), not flat fields
+		assert.equal(result!.length, 1);
+		assert.equal(result![0]!.symbol, "realFn");
+		assert.equal(result![0]!.line, 10); // from nested export, not line:99
+	});
+
+	it("handles empty nested arrays (exports: []) — no findings from that file", () => {
+		const stdout = JSON.stringify({
+			issues: [
+				{
+					file: "src/clean.ts",
+					exports: [],
+					types: [],
+					dependencies: [],
+					devDependencies: [],
+				},
+			],
+		});
+		const result = parseKnipOutput(stdout);
+		assert.ok(result);
+		assert.equal(result!.length, 0);
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════

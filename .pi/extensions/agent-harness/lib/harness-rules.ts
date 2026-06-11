@@ -21,13 +21,14 @@ import { parseBashCmd as parseBashCmdImpl } from "./bash-command.ts";
 // ── Re-export BashCommand class and constants for direct use ──
 
 export { BashCommand } from "./bash-command.ts";
-export type { BashSegment } from "./bash-command.ts";
-export { READ_BASH_CMDS, FILE_MODIFY_SIGNALS };
+// BashSegment type is imported and used internally via parseBashCmd return type
+// READ_BASH_CMDS and FILE_MODIFY_SIGNALS imported for internal use only
+// Consumers should import directly from "./constants.ts"
 
 // ── Constants ──
 
 /** Bash search signals: grep/rg/find used via pipe or backtick. */
-export const BASH_SEARCH_SIGNALS: readonly string[] = [
+const BASH_SEARCH_SIGNALS: readonly string[] = [
 	"| grep",
 	"| rg",
 	"| find",
@@ -39,7 +40,7 @@ export const BASH_SEARCH_SIGNALS: readonly string[] = [
 ];
 
 /** Dedicated search tools available to the agent. */
-export const SEARCH_TOOLS = new Set(["ripgrep_search", "structural_search"]);
+const SEARCH_TOOLS = new Set(["ripgrep_search", "structural_search"]);
 
 /** Code file extensions (lowercase). */
 const CODE_EXTENSIONS = new Set([".ts", ".js", ".tsx", ".jsx", ".py", ".rs", ".go"]);
@@ -87,7 +88,9 @@ export const MULTI_VERB_TOOLS = new Set([
 ]);
 
 /** Max errors tracked per tool before triggering retry block. */
-export const MAX_ERRORS_PER_TOOL = 3;
+// MAX_ERRORS_PER_TOOL: local copy in harness-state.ts (value 3)
+// Kept here for backward compatibility but not exported
+const MAX_ERRORS_PER_TOOL = 3;
 
 // ── Types ──
 
@@ -184,7 +187,7 @@ export function isRedundantRead(prevPath: string, currentPath: string, turnDiff:
 /**
  * Check if a file path corresponds to a code file (has recognized extension).
  */
-export function isCodeFilePath(path: string): boolean {
+function isCodeFilePath(path: string): boolean {
 	if (!path) return false;
 	const lower = path.toLowerCase();
 	for (const ext of CODE_EXTENSIONS) {
@@ -199,7 +202,7 @@ export function isCodeFilePath(path: string): boolean {
  * Check if text contains grep-like patterns.
  * Used by both advisor.ts (post-hoc) and agent-harness (runtime).
  */
-export function grepLike(s: string): boolean {
+function grepLike(s: string): boolean {
 	if (!s) return false;
 	const low = s.toLowerCase();
 	return low.includes("grep") || low.includes("| rg") || low.includes("`rg");
