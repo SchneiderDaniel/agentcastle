@@ -3,9 +3,8 @@
  * and installFooter signature work correctly.
  *
  * These test the interface shape and behavior. The FooterConfig interface
- * and installFooter function are replicated inline (same pattern as
- * context-info.test.mts) because --experimental-strip-types doesn't
- * resolve transitive local imports.
+ * is replicated inline to avoid transitive type imports.
+ * The installFooter function is imported from the real footer.ts.
  *
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/context-info/test/footer-config.test.mts
@@ -14,6 +13,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { formatCacheHitRate } from "../formatting.ts";
+import { installFooter } from "../footer.ts";
 
 // ---------------------------------------------------------------------------
 // Inline FooterConfig interface (matches .pi/extensions/context-info/types.ts)
@@ -34,6 +34,7 @@ interface ContextStatusBarConfig {
 	showTimer: boolean;
 	showTps: boolean;
 	showCache: boolean;
+	welcomeTimeoutMs: number;
 }
 
 interface FooterConfig {
@@ -50,359 +51,6 @@ interface FooterConfig {
 	sessionName: string | undefined;
 	trustStatus: "trusted" | "untrusted" | undefined;
 	sessionId: string;
-}
-
-// ---------------------------------------------------------------------------
-// Inline installFooter (matches .pi/extensions/context-info/footer.ts)
-//
-// Note: We must replicate installFooter inline rather than importing it
-// because footer.ts has runtime imports with .js extensions that
-// --experimental-strip-types cannot resolve to .ts files.
-// formatCacheHitRate is imported above from ../formatting.ts (which works).
-// ---------------------------------------------------------------------------
-
-/** Format token count: 1200 → "1.2K", 1200000 → "1.2M" */
-function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-	return String(n);
-}
-
-/** Apply hex foreground color via ANSI truecolor */
-function fgHex(_hex: string, text: string): string {
-	// Mock — no actual ANSI in tests
-	return text;
-}
-
-/** Pick threshold for given token count and return hex color */
-function pickThresholdHex(tokens: number, thresholds: ThresholdEntry[]): string {
-	const sorted = [...thresholds].sort((a, b) => {
-		if (a.maxTokens === null) return 1;
-		if (b.maxTokens === null) return -1;
-		return a.maxTokens - b.maxTokens;
-	});
-	for (let i = 0; i < sorted.length; i++) {
-		const entry = sorted[i];
-		if (entry.maxTokens === null) return "#ff5252";
-		if (tokens <= entry.maxTokens) return "#50fa7b";
-	}
-	return "#ff5252";
-}
-
-function thinkingIcon(level: string | undefined): string {
-	switch (level) {
-		case "off":
-			return "○";
-		case "minimal":
-			return "◐";
-		case "low":
-			return "◑";
-		case "medium":
-			return "◒";
-		case "high":
-			return "◓";
-		case "xhigh":
-			return "●";
-		default:
-			return "·";
-	}
-}
-
-function thinkingColor(level: string | undefined): string {
-	switch (level) {
-		case "off":
-			return "dim";
-		case "minimal":
-			return "dim";
-		case "low":
-			return "muted";
-		case "medium":
-			return "accent";
-		case "high":
-			return "warning";
-		case "xhigh":
-			return "error";
-		default:
-			return "dim";
-	}
-}
-
-function formatSessionTimer(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-	if (hours > 0) return `\u23f1 ${hours}h ${minutes}m ${seconds}s`;
-	if (minutes > 0) return `\u23f1 ${minutes}m ${seconds}s`;
-	return `\u23f1 ${seconds}s`;
-}
-
-function computeTps(samples: TpsSample[]): number | null {
-	if (samples.length < 2) return null;
-	const now = Date.now();
-	const cutoff = now - 30_000;
-	const active = samples.filter((s) => s.time >= cutoff);
-	if (active.length < 2) return null;
-	const first = active[0]!;
-	const last = active[active.length - 1]!;
-	const tokenDelta = last.cumulativeTokens - first.cumulativeTokens;
-	const timeDelta = last.time - first.time;
-	if (timeDelta <= 0) return null;
-	if (tokenDelta <= 0) return null;
-	return (tokenDelta / timeDelta) * 1000;
-}
-
-function formatTps(tps: number | null): string {
-	if (tps === null) return "-- t/s";
-	if (tps < 0.1) return "0.0 t/s";
-	if (tps > 999.9) return `${Math.round(tps)} t/s`;
-	return `${tps.toFixed(1)} t/s`;
-}
-
-function formatCacheStats(
-	cacheRead: number | undefined | null,
-	cacheWrite: number | undefined | null,
-): string {
-	if (
-		cacheRead === undefined ||
-		cacheRead === null ||
-		cacheWrite === undefined ||
-		cacheWrite === null
-	) {
-		return "\u{1F4E6} --/--";
-	}
-	return `\u{1F4E6} ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`;
-}
-
-/** Simplified visibleWidth for tests — uses string length */
-function visibleWidth(s: string): number {
-	return s.length;
-}
-
-function truncateToWidth(s: string, width: number): string {
-	return s.length <= width ? s : s.substring(0, width);
-}
-
-/** Module-scope process start time */
-const processStartTime = Date.now();
-
-function installFooter(
-	ctx: any,
-	config: ContextStatusBarConfig | null,
-	footerConfig: FooterConfig,
-): void {
-	// ── Mode guard (Improvement #3): skip footer install in non-TUI modes ──
-	if (ctx.mode !== undefined && ctx.mode !== "tui") {
-		ctx.ui.setFooter(undefined);
-		return;
-	}
-
-	const { worktreeName, thinkingLevel } = footerConfig;
-	if (!config || config.enabled === false) {
-		ctx.ui.setFooter(undefined);
-		return;
-	}
-
-	const showTimer = config.showTimer;
-
-	ctx.ui.setFooter((tui: any, theme: any, footerData: any) => {
-		const unsubBranch = footerData.onBranchChange(() => tui.requestRender());
-
-		return {
-			dispose: unsubBranch,
-			invalidate() {},
-			render(width: number): string[] {
-				// ── Compute token usage ───────────────────────
-				const usage = ctx.getContextUsage();
-				const tokens = usage?.tokens ?? null;
-				const cw = usage?.contextWindow ?? footerConfig.lastContextWindow.value;
-				if (cw && cw > 0) footerConfig.lastContextWindow.value = cw;
-
-				// ── LEFT: Git info ───────────────────────────
-				const branch = footerData.getGitBranch();
-				let leftStr = "";
-				if (branch) {
-					leftStr = theme.fg("accent", " ") + theme.fg("muted", branch);
-					if (worktreeName) {
-						leftStr += " " + theme.fg("dim", `[${worktreeName}]`);
-					}
-				} else {
-					leftStr = theme.fg("dim", "⋄ no git");
-				}
-
-				// ── Separator character ──────────────────────
-				const sep = theme.fg("dim", "│");
-
-				// ── Extension statuses ───────────────────────
-				const extStatuses = footerData.getExtensionStatuses();
-				let extStr = "";
-				if (extStatuses.size > 0) {
-					const parts: string[] = [];
-					for (const [, text] of extStatuses) {
-						if (text) parts.push(text);
-					}
-					if (parts.length > 0) extStr = parts.join(" " + sep + " ");
-				}
-
-				// ── CENTER: Model + reasoning + tool count ───
-				const modelId = ctx.model?.id ?? "?";
-				let centerStr = theme.fg("dim", "🧠 ") + theme.fg("accent", modelId);
-				if (thinkingLevel) {
-					const tIcon = thinkingIcon(thinkingLevel);
-					const tColor = thinkingColor(thinkingLevel);
-					const reasoningStr = theme.fg(tColor, `${tIcon} ${thinkingLevel}`);
-					centerStr += " " + theme.fg("dim", "·") + " " + reasoningStr;
-				}
-
-				// ── Tool call counter ─────────────────────────
-				const toolStr =
-					theme.fg("dim", "🔧") + " " + theme.fg("muted", String(footerConfig.toolCallCount.value));
-				centerStr += " " + theme.fg("dim", "·") + " " + toolStr;
-
-				// ── RIGHT: Session timer + token usage + percentage ──
-				let rightStr = "";
-
-				let timerStr = "";
-				if (showTimer) {
-					const elapsed = Date.now() - processStartTime;
-					const rawTimer = formatSessionTimer(elapsed);
-					timerStr = theme.fg("dim", rawTimer);
-				}
-
-				let tokenDisplay = "";
-				if (tokens !== null && tokens !== undefined) {
-					const currentFmt = formatTokens(tokens);
-					const maxFmt = footerConfig.lastContextWindow.value
-						? formatTokens(footerConfig.lastContextWindow.value)
-						: "?";
-					const pct =
-						footerConfig.lastContextWindow.value && footerConfig.lastContextWindow.value > 0
-							? Math.round((tokens / footerConfig.lastContextWindow.value) * 100)
-							: null;
-
-					const usageHex = pickThresholdHex(tokens, config.thresholds);
-
-					const tokenText = `${currentFmt}/${maxFmt}`;
-					tokenDisplay = theme.fg("dim", "◉ ") + fgHex(usageHex, tokenText);
-
-					if (pct !== null) {
-						const pctColor = pct >= 90 ? "error" : pct >= 70 ? "warning" : "dim";
-						tokenDisplay += " " + theme.fg(pctColor, `[${pct}%]`);
-					}
-				} else if (footerConfig.lastContextWindow.value) {
-					tokenDisplay = theme.fg(
-						"dim",
-						`◉ .../${formatTokens(footerConfig.lastContextWindow.value)}`,
-					);
-				} else {
-					tokenDisplay = theme.fg("dim", "◉ .../?");
-				}
-
-				if (timerStr && tokenDisplay) {
-					rightStr = `${timerStr} \u00b7 ${tokenDisplay}`;
-				} else if (timerStr) {
-					rightStr = timerStr;
-				} else {
-					rightStr = tokenDisplay;
-				}
-
-				// ── TPS computation ───────────────────────────
-				const computed = computeTps(footerConfig.tpsSamples);
-				if (computed !== null) {
-					footerConfig.lastComputedTps.value = computed;
-				}
-
-				// ── Build row 1 ─────────────────────────────────
-				const leftW = visibleWidth(leftStr);
-				const centerW = visibleWidth(centerStr);
-				const rightW = visibleWidth(rightStr);
-				const sepUnit = 3;
-
-				let row1: string;
-				if (leftW + centerW + rightW + 2 * sepUnit <= width) {
-					const leftSection = leftStr + " " + sep + " ";
-					const centerSection = centerStr + " " + sep + " ";
-					const beforeRight = leftSection + centerSection;
-					const beforeRightW = visibleWidth(beforeRight);
-					const padForRight = Math.max(0, width - beforeRightW - rightW);
-					row1 = beforeRight + " ".repeat(padForRight) + rightStr;
-				} else if (leftW + rightW + sepUnit <= width) {
-					const leftSection = leftStr + " " + sep + " ";
-					const leftSectionW = visibleWidth(leftSection);
-					const padBeforeRight = Math.max(0, width - leftSectionW - rightW);
-					row1 = leftSection + " ".repeat(padBeforeRight) + rightStr;
-				} else {
-					row1 = " ".repeat(Math.max(0, width - rightW)) + rightStr;
-				}
-
-				row1 = truncateToWidth(row1, width);
-
-				// ── Build row 2 (ext statuses left, TPS + cache + CH right) ──
-				const left2 = extStr || "";
-				const rightParts: string[] = [];
-				if (config.showTps) {
-					const tpsDisplay = formatTps(footerConfig.lastComputedTps.value);
-					rightParts.push(theme.fg("dim", tpsDisplay));
-				}
-				if (config.showCache) {
-					const cacheStr = formatCacheStats(footerConfig.cacheRead, footerConfig.cacheWrite);
-					rightParts.push(theme.fg("dim", cacheStr));
-					// ── CH display (Improvement #1) ────────────
-					const chStr = formatCacheHitRate(footerConfig.cacheHitRate);
-					if (chStr) {
-						rightParts.push(theme.fg("dim", chStr));
-					}
-				}
-				const right2 = rightParts.join(" " + sep + " ");
-
-				// ── Build row 3: session name/ID + trust status ──
-				let row3 = "";
-				const row3Parts: string[] = [];
-
-				// Session name (Improvement #2) or session ID fallback
-				if (footerConfig.sessionName) {
-					row3Parts.push(
-						theme.fg("dim", "Session:") + " " + theme.fg("muted", footerConfig.sessionName),
-					);
-				} else if (footerConfig.sessionId) {
-					row3Parts.push(
-						theme.fg("dim", "SessionID:") + " " + theme.fg("muted", footerConfig.sessionId),
-					);
-				}
-
-				// Trust status (Improvement #4)
-				if (footerConfig.trustStatus !== undefined) {
-					const trustIcon = footerConfig.trustStatus === "trusted" ? "🔒" : "🔓";
-					row3Parts.push(theme.fg("dim", trustIcon));
-				} else {
-					row3Parts.push(theme.fg("dim", "❓"));
-				}
-
-				row3 = row3Parts.join(" " + sep + " ");
-
-				// ── Assemble rows ───────────────────────────────────
-				const rows: string[] = [row1];
-
-				if (left2 || right2) {
-					const lw = visibleWidth(left2);
-					const rw = visibleWidth(right2);
-					const gap = Math.max(0, width - lw - rw);
-					const row2 = right2
-						? left2 + " ".repeat(gap) + right2
-						: left2 + " ".repeat(Math.max(0, width - lw));
-					rows.push(truncateToWidth(row2, width));
-				}
-
-				if (row3) {
-					rows.push(truncateToWidth(row3, width));
-				}
-
-				return rows;
-			},
-		};
-	});
-
-	ctx.ui.setStatus("contextUsage", undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -571,13 +219,13 @@ describe("formatCacheHitRate", () => {
 
 describe("installFooter — mode guard", () => {
 	const modeScenarios = [
-		{ mode: "rpc", expectedFn: undefined },
-		{ mode: "json", expectedFn: undefined },
-		{ mode: "print", expectedFn: undefined },
-		{ mode: "headless", expectedFn: undefined },
+		{ mode: "rpc" },
+		{ mode: "json" },
+		{ mode: "print" },
+		{ mode: "headless" },
 	];
 
-	for (const { mode, expectedFn } of modeScenarios) {
+	for (const { mode } of modeScenarios) {
 		it(`ctx.mode === "${mode}" → setFooter(undefined), no render function registered`, () => {
 			const config: ContextStatusBarConfig = {
 				enabled: true,
@@ -585,6 +233,7 @@ describe("installFooter — mode guard", () => {
 				showTimer: true,
 				showTps: true,
 				showCache: true,
+			welcomeTimeoutMs: 0,
 			};
 
 			const footerConfig: FooterConfig = {
@@ -614,7 +263,7 @@ describe("installFooter — mode guard", () => {
 				getContextUsage: () => undefined,
 			};
 
-			installFooter(ctx, config, footerConfig);
+			installFooter(ctx as any, config, footerConfig as any);
 
 			assert.strictEqual(
 				setFooterArg,
@@ -631,6 +280,7 @@ describe("installFooter — mode guard", () => {
 			showTimer: true,
 			showTps: true,
 			showCache: true,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -660,7 +310,7 @@ describe("installFooter — mode guard", () => {
 			getContextUsage: () => undefined,
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 
 		assert.ok(
 			typeof setFooterArg === "function",
@@ -675,6 +325,7 @@ describe("installFooter — mode guard", () => {
 			showTimer: true,
 			showTps: true,
 			showCache: true,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -704,7 +355,7 @@ describe("installFooter — mode guard", () => {
 			getContextUsage: () => undefined,
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 
 		assert.ok(
 			typeof setFooterArg === "function",
@@ -725,6 +376,7 @@ describe("installFooter with FooterConfig", () => {
 			showTimer: true,
 			showTps: true,
 			showCache: true,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -754,7 +406,7 @@ describe("installFooter with FooterConfig", () => {
 			getContextUsage: () => undefined,
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 
 		assert.ok(typeof setFooterArg === "function", "setFooter should receive a function");
 	});
@@ -766,6 +418,7 @@ describe("installFooter with FooterConfig", () => {
 			showTimer: true,
 			showTps: true,
 			showCache: true,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -795,7 +448,7 @@ describe("installFooter with FooterConfig", () => {
 			getContextUsage: () => undefined,
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 
 		assert.strictEqual(setFooterArg, undefined, "setFooter should receive undefined when disabled");
 	});
@@ -828,7 +481,7 @@ describe("installFooter with FooterConfig", () => {
 			getContextUsage: () => undefined,
 		};
 
-		installFooter(ctx, null, footerConfig);
+		installFooter(ctx as any, null, footerConfig as any);
 
 		assert.strictEqual(
 			setFooterArg,
@@ -844,6 +497,7 @@ describe("installFooter with FooterConfig", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -872,7 +526,7 @@ describe("installFooter with FooterConfig", () => {
 					if (typeof fn === "function") {
 						// Simulate setup call that returns the component
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -890,7 +544,7 @@ describe("installFooter with FooterConfig", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 
 		assert.ok(footerComponent, "footer component should be created");
 		assert.ok(typeof footerComponent!.render === "function", "footer should have render method");
@@ -908,6 +562,7 @@ describe("installFooter with FooterConfig", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -932,7 +587,7 @@ describe("installFooter with FooterConfig", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -950,7 +605,7 @@ describe("installFooter with FooterConfig", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 
 		// Mutate value-wrapped fields after install — mutations should be visible
 		footerConfig.toolCallCount.value = 7;
@@ -979,6 +634,7 @@ describe("footer — CH display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: true,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1003,7 +659,7 @@ describe("footer — CH display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1021,7 +677,7 @@ describe("footer — CH display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		const result = footerComponent!.render(80);
 		const allRows = result.join(" ");
 		assert.ok(allRows.includes("CH: 99%"), `render output should include CH: 99%, got: ${allRows}`);
@@ -1034,6 +690,7 @@ describe("footer — CH display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1058,7 +715,7 @@ describe("footer — CH display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1076,7 +733,7 @@ describe("footer — CH display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		const result = footerComponent!.render(80);
 		const allRows = result.join(" ");
 		assert.ok(!allRows.includes("CH:"), "render output should not include CH when showCache=false");
@@ -1089,6 +746,7 @@ describe("footer — CH display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: true,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1113,7 +771,7 @@ describe("footer — CH display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1131,7 +789,7 @@ describe("footer — CH display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		const result = footerComponent!.render(80);
 		const allRows = result.join(" ");
 		assert.ok(
@@ -1153,6 +811,7 @@ describe("footer — session name display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1177,7 +836,7 @@ describe("footer — session name display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1195,7 +854,7 @@ describe("footer — session name display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		// Need to set sessionId for render to have content in addition to sessionName
 		(footerConfig as any).sessionId = "abc-123";
 		const result = footerComponent!.render(80);
@@ -1213,6 +872,7 @@ describe("footer — session name display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1237,7 +897,7 @@ describe("footer — session name display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1255,7 +915,7 @@ describe("footer — session name display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		(footerConfig as any).sessionId = "abc-123";
 		const result = footerComponent!.render(80);
 		const allRows = result.join(" ");
@@ -1272,6 +932,7 @@ describe("footer — session name display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1296,7 +957,7 @@ describe("footer — session name display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1314,7 +975,7 @@ describe("footer — session name display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		(footerConfig as any).sessionId = "";
 		const result = footerComponent!.render(80);
 		const allRows = result.join(" ");
@@ -1335,6 +996,7 @@ describe("footer — trust status display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1359,7 +1021,7 @@ describe("footer — trust status display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1377,7 +1039,7 @@ describe("footer — trust status display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		const result = footerComponent!.render(80);
 		const allRows = result.join(" ");
 		assert.ok(allRows.includes("🔒"), "render output should include lock emoji when trusted");
@@ -1390,6 +1052,7 @@ describe("footer — trust status display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1414,7 +1077,7 @@ describe("footer — trust status display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1432,7 +1095,7 @@ describe("footer — trust status display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		const result = footerComponent!.render(80);
 		const allRows = result.join(" ");
 		assert.ok(allRows.includes("🔓"), "render output should include unlock emoji when untrusted");
@@ -1445,6 +1108,7 @@ describe("footer — trust status display", () => {
 			showTimer: false,
 			showTps: false,
 			showCache: false,
+		welcomeTimeoutMs: 0,
 		};
 
 		const footerConfig: FooterConfig = {
@@ -1469,7 +1133,7 @@ describe("footer — trust status display", () => {
 				setFooter: (fn: unknown) => {
 					if (typeof fn === "function") {
 						footerComponent = fn(
-							{ requestRender: () => {} },
+							{ requestRender: () => {}, setClearOnShrink: () => {} },
 							{
 								fg: (_color: string, text: string) => text,
 							},
@@ -1487,7 +1151,7 @@ describe("footer — trust status display", () => {
 			model: { id: "test-model" },
 		};
 
-		installFooter(ctx, config, footerConfig);
+		installFooter(ctx as any, config, footerConfig as any);
 		const result = footerComponent!.render(80);
 		const allRows = result.join(" ");
 		assert.ok(

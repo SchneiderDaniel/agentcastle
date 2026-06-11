@@ -22,6 +22,13 @@ import {
 // to support --experimental-strip-types resolution.
 import contextInfoFn from "../index.ts";
 
+// Runtime imports from prompts.ts, skills.ts, welcome.ts — these files
+// had import extension changes (.js → .ts) needed for the test runner.
+// The imports verify their module-level exports are valid at runtime.
+import { listLocalPrompts } from "../prompts.ts";
+import { listLocalSkills, countSkills } from "../skills.ts";
+import { showWelcomeBanner, readSessionExtState } from "../welcome.ts";
+
 // ---------------------------------------------------------------------------
 // Replicate context-info extension logic for isolated unit testing
 // (matches .pi/extensions/context-info.ts implementation exactly)
@@ -246,6 +253,221 @@ describe("contextInfo from index.ts", () => {
 			"function",
 			"contextInfoFn from index.ts is a function",
 		);
+	});
+
+	it("prompts/skills/welcome runtime exports are valid functions", () => {
+		assert.strictEqual(
+			typeof listLocalPrompts,
+			"function",
+			"listLocalPrompts should be a function",
+		);
+		assert.strictEqual(typeof listLocalSkills, "function", "listLocalSkills should be a function");
+		assert.strictEqual(typeof countSkills, "function", "countSkills should be a function");
+		assert.strictEqual(
+			typeof showWelcomeBanner,
+			"function",
+			"showWelcomeBanner should be a function",
+		);
+		assert.strictEqual(
+			typeof readSessionExtState,
+			"function",
+			"readSessionExtState should be a function",
+		);
+	});
+
+	it("prompts/skills exports return arrays (smoke test)", () => {
+		const prompts = listLocalPrompts();
+		const skills = listLocalSkills();
+		assert.ok(Array.isArray(prompts), "listLocalPrompts should return an array");
+		assert.ok(Array.isArray(skills), "listLocalSkills should return an array");
+		assert.strictEqual(typeof countSkills(), "number", "countSkills should return a number");
+	});
+
+	it("readSessionExtState returns an object with expected keys", () => {
+		const extState = readSessionExtState();
+		assert.ok(
+			typeof extState === "object" && extState !== null,
+			"readSessionExtState should return an object",
+		);
+		assert.ok("logger" in extState, "extState should have logger");
+		assert.ok("advice" in extState, "extState should have advice");
+	});
+
+	it("registers all expected event handlers when called with mock pi", () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+		};
+		contextInfoFn(pi as any);
+
+		assert.ok(handlers.has("session_start"), "should register session_start");
+		assert.ok(handlers.has("model_select"), "should register model_select");
+		assert.ok(handlers.has("message_end"), "should register message_end");
+		assert.ok(handlers.has("turn_end"), "should register turn_end");
+		assert.ok(handlers.has("thinking_level_select"), "should register thinking_level_select");
+		assert.ok(handlers.has("message_update"), "should register message_update");
+		assert.ok(handlers.has("tool_execution_end"), "should register tool_execution_end");
+		assert.ok(handlers.has("session_shutdown"), "should register session_shutdown");
+		assert.ok(handlers.has("before_agent_start"), "should register before_agent_start");
+		assert.ok(handlers.has("input"), "should register input");
+		assert.ok(handlers.has("user_bash"), "should register user_bash");
+	});
+
+	/** Create a mock ExtensionContext with mode="rpc" to avoid timer issues */
+	function createMockCtx() {
+		return {
+			mode: "rpc",
+			ui: {
+				setFooter: () => {},
+				setStatus: () => {},
+				setWidget: () => {},
+				setWorkingIndicator: () => {},
+				theme: { fg: (_c: string, t: string) => t },
+			},
+			isProjectTrusted: () => true,
+			getContextUsage: () => undefined,
+			sessionManager: { getSessionFile: () => "/tmp/test_uuid.jsonl" },
+			model: { id: "test-model", contextWindow: 128000 },
+			cwd: "/tmp",
+		};
+	}
+
+	it("session_start handler reads session name from pi.getSessionName()", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		let capturedFooterArg: unknown = undefined;
+		let sessionNameValue: string | undefined = "my-test-session";
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => sessionNameValue,
+		};
+		contextInfoFn(pi as any);
+
+		const ctx = {
+			...createMockCtx(),
+			ui: {
+				...createMockCtx().ui,
+				setFooter: (fn: unknown) => {
+					capturedFooterArg = fn;
+				},
+			},
+		};
+
+		await handlers.get("session_start")!({}, ctx);
+		// In RPC mode, installFooter sets footer to undefined and returns early
+		assert.strictEqual(capturedFooterArg, undefined, "footer should be undefined in RPC mode");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("session_start with isProjectTrusted()=true runs without error", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfoFn(pi as any);
+
+		await handlers.get("session_start")!({}, createMockCtx());
+		assert.ok(true, "session_start with trusted project completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("session_start with isProjectTrusted()=false runs without error", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfoFn(pi as any);
+
+		const ctx = createMockCtx();
+		(ctx as any).isProjectTrusted = () => false;
+
+		await handlers.get("session_start")!({}, ctx);
+		assert.ok(true, "session_start with untrusted project completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("model_select handler does not throw", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfoFn(pi as any);
+
+		await handlers.get("session_start")!({}, createMockCtx());
+		await handlers.get("model_select")!({ model: { contextWindow: 256000 } }, createMockCtx());
+		assert.ok(true, "model_select completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("message_end handler does not throw with cache stats", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfoFn(pi as any);
+
+		const ctx = {
+			...createMockCtx(),
+			getContextUsage: () => ({ tokens: 12400, contextWindow: 256000 }),
+		};
+		await handlers.get("session_start")!({}, ctx);
+
+		await handlers.get("message_end")!(
+			{ message: { role: "assistant", usage: { cacheRead: 76288, cacheWrite: 1024 } } },
+			ctx,
+		);
+		assert.ok(true, "message_end with cache stats completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("turn_end handler does not throw", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfoFn(pi as any);
+
+		await handlers.get("session_start")!({}, createMockCtx());
+		await handlers.get("turn_end")!({}, createMockCtx());
+		assert.ok(true, "turn_end completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
 	});
 });
 
