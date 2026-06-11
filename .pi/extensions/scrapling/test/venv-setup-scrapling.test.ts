@@ -366,7 +366,7 @@ describe("ensureScraplingVenv — venv creation", () => {
 		});
 
 		const result = await ensureScraplingVenv(exec, cwd);
-		assert.ok(result !== null, "should return python path after creating venv");
+		assert.ok(result, "should return python path after creating venv");
 
 		const venvCreationCalls = callLog.filter(
 			(c) => c.cmd === "python3" && c.args.includes("-m") && c.args.includes("venv"),
@@ -413,7 +413,7 @@ describe("ensureScraplingVenv — venv creation", () => {
 		assert.ok(!fs.existsSync(lockFilePath), "lock should not exist before setup");
 
 		const result = await ensureScraplingVenv(exec, cwd);
-		assert.ok(result !== null, "should succeed");
+		assert.ok(result, "should succeed");
 
 		// Lock file should be removed after setup
 		assert.ok(!fs.existsSync(lockFilePath), "lock should be removed after setup");
@@ -421,22 +421,28 @@ describe("ensureScraplingVenv — venv creation", () => {
 });
 
 describe("ensureScraplingVenv — failure paths", () => {
-	it("(entity) returns null when pip install fails", async () => {
+	it("(entity) throws when pip install fails", async () => {
 		const { cwd, exec } = setupTest({
 			handlers: { pipInstall: { code: 1, stdout: "", stderr: "pip install failed" } },
 		});
 
-		const result = await ensureScraplingVenv(exec, cwd);
-		assert.equal(result, null, "should return null when pip fails");
+		await assert.rejects(
+			ensureScraplingVenv(exec, cwd),
+			/pip install failed/,
+			"should throw when pip fails",
+		);
 	});
 
-	it("(entity) returns null when venv creation fails", async () => {
+	it("(entity) throws when venv creation fails", async () => {
 		const { cwd, exec } = setupTest({
 			handlers: { createVenv: { code: 1, stdout: "", stderr: "venv creation failed" } },
 		});
 
-		const result = await ensureScraplingVenv(exec, cwd);
-		assert.equal(result, null, "should return null when venv creation fails");
+		await assert.rejects(
+			ensureScraplingVenv(exec, cwd),
+			/venv creation/,
+			"should throw when venv creation fails",
+		);
 	});
 });
 
@@ -453,18 +459,21 @@ describe("ensureScraplingVenv — lock file race condition prevention", () => {
 		});
 
 		const result = await ensureScraplingVenv(exec, cwd);
-		assert.ok(result !== null, "should succeed");
+		assert.ok(result, "should succeed");
 		assert.ok(pipState.lockExisted, "lock file should exist during pip install");
 	});
 
-	it("(entity) removes lock file even if pip install fails", async () => {
+	it("(entity) removes lock file even when pip install throws", async () => {
 		const { cwd, exec } = setupTest({
 			handlers: { pipInstall: { code: 1, stdout: "", stderr: "pip failed" } },
 		});
 		const lockFilePath = path.join(cwd, ".pi", ".scrapling-venv.lock");
 
-		const result = await ensureScraplingVenv(exec, cwd);
-		assert.equal(result, null, "should return null on failure");
-		assert.ok(!fs.existsSync(lockFilePath), "lock should be removed even after failure");
+		try {
+			await ensureScraplingVenv(exec, cwd);
+			assert.fail("should have thrown");
+		} catch {
+			assert.ok(!fs.existsSync(lockFilePath), "lock should be removed even after failure");
+		}
 	});
 });

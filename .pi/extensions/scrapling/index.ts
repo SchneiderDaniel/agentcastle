@@ -36,6 +36,11 @@ export default function webCrawlExtension(pi: ExtensionAPI): void {
 		description:
 			"Crawl web pages. Uses lightweight fetcher normally, " +
 			"automatically bypasses Cloudflare if blocked.",
+		promptSnippet:
+			"Crawl web pages and extract content as Markdown, with automatic Cloudflare bypass",
+		promptGuidelines: [
+			"Use web_crawl for public web pages, especially behind Cloudflare or bot protection; prefer read for local files and bash curl for simple API calls without anti-bot measures.",
+		],
 		parameters: Type.Object({
 			url: Type.String({ description: "URL to crawl (e.g. https://example.com)" }),
 			maxPages: Type.Optional(
@@ -61,10 +66,7 @@ export default function webCrawlExtension(pi: ExtensionAPI): void {
 				try {
 					new URL(params.url);
 				} catch {
-					return {
-						content: [{ type: "text", text: "Invalid URL" }],
-						details: {} as Record<string, unknown>,
-					};
+					throw new Error("Invalid URL");
 				}
 
 				onUpdate?.({
@@ -75,17 +77,6 @@ export default function webCrawlExtension(pi: ExtensionAPI): void {
 				const cwd = _ctx.cwd;
 
 				const python = await ensureScraplingVenv(pi.exec, cwd, onUpdate);
-				if (!python) {
-					return {
-						content: [
-							{
-								type: "text",
-								text: "Error: Failed to initialize scraping environment.",
-							},
-						],
-						details: {} as Record<string, unknown>,
-					};
-				}
 
 				const cfg = JSON.stringify({ url: params.url, maxPages });
 				const scriptB64 = Buffer.from(SCRAPLING_SCRIPT, "utf-8").toString("base64");
@@ -131,15 +122,7 @@ export default function webCrawlExtension(pi: ExtensionAPI): void {
 						/* Fallback to raw output if JSON parse fails */
 					}
 				}
-				return {
-					content: [
-						{
-							type: "text",
-							text: `Error executing crawl: ${run.stderr || run.stdout}`,
-						},
-					],
-					details: {} as Record<string, unknown>,
-				};
+				throw new Error(`Error executing crawl: ${run.stderr || run.stdout}`);
 			} finally {
 				releaseCrawlLock();
 			}

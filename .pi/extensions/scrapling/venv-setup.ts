@@ -25,13 +25,14 @@ const LOCK_WAIT_MS = 5000;
  * @param exec — Exec function (typically pi.exec)
  * @param cwd — Working directory (project root)
  * @param onUpdate — Optional progress update callback
- * @returns Path to python3 binary, or null if setup fails
+ * @returns Path to python3 binary
+ * @throws Error if venv creation or package installation fails
  */
 export async function ensureScraplingVenv(
 	exec: ExecFn,
 	cwd: string,
 	onUpdate?: (u: { content: Array<{ type: "text"; text: string }>; details: unknown }) => void,
-): Promise<string | null> {
+): Promise<string> {
 	const pyPath = `${cwd}/${VENV_DIR}/bin/python3`;
 
 	// Quick check if already setup
@@ -58,8 +59,7 @@ export async function ensureScraplingVenv(
 		});
 		const createVenv = await exec("python3", ["-m", "venv", "--clear", `${cwd}/${VENV_DIR}`]);
 		if (createVenv.code !== 0) {
-			console.error("scrapling: failed to create venv");
-			return null;
+			throw new Error(`Failed to create Python virtual environment: ${createVenv.stderr}`);
 		}
 
 		onUpdate?.({
@@ -72,8 +72,7 @@ export async function ensureScraplingVenv(
 			{ timeout: 180_000 },
 		);
 		if (install.code !== 0) {
-			console.error("scrapling: pip install failed:", install.stderr.slice(0, 500));
-			return null;
+			throw new Error(`Failed to install packages: ${install.stderr.slice(0, 500)}`);
 		}
 
 		onUpdate?.({
