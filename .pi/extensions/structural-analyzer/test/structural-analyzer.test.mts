@@ -20,6 +20,7 @@ import structuralAnalyzer, {
 	fileExists,
 	parseLanguageGlobsFromYaml,
 	clearResultCache,
+	renderStructuralSearchResult,
 	type ExecResultResponse,
 } from "../index.ts";
 
@@ -1848,6 +1849,302 @@ describe("interpretSgExecResult", () => {
 	it("code 126 → isError", () => {
 		const result = interpretSgExecResult(126, "", "Permission denied", "console.log($A)", "ts");
 		assert.strictEqual(result.isError, true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// renderStructuralSearchResult tests
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("renderStructuralSearchResult", () => {
+	// Mock theme: fg returns text unchanged (identity function)
+	const mockTheme = {
+		fg: (_color: string, text: string) => text,
+	};
+
+	const defaultCwd = "/tmp";
+
+	function makeDetails(overrides?: Record<string, unknown>): Record<string, unknown> {
+		return {
+			success: true,
+			matches: 0,
+			results: [],
+			...overrides,
+		};
+	}
+
+	function makeResult(
+		details: Record<string, unknown>,
+		contentText?: string,
+	): { content: Array<{ type: string; text: string }>; details: unknown } {
+		return {
+			content: [{ type: "text", text: contentText ?? JSON.stringify(details) }],
+			details,
+		};
+	}
+
+	/** Render the component and return joined string (ignoring padding lines). */
+	function renderToString(
+		comp: ReturnType<typeof renderStructuralSearchResult>,
+		width = 120,
+	): string {
+		return comp.render(width).join("\n").trim();
+	}
+
+	// ─── Phase 1: entity tests ─────────────────────────────────────────
+
+	it("isPartial=true returns Text containing 'Searching...'", () => {
+		const result = makeResult(makeDetails());
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: true },
+			mockTheme as any,
+			{ cwd: defaultCwd },
+		);
+		const output = renderToString(comp);
+		assert.ok(output.includes("Searching..."), `expected 'Searching...' in output: ${output}`);
+	});
+
+	it("success=false details returns Text with error text from content", () => {
+		const result = makeResult(
+			{ success: false, exitCode: 1, stderr: "error msg" },
+			"ast-grep failed: unknown language",
+		);
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: false },
+			mockTheme as any,
+			{ cwd: defaultCwd },
+		);
+		const output = renderToString(comp);
+		assert.ok(
+			output.includes("ast-grep failed: unknown language"),
+			`expected error text in output: ${output}`,
+		);
+	});
+
+	it("details.matches=0 returns Text with 'No matches found'", () => {
+		const result = makeResult(makeDetails({ matches: 0, results: [] }));
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: false },
+			mockTheme as any,
+			{ cwd: defaultCwd },
+		);
+		const output = renderToString(comp);
+		assert.ok(
+			output.includes("No matches found"),
+			`expected 'No matches found' in output: ${output}`,
+		);
+	});
+
+	it("2 matches, expanded=true → hyperlinked file paths, line numbers, snippets", () => {
+		const results = [
+			{
+				file: "api/auth.py",
+				lines: "22-28",
+				snippet: "try:\n    verify_token(token)\nexcept AuthError:",
+			},
+			{ file: "src/app.ts", lines: "10-10", snippet: "console.log('App started')" },
+		];
+		const details = makeDetails({ matches: 2, results });
+		const result = makeResult(details);
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: false },
+			mockTheme as any,
+			{ cwd: "/home/project" },
+		);
+		const output = renderToString(comp);
+
+		// Should contain file paths (relative, as display text)
+		assert.ok(output.includes("api/auth.py"), `expected api/auth.py in output:\n${output}`);
+		assert.ok(output.includes("src/app.ts"), `expected src/app.ts in output:\n${output}`);
+
+		// Should contain line ranges
+		assert.ok(
+			output.includes("22-28") || output.includes(":22"),
+			`expected line range in output:\n${output}`,
+		);
+		assert.ok(
+			output.includes("10-10") || output.includes(":10"),
+			`expected line range in output:\n${output}`,
+		);
+
+		// Should contain hyperlink URIs with absolute paths
+		assert.ok(
+			output.includes("file://localhost/home/project/api/auth.py:22"),
+			`expected file:// URI in output:\n${output}`,
+		);
+		assert.ok(
+			output.includes("file://localhost/home/project/src/app.ts:10"),
+			`expected file:// URI in output:\n${output}`,
+		);
+
+		// Should contain snippets
+		assert.ok(output.includes("verify_token"), `expected snippet in output:\n${output}`);
+		assert.ok(
+			output.includes("console.log('App started')"),
+			`expected snippet in output:\n${output}`,
+		);
+
+		// Should contain the actual OSC 8 hyperlink sequences
+		assert.ok(output.includes("\x1b]8;;"), `expected OSC 8 escape in output:\n${output}`);
+	});
+
+	it("2 matches, expanded=false → shows summary line, detail lines", () => {
+		const results = [
+			{ file: "api/auth.py", lines: "22-28", snippet: "verify_token" },
+			{ file: "src/app.ts", lines: "10-10", snippet: "console.log" },
+		];
+		const details = makeDetails({ matches: 2, results });
+		const result = makeResult(details);
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: false, isPartial: false },
+			mockTheme as any,
+			{ cwd: defaultCwd },
+		);
+		const output = renderToString(comp);
+		// Should contain summary
+		assert.ok(
+			output.includes("Structural search") || output.includes("2 matches"),
+			`expected summary in output: ${output}`,
+		);
+		// Should still show file paths (2 ≤ collapsed limit of 5)
+		assert.ok(output.includes("api/auth.py"), `expected file in output: ${output}`);
+		assert.ok(output.includes("src/app.ts"), `expected file in output: ${output}`);
+	});
+
+	it("truncated=true → output includes truncation notice with totalMatches", () => {
+		const results = Array.from({ length: 5 }, (_, i) => ({
+			file: `f${i}.ts`,
+			lines: `${i}-${i + 1}`,
+			snippet: `match ${i}`,
+		}));
+		const details = makeDetails({
+			matches: 200,
+			results,
+			truncated: true,
+			totalMatches: 200,
+		});
+		const result = makeResult(details);
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: false },
+			mockTheme as any,
+			{ cwd: defaultCwd },
+		);
+		const output = renderToString(comp);
+		assert.ok(output.includes("200"), `expected total 200 in output:\n${output}`);
+		assert.ok(output.includes("Showing"), `expected 'Showing' in output:\n${output}`);
+	});
+
+	it("101+ results, expanded=true → capped at 20, truncation notice present", () => {
+		const results = Array.from({ length: 25 }, (_, i) => ({
+			file: `f${i}.ts`,
+			lines: `${i}-${i + 1}`,
+			snippet: `match ${i}`,
+		}));
+		const details = makeDetails({
+			matches: 150,
+			results,
+			truncated: true,
+			totalMatches: 150,
+		});
+		const result = makeResult(details);
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: false },
+			mockTheme as any,
+			{ cwd: defaultCwd },
+		);
+		const output = renderToString(comp);
+		// f19.ts is the 20th (0-indexed: 0..19 = 20 results)
+		assert.ok(output.includes("f19.ts"), `expected f19.ts (20th) in output:\n${output}`);
+		// f20.ts is the 21st — should NOT be shown
+		assert.ok(!output.includes("f20.ts"), `f20.ts should NOT appear (capped at 20):\n${output}`);
+		// Should mention total 150
+		assert.ok(output.includes("150"), `expected total 150 in output:\n${output}`);
+		// Should have truncation notice
+		assert.ok(output.includes("Showing"), `expected 'Showing' in output:\n${output}`);
+	});
+
+	it("reads from result.details.results, not from content[0].text", () => {
+		const details = makeDetails({
+			matches: 2,
+			results: [
+				{ file: "a.ts", lines: "1-1", snippet: "match a" },
+				{ file: "b.ts", lines: "2-2", snippet: "match b" },
+			],
+		});
+		// Set content text to something deliberately different
+		const result = makeResult(details, "DIFFERENT CONTENT TEXT THAT SHOULD NOT APPEAR");
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: false },
+			mockTheme as any,
+			{ cwd: defaultCwd },
+		);
+		const output = renderToString(comp);
+		assert.ok(output.includes("a.ts"), `expected a.ts in output: ${output}`);
+		assert.ok(output.includes("b.ts"), `expected b.ts in output: ${output}`);
+		assert.ok(
+			!output.includes("DIFFERENT CONTENT"),
+			`should NOT use content text in output: ${output}`,
+		);
+	});
+
+	it("hyperlink URI format for file path src/app.ts line 10 → file://localhost/.../src/app.ts:10", () => {
+		const results = [{ file: "src/app.ts", lines: "10-10", snippet: "code" }];
+		const details = makeDetails({ matches: 1, results });
+		const result = makeResult(details);
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: false },
+			mockTheme as any,
+			{ cwd: "/home/project" },
+		);
+		const output = renderToString(comp);
+		assert.ok(
+			output.includes("file://localhost/home/project/src/app.ts:10"),
+			`expected absolute URI in output:\n${output}`,
+		);
+	});
+
+	it("0 results but success=true → no hyperlinks, neutral message", () => {
+		const details = makeDetails({ matches: 0, results: [] });
+		const result = makeResult(details);
+		const comp = renderStructuralSearchResult(
+			result,
+			{ expanded: true, isPartial: false },
+			mockTheme as any,
+			{ cwd: defaultCwd },
+		);
+		const output = renderToString(comp);
+		// Should NOT contain any file:// hyperlinks
+		assert.ok(!output.includes("file://"), `should not have file:// URIs: ${output}`);
+		// Should have a neutral message
+		assert.ok(output.includes("No matches found"), `expected neutral message: ${output}`);
+	});
+
+	// ─── Verifying execute() is unchanged ───────────────────────────────
+
+	it("renderResult does not affect execute output — execute still returns structured JSON", async () => {
+		// This is a regression check: verify that adding renderResult doesn't
+		// change the shape of what execute() returns. We test by importing
+		// interpretSgExecResult and verifying it returns the expected shape.
+		const stdout = [
+			JSON.stringify({ file: "a.ts", lines: "1-5", text: "console.log(x)" }),
+			JSON.stringify({ file: "b.ts", lines: "10-12", text: "console.log(y)" }),
+		].join("\n");
+		const result = interpretSgExecResult(0, stdout, "", "console.log($A)", "ts");
+		assert.strictEqual(result.isError, undefined);
+		assert.strictEqual(result.content[0].type, "text");
+		assert.ok((result.content[0].text as string).includes("```json"));
+		const details = result.details as Record<string, unknown>;
+		assert.strictEqual(details.matches, 2);
+		assert.ok(Array.isArray(details.results));
 	});
 });
 

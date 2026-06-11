@@ -14,6 +14,8 @@
 - **Result cache** — Results cached by (pattern, language, cwd). Repeated calls return instantly without re-executing ast-grep.
 - **Streaming support** — Large result sets (>100 matches) return a truncated summary with total count. Refine the pattern to narrow results.
 - **Snippet truncation** — Results capped at 120 characters per match
+- **Custom TUI rendering** — In TUI mode, search results display with OSC 8 hyperlinked file paths and formatted line numbers for clickable navigation directly to matching lines
+- **Mode-adaptive output** — LLM always receives structured JSON; human-readable formatting with hyperlinks appears only in the terminal (TUI) via `renderResult`
 - **Prompt integration** — Injects `promptSnippet` and `promptGuidelines` so LLM knows when to use structural vs text search
 - **Binary auto-detection** — Detects `ast-grep` vs `sg` binary name, cached across calls
 
