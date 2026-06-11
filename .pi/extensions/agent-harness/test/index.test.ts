@@ -528,47 +528,49 @@ describe("AgentHarness — reset", () => {
 	});
 });
 
+// ── Mock ExtensionAPI helper (top-level for reuse across describe blocks) ──
+
+function createMockAPI() {
+	const handlers = new Map<string, (...args: any[]) => any>();
+	const api = {
+		handlers,
+		on(event: any, handler: any) {
+			handlers.set(event, handler);
+		},
+		fire(event: string, data: any, ctx?: any) {
+			const handler = handlers.get(event);
+			return handler ? handler(data, ctx ?? {}) : undefined;
+		},
+		registerTool: () => {},
+		registerCommand: () => {},
+		registerShortcut: () => {},
+		registerFlag: () => {},
+		getFlag: () => undefined,
+		registerMessageRenderer: () => {},
+		sendMessage: () => {},
+		sendUserMessage: () => {},
+		appendEntry: () => {},
+		setSessionName: () => {},
+		getSessionName: () => undefined,
+		setLabel: () => {},
+		exec: async () => ({ code: 0, killed: false, stdout: "", stderr: "" }),
+		getActiveTools: () => [],
+		getAllTools: () => [],
+		setActiveTools: () => {},
+		getCommands: () => [],
+		setModel: async () => false,
+		getThinkingLevel: () => "off" as any,
+		setThinkingLevel: () => {},
+		registerProvider: () => {},
+		unregisterProvider: () => {},
+		events: { on: () => {}, emit: () => {}, off: () => {} } as any,
+	};
+	return api as typeof api & ExtensionAPI;
+}
+
 // ── Mock ExtensionAPI integration ──
 
 describe("AgentHarness — extension entry point", () => {
-	function createMockAPI() {
-		const handlers = new Map<string, (...args: any[]) => any>();
-		const api = {
-			handlers,
-			on(event: any, handler: any) {
-				handlers.set(event, handler);
-			},
-			fire(event: string, data: any, ctx?: any) {
-				const handler = handlers.get(event);
-				return handler ? handler(data, ctx ?? {}) : undefined;
-			},
-			registerTool: () => {},
-			registerCommand: () => {},
-			registerShortcut: () => {},
-			registerFlag: () => {},
-			getFlag: () => undefined,
-			registerMessageRenderer: () => {},
-			sendMessage: () => {},
-			sendUserMessage: () => {},
-			appendEntry: () => {},
-			setSessionName: () => {},
-			getSessionName: () => undefined,
-			setLabel: () => {},
-			exec: async () => ({ code: 0, killed: false, stdout: "", stderr: "" }),
-			getActiveTools: () => [],
-			getAllTools: () => [],
-			setActiveTools: () => {},
-			getCommands: () => [],
-			setModel: async () => false,
-			getThinkingLevel: () => "off" as any,
-			setThinkingLevel: () => {},
-			registerProvider: () => {},
-			unregisterProvider: () => {},
-			events: { on: () => {}, emit: () => {}, off: () => {} } as any,
-		};
-		return api as typeof api & ExtensionAPI;
-	}
-
 	it("registers session_start, turn_start, and tool_call handlers", () => {
 		const api = createMockAPI();
 		agentHarness(api);
@@ -682,5 +684,139 @@ describe("AgentHarness — extension entry point", () => {
 			input: { path: "a.ts" },
 		});
 		assert.equal(r2, undefined, "subsequent read passes");
+	});
+});
+
+// ── Phase 3: Mode-aware read-cache bypass ──
+
+describe("AgentHarness — mode-aware read cache", () => {
+	it("hasUI: true, cache hit → blocks with cached reason (existing behavior preserved)", () => {
+		const h = new AgentHarness();
+		h.handleToolCall(makeEvent("read", { path: "test.ts" }), makeCtx());
+		const r = h.handleToolCall(makeEvent("read", { path: "test.ts" }), {
+			hasUI: true,
+		} as any);
+		assert.ok(r?.block);
+		assert.ok(r!.reason.includes("cached"));
+	});
+
+	it("hasUI: false, cache hit → returns null (pass through)", () => {
+		const h = new AgentHarness();
+		h.handleToolCall(makeEvent("read", { path: "test.ts" }), makeCtx());
+		const r = h.handleToolCall(makeEvent("read", { path: "test.ts" }), {
+			hasUI: false,
+		} as any);
+		assert.equal(r, null);
+	});
+
+	it("hasUI: undefined, cache hit → blocks (backward compat)", () => {
+		const h = new AgentHarness();
+		h.handleToolCall(makeEvent("read", { path: "test.ts" }), makeCtx());
+		const r = h.handleToolCall(makeEvent("read", { path: "test.ts" }), {});
+		assert.ok(r?.block);
+	});
+
+	it("hasUI: false, first read → passes through (normal cache store still happens)", () => {
+		const h = new AgentHarness();
+		const r = h.handleToolCall(makeEvent("read", { path: "test.ts" }), {
+			hasUI: false,
+		} as any);
+		assert.equal(r, null, "first read passes");
+		// Second read also passes (bypass in non-UI mode)
+		const r2 = h.handleToolCall(makeEvent("read", { path: "test.ts" }), {
+			hasUI: false,
+		} as any);
+		assert.equal(r2, null, "second read passes in non-UI mode");
+	});
+
+	it("hasUI: false but error retry (2+ errors) → still blocks (mode-independence for other guards)", () => {
+		const h = new AgentHarness();
+		h.handleToolCall(makeEvent("read", { path: "a.ts" }, true), makeCtx());
+		h.handleToolCall(makeEvent("read", { path: "b.ts" }, true), makeCtx());
+		const r = h.handleToolCall(makeEvent("read", { path: "c.ts" }), {
+			hasUI: false,
+		} as any);
+		assert.ok(r?.block);
+		assert.ok(r!.reason.includes("errored"));
+	});
+
+	it("hasUI: false but cascade threshold hit → still blocks (mode-independence for cascade)", () => {
+		const results = callNTimes(new AgentHarness(), "write", 8, { path: "f.ts", content: "" });
+		for (let i = 0; i < 7; i++) {
+			assert.equal(results[i], null, `call ${i + 1} should pass`);
+		}
+		assert.ok(results[7]?.block, "8th call should block regardless of UI mode");
+	});
+
+	it("hasUI: false but tool mismatch (bash grep) → still blocks (mode-independence for mismatch)", () => {
+		const h = new AgentHarness();
+		const r = h.handleToolCall(makeEvent("bash", { command: "grep foo" }), {
+			hasUI: false,
+		} as any);
+		assert.ok(r?.block);
+		assert.equal(r?.redirectTo, "ripgrep_search");
+	});
+
+	it("hasUI on ctx, but ctx is empty object {} → blocks (backward compat via cast)", () => {
+		const h = new AgentHarness();
+		h.handleToolCall(makeEvent("read", { path: "test.ts" }), {});
+		const r = h.handleToolCall(makeEvent("read", { path: "test.ts" }), {});
+		assert.ok(r?.block);
+	});
+
+	it("Mode context passed through dispatch via api.fire with hasUI: false → cache hit passes through", async () => {
+		const api = createMockAPI();
+		agentHarness(api);
+
+		const r1 = await api.fire(
+			"tool_call",
+			{
+				type: "tool_call",
+				toolCallId: "1",
+				toolName: "read",
+				input: { path: "test.ts" },
+			},
+			{ hasUI: false },
+		);
+		assert.equal(r1, undefined, "first read passes in non-UI mode");
+
+		const r2 = await api.fire(
+			"tool_call",
+			{
+				type: "tool_call",
+				toolCallId: "2",
+				toolName: "read",
+				input: { path: "test.ts" },
+			},
+			{ hasUI: false },
+		);
+		assert.equal(r2, undefined, "second read passes through (non-UI bypass)");
+	});
+});
+
+// ── Phase 4: Config-overridden cascade threshold ──
+
+describe("AgentHarness — resolved rules cascade threshold", () => {
+	it("Config-overridden cascade threshold (e.g., bash threshold 12) → 11 consecutive bash calls pass, 12th blocked", () => {
+		const h = new AgentHarness({
+			toolMeta: { bash: { cascadeThreshold: 12 } },
+			cascadeThreshold: 8,
+		});
+		const results = callNTimes(h, "bash", 12, { command: "echo hi" });
+		for (let i = 0; i < 11; i++) {
+			assert.equal(results[i], null, `call ${i + 1} should pass (threshold 12)`);
+		}
+		assert.ok(results[11]?.block, "12th call should block");
+	});
+
+	it("Default cascade threshold (8) still works without resolved rules", () => {
+		const results = callNTimes(new AgentHarness(), "write", 8, {
+			path: "f.ts",
+			content: "",
+		});
+		for (let i = 0; i < 7; i++) {
+			assert.equal(results[i], null, `call ${i + 1} should pass`);
+		}
+		assert.ok(results[7]?.block, "8th call should block");
 	});
 });

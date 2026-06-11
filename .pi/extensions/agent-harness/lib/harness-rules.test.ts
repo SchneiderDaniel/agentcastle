@@ -14,6 +14,8 @@ import {
 	isRedundantRead,
 	TOOL_META,
 	getToolMeta,
+	loadDefaultRules,
+	CASCADE_THRESHOLD,
 } from "./harness-rules.ts";
 
 // ── buildRedirectMessage ──
@@ -155,5 +157,52 @@ describe("TOOL_META — web_crawl cascade threshold (Bug 7)", () => {
 	it("(Regression) unlisted tools get default meta", () => {
 		const meta = getToolMeta("unknown_tool");
 		assert.deepEqual(meta, { passThrough: false, cascadeThreshold: 8 });
+	});
+});
+
+// ── loadDefaultRules ──
+
+describe("loadDefaultRules", () => {
+	it("returns object with shape { toolMeta, cascadeThreshold }", () => {
+		const rules = loadDefaultRules();
+		assert.ok(typeof rules.toolMeta === "object");
+		assert.ok(typeof rules.cascadeThreshold === "number");
+	});
+
+	it("cascadeThreshold equals CASCADE_THRESHOLD (8)", () => {
+		const rules = loadDefaultRules();
+		assert.equal(rules.cascadeThreshold, CASCADE_THRESHOLD);
+		assert.equal(rules.cascadeThreshold, 8);
+	});
+
+	it("toolMeta.bash has cascadeThreshold: 8", () => {
+		const rules = loadDefaultRules();
+		assert.equal(rules.toolMeta.bash?.cascadeThreshold, 8);
+	});
+
+	it("toolMeta.web_crawl has cascadeThreshold: 20", () => {
+		const rules = loadDefaultRules();
+		assert.equal(rules.toolMeta.web_crawl?.cascadeThreshold, 20);
+	});
+
+	it("toolMeta.ask_user has passThrough: true", () => {
+		const rules = loadDefaultRules();
+		assert.equal(rules.toolMeta.ask_user?.passThrough, true);
+	});
+
+	it("Unlisted tool returns default via fallback", () => {
+		const rules = loadDefaultRules();
+		const meta = rules.toolMeta["unknown_tool"] ?? {
+			passThrough: false,
+			cascadeThreshold: rules.cascadeThreshold,
+		};
+		assert.deepEqual(meta, { passThrough: false, cascadeThreshold: 8 });
+	});
+
+	it("returns a fresh object each call (no mutation leak)", () => {
+		const a = loadDefaultRules();
+		const b = loadDefaultRules();
+		assert.notEqual(a, b);
+		assert.notEqual(a.toolMeta, b.toolMeta);
 	});
 });
