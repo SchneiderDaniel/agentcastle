@@ -12,16 +12,20 @@
 - **File grouping** — Groups files by matching LSP server (e.g., all `.ts` files go to `typescript-language-server`)
 - **Structured diagnostics output** — Returns `file`, `line`, `column`, `severity`, and `message` for every finding
 - **Git-aware** — Only audits files modified since the default branch
+- **Project trust gate** — Skips LSP audit when project is not trusted, preventing untrusted workspace config from weaponizing LSP servers
+- **Mode-adaptive output** — `/lsp-auditor` command output adapts per `ctx.mode`: TUI gets clickable `file://` URIs, RPC/JSON gets structured JSON, Print gets plain text
+- **Args parsing support** — `/lsp-auditor` command handler uses `parseArgs` for future subcommand support (e.g., `/lsp-auditor --files src/`)
 
 ## How it works
 
 1. The audit is triggered — either manually via `/lsp-auditor` or automatically by the supervisor extension
-2. The extension runs `git diff <defaultBranch> --name-only` to find changed files
-3. Files are grouped by matching LSP server mapping (file extension → LSP command)
-4. For each group, the extension spawns the LSP server, opens every file via `didOpen`, and collects `publishDiagnostics` notifications
-5. Diagnostics are filtered by per-server severity threshold and merged into a single report
-6. Results include all errors/warnings with file paths, line numbers, and messages
-7. If diagnostics exceed severity thresholds, the audit can block progression to the next stage
+2. If triggered automatically, the extension first checks project trust via `ctx.isProjectTrusted()` — untrusted projects skip the audit with a warning
+3. The extension runs `git diff <defaultBranch> --name-only` to find changed files
+4. Files are grouped by matching LSP server mapping (file extension → LSP command)
+5. For each group, the extension spawns the LSP server, opens every file via `didOpen`, and collects `publishDiagnostics` notifications
+6. Diagnostics are filtered by per-server severity threshold and merged into a single report
+7. Results include all errors/warnings with file paths, line numbers, and messages
+8. If diagnostics exceed severity thresholds, the audit can block progression to the next stage
 
 ## Install
 
@@ -39,9 +43,16 @@ Then run `/reload` or restart pi.
 /lsp-auditor
 ```
 
+Output adapts to your current mode:
+- **TUI mode** — Clickable `file://` URIs with notification via `ctx.ui.notify()`
+- **RPC/JSON mode** — Structured JSON with `proceed`, `note`, and `diagnostics` fields
+- **Print mode** — Plain text summary
+
 ### Supervisor integration
 
 The supervisor extension calls `runPreAudit()` automatically during the Audit stage. No additional configuration needed.
+
+If the project is not trusted, `runPreAudit()` returns `{ proceed: true }` with a warning note — LSP audit is skipped, matching the VS Code Restricted Mode precedent.
 
 ### Configuration (optional)
 
@@ -72,9 +83,57 @@ Default server mappings:
 
 Override `severityThreshold` per server: `"error"`, `"warning"`, or `"info"` (default: `"info"`).
 
+## API
+
+### `checkProjectTrust(ctx)`
+
+Check if the project is trusted before starting LSP servers. Returns `{ trusted: true }` or `{ trusted: false, note: string }`.
+
+```typescript
+import { checkProjectTrust } from "@agentcastle/lsp-auditor";
+
+const result = checkProjectTrust(ctx);
+if (!result.trusted) {
+  // Skip LSP audit
+}
+```
+
+### `formatForMode(diagnostics, mode, worktreePath, hasUI)`
+
+Format diagnostics for the given execution mode. Returns a string or `StructuredDiagnostics` object.
+
+```typescript
+import { formatForMode } from "@agentcastle/lsp-auditor";
+
+// TUI with UI: string with file:// URIs
+const tuiOutput = formatForMode(diags, "tui", "/workspace", true);
+
+// RPC/JSON: StructuredDiagnostics object
+const structured = formatForMode(diags, "rpc", "/workspace", false);
+// { files: [{ path: "/workspace/src/app.ts", issues: [{ line, col, severity, message }] }] }
+```
+
+### `StructuredDiagnostics`
+
+```typescript
+interface StructuredDiagnostics {
+  files: Array<{
+    path: string;
+    issues: Array<{
+      line: number;
+      col: number;
+      severity: string;
+      message: string;
+    }>;
+  }>;
+}
+```
+
 ## Requirements
 
-- Pi Coding Agent
+- Pi Coding Agent v0.78.0+ (for `parseArgs` export)
+- Pi Coding Agent v0.78.1+ (for `ctx.mode`)
+- Pi Coding Agent v0.79.1+ (for `ctx.isProjectTrusted()`)
 - LSP servers installed on PATH for the languages you audit (e.g., `typescript-language-server`, `pylsp`, `rust-analyzer`, `gopls`)
 - `vscode-jsonrpc` (npm dependency, installed automatically)
 - Git repository with a default branch
