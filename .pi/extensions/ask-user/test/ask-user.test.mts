@@ -32,6 +32,8 @@ import {
 	migrateIfCsvExists,
 } from "../jsonl-logger.ts";
 
+import askUser from "../index.ts";
+
 // ============================================================================
 // Unit tests: validateQnaEntry
 // ============================================================================
@@ -1146,8 +1148,6 @@ describe("successResult (ask_user_read success envelope)", () => {
 // ============================================================================
 // Integration tests: ask_user_read execute — error signaling
 // ============================================================================
-
-import askUser from "../index.ts";
 
 describe("ask_user_read execute — error signaling", () => {
 	let tmpDir: string;
