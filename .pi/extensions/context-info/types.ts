@@ -38,5 +38,11 @@ export interface FooterConfig {
 	toolCallCount: { value: number };
 	cacheRead: number | undefined;
 	cacheWrite: number | undefined;
+	/** Cache hit rate percentage: cacheRead/(cacheRead+cacheWrite)*100 */
+	cacheHitRate: number | undefined;
+	/** User-assigned session name from pi.getSessionName() */
+	sessionName: string | undefined;
+	/** Project trust status from ctx.isProjectTrusted() */
+	trustStatus: "trusted" | "untrusted" | undefined;
 	sessionId: string;
 }

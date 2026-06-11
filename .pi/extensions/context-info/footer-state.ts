@@ -50,6 +50,9 @@ export class FooterState {
 			toolCallCount: { value: 0 },
 			cacheRead: undefined,
 			cacheWrite: undefined,
+			cacheHitRate: undefined,
+			sessionName: undefined,
+			trustStatus: undefined,
 			sessionId: "",
 		};
 	}
@@ -134,6 +137,9 @@ export class FooterState {
 		this.footerConfig.toolCallCount.value = 0;
 		this.footerConfig.cacheRead = undefined;
 		this.footerConfig.cacheWrite = undefined;
+		this.footerConfig.cacheHitRate = undefined;
+		this.footerConfig.sessionName = undefined;
+		this.footerConfig.trustStatus = undefined;
 		this.footerConfig.sessionId = "";
 	}
 }

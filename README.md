@@ -45,7 +45,7 @@ Cheasee-Pi is a **Pi agent harness** built on the [Pi coding agent](https://pi.d
 - **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching for finding function/class definitions, method calls, try/catch blocks
 - **Text search** — `ripgrep_search` via ripgrep: fast literal/regex code search
 - **Web crawling** — `web_crawl`: Scrapling (progressive fetch with automatic Cloudflare bypass)
-- **Rich TUI** — Custom status bar (branch, model, token usage, TPS, cache stats), welcome banner
+- **Rich TUI** — Custom status bar (branch, model, token usage, TPS, cache stats, cache hit rate, session name, trust status), welcome banner
 - **Session logging** — Every conversation saved as JSONL, queryable with jq
 - **Multi-agent pipeline** — Autonomous Kanban: Researcher → Architect → TestDesigner → Developer → Auditor
 - **LSP pre-audit** — Real LSP diagnostics before merge, auto-retry on errors
@@ -198,7 +198,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/scrapling/`                         | `web_crawl` tool: Scrapling with progressive fetching (lightweight → stealth)                                           |
 | `.pi/extensions/web-search/`                        | `web_search` tool: DuckDuckGo search via ddgs Python lib — ranked results with URLs + snippets                         |
 | `.pi/extensions/supervisor/`                        | Kanban-driven multi-agent orchestration                                                                                |
-| `.pi/extensions/context-info/`                      | Rich TUI status bar (branch, model, tokens, TPS, cache), welcome banner                                                |
+| `.pi/extensions/context-info/`                      | Rich TUI status bar (branch, model, tokens, TPS, cache, cache hit rate, session name, trust status), welcome banner |
 | `.pi/extensions/session-logger/`                    | Session logging to JSONL                                                                                               |
 | `.pi/extensions/agent-harness/`                     | Runtime tool call validation — blocks `bash                                                                            | grep`, `cat` file reads, redundant reads, error retry loops, same-tool cascades |
 | `.pi/extensions/ask-user/`                          | Interactive MC questions + CSV logger                                                                                  |
