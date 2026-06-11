@@ -11,6 +11,25 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // ---------------------------------------------------------------------------
+// Safe-default patterns for untrusted projects
+// ---------------------------------------------------------------------------
+
+/**
+ * Hardcoded patterns used when the project is not trusted.
+ * Prevents attacker-controlled .piignore from controlling which files
+ * the AI can access. These always block common secret-bearing files.
+ *
+ * Exported for testing (test imports via TDD gate verification).
+ */
+export const SAFE_DEFAULT_BLOCK: readonly string[] = [
+	"*.env",
+	".env.*",
+	"secrets/",
+	"**/*.pem",
+	"**/*.key",
+];
+
+// ---------------------------------------------------------------------------
 // Lightweight gitignore pattern matcher (Node built-ins only)
 // ---------------------------------------------------------------------------
 
@@ -163,6 +182,19 @@ function isIgnored(targetPath: string, entries: IgnoreEntry[], cwd: string): boo
 	}
 
 	return ignored;
+}
+
+/**
+ * Build IgnoreEntry[] from SAFE_DEFAULT_BLOCK patterns rooted at cwd.
+ * Used when the project is not trusted — skips .piignore entirely.
+ */
+function getSafeDefaultEntries(cwd: string): IgnoreEntry[] {
+	return [
+		{
+			root: cwd,
+			patterns: SAFE_DEFAULT_BLOCK.map(patternToRegex),
+		},
+	];
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +443,20 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.on("tool_call", async (event, ctx) => {
 		try {
-			const ignoreEntries = getEntries(ctx.cwd);
+			// ── Trust gate ──────────────────────────────────────────
+			// If ctx.isProjectTrusted() is unavailable (older Pi),
+			// throws, or returns false/undefined, treat as untrusted
+			// and fall back to safe-default patterns. This prevents
+			// attacker-controlled .piignore from being honored.
+			let isTrusted = false;
+			try {
+				isTrusted = (ctx as any).isProjectTrusted?.() === true;
+			} catch {
+				isTrusted = false;
+			}
+
+			const ignoreEntries = isTrusted ? getEntries(ctx.cwd) : getSafeDefaultEntries(ctx.cwd);
+
 			let blockedPath: string | null = null;
 
 			if (isToolCallEventType("read", event)) {
@@ -433,12 +478,15 @@ export default function (pi: ExtensionAPI): void {
 			}
 
 			if (blockedPath) {
+				const source = isTrusted ? ".piignore" : "safe-default";
 				if (ctx.hasUI) {
-					ctx.ui.notify(`Blocked by .piignore: ${blockedPath}`, "warning");
+					ctx.ui.notify(`Blocked by ${source}: ${blockedPath}`, "warning");
 				}
 				return {
 					block: true,
-					reason: `Path "${blockedPath}" matches .piignore patterns`,
+					reason: ctx.hasUI
+						? `Path "${blockedPath}" matches ${source} patterns`
+						: `Path "${blockedPath}" matches ${source} patterns (${(ctx as any).mode ?? "unknown"} mode — no notification shown)`,
 				};
 			}
 		} catch (err) {

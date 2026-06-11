@@ -76,6 +76,18 @@ export function resolveSessionLevel(
 // ---------------------------------------------------------------------------
 
 /**
+ * Gate whether to append a caveman-level entry based on project trust.
+ *
+ * Prevents extension state from leaking into untrusted sessions where
+ * session entries are visible to the LLM during context assembly.
+ *
+ * @returns true only when both conditions are met
+ */
+export function shouldAppendCavemanEntry(shouldAppendEntry: boolean, isTrusted: boolean): boolean {
+	return shouldAppendEntry && isTrusted;
+}
+
+/**
  * Reset caveman level to "off" on session shutdown.
  * Prevents stale state from leaking across sessions.
  */

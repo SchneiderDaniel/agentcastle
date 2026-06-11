@@ -182,37 +182,86 @@ export function enableDebugLogger(cwd: string, sessionId?: string): DebugLogger 
 	return logger;
 }
 
+// ─── Args type (mirrors parseArgs export from pi-coding-agent v0.78.0+) ──
+
+/** Mirrors the Args type from @earendil-works/pi-coding-agent (v0.78.0+) */
+export interface SupervisorArgs {
+	/** Unknown flags (potentially extension flags) — map of flag name to value */
+	unknownFlags: Map<string, boolean | string>;
+	/** Bare positional arguments (non-flag strings) */
+	messages: string[];
+}
+
 /**
- * Parse args string for --debug flag and extract the bare issue number.
- * Supported forms: "103", "--debug 103", "103 --debug", "--debug 103 --other"
- * Returns { issueNum, isDebug }.
+ * Parse args string into SupervisorArgs, mirroring the parseArgs API.
+ * Handles --flag boolean, --flag value, and bare positional arguments.
+ * When pi-coding-agent is upgraded to v0.78.0+, replace this with:
+ *   import { parseArgs } from "@earendil-works/pi-coding-agent";
  */
 export function parseSupervisorArgs(raw: string | undefined): {
 	issueNum: number | null;
 	isDebug: boolean;
-} {
+} & SupervisorArgs {
+	const result: {
+		issueNum: number | null;
+		isDebug: boolean;
+		unknownFlags: Map<string, boolean | string>;
+		messages: string[];
+	} = {
+		issueNum: null,
+		isDebug: false,
+		unknownFlags: new Map(),
+		messages: [],
+	};
+
 	if (!raw || !raw.trim()) {
-		return { issueNum: null, isDebug: false };
+		return result;
 	}
 
 	const parts = raw.trim().split(/\s+/);
-	let isDebug = false;
-	let numPart: string | null = null;
 
-	for (const p of parts) {
+	for (let i = 0; i < parts.length; i++) {
+		const p = parts[i]!;
+
 		if (p === "--debug") {
-			isDebug = true;
-		} else if (p.startsWith("--")) {
-			// Other flags — skip
+			result.isDebug = true;
+			result.unknownFlags.set("debug", true);
+		} else if (p.startsWith("--") && p.length > 2) {
+			// Strip -- prefix and check for --flag=value form
+			const eqIdx = p.indexOf("=");
+			if (eqIdx !== -1) {
+				const flagName = p.slice(2, eqIdx);
+				const flagValue = p.slice(eqIdx + 1);
+				result.unknownFlags.set(flagName, flagValue);
+			} else {
+				// Boolean flag form: --flag
+				const flagName = p.slice(2);
+				// Check if next arg is a value (not starting with --)
+				if (i + 1 < parts.length && !parts[i + 1]!.startsWith("--")) {
+					const nextArg = parts[++i]!;
+					result.unknownFlags.set(flagName, nextArg);
+					// Also handle --debug specially
+					if (flagName === "debug") {
+						result.isDebug = true;
+					}
+				} else {
+					result.unknownFlags.set(flagName, true);
+					if (flagName === "debug") {
+						result.isDebug = true;
+					}
+				}
+			}
 		} else if (/^\d+$/.test(p)) {
-			numPart = p;
+			result.messages.push(p);
+			const num = parseInt(p, 10);
+			if (!isNaN(num) && num >= 1) {
+				result.issueNum = num;
+			}
+		} else {
+			// Non-numeric, non-flag — treat as positional message
+			result.messages.push(p);
 		}
 	}
 
-	if (!numPart) {
-		return { issueNum: null, isDebug };
-	}
-
-	const issueNum = parseInt(numPart, 10);
-	return { issueNum: isNaN(issueNum) || issueNum < 1 ? null : issueNum, isDebug };
+	return result;
 }

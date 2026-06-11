@@ -238,6 +238,7 @@ function createMockPi(): { pi: ExtensionAPI; handlers: HandlerStore } {
 /**
  * Simulate a tool_call event on the extension's handler.
  * Creates a minimal mock ctx with the given cwd.
+ * Provides isProjectTrusted returning true so existing tests run as trusted.
  */
 async function simulateToolCall(
 	handler: Function,
@@ -245,7 +246,15 @@ async function simulateToolCall(
 	input: Record<string, unknown>,
 	cwd: string,
 ): Promise<unknown> {
-	return await handler({ toolName, input }, { cwd, hasUI: false, ui: { notify: () => {} } });
+	return await handler(
+		{ toolName, input },
+		{
+			cwd,
+			hasUI: false,
+			ui: { notify: () => {} },
+			isProjectTrusted: () => true,
+		},
+	);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

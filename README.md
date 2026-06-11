@@ -45,7 +45,7 @@ Cheasee-Pi is a **Pi agent harness** built on the [Pi coding agent](https://pi.d
 - **Structural search** — `structural_search` via ast-grep: AST-aware pattern matching for finding function/class definitions, method calls, try/catch blocks
 - **Text search** — `ripgrep_search` via ripgrep: fast literal/regex code search
 - **Web crawling** — `web_crawl`: Scrapling (progressive fetch with automatic Cloudflare bypass)
-- **Rich TUI** — Custom status bar (branch, model, token usage, TPS, cache stats), welcome banner
+- **Rich TUI** — Custom status bar (branch, model, token usage, TPS, cache stats, cache hit rate, session name, trust status), welcome banner
 - **Session logging** — Every conversation saved as JSONL, queryable with jq
 - **Multi-agent pipeline** — Autonomous Kanban: Researcher → Architect → TestDesigner → Developer → Auditor
 - **LSP pre-audit** — Real LSP diagnostics before merge, auto-retry on errors
@@ -198,11 +198,11 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/scrapling/`                         | `web_crawl` tool: Scrapling with progressive fetching (lightweight → stealth)                                           |
 | `.pi/extensions/web-search/`                        | `web_search` tool: DuckDuckGo search via ddgs Python lib — ranked results with URLs + snippets                         |
 | `.pi/extensions/supervisor/`                        | Kanban-driven multi-agent orchestration                                                                                |
-| `.pi/extensions/context-info/`                      | Rich TUI status bar (branch, model, tokens, TPS, cache), welcome banner                                                |
+| `.pi/extensions/context-info/`                      | Rich TUI status bar (branch, model, tokens, TPS, cache, cache hit rate, session name, trust status), welcome banner |
 | `.pi/extensions/session-logger/`                    | Session logging to JSONL                                                                                               |
 | `.pi/extensions/agent-harness/`                     | Runtime tool call validation — blocks `bash                                                                            | grep`, `cat` file reads, redundant reads, error retry loops, same-tool cascades |
 | `.pi/extensions/ask-user/`                          | Interactive MC questions + CSV logger                                                                                  |
-| `.pi/extensions/caveman/`                           | Token-efficient communication protocol                                                                                 |
+| `.pi/extensions/caveman/`                           | Token-efficient communication protocol; mode-adaptive compression, project-trust gating, `/caveman status` command    |
 | `.pi/extensions/format-on-save/`                    | Auto Prettier + ESLint after write/edit                                                                                |
 | `.pi/extensions/lsp-auditor/`                       | LSP diagnostics pre-audit for supervisor                                                                               |
 | `.pi/extensions/piignore.ts`                        | `.piignore` path blocking                                                                                              |
@@ -501,7 +501,7 @@ Switch the project to **Board** layout in the browser and change **Group by** to
 | Session advice report   | `/session-advice report` — generates report, prompts cleanup + GitHub issue creation. Supports `--repo owner/repo` flag. Skips interactive dialogs in non-TUI modes.                                                               |
 | Batch advice analysis   | `npx tsx scripts/session-advice.ts` (all) or `--latest`                              |
 | Toggle session logger   | `/session-logger on` / `/session-logger off`                                         |
-| Toggle caveman level    | `/caveman` (cycle: lite → full → off) or `/caveman lite`                             |
+| Toggle caveman level    | `/caveman` (cycle: lite → full → off) or `/caveman lite`; `/caveman status` for prompt context; `/caveman config` for settings |
 | Query session logs      | `./scripts/session-query.sh 'select(.role == "user")'`                               |
 | Design an extension     | `/extension-spec <idea>`                                                             |
 | Write handover          | `/handover`                                                                          |
@@ -530,6 +530,21 @@ with agent header, status, tool count, token count, duration, thinking blocks,
 tool calls and results, raw output (collapsed), and audit score. Failed sub-agents
 show error output. Sub-agent entries are clearly distinguished from primary
 turns via `### Agent:` heading level.
+
+The report header includes the session **mode** (TUI, RPC, JSON, or print) when
+available, distinguishing interactive sessions from automated and CI sessions.
+If a session **name** was set via `--name`/`-n` CLI flag or `pi.setSessionName()`,
+it appears in the report header between the start time and working directory
+rows, enabling correlation between reports and named sessions.
+
+**Project trust gate:** Session reports are generated only when the project is
+trusted (`ctx.isProjectTrusted()` returns true). This prevents unintentional
+tool argument and file path logging in untrusted projects. When a project is
+not trusted, report generation is skipped and a warning notification is issued.
+
+For recovered or crash-recovered sessions (where live session name and mode
+are not available), the corresponding header rows are omitted — backward-
+compatible with existing reports.
 
 The JSONL log is a newline-delimited JSON event stream: messages, thinking blocks, tool calls, compactions.
 
@@ -894,13 +909,25 @@ All supervisor settings in `.pi/settings.json` under the `supervisor` key:
 			"researcher": 10,
 			"developer": 30,
 		},
+		"enableExperimentalFeatures": false, // Gate experimental pipeline features (auto-forking, advanced parallelism)
 		"submodules": [
 			// Auto-parsed from .gitmodules if absent
 			{ "path": "flask_blogs", "repo": "Owner/flask_blogs" },
 		],
 	},
 }
-```
+
+### New in Changelog Check (v0.78.0–v0.79.1)
+
+| Improvement | Description |
+|---|---|
+| **Autocomplete trigger** | `#` trigger in editor opens issue autocomplete from configured repo. Registered in `session_start` handler. |
+| **Mode adaptation** | UI dialog methods (confirm/select) gated behind `ctx.hasUI`. Notify calls use `pi.sendMessage()` fallback in non-UI modes. |
+| **Trust gate** | Pipeline checks `ctx.isProjectTrusted()` before reading config or making GitHub calls. Early return with warning if untrusted. |
+| **System prompt options** | `ctx.getSystemPromptOptions()` called at pipeline start; tools, skills, context files injected into agent tasks via `## Available Tools` section. |
+| **Experimental features** | `enableExperimentalFeatures` config field gates advanced pipeline stages. |
+| **parseArgs interface** | `parseSupervisorArgs` updated to mirror `parseArgs` API with `unknownFlags` Map and `messages` array. |
+| **Prompt template defaults** | Developer agent prompt includes thinking effort default (`${1:-medium}`) using pi's prompt template syntax. |
 
 #### 8.9 Complete Walkthrough
 

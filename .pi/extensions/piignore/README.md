@@ -8,8 +8,11 @@
 - **`.piignore` file format** — Same syntax as `.gitignore` (supports `*`, `**`, `?`, `!` negation, directory-only `/` suffix)
 - **Hierarchical loading** — Walks up from project root to filesystem root, merging all `.piignore` files
 - **Bash path detection** — Tokenizes bash commands and checks file-like arguments against ignore patterns (skips URLs, package names, echo/printf strings)
+- **Trust gate** — When the project is not trusted, `.piignore` patterns are ignored and a hardcoded safe-default block list is used instead, preventing attacker-controlled `.piignore` files from controlling path access
+- **Safe-default block list** — Always blocks `*.env`, `.env.*`, `secrets/`, `**/*.pem`, `**/*.key` on untrusted projects, regardless of `.piignore` contents
+- **Mode-aware blocking** — In non-TUI modes (JSON, RPC, print), notifications are suppressed and block reasons include full context about the source and mode
 - **Pattern reload** — Re-reads `.piignore` on `/reload` via `resources_discover` event
-- **TUI notifications** — Shows a warning toast when a path is blocked
+- **Notifications** — Shows a warning toast when a path is blocked (TUI/RPC modes with UI)
 - **Zero dependencies** — Pure Node.js built-ins, no npm deps
 
 ## How it works
@@ -68,9 +71,42 @@ bash(echo x && cat .env)      → Blocked: ".env" checked independently in cat s
 
 ## Requirements
 
-- Pi Coding Agent
+- Pi Coding Agent >= 0.79.1 (for `ctx.isProjectTrusted()` and `ctx.mode`)
 - No external dependencies — pure Node.js built-ins
 - Optional: a `.piignore` file in your project root
+
+## Trust Model
+
+When a project is **trusted** (`ctx.isProjectTrusted()` returns `true`):
+- piignore loads and enforces `.piignore` patterns as before
+- All matching paths are blocked with a notification
+
+When a project is **not trusted** (`ctx.isProjectTrusted()` returns `false` or `undefined`):
+- `.piignore` patterns are **not honored** — prevents attacker-controlled patterns
+- A hardcoded safe-default block list is enforced instead:
+  - `*.env` — all `.env` files
+  - `.env.*` — environment variable files
+  - `secrets/` — secrets directory
+  - `**/*.pem` — private key certificates
+  - `**/*.key` — SSH/private keys
+- Non-sensitive paths like `README.md`, `src/`, `package.json` remain accessible
+
+If `ctx.isProjectTrusted()` is unavailable (older Pi version) or throws an error,
+the handler treats the project as untrusted (fail-closed) and applies safe-defaults.
+
+## Global Companion (Optional)
+
+The companion extension `global-companion.ts` participates in the `project_trust`
+event to warn about restrictive `.piignore` patterns before trust is granted.
+It does **not** make trust decisions — it only observes and warns.
+
+### Install
+
+```bash
+cp .pi/extensions/piignore/global-companion.ts ~/.pi/agent/extensions/piignore-trust-check.ts
+```
+
+Requires Pi v0.79.0+ (for the `project_trust` event).
 
 ## License
 

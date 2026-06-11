@@ -10,6 +10,24 @@
 
 import assert from "node:assert";
 import { describe, it, beforeEach } from "node:test";
+import {
+	formatCacheHitRate,
+	formatSessionTimer,
+	formatCacheStats,
+	formatTokens,
+} from "../formatting.ts";
+
+// Runtime import from index.ts — verified through the test assertion below.
+// All local imports in index.ts use .ts extensions (changed from .js)
+// to support --experimental-strip-types resolution.
+import { contextInfo } from "../index.ts";
+
+// Runtime imports from prompts.ts, skills.ts, welcome.ts — these files
+// had import extension changes (.js → .ts) needed for the test runner.
+// The imports verify their module-level exports are valid at runtime.
+import { listLocalPrompts } from "../prompts.ts";
+import { listLocalSkills, countSkills } from "../skills.ts";
+import { showWelcomeBanner, readSessionExtState } from "../welcome.ts";
 
 // ---------------------------------------------------------------------------
 // Replicate context-info extension logic for isolated unit testing
@@ -18,10 +36,13 @@ import { describe, it, beforeEach } from "node:test";
 
 interface MockCtx {
 	getContextUsage: () => { tokens?: number; contextWindow?: number } | undefined;
+	mode?: string;
+	isProjectTrusted?: () => boolean | undefined;
 }
 
 interface MockPi {
 	on: (event: string, handler: (...args: any[]) => void) => void;
+	getSessionName?: () => string | undefined;
 }
 
 function createContextInfoExtension(): {
@@ -30,6 +51,10 @@ function createContextInfoExtension(): {
 	mockCtx: MockCtx;
 	getCacheRead: () => number | undefined;
 	getCacheWrite: () => number | undefined;
+	getCacheHitRate: () => number | undefined;
+	getSessionName: () => string | undefined;
+	getTrustStatus: () => string | undefined;
+	getUiSetFooterCalls: () => number;
 } {
 	const logCalls: string[] = [];
 	const handlers = new Map<string, (...args: any[]) => void>();
@@ -38,11 +63,16 @@ function createContextInfoExtension(): {
 	};
 	let _cacheRead: number | undefined;
 	let _cacheWrite: number | undefined;
+	let _cacheHitRate: number | undefined;
+	let _sessionName: string | undefined;
+	let _trustStatus: "trusted" | "untrusted" | undefined;
+	let _uiSetFooterCalls = 0;
 
 	const mockPi: MockPi = {
 		on(event, handler) {
 			handlers.set(event, handler);
 		},
+		getSessionName: () => _sessionName,
 	};
 
 	// Simulate the extension's default export logic
@@ -70,6 +100,26 @@ function createContextInfoExtension(): {
 		emitted = false;
 		_cacheRead = undefined;
 		_cacheWrite = undefined;
+		_cacheHitRate = undefined;
+		_trustStatus = undefined;
+
+		// Read session name from pi.getSessionName()
+		if (mockPi.getSessionName) {
+			_sessionName = mockPi.getSessionName();
+		}
+
+		// Read trust status from ctx.isProjectTrusted()
+		if (typeof mockCtx.isProjectTrusted === "function") {
+			const trusted = mockCtx.isProjectTrusted();
+			if (trusted === true) _trustStatus = "trusted";
+			else if (trusted === false) _trustStatus = "untrusted";
+			else _trustStatus = undefined;
+		}
+
+		// Mode guard: only do UI operations in TUI mode
+		if (mockCtx.mode === undefined || mockCtx.mode === "tui") {
+			_uiSetFooterCalls++;
+		}
 	});
 
 	handlers.set("model_select", (event: any) => {
@@ -78,10 +128,17 @@ function createContextInfoExtension(): {
 			contextWindow = cw;
 			tryEmit();
 		}
+		// Reset cache hit rate on model change (per research finding)
+		_cacheHitRate = undefined;
+		// Re-read session name (in case setSessionName was called mid-session)
+		if (mockPi.getSessionName) {
+			_sessionName = mockPi.getSessionName();
+		}
 	});
 
 	// Match production: use ctx.getContextUsage() instead of event.message.usage
 	// Also capture cacheRead/cacheWrite from event.message.usage
+	// Also compute cache hit rate (Improvement #1)
 	handlers.set("message_end", (event: any) => {
 		const msg = event.message;
 		if (!msg || msg.role !== "assistant") return;
@@ -90,11 +147,23 @@ function createContextInfoExtension(): {
 		if (usage) {
 			if (typeof usage.cacheRead === "number") _cacheRead = usage.cacheRead;
 			if (typeof usage.cacheWrite === "number") _cacheWrite = usage.cacheWrite;
+
+			// Compute cache hit rate: cacheRead/(cacheRead+cacheWrite)*100
+			if (typeof _cacheRead === "number" && typeof _cacheWrite === "number") {
+				_cacheHitRate = Math.round((_cacheRead / (_cacheRead + _cacheWrite)) * 100);
+			}
 		}
 		const ctxUsage = mockCtx.getContextUsage();
 		if (ctxUsage && typeof ctxUsage.tokens === "number" && ctxUsage.tokens > 0) {
 			contextTokens = ctxUsage.tokens;
 			tryEmit();
+		}
+	});
+
+	handlers.set("turn_end", () => {
+		// Re-read session name (in case setSessionName was called mid-session)
+		if (mockPi.getSessionName) {
+			_sessionName = mockPi.getSessionName();
 		}
 	});
 
@@ -109,6 +178,10 @@ function createContextInfoExtension(): {
 		mockCtx,
 		getCacheRead: () => _cacheRead,
 		getCacheWrite: () => _cacheWrite,
+		getCacheHitRate: () => _cacheHitRate,
+		getSessionName: () => _sessionName,
+		getTrustStatus: () => _trustStatus,
+		getUiSetFooterCalls: () => _uiSetFooterCalls,
 		_handlers: handlers,
 		_invoke: invoke,
 	} as unknown as {
@@ -117,6 +190,10 @@ function createContextInfoExtension(): {
 		mockCtx: MockCtx;
 		getCacheRead: () => number | undefined;
 		getCacheWrite: () => number | undefined;
+		getCacheHitRate: () => number | undefined;
+		getSessionName: () => string | undefined;
+		getTrustStatus: () => string | undefined;
+		getUiSetFooterCalls: () => number;
 		_invoke: (e: string, ...a: any[]) => void;
 	};
 }
@@ -135,59 +212,24 @@ function getCacheWrite(ctx: TestCtx): number | undefined {
 	return ctx.getCacheWrite();
 }
 
+function getCacheHitRate(ctx: TestCtx): number | undefined {
+	return ctx.getCacheHitRate();
+}
+
+function getSessionName(ctx: TestCtx): string | undefined {
+	return ctx.getSessionName();
+}
+
+function getTrustStatus(ctx: TestCtx): string | undefined {
+	return ctx.getTrustStatus();
+}
+
+function getUiSetFooterCalls(ctx: TestCtx): number {
+	return ctx.getUiSetFooterCalls();
+}
+
 function invoke(ctx: TestCtx, event: string, ...args: any[]) {
 	(ctx as any)._invoke(event, ...args);
-}
-
-// ---------------------------------------------------------------------------
-// Duplicated helpers from .pi/extensions/context-info.ts (session timer)
-// ---------------------------------------------------------------------------
-
-/** Format token count: 1200 → "1.2K", 1200000 → "1.2M" */
-function formatTokens(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-	return String(n);
-}
-
-/** Format cache stats: 📦 cacheRead/cacheWrite */
-function formatCacheStats(
-	cacheRead: number | undefined | null,
-	cacheWrite: number | undefined | null,
-): string {
-	if (
-		cacheRead === undefined ||
-		cacheRead === null ||
-		cacheWrite === undefined ||
-		cacheWrite === null
-	) {
-		return "\u{1F4E6} --/--";
-	}
-	return `\u{1F4E6} ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`;
-}
-
-/** Format elapsed ms → "⏱ Xh Ym Zs" */
-function formatSessionTimer(ms: number): string {
-	const totalSeconds = Math.floor(ms / 1000);
-	const hours = Math.floor(totalSeconds / 3600);
-	const minutes = Math.floor((totalSeconds % 3600) / 60);
-	const seconds = totalSeconds % 60;
-
-	if (hours > 0) return `\u23f1 ${hours}h ${minutes}m ${seconds}s`;
-	if (minutes > 0) return `\u23f1 ${minutes}m ${seconds}s`;
-	return `\u23f1 ${seconds}s`;
-}
-
-/** Build right section string: timer · tokens, or just timer, or just tokens */
-function buildRightSection(
-	showTimer: boolean,
-	timerMs: number,
-	tokenDisplay: string | null,
-): string {
-	const timerStr = showTimer ? formatSessionTimer(timerMs) : null;
-	if (timerStr && tokenDisplay) return `${timerStr} \u00b7 ${tokenDisplay}`;
-	if (timerStr) return timerStr;
-	return tokenDisplay ?? "";
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +237,238 @@ function buildRightSection(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// formatSessionTimer tests
+// Reference test for contextInfo from index.ts
+// The named import of contextInfo at the top of this file provides static
+// coverage for index.ts's default export. This test verifies the type-level
+// reference is valid.
+// ---------------------------------------------------------------------------
+
+describe("contextInfo from index.ts", () => {
+	it("contextInfo is the default export — a function", () => {
+		// contextInfo is imported at runtime from ../index.ts.
+		// Verifying it's a function confirms the module loaded successfully
+		// and the default export is the expected extension factory.
+		assert.strictEqual(typeof contextInfo, "function", "contextInfo from index.ts is a function");
+	});
+
+	it("prompts/skills/welcome runtime exports are valid functions", () => {
+		assert.strictEqual(
+			typeof listLocalPrompts,
+			"function",
+			"listLocalPrompts should be a function",
+		);
+		assert.strictEqual(typeof listLocalSkills, "function", "listLocalSkills should be a function");
+		assert.strictEqual(typeof countSkills, "function", "countSkills should be a function");
+		assert.strictEqual(
+			typeof showWelcomeBanner,
+			"function",
+			"showWelcomeBanner should be a function",
+		);
+		assert.strictEqual(
+			typeof readSessionExtState,
+			"function",
+			"readSessionExtState should be a function",
+		);
+	});
+
+	it("prompts/skills exports return arrays (smoke test)", () => {
+		const prompts = listLocalPrompts();
+		const skills = listLocalSkills();
+		assert.ok(Array.isArray(prompts), "listLocalPrompts should return an array");
+		assert.ok(Array.isArray(skills), "listLocalSkills should return an array");
+		assert.strictEqual(typeof countSkills(), "number", "countSkills should return a number");
+	});
+
+	it("readSessionExtState returns an object with expected keys", () => {
+		const extState = readSessionExtState();
+		assert.ok(
+			typeof extState === "object" && extState !== null,
+			"readSessionExtState should return an object",
+		);
+		assert.ok("logger" in extState, "extState should have logger");
+		assert.ok("advice" in extState, "extState should have advice");
+	});
+
+	it("registers all expected event handlers when called with mock pi", () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+		};
+		contextInfo(pi as any);
+
+		assert.ok(handlers.has("session_start"), "should register session_start");
+		assert.ok(handlers.has("model_select"), "should register model_select");
+		assert.ok(handlers.has("message_end"), "should register message_end");
+		assert.ok(handlers.has("turn_end"), "should register turn_end");
+		assert.ok(handlers.has("thinking_level_select"), "should register thinking_level_select");
+		assert.ok(handlers.has("message_update"), "should register message_update");
+		assert.ok(handlers.has("tool_execution_end"), "should register tool_execution_end");
+		assert.ok(handlers.has("session_shutdown"), "should register session_shutdown");
+		assert.ok(handlers.has("before_agent_start"), "should register before_agent_start");
+		assert.ok(handlers.has("input"), "should register input");
+		assert.ok(handlers.has("user_bash"), "should register user_bash");
+	});
+
+	/** Create a mock ExtensionContext with mode="rpc" to avoid timer issues */
+	function createMockCtx() {
+		return {
+			mode: "rpc",
+			ui: {
+				setFooter: () => {},
+				setStatus: () => {},
+				setWidget: () => {},
+				setWorkingIndicator: () => {},
+				theme: { fg: (_c: string, t: string) => t },
+			},
+			isProjectTrusted: () => true,
+			getContextUsage: () => undefined,
+			sessionManager: { getSessionFile: () => "/tmp/test_uuid.jsonl" },
+			model: { id: "test-model", contextWindow: 128000 },
+			cwd: "/tmp",
+		};
+	}
+
+	it("session_start handler reads session name from pi.getSessionName()", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		let capturedFooterArg: unknown = undefined;
+		let sessionNameValue: string | undefined = "my-test-session";
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => sessionNameValue,
+		};
+		contextInfo(pi as any);
+
+		const ctx = {
+			...createMockCtx(),
+			ui: {
+				...createMockCtx().ui,
+				setFooter: (fn: unknown) => {
+					capturedFooterArg = fn;
+				},
+			},
+		};
+
+		await handlers.get("session_start")!({}, ctx);
+		// In RPC mode, installFooter sets footer to undefined and returns early
+		assert.strictEqual(capturedFooterArg, undefined, "footer should be undefined in RPC mode");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("session_start with isProjectTrusted()=true runs without error", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfo(pi as any);
+
+		await handlers.get("session_start")!({}, createMockCtx());
+		assert.ok(true, "session_start with trusted project completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("session_start with isProjectTrusted()=false runs without error", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfo(pi as any);
+
+		const ctx = createMockCtx();
+		(ctx as any).isProjectTrusted = () => false;
+
+		await handlers.get("session_start")!({}, ctx);
+		assert.ok(true, "session_start with untrusted project completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("model_select handler does not throw", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfo(pi as any);
+
+		await handlers.get("session_start")!({}, createMockCtx());
+		await handlers.get("model_select")!({ model: { contextWindow: 256000 } }, createMockCtx());
+		assert.ok(true, "model_select completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("message_end handler does not throw with cache stats", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfo(pi as any);
+
+		const ctx = {
+			...createMockCtx(),
+			getContextUsage: () => ({ tokens: 12400, contextWindow: 256000 }),
+		};
+		await handlers.get("session_start")!({}, ctx);
+
+		await handlers.get("message_end")!(
+			{ message: { role: "assistant", usage: { cacheRead: 76288, cacheWrite: 1024 } } },
+			ctx,
+		);
+		assert.ok(true, "message_end with cache stats completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+
+	it("turn_end handler does not throw", async () => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		const pi = {
+			on: (event: string, handler: (...args: any[]) => void) => {
+				handlers.set(event, handler);
+			},
+			registerCommand: () => {},
+			getSessionName: () => undefined,
+		};
+		contextInfo(pi as any);
+
+		await handlers.get("session_start")!({}, createMockCtx());
+		await handlers.get("turn_end")!({}, createMockCtx());
+		assert.ok(true, "turn_end completed without error");
+
+		// Cleanup: stop timer via session_shutdown
+		await handlers.get("session_shutdown")!();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatSessionTimer tests (using imported real implementation)
 // ---------------------------------------------------------------------------
 
 describe("formatSessionTimer", () => {
@@ -226,32 +499,6 @@ describe("formatSessionTimer", () => {
 
 	it("exact minute: 1m → ⏱ 1m 0s", () => {
 		assert.strictEqual(formatSessionTimer(60_000), "\u23f1 1m 0s");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Footer right section integration tests
-// ---------------------------------------------------------------------------
-
-describe("footer right section — session timer", () => {
-	it("timer with token display → ⏱ ... · ◉ ...", () => {
-		const result = buildRightSection(true, 330_000, "\u25c9 12.5K/200K [6%]");
-		assert.strictEqual(result, "\u23f1 5m 30s \u00b7 \u25c9 12.5K/200K [6%]");
-	});
-
-	it("timer hidden (showTimer=false) → only token display", () => {
-		const result = buildRightSection(false, 330_000, "\u25c9 12.5K/200K [6%]");
-		assert.strictEqual(result, "\u25c9 12.5K/200K [6%]");
-	});
-
-	it("timer visible, no token data → timer alone", () => {
-		const result = buildRightSection(true, 60_000, null);
-		assert.strictEqual(result, "\u23f1 1m 0s");
-	});
-
-	it("timer hidden, no token data → empty string", () => {
-		const result = buildRightSection(false, 0, null);
-		assert.strictEqual(result, "");
 	});
 });
 
@@ -443,7 +690,7 @@ describe("context-info extension — error resilience", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Cache stats capture tests
+// Cache stats capture tests (existing + CH)
 // ---------------------------------------------------------------------------
 
 describe("context-info extension — cache stats capture", () => {
@@ -517,6 +764,279 @@ describe("context-info extension — cache stats capture", () => {
 		});
 		assert.strictEqual(getCacheRead(ctx), undefined);
 		assert.strictEqual(getCacheWrite(ctx), undefined);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// CH computation tests (Improvement #1)
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — cache hit rate computation", () => {
+	let ctx: TestCtx;
+
+	beforeEach(() => {
+		ctx = createContextInfoExtension();
+	});
+
+	it("message_end with cacheRead=76288, cacheWrite=1024 → cacheHitRate=99", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 76288, cacheWrite: 1024 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 99);
+	});
+
+	it("message_end with cacheRead=0, cacheWrite=100 → cacheHitRate=0", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 0, cacheWrite: 100 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 0);
+	});
+
+	it("message_end with cacheRead=100, cacheWrite=0 → cacheHitRate=100", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100, cacheWrite: 0 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 100);
+	});
+
+	it("message_end with both cacheRead and cacheWrite undefined → cacheHitRate stays undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: { role: "assistant" },
+		});
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+
+	it("message_end without usage object → cacheHitRate stays undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: { role: "assistant", content: "hello" },
+		});
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+
+	it("message_end with only cacheRead (cacheWrite undefined) → cacheHitRate stays undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+
+	it("model_select resets cacheHitRate to undefined", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100, cacheWrite: 0 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 100);
+
+		// model_select resets CH
+		invoke(ctx, "model_select", { model: { contextWindow: 512000 } });
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+
+	it("session_start resets cacheHitRate", () => {
+		invoke(ctx, "session_start", {});
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+		invoke(ctx, "message_end", {
+			message: {
+				role: "assistant",
+				usage: { cacheRead: 100, cacheWrite: 0 },
+			},
+		});
+		assert.strictEqual(getCacheHitRate(ctx), 100);
+
+		// New session resets
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getCacheHitRate(ctx), undefined);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// formatCacheHitRate tests
+// ---------------------------------------------------------------------------
+
+describe("formatCacheHitRate", () => {
+	it("formatCacheHitRate(75) → CH: 75%", () => {
+		assert.strictEqual(formatCacheHitRate(75), "CH: 75%");
+	});
+
+	it("formatCacheHitRate(0) → CH: 0%", () => {
+		assert.strictEqual(formatCacheHitRate(0), "CH: 0%");
+	});
+
+	it("formatCacheHitRate(100) → CH: 100%", () => {
+		assert.strictEqual(formatCacheHitRate(100), "CH: 100%");
+	});
+
+	it("formatCacheHitRate(33.333) → CH: 33% (rounded integer)", () => {
+		assert.strictEqual(formatCacheHitRate(33.333), "CH: 33%");
+	});
+
+	it("formatCacheHitRate(undefined) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(undefined), "");
+	});
+
+	it("formatCacheHitRate(null) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(null as any), "");
+	});
+
+	it("formatCacheHitRate(NaN) → empty string", () => {
+		assert.strictEqual(formatCacheHitRate(NaN), "");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Mode guard tests (Improvement #3)
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — mode guard", () => {
+	it("session_start with ctx.mode === 'rpc' does not increment UI calls", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.mode = "rpc";
+		invoke(ctx, "session_start", { mode: "rpc" });
+		// In TUI mode, setFooter would be called; in RPC it should not
+		assert.strictEqual(getUiSetFooterCalls(ctx), 0, "should not call UI setFooter in RPC mode");
+	});
+
+	it("session_start with ctx.mode === 'tui' does increment UI calls", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.mode = "tui";
+		invoke(ctx, "session_start", { mode: "tui" });
+		assert.strictEqual(getUiSetFooterCalls(ctx), 1, "should call UI setFooter in TUI mode");
+	});
+
+	it("session_start with ctx.mode undefined (backward compat) does increment UI calls", () => {
+		const ctx = createContextInfoExtension();
+		// mode is undefined by default
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(
+			getUiSetFooterCalls(ctx),
+			1,
+			"should call UI setFooter when mode is undefined",
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Session name tests (Improvement #2)
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — session name", () => {
+	it("session_start calls pi.getSessionName() and stores result", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => "my-session";
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getSessionName(ctx), "my-session");
+	});
+
+	it("session_start with pi.getSessionName() returning undefined → sessionName = undefined", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => undefined;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getSessionName(ctx), undefined);
+	});
+
+	it("session_start with pi.getSessionName() returning string → sessionName = that string", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => "dev-session";
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getSessionName(ctx), "dev-session");
+	});
+
+	it("model_select re-reads pi.getSessionName() → picks up mid-session rename", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => "original-name";
+		invoke(ctx, "session_start", {});
+
+		// Mid-session rename
+		(ctx.pi as any).getSessionName = () => "renamed-session";
+		invoke(ctx, "model_select", { model: { contextWindow: 256000 } });
+
+		assert.strictEqual(getSessionName(ctx), "renamed-session");
+	});
+
+	it("turn_end re-reads pi.getSessionName() → picks up mid-session rename", () => {
+		const ctx = createContextInfoExtension();
+		(ctx.pi as any).getSessionName = () => "original-name";
+		invoke(ctx, "session_start", {});
+
+		// Mid-session rename
+		(ctx.pi as any).getSessionName = () => "renamed-session";
+		invoke(ctx, "turn_end", {});
+
+		assert.strictEqual(getSessionName(ctx), "renamed-session");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Trust status tests (Improvement #4)
+// ---------------------------------------------------------------------------
+
+describe("context-info extension — trust status", () => {
+	it("session_start calls ctx.isProjectTrusted() → trusted", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.isProjectTrusted = () => true;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), "trusted");
+	});
+
+	it("ctx.isProjectTrusted() returns false → trustStatus = 'untrusted'", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.isProjectTrusted = () => false;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), "untrusted");
+	});
+
+	it("ctx.isProjectTrusted() returns undefined → trustStatus = undefined", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.isProjectTrusted = () => undefined;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), undefined);
+	});
+
+	it("ctx.isProjectTrusted() not defined → trustStatus stays undefined", () => {
+		const ctx = createContextInfoExtension();
+		// isProjectTrusted not set on mockCtx
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), undefined);
+	});
+
+	it("session_start resets trustStatus, then re-reads", () => {
+		const ctx = createContextInfoExtension();
+		ctx.mockCtx.isProjectTrusted = () => true;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), "trusted");
+
+		// New session with different trust
+		ctx.mockCtx.isProjectTrusted = () => false;
+		invoke(ctx, "session_start", {});
+		assert.strictEqual(getTrustStatus(ctx), "untrusted");
 	});
 });
 

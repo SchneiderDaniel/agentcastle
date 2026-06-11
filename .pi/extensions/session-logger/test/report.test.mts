@@ -278,4 +278,67 @@ describe("buildMetadata() — pure function unit tests", () => {
 		const meta = buildMetadata(parsed);
 		assert.strictEqual(meta.fileModifications, undefined);
 	});
+
+	it("with mode override sets meta.mode", () => {
+		const parsed = makeParsed();
+		const meta = buildMetadata(parsed, undefined, { mode: "tui" });
+		assert.strictEqual(meta.mode, "tui");
+	});
+
+	it("with sessionName override sets meta.name", () => {
+		const parsed = makeParsed();
+		const meta = buildMetadata(parsed, undefined, { sessionName: "fix-bug-123" });
+		assert.strictEqual(meta.name, "fix-bug-123");
+	});
+
+	it("with both overrides sets both name and mode", () => {
+		const parsed = makeParsed();
+		const meta = buildMetadata(parsed, undefined, {
+			sessionName: "fix-bug-123",
+			mode: "tui",
+		});
+		assert.strictEqual(meta.name, "fix-bug-123");
+		assert.strictEqual(meta.mode, "tui");
+	});
+
+	it("without overrides keeps name undefined and mode absent", () => {
+		const parsed = makeParsed();
+		const meta = buildMetadata(parsed);
+		assert.strictEqual(meta.name, undefined);
+		assert.strictEqual((meta as any).mode, undefined);
+	});
+
+	it("with overrides preserves all other parsed fields unchanged", () => {
+		const parsed = makeParsed({ cost: 0.99, entryCount: 10 });
+		const meta = buildMetadata(parsed, undefined, {
+			sessionName: "test",
+			mode: "rpc",
+		});
+		assert.strictEqual(meta.sessionId, "test-session-1");
+		assert.strictEqual(meta.cost, 0.99);
+		assert.strictEqual(meta.messages, 10);
+		assert.deepStrictEqual(meta.tokens, defaultTokens);
+		assert.strictEqual(meta.compactions, 2);
+		assert.deepStrictEqual(meta.modelChanges, parsed.modelChanges);
+	});
+
+	it("overrides survive snapshot merge", () => {
+		const parsed = makeParsed({
+			toolStats: { read: { calls: 1, errors: 0, totalDurationMs: 0 } },
+		});
+		const execs = [makeToolExecution("read", { durationMs: 150 })];
+		const snapshot = makeSnapshot(execs);
+		const meta = buildMetadata(parsed, snapshot, {
+			sessionName: "test-snapshot",
+			mode: "json",
+		});
+		assert.strictEqual(meta.name, "test-snapshot");
+		assert.strictEqual(meta.mode, "json");
+		// Tool stats still merged correctly
+		assert.strictEqual(meta.toolStats!.read.totalDurationMs, 150);
+	});
+
+	it("buildMetadata is a function (exported from report.ts)", () => {
+		assert.strictEqual(typeof buildMetadata, "function", "buildMetadata should be a function");
+	});
 });

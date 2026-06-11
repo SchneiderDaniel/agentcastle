@@ -33,6 +33,7 @@
 		"agentTimeoutsMin": {},
 		"agentTokenBudget": 300000,
 		"bellOnComplete": false,
+		"enableExperimentalFeatures": false,
 		"commentSummaryThreshold": 7,
 		"maxCommentChars": 2000
 	}

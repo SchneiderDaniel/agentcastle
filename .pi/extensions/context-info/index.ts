@@ -8,19 +8,19 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, readPiSetting } from "./config.js";
-import { getWorktreeName } from "./git-helpers.js";
-import { tryEmit } from "./telemetry.js";
-import { installFooter } from "./footer.js";
-import { FooterState } from "./footer-state.js";
-import { showWelcomeBanner, readSessionExtState } from "./welcome.js";
-import { listLocalExtensions } from "./extensions.js";
-import type { ExtensionMeta } from "./extensions.js";
-import { listLocalPrompts } from "./prompts.js";
-import type { PromptMeta } from "./prompts.js";
-import { listLocalSkills } from "./skills.js";
-import type { SkillMeta } from "./skills.js";
-import { createExplainCommand, wordWrap } from "./explain.js";
+import { loadConfig, readPiSetting } from "./config.ts";
+import { getWorktreeName } from "./git-helpers.ts";
+import { tryEmit } from "./telemetry.ts";
+import { installFooter } from "./footer.ts";
+import { FooterState } from "./footer-state.ts";
+import { showWelcomeBanner, readSessionExtState } from "./welcome.ts";
+import { listLocalExtensions } from "./extensions.ts";
+import type { ExtensionMeta } from "./extensions.ts";
+import { listLocalPrompts } from "./prompts.ts";
+import type { PromptMeta } from "./prompts.ts";
+import { listLocalSkills } from "./skills.ts";
+import type { SkillMeta } from "./skills.ts";
+import { createExplainCommand, wordWrap } from "./explain.ts";
 
 export default function contextInfo(pi: ExtensionAPI): void {
 	// FooterState — single source of truth for all mutable state
@@ -89,9 +89,14 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 
 		if (state.config === null) {
-			ctx.ui.setFooter(undefined);
-			ctx.ui.setStatus("contextUsage", undefined);
-			ctx.ui.setWidget("cheasee-pi-welcome", undefined);
+			// Mode guard: only clear UI elements in TUI mode
+			// ctx.mode is available in pi >=0.78.1; cast for backward compat
+			const mode = (ctx as any).mode as string | undefined;
+			if (mode === undefined || mode === "tui") {
+				ctx.ui.setFooter(undefined);
+				ctx.ui.setStatus("contextUsage", undefined);
+				ctx.ui.setWidget("cheasee-pi-welcome", undefined);
+			}
 			state.stopTimer();
 			return;
 		}
@@ -101,22 +106,40 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			state.footerConfig.lastContextWindow.value = cw;
 		}
 
-		// Install custom footer
+		// ── Session name (Improvement #2) ──────────────────────
+		state.footerConfig.sessionName = pi.getSessionName();
+
+		// ── Project trust status (Improvement #4) ──────────────
+		// ctx.isProjectTrusted() is available in pi >=0.79.1; cast for backward compat
+		const trusted = (ctx as any).isProjectTrusted?.();
+		if (trusted === true) {
+			state.footerConfig.trustStatus = "trusted";
+		} else if (trusted === false) {
+			state.footerConfig.trustStatus = "untrusted";
+		} else {
+			state.footerConfig.trustStatus = undefined;
+		}
+
+		// Install custom footer (mode-guarded inside installFooter)
 		state.callInstallFooter();
 
-		// Start live timer
+		// Start live timer (timer itself has its own mode guard via installFooter call)
 		state.startTimer();
 
-		// Custom working indicator — subtle dot pulse
-		ctx.ui.setWorkingIndicator({
-			frames: [
-				ctx.ui.theme.fg("dim", "·"),
-				ctx.ui.theme.fg("muted", "•"),
-				ctx.ui.theme.fg("accent", "●"),
-				ctx.ui.theme.fg("muted", "•"),
-			],
-			intervalMs: 150,
-		});
+		// Mode guard: only set working indicator and widgets in TUI mode
+		const mode = (ctx as any).mode as string | undefined;
+		if (mode === undefined || mode === "tui") {
+			// Custom working indicator — subtle dot pulse
+			ctx.ui.setWorkingIndicator({
+				frames: [
+					ctx.ui.theme.fg("dim", "·"),
+					ctx.ui.theme.fg("muted", "•"),
+					ctx.ui.theme.fg("accent", "●"),
+					ctx.ui.theme.fg("muted", "•"),
+				],
+				intervalMs: 150,
+			});
+		}
 
 		// ── Session ID ────────────────────────────────────────
 		let sessionId = "unknown";
@@ -128,7 +151,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 		state.footerConfig.sessionId = sessionId;
 
-		// ── Startup welcome banner ──────────────────────────────
+		// ── Startup welcome banner (mode-guarded inside showWelcomeBanner) ──
 		const extState = readSessionExtState();
 		const startupRef = {
 			get value() {
@@ -157,9 +180,13 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			}
 			state.startupWidgetActive = false;
 		}
-		ctx.ui.setWidget("explain-extensions", undefined);
-		ctx.ui.setWidget("explain-prompts", undefined);
-		ctx.ui.setWidget("explain-skills", undefined);
+		// Mode guard: only clear widgets in TUI mode
+		const mode = (ctx as any).mode as string | undefined;
+		if (mode === undefined || mode === "tui") {
+			ctx.ui.setWidget("explain-extensions", undefined);
+			ctx.ui.setWidget("explain-prompts", undefined);
+			ctx.ui.setWidget("explain-skills", undefined);
+		}
 	}
 
 	// Clear welcome banner and explain-* widgets on first user input
@@ -191,6 +218,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		if (typeof cw === "number" && cw > 0) {
 			state.footerConfig.lastContextWindow.value = cw;
 		}
+		// Reset cache hit rate on model change (per research finding — cache keys are provider/model-specific)
+		state.footerConfig.cacheHitRate = undefined;
+		// Re-read session name (in case setSessionName was called mid-session)
+		state.footerConfig.sessionName = pi.getSessionName();
 		if (state.config) {
 			state.callInstallFooter();
 		}
@@ -198,9 +229,10 @@ export default function contextInfo(pi: ExtensionAPI): void {
 	});
 
 	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
-		if (state && state.config) {
-			state.callInstallFooter();
-		}
+		if (!state || !state.config) return;
+		// Re-read session name (in case setSessionName was called mid-session)
+		state.footerConfig.sessionName = pi.getSessionName();
+		state.callInstallFooter();
 	});
 
 	pi.on("message_end", async (event, ctx: ExtensionContext) => {
@@ -214,6 +246,16 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 		if (eventUsage && typeof eventUsage.cacheWrite === "number") {
 			state.footerConfig.cacheWrite = eventUsage.cacheWrite;
+		}
+		// Compute cache hit rate (Improvement #1)
+		if (
+			eventUsage &&
+			typeof eventUsage.cacheRead === "number" &&
+			typeof eventUsage.cacheWrite === "number"
+		) {
+			state.footerConfig.cacheHitRate = Math.round(
+				(eventUsage.cacheRead / (eventUsage.cacheRead + eventUsage.cacheWrite)) * 100,
+			);
 		}
 		const usage = ctx.getContextUsage();
 		if (usage && typeof usage.tokens === "number" && usage.tokens > 0) {
@@ -244,4 +286,7 @@ export default function contextInfo(pi: ExtensionAPI): void {
 }
 
 // Re-export types for consumers
-export type { ThresholdEntry, TpsSample, ContextStatusBarConfig, FooterConfig } from "./types.js";
+export type { ThresholdEntry, TpsSample, ContextStatusBarConfig, FooterConfig } from "./types.ts";
+
+// Named export alongside default — needed by tests for named import compatibility
+export { contextInfo };

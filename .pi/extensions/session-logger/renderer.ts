@@ -298,7 +298,10 @@ export function parseSessionStats(filepath: string): ParsedSessionStats | null {
 }
 
 /** Render a .jsonl session file to Markdown. */
-export function renderSessionToMarkdown(filepath: string): string {
+export function renderSessionToMarkdown(
+	filepath: string,
+	overrides?: { sessionName?: string; mode?: string },
+): string {
 	const raw = readFileSync(filepath, "utf-8").trim();
 	if (!raw) return "*Empty session*";
 
@@ -324,6 +327,8 @@ export function renderSessionToMarkdown(filepath: string): string {
 	sections.push(`|-------|-------|`);
 	sections.push(`| **Session** | \`${sid}\` |`);
 	sections.push(`| **Start** | \`${ts}\` |`);
+	if (overrides?.sessionName) sections.push(`| **Name** | \`${escMd(overrides.sessionName)}\` |`);
+	if (overrides?.mode !== undefined) sections.push(`| **Mode** | ${escMd(overrides.mode)} |`);
 	sections.push(`| **CWD** | \`${cwd}\` |`);
 	sections.push(`| **Version** | ${ver} |`);
 	sections.push(`| **Entries** | ${lines.length} |`);

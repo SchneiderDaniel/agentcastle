@@ -37,13 +37,20 @@ describe("types.ts — STOP_ALIASES", () => {
 });
 
 describe("types.ts — CAVEMAN_COMMAND_OPTIONS", () => {
-	it("includes all 7 entries with value, label, description", () => {
-		assert.strictEqual(CAVEMAN_COMMAND_OPTIONS.length, 7);
+	it("includes all 8 entries with value, label, description", () => {
+		assert.strictEqual(CAVEMAN_COMMAND_OPTIONS.length, 8);
 		for (const opt of CAVEMAN_COMMAND_OPTIONS) {
 			assert.ok(typeof opt.value === "string");
 			assert.ok(typeof opt.label === "string");
 			assert.ok(typeof opt.description === "string");
 		}
+	});
+
+	it('includes "status" entry', () => {
+		const statusOpt = CAVEMAN_COMMAND_OPTIONS.find((o) => o.value === "status");
+		assert.ok(statusOpt !== undefined, "status entry should exist");
+		assert.equal(statusOpt.value, "status");
+		assert.ok(statusOpt.description.includes("prompt context"));
 	});
 });
 
