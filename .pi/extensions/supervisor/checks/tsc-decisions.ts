@@ -4,7 +4,6 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TscDiagnostic } from "../../tsc-checkpoint/index.ts";
-import { formatTscDiagnostics } from "../../tsc-checkpoint/index.ts";
 
 /**
  * Result from a tsc checkpoint run.
@@ -31,10 +30,10 @@ export interface TscCheckpointDecision {
  * - If hasErrors → stay in Implementation with diagnostic details
  * - If clean → proceed to Audit with success note
  */
-export function determineTscCheckpointDecision(
+export async function determineTscCheckpointDecision(
 	result: TscCheckpointResult | null,
 	intendedNext: string,
-): TscCheckpointDecision {
+): Promise<TscCheckpointDecision> {
 	if (intendedNext !== "Audit") {
 		return { nextStatus: intendedNext, note: "", tscTriggered: false };
 	}
@@ -48,6 +47,7 @@ export function determineTscCheckpointDecision(
 	}
 
 	if (result.hasErrors) {
+		const { formatTscDiagnostics } = await import("../../tsc-checkpoint/index.ts");
 		const formatted = formatTscDiagnostics(result.diagnostics);
 		return {
 			nextStatus: "Implementation",
