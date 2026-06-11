@@ -352,4 +352,61 @@ describe("LoggerPipeline onSessionStart", () => {
 		assert.ok(calledFile, "getSessionFile should be called");
 		assert.strictEqual(pipeline.getSessionFile(), undefined);
 	});
+
+	it("with overrides stores sessionName and mode on pipeline", async () => {
+		const gate = createGate(true);
+		const pipeline = new LoggerPipeline(gate);
+
+		const ctx = {
+			sessionManager: {
+				getSessionFile: () => undefined,
+				getCwd: () => "/tmp",
+				getEntries: () => [],
+			},
+		};
+
+		await pipeline.onSessionStart({}, ctx as any, {
+			sessionName: "fix-bug-123",
+			mode: "tui",
+		});
+		assert.strictEqual(pipeline.getSessionName(), "fix-bug-123");
+		assert.strictEqual(pipeline.getMode(), "tui");
+	});
+
+	it("without overrides keeps sessionName and mode as undefined", async () => {
+		const gate = createGate(true);
+		const pipeline = new LoggerPipeline(gate);
+
+		const ctx = {
+			sessionManager: {
+				getSessionFile: () => undefined,
+				getCwd: () => "/tmp",
+				getEntries: () => [],
+			},
+		};
+
+		await pipeline.onSessionStart({}, ctx as any);
+		assert.strictEqual(pipeline.getSessionName(), undefined);
+		assert.strictEqual(pipeline.getMode(), undefined);
+	});
+
+	it("with gate disabled does not store overrides", async () => {
+		const gate = createGate(false);
+		const pipeline = new LoggerPipeline(gate);
+
+		const ctx = {
+			sessionManager: {
+				getSessionFile: () => "/tmp/session.jsonl",
+				getCwd: () => "/tmp",
+				getEntries: () => [],
+			},
+		};
+
+		await pipeline.onSessionStart({}, ctx as any, {
+			sessionName: "fix-bug-123",
+			mode: "tui",
+		});
+		assert.strictEqual(pipeline.getSessionName(), undefined);
+		assert.strictEqual(pipeline.getMode(), undefined);
+	});
 });

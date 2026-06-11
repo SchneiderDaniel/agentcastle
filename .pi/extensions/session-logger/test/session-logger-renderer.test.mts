@@ -642,3 +642,126 @@ describe("parseSessionStats — perTurnTokens characterization", () => {
 		assert.strictEqual(parsed, null);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// renderSessionToMarkdown — header overrides (name/mode)
+// ---------------------------------------------------------------------------
+
+describe("renderSessionToMarkdown — header name/mode overrides", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "session-logger-header-"));
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function writeJsonl(entries: Record<string, unknown>[]): string {
+		const filepath = path.join(tmpDir, "test-session.jsonl");
+		const header = {
+			type: "session",
+			id: "test-header-session",
+			timestamp: "2025-06-01T10:00:00Z",
+			cwd: "/tmp",
+			version: 1,
+		};
+		const lines = [header, ...entries].map((e) => JSON.stringify(e)).join("\n") + "\n";
+		fs.writeFileSync(filepath, lines, "utf-8");
+		return filepath;
+	}
+
+	it("with mode override renders Mode row between Start and CWD", () => {
+		const filepath = writeJsonl([]);
+		const md = renderSessionToMarkdown(filepath, { mode: "tui" });
+
+		const startIdx = md.indexOf("| **Start**");
+		const modeIdx = md.indexOf("| **Mode** |");
+		const cwdIdx = md.indexOf("| **CWD**");
+
+		assert.ok(modeIdx >= 0, "Should render Mode row");
+		assert.ok(modeIdx > startIdx, "Mode row should be after Start");
+		assert.ok(cwdIdx > modeIdx, "CWD row should be after Mode");
+		assert.ok(md.includes("| **Mode** | tui |"), "Should contain Mode value");
+	});
+
+	it("with sessionName override renders Name row between Start and CWD", () => {
+		const filepath = writeJsonl([]);
+		const md = renderSessionToMarkdown(filepath, { sessionName: "fix-bug-123" });
+
+		const startIdx = md.indexOf("| **Start**");
+		const nameIdx = md.indexOf("| **Name** |");
+		const cwdIdx = md.indexOf("| **CWD**");
+
+		assert.ok(nameIdx >= 0, "Should render Name row");
+		assert.ok(nameIdx > startIdx, "Name row should be after Start");
+		assert.ok(cwdIdx > nameIdx, "CWD row should be after Name");
+		assert.ok(md.includes("| **Name** | \`fix-bug-123\` |"), "Should contain Name value");
+	});
+
+	it("with both overrides renders both Name and Mode rows in correct order", () => {
+		const filepath = writeJsonl([]);
+		const md = renderSessionToMarkdown(filepath, {
+			sessionName: "fix-bug-123",
+			mode: "tui",
+		});
+
+		const startIdx = md.indexOf("| **Start**");
+		const nameIdx = md.indexOf("| **Name** |");
+		const modeIdx = md.indexOf("| **Mode** |");
+		const cwdIdx = md.indexOf("| **CWD**");
+
+		assert.ok(nameIdx >= 0, "Should render Name row");
+		assert.ok(modeIdx >= 0, "Should render Mode row");
+		assert.ok(nameIdx > startIdx, "Name row after Start");
+		assert.ok(modeIdx > startIdx, "Mode row after Start");
+		assert.ok(cwdIdx > modeIdx, "CWD after Mode");
+		assert.ok(cwdIdx > nameIdx, "CWD after Name");
+	});
+
+	it("without overrides does not render Name or Mode rows (backward compat)", () => {
+		const filepath = writeJsonl([]);
+		const md = renderSessionToMarkdown(filepath);
+
+		assert.ok(!md.includes("| **Name** |"), "Should not render Name row");
+		assert.ok(!md.includes("| **Mode** |"), "Should not render Mode row");
+	});
+
+	it("Mode row uses escMd escaping for pipe/backtick in mode string", () => {
+		const filepath = writeJsonl([]);
+		const md = renderSessionToMarkdown(filepath, { mode: "rpc|json" });
+
+		assert.ok(md.includes("| **Mode** | rpc\\|json |"), "Mode value should escape pipe");
+	});
+
+	it("Name row uses escMd escaping for pipe/backtick in name string", () => {
+		const filepath = writeJsonl([]);
+		const md = renderSessionToMarkdown(filepath, { sessionName: "test\`name|v2" });
+
+		assert.ok(md.includes("\\`"), "Name value should escape backtick");
+		assert.ok(md.includes("\\|"), "Name value should escape pipe");
+	});
+
+	it("empty mode string renders as empty value", () => {
+		const filepath = writeJsonl([]);
+		const md = renderSessionToMarkdown(filepath, { mode: "" });
+
+		assert.ok(md.includes("| **Mode** |  |"), "Empty mode should render as empty value");
+	});
+
+	it("overrides do not affect other header rows or sections", () => {
+		const filepath = writeJsonl([]);
+		const md = renderSessionToMarkdown(filepath, { mode: "tui" });
+
+		// Standard rows still present
+		assert.ok(md.includes("| **Session** |"), "Session row present");
+		assert.ok(md.includes("| **Start** |"), "Start row present");
+		assert.ok(md.includes("| **CWD** |"), "CWD row present");
+		assert.ok(md.includes("| **Version** |"), "Version row present");
+		assert.ok(md.includes("| **Entries** |"), "Entries row present");
+
+		// Token table not affected
+		assert.ok(md.includes("| **Input tokens** |"), "Input tokens row present");
+	});
+});

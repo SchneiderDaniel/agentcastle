@@ -27,6 +27,8 @@ export class LoggerPipeline {
 	private files: FileOps;
 	private sessionFile: string | undefined;
 	private sessionsDir: string | undefined;
+	private sessionName: string | undefined;
+	private mode: string | undefined;
 
 	constructor(gate: SessionLoggerGate) {
 		this.gate = gate;
@@ -54,6 +56,16 @@ export class LoggerPipeline {
 		return this.sessionsDir;
 	}
 
+	/** Expose session name for testing / override passing. */
+	getSessionName(): string | undefined {
+		return this.sessionName;
+	}
+
+	/** Expose session mode for testing / override passing. */
+	getMode(): string | undefined {
+		return this.mode;
+	}
+
 	// ── Session lifecycle ──
 
 	async onSessionStart(
@@ -65,8 +77,14 @@ export class LoggerPipeline {
 				getEntries(): any[];
 			};
 		},
+		overrides?: { sessionName?: string; mode?: string },
 	): Promise<void> {
 		if (!beginSession(this.gate)) return;
+
+		if (overrides) {
+			this.sessionName = overrides.sessionName;
+			this.mode = overrides.mode;
+		}
 
 		const sm = ctx.sessionManager;
 		this.sessionFile = sm.getSessionFile();
@@ -98,8 +116,17 @@ export class LoggerPipeline {
 		// Capture in-memory tool execution timing before shutdown.
 		const snapshot = this.stats.getSnapshot();
 
+		const overrides: { sessionName?: string; mode?: string } = {};
+		if (this.sessionName) overrides.sessionName = this.sessionName;
+		if (this.mode !== undefined) overrides.mode = this.mode;
+
 		try {
-			await generateMissingReports(sf, this.files, snapshot);
+			await generateMissingReports(
+				sf,
+				this.files,
+				snapshot,
+				Object.keys(overrides).length > 0 ? overrides : undefined,
+			);
 		} catch (err) {
 			console.error(`[session-logger] Shutdown handler failed: ${(err as Error).message}`);
 		}
