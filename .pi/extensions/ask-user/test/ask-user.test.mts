@@ -1055,76 +1055,10 @@ describe("Empty JSONL file edge cases", () => {
 	});
 });
 
-// ============================================================================
-// Unit tests: readError helper (ask_user_read error unification)
-// ============================================================================
-
 interface ContentResult {
 	content: Array<{ type: "text"; text: string }>;
 	details: Record<string, unknown>;
 }
-
-function readError(message: string): ContentResult {
-	return {
-		content: [{ type: "text", text: JSON.stringify({ entries: [], count: 0, error: message }) }],
-		details: { entries: [], count: 0, error: message },
-	};
-}
-
-describe("readError (ask_user_read error unification)", () => {
-	it("returns correct ContentResult shape", () => {
-		const result = readError("test error");
-		assert.ok(Array.isArray(result.content));
-		assert.strictEqual(result.content.length, 1);
-		assert.strictEqual(result.content[0]!.type, "text");
-	});
-
-	it("includes error message in content text JSON", () => {
-		const result = readError("test error");
-		const parsed = JSON.parse(result.content[0]!.text);
-		assert.deepStrictEqual(parsed.entries, []);
-		assert.strictEqual(parsed.count, 0);
-		assert.strictEqual(parsed.error, "test error");
-		assert.strictEqual(parsed.message, undefined, "Should use 'error' not 'message' key");
-	});
-
-	it("includes error message in details", () => {
-		const result = readError("test error");
-		assert.deepStrictEqual(result.details.entries, []);
-		assert.strictEqual(result.details.count, 0);
-		assert.strictEqual(result.details.error, "test error");
-	});
-
-	it("handles all expected error messages", () => {
-		const messages = [
-			"id parameter is required for get action",
-			"text parameter is required for query action",
-			"Unknown action: invalid",
-			"Error reading Q&A history: something broke",
-			"No Q&A history yet",
-			"Entry #42 not found",
-		];
-		for (const msg of messages) {
-			const result = readError(msg);
-			const parsed = JSON.parse(result.content[0]!.text);
-			assert.strictEqual(parsed.error, msg, `Message: "${msg}"`);
-		}
-	});
-
-	it("details.error matches content.error", () => {
-		const msg = "Something went wrong";
-		const result = readError(msg);
-		const parsed = JSON.parse(result.content[0]!.text);
-		assert.strictEqual(parsed.error, result.details.error);
-	});
-
-	it("content is a single text block", () => {
-		const result = readError("error");
-		assert.strictEqual(result.content.length, 1);
-		assert.strictEqual(result.content[0]!.type, "text");
-		assert.ok(typeof result.content[0]!.text === "string");
-	});
-});
 
 // ============================================================================
 // Unit tests: successResult helper (ask_user_read success envelope)
@@ -1206,5 +1140,157 @@ describe("successResult (ask_user_read success envelope)", () => {
 		assert.strictEqual(result.content.length, 1);
 		assert.strictEqual(result.content[0]!.type, "text");
 		assert.ok(typeof result.content[0]!.text === "string");
+	});
+});
+
+// ============================================================================
+// Integration tests: ask_user_read execute — error signaling
+// ============================================================================
+
+import askUser from "../index.ts";
+
+describe("ask_user_read execute — error signaling", () => {
+	let tmpDir: string;
+	let tools: Record<string, { execute: (...args: unknown[]) => Promise<unknown> }>;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ask-user-read-error-test-"));
+		tools = {};
+		const mockPi: any = {
+			registerTool: (tool: any) => {
+				tools[tool.name] = tool;
+			},
+			on: () => {},
+			registerCommand: () => {},
+			sendUserMessage: () => {},
+		};
+		askUser(mockPi);
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	function makeCtx(): any {
+		return {
+			sessionManager: {
+				getCwd: () => tmpDir,
+			},
+		};
+	}
+
+	// Entity tests — validation errors, no I/O needed
+
+	it("throws for get action with undefined id", async () => {
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "get", id: undefined }, null, null, makeCtx()),
+			/id parameter is required for get action/,
+		);
+	});
+
+	it("throws for get action with missing id", async () => {
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "get" }, null, null, makeCtx()),
+			/id parameter is required for get action/,
+		);
+	});
+
+	it("throws for get action with null id", async () => {
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "get", id: null }, null, null, makeCtx()),
+			/id parameter is required for get action/,
+		);
+	});
+
+	it("throws for query action with undefined text", async () => {
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "query", text: undefined }, null, null, makeCtx()),
+			/text parameter is required for query action/,
+		);
+	});
+
+	it("throws for query action with empty text", async () => {
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "query", text: "" }, null, null, makeCtx()),
+			/text parameter is required for query action/,
+		);
+	});
+
+	it("throws for query action with missing text", async () => {
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "query" }, null, null, makeCtx()),
+			/text parameter is required for query action/,
+		);
+	});
+
+	it("throws for unknown action", async () => {
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "invalid_action" }, null, null, makeCtx()),
+			/Unknown action: invalid_action/,
+		);
+	});
+
+	// Integration tests — I/O needed
+
+	it("throws when no Q&A history exists (empty directory)", async () => {
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "get", id: 1 }, null, null, makeCtx()),
+			/No Q&A history yet/,
+		);
+	});
+
+	it("throws when entry id not found", async () => {
+		await appendQnaEntry(tmpDir, "2026-05-15T19:00:00.000Z", "Q1", "A1");
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "get", id: 999 }, null, null, makeCtx()),
+			/Entry #999 not found/,
+		);
+	});
+
+	it("throws when entry id 0 not found (boundary)", async () => {
+		await appendQnaEntry(tmpDir, "2026-05-15T19:00:00.000Z", "Q1", "A1");
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "get", id: 0 }, null, null, makeCtx()),
+			/Entry #0 not found/,
+		);
+	});
+
+	it("propagates I/O error from storage layer (catch block)", async () => {
+		// Make .pi/context a file so readdir fails
+		const contextDir = path.join(tmpDir, ".pi", "context");
+		await fs.promises.mkdir(path.join(tmpDir, ".pi"), { recursive: true });
+		await fs.promises.writeFile(contextDir, "this is a file, not a directory", "utf-8");
+
+		const execute = tools["ask_user_read"].execute;
+		await assert.rejects(
+			() => execute("call1", { action: "list" }, null, null, makeCtx()),
+			/not a directory|ENOTDIR/,
+		);
+	});
+
+	it("success path still works (list with entries returns successResult)", async () => {
+		await appendQnaEntry(tmpDir, "2026-05-15T19:00:00.000Z", "Q1", "A1");
+		await appendQnaEntry(tmpDir, "2026-05-15T20:00:00.000Z", "Q2", "A2");
+
+		const execute = tools["ask_user_read"].execute;
+		const result: any = await execute("call1", { action: "list" }, null, null, makeCtx());
+
+		assert.ok(Array.isArray(result.content));
+		assert.strictEqual(result.content.length, 1);
+		const parsed = JSON.parse(result.content[0]!.text);
+		assert.strictEqual(parsed.count, 2);
+		assert.strictEqual(parsed.entries.length, 2);
+		assert.strictEqual(result.details.count, 2);
+		assert.strictEqual((result.details.entries as Array<unknown>).length, 2);
 	});
 });
