@@ -12,6 +12,8 @@ Core philosophies:
 - Temp files: save to `ignore/` folder, delete after use
 - GitHub issues: use repo from `.pi/settings.json` (supervisor.repo), never git remote
 - TypeScript: root `tsconfig.json` extends `.pi/tsconfig.json`. Run `npm run tsc:extensions` or `tsc --noEmit` for type checks.
+- Use `bash ls` only for directory listing. For file contents, use `read`. For finding files, use `ripgrep_search`
+- Use ripgrep_search instead of bash | grep to search file contents
 
 ## Tool Reference
 
