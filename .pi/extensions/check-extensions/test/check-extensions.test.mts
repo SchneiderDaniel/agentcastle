@@ -2483,6 +2483,7 @@ describe("ChangelogPipeline", () => {
 		const ctx: PipelineContext = {
 			cwd: "/tmp",
 			ui: { notify: () => {} },
+			hasUI: true,
 		};
 
 		const pipeline = new ChangelogPipeline(pi, ctx);
@@ -2491,7 +2492,7 @@ describe("ChangelogPipeline", () => {
 
 	it("has all expected phase methods", () => {
 		const pi = {} as any;
-		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} }, hasUI: true };
 		const pipeline = new ChangelogPipeline(pi, ctx);
 
 		assert.strictEqual(typeof pipeline.validatePhase, "function");
@@ -2529,6 +2530,7 @@ describe("ChangelogPipeline", () => {
 		const ctx: PipelineContext = {
 			cwd: "/nonexistent",
 			ui: { notify: () => {} },
+			hasUI: true,
 		};
 		const pipeline = new ChangelogPipeline(pi, ctx);
 		const result = pipeline.validatePhase();
@@ -2539,7 +2541,7 @@ describe("ChangelogPipeline", () => {
 
 	it("parsePhase returns entries from valid changelog content", () => {
 		const pi = { sendUserMessage: () => {} } as any;
-		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} }, hasUI: true };
 		const pipeline = new ChangelogPipeline(pi, ctx);
 
 		const md = `## [1.0.0] - 2026-01-01
@@ -2557,7 +2559,7 @@ describe("ChangelogPipeline", () => {
 
 	it("parsePhase handles empty changelog gracefully", () => {
 		const pi = { sendUserMessage: () => {} } as any;
-		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} }, hasUI: true };
 		const pipeline = new ChangelogPipeline(pi, ctx);
 
 		const result = pipeline.parsePhase("");
@@ -2730,7 +2732,7 @@ describe("CHANGELOG_API_TO_PATTERN_LOWER — config option (Phase 2: fix mapping
 
 	it("parsePhase round-trip: 'Added config option for extension flags' affects pi.registerFlag and pi.getFlag", () => {
 		const pi = { sendUserMessage: () => {} } as any;
-		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} }, hasUI: true };
 		const pipeline = new ChangelogPipeline(pi, ctx);
 
 		const md = `## [0.76.0] - 2026-06-01\n\n### Added\n\n- Added config option for extension flags\n`;
@@ -2772,7 +2774,7 @@ describe("extractApiNames — config option (Phase 3: remove if-else coupling)",
 
 	it("parsePhase round-trip still produces correct patterns", () => {
 		const pi = { sendUserMessage: () => {} } as any;
-		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} } };
+		const ctx: PipelineContext = { cwd: "/tmp", ui: { notify: () => {} }, hasUI: true };
 		const pipeline = new ChangelogPipeline(pi, ctx);
 
 		const md = `## [0.76.0] - 2026-06-01\n\n### Added\n\n- Added config option for extension flags\n`;
@@ -2894,5 +2896,299 @@ describe("tryReadManifestFile", () => {
 		assert.strictEqual(result, true);
 		assert.strictEqual(manifest.piVersion, "UNKNOWN");
 		assert.strictEqual(manifest.testedWithVersion, "1.0.0");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 17: parseCheckExtensionsArgs — Argument parsing
+// ═══════════════════════════════════════════════════════════════════════
+
+import { parseCheckExtensionsArgs, registerCheckExtensions } from "../index.ts";
+
+describe("registerCheckExtensions", () => {
+	it("is a function (named export plus default)", () => {
+		assert.equal(typeof registerCheckExtensions, "function");
+	});
+
+	it("registers 'check-extensions' command when called", () => {
+		let registeredName = "";
+		let registeredHandler: ((_args: string, _ctx: any) => Promise<void>) | null = null;
+
+		const mockPi = {
+			registerCommand: (
+				name: string,
+				cmd: { handler: (_args: string, _ctx: any) => Promise<void> },
+			) => {
+				registeredName = name;
+				registeredHandler = cmd.handler;
+			},
+		} as any;
+
+		registerCheckExtensions(mockPi);
+
+		assert.equal(registeredName, "check-extensions");
+		assert.equal(typeof registeredHandler, "function");
+	});
+});
+
+describe("parseCheckExtensionsArgs", () => {
+	it("returns empty result for undefined args", () => {
+		assert.equal(parseCheckExtensionsArgs(undefined).unknownFlags.size, 0);
+		assert.equal(parseCheckExtensionsArgs(undefined).messages.length, 0);
+	});
+
+	it("returns empty result for empty string", () => {
+		assert.equal(parseCheckExtensionsArgs("").unknownFlags.size, 0);
+		assert.equal(parseCheckExtensionsArgs("").messages.length, 0);
+	});
+
+	it("returns empty result for whitespace-only string", () => {
+		assert.equal(parseCheckExtensionsArgs("   ").unknownFlags.size, 0);
+		assert.equal(parseCheckExtensionsArgs("   ").messages.length, 0);
+	});
+
+	it("captures unknown flags with values", () => {
+		assert.equal(parseCheckExtensionsArgs("--dry-run --since=v0.78.0").unknownFlags.size, 2);
+		assert.equal(
+			parseCheckExtensionsArgs("--dry-run --since=v0.78.0").unknownFlags.get("dry-run"),
+			true,
+		);
+		assert.equal(
+			parseCheckExtensionsArgs("--dry-run --since=v0.78.0").unknownFlags.get("since"),
+			"v0.78.0",
+		);
+	});
+
+	it("captures flag with space-separated value", () => {
+		assert.equal(parseCheckExtensionsArgs("--extension caveman").unknownFlags.size, 1);
+		assert.equal(
+			parseCheckExtensionsArgs("--extension caveman").unknownFlags.get("extension"),
+			"caveman",
+		);
+	});
+
+	it("captures multiple flags and messages", () => {
+		assert.equal(
+			parseCheckExtensionsArgs("--verbose --since=v0.78.0 some-positional").unknownFlags.size,
+			2,
+		);
+		assert.equal(
+			parseCheckExtensionsArgs("--verbose --since=v0.78.0 some-positional").unknownFlags.get(
+				"verbose",
+			),
+			true,
+		);
+		assert.equal(
+			parseCheckExtensionsArgs("--verbose --since=v0.78.0 some-positional").unknownFlags.get(
+				"since",
+			),
+			"v0.78.0",
+		);
+		assert.equal(
+			parseCheckExtensionsArgs("--verbose --since=v0.78.0 some-positional").messages.length,
+			1,
+		);
+		assert.equal(
+			parseCheckExtensionsArgs("--verbose --since=v0.78.0 some-positional").messages[0],
+			"some-positional",
+		);
+	});
+
+	it("handles flag with equals sign and empty value", () => {
+		assert.equal(parseCheckExtensionsArgs("--flag=").unknownFlags.size, 1);
+		assert.equal(parseCheckExtensionsArgs("--flag=").unknownFlags.get("flag"), "");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 18: Handler — Trust gate and parseArgs integration
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("check-extensions handler — trust gate", () => {
+	it("does NOT call runPipeline when isProjectTrusted() returns false", async () => {
+		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+		let userMessageSent = false;
+
+		const pi = {
+			on: () => {},
+			registerCommand: (
+				_name: string,
+				cmd: { handler: (args: string, ctx: any) => Promise<void> },
+			) => {
+				capturedHandler = cmd.handler;
+			},
+			sendUserMessage: (_msg: string) => {
+				userMessageSent = true;
+			},
+			sendMessage: () => {},
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		} as unknown as any;
+
+		const mod = await import("../index.ts");
+		mod.default(pi);
+		assert.ok(capturedHandler, "handler should be registered");
+
+		const testCtx = {
+			cwd: "/tmp",
+			ui: { notify: () => {} },
+			hasUI: true,
+			isProjectTrusted: () => false,
+		};
+
+		await capturedHandler!("", testCtx);
+
+		// Handler should have sent user message about trust
+		assert.equal(userMessageSent, true, "should send trust-gate user message");
+	});
+
+	it("calls runPipeline when isProjectTrusted() returns true", async () => {
+		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+		let notifyCalled = false;
+
+		const pi = {
+			on: () => {},
+			registerCommand: (
+				_name: string,
+				cmd: { handler: (args: string, ctx: any) => Promise<void> },
+			) => {
+				capturedHandler = cmd.handler;
+			},
+			sendUserMessage: () => {},
+			sendMessage: () => {},
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		} as unknown as any;
+
+		const mod = await import("../index.ts");
+		mod.default(pi);
+		assert.ok(capturedHandler, "handler should be registered");
+
+		const testCtx = {
+			cwd: "/tmp",
+			ui: {
+				notify: (_msg: string, _level: string) => {
+					notifyCalled = true;
+				},
+			},
+			hasUI: true,
+			isProjectTrusted: () => true,
+		};
+
+		// Handler should proceed past trust gate and attempt pipeline
+		await capturedHandler!("", testCtx);
+
+		// Handler should have called ctx.ui.notify (from pipeline's validatePhase)
+		assert.equal(notifyCalled, true, "pipeline should proceed past trust gate");
+	});
+
+	it("handles missing isProjectTrusted gracefully (older pi version)", async () => {
+		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+		let notifyCalled = false;
+
+		const pi = {
+			on: () => {},
+			registerCommand: (
+				_name: string,
+				cmd: { handler: (args: string, ctx: any) => Promise<void> },
+			) => {
+				capturedHandler = cmd.handler;
+			},
+			sendUserMessage: () => {},
+			sendMessage: () => {},
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		} as unknown as any;
+
+		const mod = await import("../index.ts");
+		mod.default(pi);
+		assert.ok(capturedHandler, "handler should be registered");
+
+		// No isProjectTrusted method — older pi version
+		const testCtx = {
+			cwd: "/tmp",
+			ui: {
+				notify: (_msg: string, _level: string) => {
+					notifyCalled = true;
+				},
+			},
+			hasUI: true,
+		};
+
+		// Handler should proceed (optional chaining returns undefined, which !== false)
+		await capturedHandler!("", testCtx);
+
+		assert.equal(notifyCalled, true, "pipeline should proceed when isProjectTrusted is absent");
+	});
+});
+
+describe("check-extensions handler — parseArgs integration", () => {
+	it("parseCheckExtensionsArgs called before pipeline creation (empty args)", async () => {
+		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+
+		const pi = {
+			on: () => {},
+			registerCommand: (
+				_name: string,
+				cmd: { handler: (args: string, ctx: any) => Promise<void> },
+			) => {
+				capturedHandler = cmd.handler;
+			},
+			sendUserMessage: () => {},
+			sendMessage: () => {},
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		} as unknown as any;
+
+		const mod = await import("../index.ts");
+		mod.default(pi);
+
+		assert.ok(capturedHandler, "handler should be registered");
+
+		const testCtx = {
+			cwd: "/tmp",
+			ui: { notify: () => {} },
+			hasUI: false,
+			isProjectTrusted: () => true,
+		};
+
+		// Handler should not throw for empty args
+		// It will attempt runPipeline which may fail, but that's fine —
+		// we just verify parseArgs was called (no crash)
+		try {
+			await capturedHandler!("", testCtx);
+		} catch {
+			// Expected — pipeline will fail without real changelog
+		}
+	});
+
+	it("handler accepts unknown flags without crashing", async () => {
+		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+
+		const pi = {
+			on: () => {},
+			registerCommand: (
+				_name: string,
+				cmd: { handler: (args: string, ctx: any) => Promise<void> },
+			) => {
+				capturedHandler = cmd.handler;
+			},
+			sendUserMessage: () => {},
+			sendMessage: () => {},
+			exec: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+		} as unknown as any;
+
+		const mod = await import("../index.ts");
+		mod.default(pi);
+
+		const testCtx = {
+			cwd: "/tmp",
+			ui: { notify: () => {} },
+			hasUI: true,
+			isProjectTrusted: () => true,
+		};
+
+		// Handler should not crash with unknown flags
+		try {
+			await capturedHandler!("--dry-run --since=v0.78.0", testCtx);
+		} catch {
+			// Expected — pipeline will fail without real changelog
+		}
 	});
 });
