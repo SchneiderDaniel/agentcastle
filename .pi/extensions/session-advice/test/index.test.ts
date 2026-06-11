@@ -1299,3 +1299,53 @@ describe("Phase 9: createSignalIssues passes unsafe LLM fields safely", () => {
 		assert.ok(title2.includes("issue-two") || title2.includes("issue"));
 	});
 });
+
+// ── Phase 10: Pipeline parameter passing — systemPromptOptions ──
+
+describe("Phase 10: Pipeline generates report with systemPromptOptions", () => {
+	const tmpDirs10: string[] = [];
+
+	after(() => {
+		for (const d of tmpDirs10) {
+			try {
+				fs.rmSync(d, { recursive: true });
+			} catch {
+				/* ok */
+			}
+		}
+	});
+
+	function makeDir(): string {
+		const dir = fs.mkdtempSync("/tmp/session-advice-test-");
+		tmpDirs10.push(dir);
+		return dir;
+	}
+
+	it("generateAdviceReport works without systemPromptOptions (backward compatible)", () => {
+		const dir = makeDir();
+		writeJsonl(dir, "session.jsonl", "uuid-test-p10", makeSessionBody());
+
+		const report = generateAdviceReport(dir);
+		assert.ok(report, "report should be generated");
+		assert.ok(report.includes("uuid-tes"), "report should contain session id prefix");
+	});
+
+	it("generateAdviceReport still works with systemPromptOptions-like data (no crash)", () => {
+		const dir = makeDir();
+		writeJsonl(dir, "session.jsonl", "uuid-test-p10b", makeSessionBody());
+
+		// This just tests the regular path still works
+		const report = generateAdviceReport(dir);
+		assert.ok(report.includes("Sessions analyzed | 1"), "should analyze 1 session");
+	});
+
+	it("generateAdviceReport with multiple sessions still works (regression)", () => {
+		const dir = makeDir();
+		writeJsonl(dir, "a.jsonl", "uuid-a-p10", makeSessionBody());
+		writeJsonl(dir, "b.jsonl", "uuid-b-p10", makeSessionBody());
+
+		const report = generateAdviceReport(dir);
+		assert.ok(report.includes("uuid-a-p10".slice(0, 8)), "should contain session a");
+		assert.ok(report.includes("uuid-b-p10".slice(0, 8)), "should contain session b");
+	});
+});

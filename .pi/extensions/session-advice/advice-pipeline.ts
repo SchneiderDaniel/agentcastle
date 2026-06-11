@@ -15,6 +15,7 @@ import { generateAdvice, generateReportAdvice } from "./llm-advisor.ts";
 import type {
 	AdviceResult,
 	SignalReview,
+	SystemPromptOptions,
 	ModelLike as ModelRef,
 	ModelRegistryLike as ModelRegistryRef,
 } from "./llm-advisor.ts";
@@ -379,6 +380,7 @@ export class AdvicePipeline {
 		sessionsDir: string,
 		model?: ModelRef,
 		modelRegistry?: ModelRegistryRef,
+		systemPromptOptions?: SystemPromptOptions,
 	): Promise<{ markdown: string; reportPath: string; report: WasteReport }> {
 		const { analyses } = this.detect(sessionsDir);
 		const report = this.aggregate(analyses);
@@ -386,7 +388,13 @@ export class AdvicePipeline {
 		// Try LLM advice + signal review if model available
 		if (model && modelRegistry && analyses.length > 0) {
 			try {
-				const { reportMd, review } = await generateReportAdvice(analyses, model, modelRegistry);
+				const { reportMd, review } = await generateReportAdvice(
+					analyses,
+					model,
+					modelRegistry,
+					undefined,
+					systemPromptOptions,
+				);
 				report.adviceMd = reportMd;
 				report.review = review;
 			} catch (err) {

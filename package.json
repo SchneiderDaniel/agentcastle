@@ -13,13 +13,13 @@
 	"license": "MIT",
 	"type": "commonjs",
 	"devDependencies": {
-		"@earendil-works/pi-coding-agent": "^0.74.0",
+		"@earendil-works/pi-coding-agent": "^0.79.1",
 		"@types/node": "^25.9.1",
 		"prettier": "^3.8.3",
 		"typescript": "^6.0.3"
 	},
 	"dependencies": {
-		"@earendil-works/pi-tui": "^0.74.0",
+		"@earendil-works/pi-tui": "^0.79.1",
 		"boxen": "^7.1.1",
 		"vscode-jsonrpc": "^8.2.1"
 	}

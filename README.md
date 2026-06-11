@@ -1,7 +1,7 @@
 # Cheasee-Pi: Build Your Own PI. Cheap. Easy. Secure.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Pi](https://img.shields.io/badge/Pi-%3E%3D0.74.0-6e3bf0)](https://pi.dev)
+[![Pi](https://img.shields.io/badge/Pi-%3E%3D0.79.1-6e3bf0)](https://pi.dev)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 **Token-saving agent harness with security guardrails and a Kanban git-oriented sub-agent framework.** Docker + Pi AI — autonomous Kanban pipeline, sandboxed execution, real-time feedback via git worktrees for parallel development.
@@ -498,7 +498,7 @@ Switch the project to **Board** layout in the browser and change **Group by** to
 | Run supervisor pipeline | `/supervisor <issue-number>`                                                         |
 | Run TSC type-check      | `/check`                                                                             |
 | Toggle session advice   | `/session-advice on` / `/session-advice off`                                         |
-| Session advice report   | `/session-advice report` — generates report, prompts cleanup + GitHub issue creation |
+| Session advice report   | `/session-advice report` — generates report, prompts cleanup + GitHub issue creation. Supports `--repo owner/repo` flag. Skips interactive dialogs in non-TUI modes.                                                               |
 | Batch advice analysis   | `npx tsx scripts/session-advice.ts` (all) or `--latest`                              |
 | Toggle session logger   | `/session-logger on` / `/session-logger off`                                         |
 | Toggle caveman level    | `/caveman` (cycle: lite → full → off) or `/caveman lite`                             |
@@ -1085,9 +1085,9 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | Component                                         | Version  | License      | Type       | Supplier/URL                                                                                             |
 | ------------------------------------------------- | -------- | ------------ | ---------- | -------------------------------------------------------------------------------------------------------- |
 | **Runtime & Core**                                |          |              |            |                                                                                                          |
-| @earendil-works/pi-coding-agent                   | ^0.74.0  | MIT          | dev        | [pi.dev](https://pi.dev)                                                                                 |
-| @earendil-works/pi-agent-core                     | 0.74.0   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
-| @earendil-works/pi-ai                             | 0.74.0   | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @earendil-works/pi-coding-agent                   | ^0.79.1  | MIT          | dev        | [pi.dev](https://pi.dev)                                                                                 |
+| @earendil-works/pi-agent-core                     | ^0.79.1  | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
+| @earendil-works/pi-ai                             | ^0.79.1  | MIT          | transitive | [pi.dev](https://pi.dev)                                                                                 |
 | @silvia-odwyer/photon-node                        | 0.3.4    | MIT          | transitive | [github.com/silvia-odwyer/photon-node](https://github.com/silvia-odwyer/photon-node)                     |
 | jiti                                              | 2.7.0    | MIT          | transitive | [github.com/unjs/jiti](https://github.com/unjs/jiti)                                                     |
 | **AI Providers**                                  |          |              |            |                                                                                                          |
@@ -1101,7 +1101,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | **Formatter**                                     |          |              |            |                                                                                                          |
 | prettier                                          | ^3.8.3   | MIT          | dev        | [prettier.io](https://prettier.io)                                                                       |
 | **TUI & UI**                                      |          |              |            |                                                                                                          |
-| @earendil-works/pi-tui                            | ^0.74.0  | MIT          | prod       | [pi.dev](https://pi.dev)                                                                                 |
+| @earendil-works/pi-tui                            | ^0.79.1  | MIT          | prod       | [pi.dev](https://pi.dev)                                                                                 |
 | boxen                                             | ^7.1.1   | MIT          | prod       | [github.com/sindresorhus/boxen](https://github.com/sindresorhus/boxen)                                   |
 | **LSP**                                           |          |              |            |                                                                                                          |
 | vscode-jsonrpc                                    | ^8.2.1   | MIT          | prod       | [github.com/microsoft/vscode-jsonrpc](https://github.com/microsoft/vscode-jsonrpc)                       |

@@ -10,6 +10,15 @@
 
 import type { SessionAnalysis, WasteSignal } from "./advisor.ts";
 
+// ── System prompt options interface ──
+
+/** Options from the system prompt configuration that can enrich advice. */
+export interface SystemPromptOptions {
+	selectedTools?: string[];
+	contextFiles?: Array<{ path: string; content: string }>;
+	skills?: Array<{ name: string; description: string; prompt: string }>;
+}
+
 // ── Types ──
 
 export interface AdviceAction {
@@ -126,7 +135,10 @@ OUTPUT FORMAT (JSON only, no markdown):
 
 // ── Prompt builders ──
 
-function buildAdvicePrompt(analysis: SessionAnalysis): string {
+function buildAdvicePrompt(
+	analysis: SessionAnalysis,
+	systemPromptOptions?: SystemPromptOptions,
+): string {
 	const lines: string[] = [];
 	lines.push(`Session: ${analysis.sessionId}`);
 	lines.push(`Total tokens: ${analysis.totalTokens.toLocaleString()}`);
@@ -135,6 +147,32 @@ function buildAdvicePrompt(analysis: SessionAnalysis): string {
 	);
 	lines.push(`Total cost: $${analysis.totalCost.toFixed(6)}`);
 	lines.push(``);
+
+	// Enrich with system prompt options if available
+	if (systemPromptOptions) {
+		lines.push(`### System Prompt Configuration`);
+		lines.push(``);
+		if (systemPromptOptions.selectedTools && systemPromptOptions.selectedTools.length > 0) {
+			lines.push(`Active tools (${systemPromptOptions.selectedTools.length}):`);
+			for (const tool of systemPromptOptions.selectedTools) {
+				lines.push(`- ${tool}`);
+			}
+			lines.push(``);
+		}
+		if (systemPromptOptions.contextFiles && systemPromptOptions.contextFiles.length > 0) {
+			lines.push(
+				`Context files (${systemPromptOptions.contextFiles.length}): ${systemPromptOptions.contextFiles.map((f) => f.path).join(", ")}`,
+			);
+			lines.push(``);
+		}
+		if (systemPromptOptions.skills && systemPromptOptions.skills.length > 0) {
+			lines.push(
+				`Skills loaded (${systemPromptOptions.skills.length}): ${systemPromptOptions.skills.map((s) => s.name).join(", ")}`,
+			);
+			lines.push(``);
+		}
+	}
+
 	lines.push(`Waste signals:`);
 	lines.push(``);
 
@@ -300,8 +338,9 @@ export async function generateAdvice(
 	model: ModelLike,
 	modelRegistry: ModelRegistryLike,
 	signal?: AbortSignal,
+	systemPromptOptions?: SystemPromptOptions,
 ): Promise<AdviceResult> {
-	const prompt = buildAdvicePrompt(analysis);
+	const prompt = buildAdvicePrompt(analysis, systemPromptOptions);
 	const content = await callLLM(model, modelRegistry, ADVICE_SYSTEM_PROMPT, prompt, signal);
 	return parseAdviceResponse(content, analysis.sessionId);
 }
@@ -333,6 +372,7 @@ export async function generateReportAdvice(
 	model: ModelLike,
 	modelRegistry: ModelRegistryLike,
 	signal?: AbortSignal,
+	systemPromptOptions?: SystemPromptOptions,
 ): Promise<{ reportMd: string; review?: SignalReview }> {
 	const totalTokens = sessions.reduce((s, a) => s + a.totalTokens, 0);
 	const totalWaste = sessions.reduce((s, a) => s + a.totalWasteTokens, 0);
@@ -374,7 +414,31 @@ export async function generateReportAdvice(
 		aggLines.push(``);
 	}
 
-	const prompt = `Produce a cross-session advice report. Analyze these aggregated waste signals across ${sessions.length} sessions and recommend top actions to reduce waste.\n\n${aggLines.join("\n")}`;
+	// Build system prompt options context if available
+	let spoContext = "";
+	if (systemPromptOptions) {
+		const parts: string[] = [];
+		if (systemPromptOptions.selectedTools && systemPromptOptions.selectedTools.length > 0) {
+			parts.push(
+				`Active tools (${systemPromptOptions.selectedTools.length}): ${systemPromptOptions.selectedTools.join(", ")}`,
+			);
+		}
+		if (systemPromptOptions.contextFiles && systemPromptOptions.contextFiles.length > 0) {
+			parts.push(
+				`Context files (${systemPromptOptions.contextFiles.length}): ${systemPromptOptions.contextFiles.map((f) => f.path).join(", ")}`,
+			);
+		}
+		if (systemPromptOptions.skills && systemPromptOptions.skills.length > 0) {
+			parts.push(
+				`Skills loaded (${systemPromptOptions.skills.length}): ${systemPromptOptions.skills.map((s) => s.name).join(", ")}`,
+			);
+		}
+		if (parts.length > 0) {
+			spoContext = `\n\nSystem Prompt Configuration:\n${parts.join("\n")}`;
+		}
+	}
+
+	const prompt = `Produce a cross-session advice report. Analyze these aggregated waste signals across ${sessions.length} sessions and recommend top actions to reduce waste.${spoContext}\n\n${aggLines.join("\n")}`;
 	const content = await callLLM(model, modelRegistry, ADVICE_SYSTEM_PROMPT, prompt, signal);
 
 	// Also run signal review if >= 3 sessions
