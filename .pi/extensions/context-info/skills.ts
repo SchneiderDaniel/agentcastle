@@ -8,7 +8,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
-import { extractDescription } from "./frontmatter.js";
+import { extractDescription } from "./frontmatter.ts";
 
 // ─── Types ────────────────────────────────────────────────────────
 

@@ -17,9 +17,10 @@ import {
 	formatTokens,
 } from "../formatting.ts";
 
-// Type-only import from index.ts — provides static coverage for the default export.
-// Erased at runtime; no module resolution triggered (avoids .js → .ts resolution issue).
-import type contextInfoFn from "../index.ts";
+// Runtime import from index.ts — verified through the test assertion below.
+// All local imports in index.ts use .ts extensions (changed from .js)
+// to support --experimental-strip-types resolution.
+import contextInfoFn from "../index.ts";
 
 // ---------------------------------------------------------------------------
 // Replicate context-info extension logic for isolated unit testing
@@ -236,14 +237,14 @@ function invoke(ctx: TestCtx, event: string, ...args: any[]) {
 // ---------------------------------------------------------------------------
 
 describe("contextInfo from index.ts", () => {
-	it("contextInfoFn type references the real default export", () => {
-		// contextInfoFn is the type of index.ts default export (function).
-		// At type level it's a function accepting ExtensionAPI.
-		// The createContextInfoExtension replicates the same event handler
-		// pattern that the real contextInfo function sets up.
-		assert.ok(
-			typeof createContextInfoExtension === "function",
-			"createContextInfoExtension (replicating contextInfo from index.ts) is a function",
+	it("contextInfoFn is the default export — a function", () => {
+		// contextInfoFn is imported at runtime from ../index.ts.
+		// Verifying it's a function confirms the module loaded successfully
+		// and the default export is the expected extension factory.
+		assert.strictEqual(
+			typeof contextInfoFn,
+			"function",
+			"contextInfoFn from index.ts is a function",
 		);
 	});
 });

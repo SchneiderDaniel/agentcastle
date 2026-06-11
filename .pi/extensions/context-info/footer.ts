@@ -19,7 +19,7 @@ import {
 	formatCacheStats,
 	formatCacheHitRate,
 	computeTps,
-} from "./formatting.js";
+} from "./formatting.ts";
 
 /** Module-scope process start time — captures true pi process launch time */
 export const processStartTime = Date.now();

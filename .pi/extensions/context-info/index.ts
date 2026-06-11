@@ -8,19 +8,19 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { loadConfig, readPiSetting } from "./config.js";
-import { getWorktreeName } from "./git-helpers.js";
-import { tryEmit } from "./telemetry.js";
-import { installFooter } from "./footer.js";
-import { FooterState } from "./footer-state.js";
-import { showWelcomeBanner, readSessionExtState } from "./welcome.js";
-import { listLocalExtensions } from "./extensions.js";
-import type { ExtensionMeta } from "./extensions.js";
-import { listLocalPrompts } from "./prompts.js";
-import type { PromptMeta } from "./prompts.js";
-import { listLocalSkills } from "./skills.js";
-import type { SkillMeta } from "./skills.js";
-import { createExplainCommand, wordWrap } from "./explain.js";
+import { loadConfig, readPiSetting } from "./config.ts";
+import { getWorktreeName } from "./git-helpers.ts";
+import { tryEmit } from "./telemetry.ts";
+import { installFooter } from "./footer.ts";
+import { FooterState } from "./footer-state.ts";
+import { showWelcomeBanner, readSessionExtState } from "./welcome.ts";
+import { listLocalExtensions } from "./extensions.ts";
+import type { ExtensionMeta } from "./extensions.ts";
+import { listLocalPrompts } from "./prompts.ts";
+import type { PromptMeta } from "./prompts.ts";
+import { listLocalSkills } from "./skills.ts";
+import type { SkillMeta } from "./skills.ts";
+import { createExplainCommand, wordWrap } from "./explain.ts";
 
 export default function contextInfo(pi: ExtensionAPI): void {
 	// FooterState — single source of truth for all mutable state
@@ -286,4 +286,4 @@ export default function contextInfo(pi: ExtensionAPI): void {
 }
 
 // Re-export types for consumers
-export type { ThresholdEntry, TpsSample, ContextStatusBarConfig, FooterConfig } from "./types.js";
+export type { ThresholdEntry, TpsSample, ContextStatusBarConfig, FooterConfig } from "./types.ts";

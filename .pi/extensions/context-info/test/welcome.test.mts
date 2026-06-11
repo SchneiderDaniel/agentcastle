@@ -56,7 +56,7 @@ function createMockCtx(): any {
 // Import the function under test
 // ---------------------------------------------------------------------------
 
-import { showWelcomeBanner } from "../welcome.js";
+import { showWelcomeBanner } from "../welcome.ts";
 
 // ---------------------------------------------------------------------------
 // Helper: extract the session status line from rendered output
