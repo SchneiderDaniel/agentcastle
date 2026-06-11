@@ -25,7 +25,11 @@ import type { Metadata } from "./types.ts";
  *
  * Pure function — no side effects, no file I/O.
  */
-export function buildMetadata(parsed: ParsedSessionStats, snapshot?: StatsSnapshot): Metadata {
+export function buildMetadata(
+	parsed: ParsedSessionStats,
+	snapshot?: StatsSnapshot,
+	overrides?: { sessionName?: string; mode?: string },
+): Metadata {
 	// Build tool stats — prefer in-memory timing when snapshot is available.
 	// Parsed stats are source of truth for call/error counts (message replay).
 	// In-memory stats provide accurate totalDurationMs.
@@ -47,7 +51,8 @@ export function buildMetadata(parsed: ParsedSessionStats, snapshot?: StatsSnapsh
 
 	return {
 		sessionId: parsed.sessionId,
-		name: undefined,
+		name: overrides?.sessionName ?? undefined,
+		mode: overrides?.mode,
 		messages: parsed.entryCount,
 		tokens: parsed.tokens,
 		cost: parsed.cost,
@@ -68,6 +73,7 @@ export async function generateMissingReports(
 	sessionFilePath: string,
 	files: ReturnType<typeof createFileOps>,
 	snapshot?: StatsSnapshot,
+	overrides?: { sessionName?: string; mode?: string },
 ): Promise<void> {
 	// Check if the JSONL file still exists (might have been cleaned up)
 	if (!fs.existsSync(sessionFilePath)) return;
@@ -91,7 +97,7 @@ export async function generateMissingReports(
 
 	if (!parsed) return;
 
-	const meta = buildMetadata(parsed, snapshot);
+	const meta = buildMetadata(parsed, snapshot, overrides);
 
 	// Write metadata if missing
 	if (!fs.existsSync(metaPath)) {
@@ -106,7 +112,7 @@ export async function generateMissingReports(
 	// Generate .md report if missing
 	if (!fs.existsSync(mdPath)) {
 		try {
-			const md = renderSessionToMarkdown(sessionFilePath);
+			const md = renderSessionToMarkdown(sessionFilePath, overrides);
 			fs.writeFileSync(mdPath, md, "utf-8");
 			await files.ensureMdSymlink(sessionDir, mdPath);
 		} catch (err) {

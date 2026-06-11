@@ -6,6 +6,7 @@ export interface SessionLoggerGate {
 export interface Metadata {
 	sessionId: string;
 	name?: string;
+	mode?: string;
 	messages: number;
 	tokens: {
 		input: number;

@@ -91,10 +91,30 @@ export default function (pi: ExtensionAPI): void {
 	// ── Session lifecycle ──
 
 	pi.on("session_start", async (event, ctx) => {
-		await pipeline.onSessionStart(event, ctx);
+		// Capture session name and mode for report metadata
+		const sessionName = typeof pi.getSessionName === "function" ? pi.getSessionName() : undefined;
+		const mode = (ctx as any).mode;
+		const overrides: { sessionName?: string; mode?: string } = {};
+		if (sessionName) overrides.sessionName = sessionName;
+		if (mode !== undefined) overrides.mode = mode;
+		await pipeline.onSessionStart(
+			event,
+			ctx,
+			Object.keys(overrides).length > 0 ? overrides : undefined,
+		);
 	});
 
 	pi.on("session_shutdown", async (event, ctx) => {
+		// Gate report generation on project trust
+		if (typeof (ctx as any).isProjectTrusted === "function") {
+			const trusted = await (ctx as any).isProjectTrusted();
+			if (!trusted) {
+				if (typeof (ctx as any).ui?.notify === "function") {
+					(ctx as any).ui.notify("Session logging skipped: project not trusted", "warning");
+				}
+				return;
+			}
+		}
 		await pipeline.onSessionShutdown(event, ctx);
 	});
 

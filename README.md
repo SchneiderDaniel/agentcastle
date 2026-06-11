@@ -531,6 +531,21 @@ tool calls and results, raw output (collapsed), and audit score. Failed sub-agen
 show error output. Sub-agent entries are clearly distinguished from primary
 turns via `### Agent:` heading level.
 
+The report header includes the session **mode** (TUI, RPC, JSON, or print) when
+available, distinguishing interactive sessions from automated and CI sessions.
+If a session **name** was set via `--name`/`-n` CLI flag or `pi.setSessionName()`,
+it appears in the report header between the start time and working directory
+rows, enabling correlation between reports and named sessions.
+
+**Project trust gate:** Session reports are generated only when the project is
+trusted (`ctx.isProjectTrusted()` returns true). This prevents unintentional
+tool argument and file path logging in untrusted projects. When a project is
+not trusted, report generation is skipped and a warning notification is issued.
+
+For recovered or crash-recovered sessions (where live session name and mode
+are not available), the corresponding header rows are omitted — backward-
+compatible with existing reports.
+
 The JSONL log is a newline-delimited JSON event stream: messages, thinking blocks, tool calls, compactions.
 
 ```bash
