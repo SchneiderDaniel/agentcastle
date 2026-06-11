@@ -9,18 +9,29 @@
 
 import type { ExtensionAPI, ToolCallEventResult } from "@earendil-works/pi-coding-agent";
 import { AgentHarness } from "./agent-harness.ts";
+import { loadProjectConfig } from "./lib/load-config.ts";
+import type { ConfigLoaderContext } from "./lib/load-config.ts";
 
 export { AgentHarness, getBashSubKey } from "./agent-harness.ts";
 export type { ToolCallResult } from "./agent-harness.ts";
+export type { ResolvedHarnessRules } from "./agent-harness.ts";
+export { loadProjectConfig } from "./lib/load-config.ts";
 
 // ── Extension entry point ──
 
 export default function agentHarness(pi: ExtensionAPI): void {
 	const harness = new AgentHarness();
 
-	// Session start: initialize fresh state
-	pi.on("session_start", async () => {
+	// Session start: initialize fresh state and load project config
+	pi.on("session_start", async (_data: unknown, ctx: unknown) => {
 		harness.reset();
+		try {
+			const configCtx = (ctx ?? {}) as ConfigLoaderContext;
+			const rules = loadProjectConfig(configCtx);
+			harness.setRules(rules);
+		} catch {
+			// Fail-safe: on config load failure, continue with defaults
+		}
 	});
 
 	// Turn start: increment session turn, reset cascade counter, decay error tracker
