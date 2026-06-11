@@ -1,12 +1,16 @@
 /**
- * Tests for tsc-checkpoint incremental watch mode
+ * Tests for tsc-checkpoint
  *
- * Phases 1–4: DiagnosticsWatcher lifecycle, cache, file-path resolution, trends
- * Phase 5: Integration — extension entry point (/check command)
+ * Phases 1: diagnosticToTscDiagnostic
+ * Phase 2: runTscCheckpoint one-shot (ts.createProgram) integration
+ * Phase 3: TypeScriptWatchAdapter refactoring (delegation)
+ * Phase 4: DiagnosticsWatcher — Lifecycle
+ * Phase 6-8: DiagnosticsWatcher incremental cache, file-path resolution, trends
+ * Phase 9: Pipeline contract — runTscCheckpoint signature
+ * Phase 10-15: Extension entry point, lifecycle, resource leaks, trust gate, modes, parseArgs
  *
- * Imports from the source module for true integration testing.
- * The real TypeScriptWatchAdapter is NOT used here — tests use MockAdapter
- * to keep tests fast and deterministic.
+ * Phases 4-8 use MockAdapter to keep tests fast and deterministic.
+ * Phase 2 uses real ts.createProgram with temp fixtures.
  *
  * Run with:
  *   node --experimental-strip-types --test .pi/extensions/tsc-checkpoint/test/tsc-checkpoint.test.mts
@@ -23,6 +27,7 @@ import {
 	formatDiagnosticsJson,
 	formatTrend,
 	runTscCheckpoint,
+	diagnosticToTscDiagnostic,
 } from "../index.ts";
 
 import type {
@@ -31,6 +36,11 @@ import type {
 	TscCheckpointResult,
 	DiagnosticTrend,
 } from "../index.ts";
+
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import ts from "typescript";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Mock Adapter for Testing
@@ -87,7 +97,390 @@ class MockAdapter implements TscWatchAdapter {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 1: DiagnosticsWatcher — Lifecycle
+// Phase 1: diagnosticToTscDiagnostic — pure mapping ts.Diagnostic → TscDiagnostic
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("diagnosticToTscDiagnostic", () => {
+	const configDir = "/home/user/project";
+
+	function mockSourceFile(fileName: string): ts.SourceFile {
+		return {
+			fileName,
+			getLineAndCharacterOfPosition(_pos: number) {
+				return { line: 2, character: 5 };
+			},
+		} as unknown as ts.SourceFile;
+	}
+
+	function mockDiagnostic(overrides: {
+		file: ts.SourceFile;
+		start?: number;
+		messageText?: string | ts.DiagnosticMessageChain;
+		code?: number;
+		category?: ts.DiagnosticCategory;
+	}): ts.Diagnostic {
+		return {
+			start: 100,
+			messageText: "Type 'string' is not assignable to type 'number'",
+			code: 2322,
+			category: ts.DiagnosticCategory.Error,
+			...overrides,
+		} as unknown as ts.Diagnostic;
+	}
+
+	it("maps error diagnostic with file to correct TscDiagnostic fields", () => {
+		const file = mockSourceFile("src/app.ts");
+		const diagnostic = mockDiagnostic({ file });
+
+		const result = diagnosticToTscDiagnostic(diagnostic, configDir);
+
+		assert.ok(result, "should return a TscDiagnostic");
+		assert.strictEqual(result!.file, "src/app.ts");
+		assert.strictEqual(result!.line, 3); // line + 1
+		assert.strictEqual(result!.column, 6); // character + 1
+		assert.strictEqual(result!.severity, "Error");
+		assert.strictEqual(result!.message, "Type 'string' is not assignable to type 'number'");
+		assert.strictEqual(result!.code, "TS2322");
+		assert.strictEqual(result!.filePath, "/home/user/project/src/app.ts");
+	});
+
+	it("maps diagnostic with non-zero offset → line/column derived correctly", () => {
+		const file = {
+			fileName: "src/deep.ts",
+			getLineAndCharacterOfPosition(pos: number) {
+				// pos 150 → line 3, character 30
+				return { line: 3, character: 30 };
+			},
+		} as unknown as ts.SourceFile;
+
+		const diagnostic = mockDiagnostic({ file, start: 150 });
+		const result = diagnosticToTscDiagnostic(diagnostic, configDir);
+
+		assert.ok(result);
+		assert.strictEqual(result!.line, 4); // 3 + 1
+		assert.strictEqual(result!.column, 31); // 30 + 1
+	});
+
+	it("maps diagnostic with nested messageText → flattened single string", () => {
+		const file = mockSourceFile("src/app.ts");
+		const nestedMessage: ts.DiagnosticMessageChain = {
+			messageText: "Type 'string' is not assignable",
+			category: ts.DiagnosticCategory.Error,
+			code: 2322,
+			next: [
+				{
+					messageText: "Did you mean 'number'?",
+					category: ts.DiagnosticCategory.Error,
+					code: 2322,
+				},
+			],
+		};
+
+		const diagnostic = mockDiagnostic({ file, messageText: nestedMessage });
+		const result = diagnosticToTscDiagnostic(diagnostic, configDir);
+
+		assert.ok(result);
+		// Flattened message should include both parts
+		assert.ok(result!.message.includes("Type 'string' is not assignable"));
+		assert.ok(result!.message.includes("Did you mean 'number'?"));
+	});
+
+	it("diagnostic without file → returns undefined", () => {
+		// A diagnostic without a file (global error like duplicate identifier across files)
+		const diagnostic = {
+			start: 0,
+			messageText: "Global error",
+			code: 2300,
+			category: ts.DiagnosticCategory.Error,
+			// No file property
+		} as unknown as ts.Diagnostic;
+
+		const result = diagnosticToTscDiagnostic(diagnostic, configDir);
+		assert.strictEqual(result, undefined);
+	});
+
+	it("diagnostic with zero start → line=1, column=1", () => {
+		const file = {
+			fileName: "src/zero.ts",
+			getLineAndCharacterOfPosition(_pos: number) {
+				return { line: 0, character: 0 };
+			},
+		} as unknown as ts.SourceFile;
+
+		const diagnostic = mockDiagnostic({ file, start: 0 });
+		const result = diagnosticToTscDiagnostic(diagnostic, configDir);
+
+		assert.ok(result);
+		assert.strictEqual(result!.line, 1);
+		assert.strictEqual(result!.column, 1);
+	});
+
+	it("filePath resolved: relative path → resolved against configDir", () => {
+		const file = mockSourceFile("relative/path.ts");
+		const diagnostic = mockDiagnostic({ file });
+
+		const result = diagnosticToTscDiagnostic(diagnostic, configDir);
+		assert.ok(result);
+		assert.strictEqual(result!.filePath, "/home/user/project/relative/path.ts");
+	});
+
+	it("filePath resolved: absolute path → returned as-is", () => {
+		const file = mockSourceFile("/absolute/path.ts");
+		const diagnostic = mockDiagnostic({ file });
+
+		const result = diagnosticToTscDiagnostic(diagnostic, configDir);
+		assert.ok(result);
+		assert.strictEqual(result!.filePath, "/absolute/path.ts");
+	});
+
+	it("diagnostic with start > file length → still returns position (boundary)", () => {
+		// TypeScript's getLineAndCharacterOfPosition handles over-large positions
+		// by returning last-character behavior; we just verify the function doesn't throw
+		const file = {
+			fileName: "src/boundary.ts",
+			getLineAndCharacterOfPosition(pos: number) {
+				// Even for very large positions, TS returns some line/char
+				return { line: 999, character: 50 };
+			},
+		} as unknown as ts.SourceFile;
+
+		const diagnostic = mockDiagnostic({ file, start: 999999 });
+		const result = diagnosticToTscDiagnostic(diagnostic, configDir);
+
+		assert.ok(result, "should still return a diagnostic without throwing");
+		assert.strictEqual(result!.line, 1000);
+		assert.strictEqual(result!.column, 51);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 2: runTscCheckpoint — one-shot ts.createProgram integration
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Create a temp fixture directory for integration testing.
+ * Returns { dir, cleanup } where cleanup() removes the temp dir.
+ */
+function createFixture(): { dir: string; cleanup: () => void } {
+	const dir = mkdtempSync(join(tmpdir(), "tsc-checkpoint-test-"));
+	const cleanup = () => {
+		try {
+			rmSync(dir, { recursive: true, force: true });
+		} catch {
+			// ignore cleanup errors
+		}
+	};
+	return { dir, cleanup };
+}
+
+function writeSource(dir: string, filePath: string, content: string): void {
+	const fullPath = join(dir, filePath);
+	mkdirSync(join(dir, "src"), { recursive: true });
+	writeFileSync(fullPath, content, "utf-8");
+}
+
+describe("runTscCheckpoint (one-shot ts.createProgram)", () => {
+	it("missing tsconfig returns empty diagnostics", async () => {
+		const result = await runTscCheckpoint("/nonexistent/path");
+		assert.deepStrictEqual(result, { diagnostics: [], hasErrors: false });
+	});
+
+	it("config parse failure (malformed JSON) returns empty diagnostics", async () => {
+		const { dir, cleanup } = createFixture();
+		try {
+			writeFileSync(
+				join(dir, "tsconfig.json"),
+				'{ "compilerOptions": { "noEmit": true, "strict": true ',
+				"utf-8",
+			);
+			const result = await runTscCheckpoint(dir);
+			assert.deepStrictEqual(result, { diagnostics: [], hasErrors: false });
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("config parse failure with non-existent extends returns empty diagnostics", async () => {
+		const { dir, cleanup } = createFixture();
+		try {
+			writeFileSync(
+				join(dir, "tsconfig.json"),
+				JSON.stringify({
+					compilerOptions: { noEmit: true, strict: true },
+					extends: "./nonexistent-base.json",
+				}),
+				"utf-8",
+			);
+			const result = await runTscCheckpoint(dir);
+			assert.deepStrictEqual(result, { diagnostics: [], hasErrors: false });
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("clean project with no type errors returns empty diagnostics", async () => {
+		const { dir, cleanup } = createFixture();
+		try {
+			writeFileSync(
+				join(dir, "tsconfig.json"),
+				JSON.stringify({
+					compilerOptions: { noEmit: true, strict: true },
+					include: ["src/**/*.ts"],
+				}),
+				"utf-8",
+			);
+			mkdirSync(join(dir, "src"), { recursive: true });
+			writeFileSync(join(dir, "src", "index.ts"), "export const x: number = 1;\n", "utf-8");
+
+			const result = await runTscCheckpoint(dir);
+			assert.deepStrictEqual(result, { diagnostics: [], hasErrors: false });
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("project with type errors returns hasErrors: true with diagnostics", async () => {
+		const { dir, cleanup } = createFixture();
+		try {
+			writeFileSync(
+				join(dir, "tsconfig.json"),
+				JSON.stringify({
+					compilerOptions: { noEmit: true, strict: true },
+					include: ["src/**/*.ts"],
+				}),
+				"utf-8",
+			);
+			mkdirSync(join(dir, "src"), { recursive: true });
+			writeFileSync(join(dir, "src", "index.ts"), 'const x: number = "string";\n', "utf-8");
+
+			const result = await runTscCheckpoint(dir);
+
+			assert.strictEqual(result.hasErrors, true);
+			assert.ok(result.diagnostics.length > 0, "should have at least one diagnostic");
+			const diag = result.diagnostics[0]!;
+			assert.strictEqual(diag.severity, "Error");
+			assert.ok(diag.file.includes("index.ts") || diag.filePath.includes("index.ts"));
+			assert.ok(diag.message.length > 0);
+			assert.ok(diag.code?.startsWith("TS"));
+			assert.strictEqual(typeof diag.line, "number");
+			assert.strictEqual(typeof diag.column, "number");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("project with no type errors and noUnusedLocals:true — unused variables are warning-level, not errors", async () => {
+		const { dir, cleanup } = createFixture();
+		try {
+			writeFileSync(
+				join(dir, "tsconfig.json"),
+				JSON.stringify({
+					compilerOptions: { noEmit: true, strict: true, noUnusedLocals: true },
+					include: ["src/**/*.ts"],
+				}),
+				"utf-8",
+			);
+			mkdirSync(join(dir, "src"), { recursive: true });
+			writeFileSync(
+				join(dir, "src", "index.ts"),
+				"const unused = 1;\nexport const x = 2;\n",
+				"utf-8",
+			);
+
+			const result = await runTscCheckpoint(dir);
+
+			// noUnusedLocals diagnostics may be Warning or Error category depending on TS version.
+			// Verify that if errors are reported, they include the expected unused-variable code (6133)
+			if (result.hasErrors) {
+				for (const d of result.diagnostics) {
+					assert.ok(
+						d.message.includes("unused") || d.code === "TS6133",
+						`Expected unused-variable diagnostic, got: ${d.code} - ${d.message}`,
+					);
+				}
+			} else {
+				assert.deepStrictEqual(result.diagnostics, []);
+			}
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("project with multiple error files — all errors reported", async () => {
+		const { dir, cleanup } = createFixture();
+		try {
+			writeFileSync(
+				join(dir, "tsconfig.json"),
+				JSON.stringify({
+					compilerOptions: { noEmit: true, strict: true },
+					include: ["src/**/*.ts"],
+				}),
+				"utf-8",
+			);
+			mkdirSync(join(dir, "src"), { recursive: true });
+			writeFileSync(join(dir, "src", "a.ts"), 'const x: number = "string-a";\n', "utf-8");
+			writeFileSync(join(dir, "src", "b.ts"), 'const y: number = "string-b";\n', "utf-8");
+
+			const result = await runTscCheckpoint(dir);
+
+			assert.strictEqual(result.hasErrors, true);
+			assert.strictEqual(result.diagnostics.length, 2, "should have 2 errors (one per file)");
+			// Each diagnostic should reference a different file
+			const files = new Set(result.diagnostics.map((d) => d.file));
+			assert.strictEqual(files.size, 2);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("return shape matches TscCheckpointResult", async () => {
+		const result = await runTscCheckpoint("/nonexistent/path");
+		assert.ok("diagnostics" in result);
+		assert.ok("hasErrors" in result);
+		assert.ok(Array.isArray(result.diagnostics));
+		assert.strictEqual(typeof result.hasErrors, "boolean");
+		// trend is optional, should not be present when empty
+		assert.strictEqual((result as any).trend, undefined);
+	});
+
+	it("function signature unchanged: async with single worktreePath param", () => {
+		assert.strictEqual(runTscCheckpoint.length, 1);
+	});
+
+	it("empty worktreePath string → no crash (resolves to CWD which has tsconfig)", async () => {
+		// resolve("", "tsconfig.json") resolves to CWD, which may have a tsconfig.
+		// This test just verifies no crash and correct return shape.
+		const result = await runTscCheckpoint("");
+		assert.ok("diagnostics" in result);
+		assert.ok("hasErrors" in result);
+		assert.ok(Array.isArray(result.diagnostics));
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 3: TypeScriptWatchAdapter.handleDiagnostic → delegation
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("TypeScriptWatchAdapter refactoring", () => {
+	it("diagnosticToTscDiagnostic is exported from module", async () => {
+		const mod = await import("../index.ts");
+		assert.strictEqual(typeof mod.diagnosticToTscDiagnostic, "function");
+	});
+
+	it("createDefaultAdapter() still returns a TypeScriptWatchAdapter", async () => {
+		const mod = await import("../index.ts");
+		const adapter = mod.createDefaultAdapter();
+		// TypeScriptWatchAdapter is a class — verify via isRunning method
+		assert.strictEqual(typeof adapter.isRunning, "function");
+		assert.strictEqual(typeof adapter.start, "function");
+		assert.strictEqual(typeof adapter.stop, "function");
+		assert.strictEqual(typeof adapter.getDiagnostics, "function");
+		assert.strictEqual(typeof adapter.onDiagnosticsChange, "function");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 4: DiagnosticsWatcher — Lifecycle (unchanged)
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("DiagnosticsWatcher (lifecycle)", () => {
@@ -179,7 +572,7 @@ describe("DiagnosticsWatcher (lifecycle)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 2: Incremental Re-check & Diagnostic Cache
+// Phase 6: Incremental Re-check & Diagnostic Cache
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("DiagnosticsWatcher (incremental re-check & cache)", () => {
@@ -283,7 +676,7 @@ describe("DiagnosticsWatcher (incremental re-check & cache)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 3: File-Path Resolution
+// Phase 7: File-Path Resolution
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("resolveDiagnosticFilePath", () => {
@@ -304,7 +697,7 @@ describe("resolveDiagnosticFilePath", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 4: Trend Tracking
+// Phase 8: Trend Tracking
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("DiagnosticsWatcher (trend tracking)", () => {
@@ -494,10 +887,10 @@ describe("formatTrend", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 5: runTscCheckpoint (deprecated one-shot adapter)
+// Phase 9: Pipeline contract — runTscCheckpoint signature & shape
 // ═══════════════════════════════════════════════════════════════════════
 
-describe("runTscCheckpoint (deprecated one-shot)", () => {
+describe("runTscCheckpoint (pipeline contract)", () => {
 	it("is exported and callable with single worktreePath argument", async () => {
 		const result = await runTscCheckpoint("/nonexistent/path");
 		assert.ok(typeof result === "object");
@@ -520,10 +913,20 @@ describe("runTscCheckpoint (deprecated one-shot)", () => {
 		const mod = await import("../index.ts");
 		assert.ok(typeof mod.default === "function", "default export (tscCheckpoint) still present");
 	});
+
+	it("getRunTscCheckpoint returns function with .length === 1 that returns { diagnostics, hasErrors }", async () => {
+		// This mirrors the pipeline contract in tsc-decisions.ts
+		const mod = await import("../index.ts");
+		assert.strictEqual(typeof mod.runTscCheckpoint, "function");
+		assert.strictEqual(mod.runTscCheckpoint.length, 1);
+		const result = await mod.runTscCheckpoint("/nonexistent/path");
+		assert.ok("diagnostics" in result);
+		assert.ok("hasErrors" in result);
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 6: Integration — Extension Entry Point
+// Phase 10: Integration — Extension Entry Point
 // ═══════════════════════════════════════════════════════════════════════
 
 interface MockSendUserMessage {
@@ -742,7 +1145,7 @@ describe("Extension entry point (/check command)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 7: Lifecycle cleanup via session_shutdown event
+// Phase 11: Lifecycle cleanup via session_shutdown event
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
@@ -874,7 +1277,7 @@ describe("session_shutdown lifecycle", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 8: Resource leak prevention — no duplicate watchers
+// Phase 12: Resource leak prevention — no duplicate watchers
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("resource leak prevention (no duplicate watchers)", () => {
@@ -942,7 +1345,7 @@ describe("resource leak prevention (no duplicate watchers)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 9: Trust Gate — reject untrusted project before starting watcher
+// Phase 13: Trust Gate — reject untrusted project before starting watcher
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("Trust gate (isProjectTrusted)", () => {
@@ -1009,7 +1412,7 @@ describe("Trust gate (isProjectTrusted)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 10: Mode-adapted output — JSON in non-TUI modes, markdown in TUI
+// Phase 14: Mode-adapted output — JSON in non-TUI modes, markdown in TUI
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("formatDiagnosticsJson", () => {
@@ -1292,7 +1695,7 @@ describe("Mode-adapted output (/check with ctx.mode)", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
-// Phase 11: Import parseArgs — structural addition without behavioral change
+// Phase 15: Import parseArgs — structural addition without behavioral change
 // ═══════════════════════════════════════════════════════════════════════
 
 describe("parseArgs import", () => {
