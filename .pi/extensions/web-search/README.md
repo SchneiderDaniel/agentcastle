@@ -9,15 +9,16 @@
   - Returns ranked `[{title, url, snippet}]` results
   - Uses `ddgs` Python library with `backend="auto"` for multi-engine fallback
   - Optional proxy support for restricted environments
+  - Includes `promptGuidelines` for LLM context, guiding discovery of URLs before crawling with `web_crawl`
 - **Delimiter-based output** — `SEARCH_OK` / `SEARCH_DONE` markers around JSON output for reliable parsing
 - **Result cache** — Same query+maxResults returns cached result within 5-minute TTL
-- **Graceful degradation** — If search fails, returns error message for the agent to handle
+- **Error signaling via throw** — Errors (empty query, venv setup failure, search execution failure, parse failure) propagate as thrown exceptions per the extension framework contract, ensuring the LLM receives proper `isError` signaling
 - **SIGTERM handling** — Python subprocess exits cleanly with code 130 on cancellation
 
 ## How it works
 
 1. The LLM calls `web_search` with a query and optional maxResults
-2. The extension validates the query (rejects empty queries)
+2. The extension validates the query (rejects empty queries via thrown error)
 3. **Cache check** — If the same query+maxResults was already searched within 5 minutes, the cached result is returned without re-running the subprocess
 4. The extension writes the Python script and config to `ignore/web-search/` temp files
 5. The script is executed via `bash -c` using `pi.exec`
@@ -25,6 +26,7 @@
 7. Results are parsed from the `SEARCH_OK`/`SEARCH_DONE` delimited output
 8. Results are cached in memory for the session duration (5-minute TTL)
 9. A formatted result string is returned showing ranked results with titles as markdown links and snippets
+10. On failure at any step (venv setup, search execution, result parsing), a thrown error propagates to the framework, which records the failure with `isError: true` on the tool execution event
 
 ## Install
 

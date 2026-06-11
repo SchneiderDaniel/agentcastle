@@ -127,7 +127,9 @@ export default function webSearch(pi: ExtensionAPI): void {
 /**
  * Format search results into readable text for the LLM.
  */
-function formatResults(results: Array<{ title: string; url: string; snippet: string }>): string {
+export function formatResults(
+	results: Array<{ title: string; url: string; snippet: string }>,
+): string {
 	if (results.length === 0) {
 		return "No results found.";
 	}

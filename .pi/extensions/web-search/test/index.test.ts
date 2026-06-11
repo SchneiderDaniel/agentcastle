@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { describe, it, mock, beforeEach } from "node:test";
 import type { ExecFn, ExecResult } from "../types.ts";
+import webSearch, { formatResults as realFormatResults } from "../index.ts";
 
 // ===========================================================================
 // Replicate index.ts logic inline for testing
@@ -183,7 +184,7 @@ describe("web-search extension entry point", () => {
 			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
 		};
 
-		webSearchEntry(mockPi);
+		webSearch(mockPi as any);
 		assert.ok(Array.isArray(registeredTool.promptGuidelines));
 		assert.ok(registeredTool.promptGuidelines.length > 0);
 	});
@@ -295,7 +296,7 @@ describe("formatResults — result formatting", () => {
 			{ title: "Result 1", url: "https://example.com/1", snippet: "First result snippet" },
 			{ title: "Result 2", url: "https://example.com/2", snippet: "Second result snippet" },
 		];
-		const text = formatResults(results);
+		const text = realFormatResults(results);
 		assert.ok(text.includes("1. [Result 1](https://example.com/1)"));
 		assert.ok(text.includes("First result snippet"));
 		assert.ok(text.includes("2. [Result 2](https://example.com/2)"));
@@ -303,7 +304,7 @@ describe("formatResults — result formatting", () => {
 	});
 
 	it("(D) returns 'No results found.' for empty array", () => {
-		const text = formatResults([]);
+		const text = realFormatResults([]);
 		assert.equal(text, "No results found.");
 	});
 });
