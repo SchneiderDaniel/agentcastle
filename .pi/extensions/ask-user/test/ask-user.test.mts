@@ -15,6 +15,7 @@ import path from "node:path";
 import os from "node:os";
 import { describe, it, beforeEach, afterEach } from "node:test";
 import type { QnaEntry } from "../types.ts";
+import { QuestionParams, QnaReadParams } from "../types.ts";
 
 import {
 	validateQnaEntry,
@@ -928,6 +929,19 @@ describe("ask_user schema shape", () => {
 		assert.ok("question" in entry);
 		assert.ok("answer" in entry);
 	});
+
+	it("QuestionParams and QnaReadParams are exported as runtime TypeBox schemas", () => {
+		assert.ok(QuestionParams, "QuestionParams should be exported");
+		assert.strictEqual(QuestionParams.type, "object", "QuestionParams should be an object schema");
+		assert.ok(QnaReadParams, "QnaReadParams should be exported");
+		assert.strictEqual(QnaReadParams.type, "object", "QnaReadParams should be an object schema");
+		// Verify key properties exist in both schemas
+		assert.ok("action" in QnaReadParams.properties, "QnaReadParams should have action property");
+		assert.ok(
+			"question" in QuestionParams.properties,
+			"QuestionParams should have question property",
+		);
+	});
 });
 
 // ============================================================================
@@ -1171,11 +1185,12 @@ describe("ask_user_read execute — error signaling", () => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	});
 
-	function makeCtx(): any {
+	function makeCtx(trusted?: boolean): any {
 		return {
 			sessionManager: {
 				getCwd: () => tmpDir,
 			},
+			isProjectTrusted: async () => trusted ?? true,
 		};
 	}
 

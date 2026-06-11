@@ -231,12 +231,18 @@ export async function appendQnaEntry(
 	timestamp: string,
 	question: string,
 	answer: string,
+	trusted?: boolean,
 ): Promise<QnaEntry> {
 	const entry: QnaEntry = { datetime: timestamp, question, answer };
 
 	const validationError = validateQnaEntry(entry);
 	if (validationError !== null) {
 		throw new Error(validationError);
+	}
+
+	// Defensive guard: skip write when explicitly not trusted
+	if (trusted === false) {
+		return entry;
 	}
 
 	const dir = contextDir(projectDir);
