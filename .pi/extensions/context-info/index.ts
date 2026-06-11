@@ -13,7 +13,7 @@ import { getWorktreeName } from "./git-helpers.ts";
 import { tryEmit } from "./telemetry.ts";
 import { installFooter } from "./footer.ts";
 import { FooterState } from "./footer-state.ts";
-import { showWelcomeBanner, readSessionExtState } from "./welcome.ts";
+import { registerCheaseePiInfo } from "./cheasee-pi-info.ts";
 import { listLocalExtensions } from "./extensions.ts";
 import type { ExtensionMeta } from "./extensions.ts";
 import { listLocalPrompts } from "./prompts.ts";
@@ -68,6 +68,9 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		},
 	});
 
+	// ── cheasee-pi-info command ────────────────────────────
+	registerCheaseePiInfo(pi);
+
 	// ── Hooks ──────────────────────────────────────────────────────
 
 	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
@@ -95,7 +98,6 @@ export default function contextInfo(pi: ExtensionAPI): void {
 			if (mode === undefined || mode === "tui") {
 				ctx.ui.setFooter(undefined);
 				ctx.ui.setStatus("contextUsage", undefined);
-				ctx.ui.setWidget("cheasee-pi-welcome", undefined);
 			}
 			state.stopTimer();
 			return;
@@ -151,36 +153,12 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 		state.footerConfig.sessionId = sessionId;
 
-		// ── Startup welcome banner (mode-guarded inside showWelcomeBanner) ──
-		const extState = readSessionExtState();
-		const startupRef = {
-			get value() {
-				return state!.startupWidgetActive;
-			},
-			set value(v: boolean) {
-				state!.startupWidgetActive = v;
-			},
-		};
-		state!.welcomeDispose = showWelcomeBanner(
-			ctx,
-			startupRef,
-			state!.config?.welcomeTimeoutMs ?? 0,
-			extState.logger,
-			extState.advice,
-		);
+		// ── Startup hint ────────────────────────────────────
+		ctx.ui.notify("For Info:  /cheasee-pi-info", "info");
 	});
 
-	// Helpers to clear startup widgets
-	function clearStartupWidgets(ctx: ExtensionContext) {
-		if (state) {
-			// Use stored dispose (handles timer cleanup + widget removal)
-			if (state.welcomeDispose) {
-				state.welcomeDispose();
-				state.welcomeDispose = undefined;
-			}
-			state.startupWidgetActive = false;
-		}
-		// Mode guard: only clear widgets in TUI mode
+	// Clear explain-* widgets on first user interaction
+	function clearExplainWidgets(ctx: ExtensionContext) {
 		const mode = (ctx as any).mode as string | undefined;
 		if (mode === undefined || mode === "tui") {
 			ctx.ui.setWidget("explain-extensions", undefined);
@@ -189,19 +167,16 @@ export default function contextInfo(pi: ExtensionAPI): void {
 		}
 	}
 
-	// Clear welcome banner and explain-* widgets on first user input
 	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
-		clearStartupWidgets(ctx);
+		clearExplainWidgets(ctx);
 	});
 
-	// Clear on input event (covers non-command inputs reaching expansion)
 	pi.on("input", async (_event, ctx: ExtensionContext) => {
-		clearStartupWidgets(ctx);
+		clearExplainWidgets(ctx);
 	});
 
-	// Clear on user bash commands (! and !!)
 	pi.on("user_bash", async (_event, ctx: ExtensionContext) => {
-		clearStartupWidgets(ctx);
+		clearExplainWidgets(ctx);
 	});
 
 	pi.on("thinking_level_select", async (event, ctx: ExtensionContext) => {

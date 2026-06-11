@@ -41,7 +41,7 @@ If you absolutely cannot output JSON, fall back to the text completion marker me
   "action": "COMPLETE",
   "agentName": "<agent-name>",
   "summary": "<one-line summary of what was accomplished>",
-  "commentBody": "<full comment body to post on GitHub issue (optional)>",
+  "commentBody": "<full comment body to post on GitHub issue>",
   "refusal": "<if you cannot complete the task, explain why here>"
 }
 \`\`\`
@@ -187,6 +187,7 @@ export function buildAgentTask(
 	researchFindings?: string | null,
 	auditFeedback?: string | null,
 	deadCodeContext?: string | null,
+	gateFailureContext?: string,
 	systemPromptOptions?: SystemPromptOptions,
 ): string {
 	// Build trusted comments block
@@ -217,6 +218,25 @@ export function buildAgentTask(
 
 	// Build the research findings block (injected for architect from issue comments)
 	const researchBlock = researchFindings ? `\n### Research Findings\n\n${researchFindings}\n` : "";
+
+	// Build the gate failure context block (injected for developer when a pre-transition
+	// hook — CI, TDD gate, TSC checkpoint, LSP pre-audit — blocked the Implementation→Audit
+	// transition). Wrapped in XML tags for higher salience per Anthropic context engineering
+	// guidelines. Includes action items for git status/log to handle stale partial edits.
+	const gateFailureBlock = gateFailureContext
+		? `<previous_gate_failure>
+⚠️ THE PREVIOUS IMPLEMENTATION ATTEMPT WAS BLOCKED BY AUTOMATED CHECKS.
+The following automated checks failed and blocked the transition to Audit.
+You MUST address every item below before completing the implementation.
+${gateFailureContext}
+Action items:
+1. Run \`git status\` — check for partial changes from the previous attempt
+2. Run \`git log --oneline ${remote}/${defaultBranch}..HEAD\` — check for unpushed commits
+3. Fix every issue listed above
+4. Do NOT redo work that passed these checks — only fix what failed
+</previous_gate_failure>
+`
+		: "";
 
 	// Build the audit feedback block (injected for developer when looping back from Audit rejection)
 	// This is a prominent section that tells the developer what the auditor found wrong.
@@ -258,7 +278,7 @@ ${auditFeedback}\n`
 			);
 			// Prompt template defaults: thinking effort defaults to "medium" if not specified.
 			// Uses pi's prompt template syntax \${N:-default} where available.
-			return `${systemPromptPrefix}${issueBlock}\n\n## Task\nFollow your system prompt instructions.\n\n### Setup\nWork from current directory — worktree already set up by supervisor. Branch already created.\n\n⚠️ **This may be a resume after previous failure.** The worktree and branch may already contain\n   partial work from a prior attempt. Always check existing state before starting fresh:\n\n1. Run \`git status\` — if files modified/staged, a previous attempt left work behind\n2. Run \`git log --oneline ${remote}/${defaultBranch}..HEAD\` — if commits exist but unpushed,\n   previous work is sitting on the branch\n3. Run \`git stash list\` — there may be stashed changes from a prior attempt\n\n**If existing work found:** resume from it. Read existing files, check what\'s done, complete what\nremains. Do NOT start over — that wastes time and may discard partial progress.\n\n**If no existing work (clean state):** proceed with fresh implementation.\n\n${auditFeedbackBlock}\n\n**Branch name:** ${branch}\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.\n\n${JSON_OUTPUT_INSTRUCTION}\n\n**Thinking effort (default: medium):** Set your thinking depth to \${1:-medium} — low for simple changes, high for complex refactors.\n\nExample output:\n\n\`\`\`json\n${developerExample}\n\`\`\``;
+			return `${systemPromptPrefix}${issueBlock}\n\n## Task\nFollow your system prompt instructions.\n\n### Setup\nWork from current directory — worktree already set up by supervisor. Branch already created.\n\n⚠️ **This may be a resume after previous failure.** The worktree and branch may already contain\n   partial work from a prior attempt. Always check existing state before starting fresh:\n\n1. Run \`git status\` — if files modified/staged, a previous attempt left work behind\n2. Run \`git log --oneline ${remote}/${defaultBranch}..HEAD\` — if commits exist but unpushed,\n   previous work is sitting on the branch\n3. Run \`git stash list\` — there may be stashed changes from a prior attempt\n\n**If existing work found:** resume from it. Read existing files, check what\'s done, complete what\nremains. Do NOT start over — that wastes time and may discard partial progress.\n\n**If no existing work (clean state):** proceed with fresh implementation.\n\n${gateFailureBlock}${auditFeedbackBlock}\n\n**Branch name:** ${branch}\n\n**SECURITY RULE:** Use ONLY the issue data provided above. Do NOT run \`gh issue view\` — the data above is pre-filtered for trust.\n\n${JSON_OUTPUT_INSTRUCTION}\n\n**Thinking effort (default: medium):** Set your thinking depth to \${1:-medium} — low for simple changes, high for complex refactors.\n\nExample output:\n\n\`\`\`json\n${developerExample}\n\`\`\``;
 		}
 
 		case "auditor": {

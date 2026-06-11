@@ -41,3 +41,21 @@ export interface PreAuditResult {
 	proceed: boolean;
 	note: string;
 }
+
+// ─── Output Adaptation Types ──────────────────────────────────────────
+
+/**
+ * Structured diagnostic data for RPC/JSON mode output.
+ * Provides a machine-parseable shape with files grouped by path.
+ */
+export interface StructuredDiagnostics {
+	files: Array<{
+		path: string;
+		issues: Array<{
+			line: number;
+			col: number;
+			severity: string;
+			message: string;
+		}>;
+	}>;
+}

@@ -54,6 +54,7 @@ import {
 	inferForwardStatus,
 	hasBranchCommits,
 	buildDuplicateCodeContext,
+	applyGateFailureContext,
 	type GateRejected,
 	buildDeadCodeContext,
 } from "./stages.ts";
@@ -490,6 +491,7 @@ export async function handleSupervisorCommand(
 				researchFindings,
 				auditFeedback,
 				deadContext,
+				stageState.gateFailureContext,
 				systemPromptOptions,
 			);
 
@@ -779,6 +781,10 @@ export async function handleSupervisorCommand(
 						collector,
 					);
 					effectiveNextStatus = auditResult.nextStatus;
+					// Capture gate failure context for developer feedback loop
+					// When a pre-transition hook returns Implementation, the failure note
+					// is stored so the next developer iteration receives targeted context.
+					applyGateFailureContext(stageState, effectiveNextStatus, auditResult.note);
 					// Store dead code result in stage state for auditor context injection
 					if (auditResult.deadCodeResult) {
 						stageState.deadCodeResult = auditResult.deadCodeResult;

@@ -157,6 +157,29 @@ export function rewritePath(
 
 export default function (pi: ExtensionAPI) {
 	pi.on("tool_call", async (event, ctx) => {
+		// ── Mode gate ──────────────────────────────────────────────
+		// Skip sandbox enforcement in print/JSON modes where no file
+		// operations occur. Avoids existsSync()+statSync() overhead.
+		const mode = (ctx as { mode?: string }).mode;
+		const isFileMode = mode === "tui" || mode === "rpc" || !mode;
+		if (!isFileMode) {
+			return undefined;
+		}
+
+		// ── Trust gate ─────────────────────────────────────────────
+		// Check project trust BEFORE resolving sandbox root, so that
+		// an untrusted project cannot control WORKTREE_SANDBOX_PATH
+		// and redirect sandbox operations to attacker-controlled paths.
+		const isTrusted = (
+			ctx as { isProjectTrusted?: () => boolean | undefined }
+		).isProjectTrusted?.();
+		if (isTrusted === false) {
+			if (ctx.hasUI) {
+				ctx.ui.notify("[sandbox] Project not trusted — skipping sandbox enforcement", "warning");
+			}
+			return undefined;
+		}
+
 		const sandboxRoot = getSandboxRoot();
 		if (!sandboxRoot) {
 			return undefined;

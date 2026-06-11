@@ -60,6 +60,14 @@ export interface StageState {
 	researcherSkipped: boolean;
 	/** Dead code check result, set during Implementation→Audit hooks */
 	deadCodeResult: DeadCodeResult | null;
+	/**
+	 * Gate failure note from the last pre-transition hook that returned
+	 * effectiveNextStatus === "Implementation". Set by handler.ts after
+	 * runTscAndLspAudit() returns a failure. Cleared on next successful
+	 * transition to Audit. Ephemeral — lives only for this /supervisor
+	 * command; does not persist across process restarts.
+	 */
+	gateFailureContext?: string;
 }
 
 export function createStageState(initialStatus: string): StageState {
@@ -70,6 +78,7 @@ export function createStageState(initialStatus: string): StageState {
 		duplicateCodeResult: null,
 		researcherSkipped: false,
 		deadCodeResult: null,
+		gateFailureContext: undefined,
 	};
 }
 
@@ -271,6 +280,29 @@ export async function handleDeadCodeCheck(
  */
 export function buildDeadCodeContext(result: DeadCodeResult | null): string | null {
 	return buildDeadCodeContextInner(result);
+}
+
+// ─── Gate Failure Context ────────────────────────────────────────────
+
+/**
+ * Apply gate failure context to stage state based on next status.
+ * When effectiveNextStatus is "Implementation", the gate failure note
+ * is stored for injection into the developer task on the next iteration.
+ * When effectiveNextStatus is "Audit", stale context is cleared.
+ * Non-Implementation/Audit statuses leave state unchanged.
+ * Empty notes are treated as no-ops.
+ */
+export function applyGateFailureContext(
+	state: StageState,
+	effectiveNextStatus: string,
+	note: string,
+): void {
+	if (effectiveNextStatus === "Implementation" && note && note.trim().length > 0) {
+		state.gateFailureContext = note;
+	} else if (effectiveNextStatus === "Audit") {
+		state.gateFailureContext = undefined;
+	}
+	// Other statuses (e.g., "Done") — leave state unchanged
 }
 
 // ─── Check Rejection Limit ────────────────────────────────────────
@@ -777,13 +809,43 @@ export async function handlePostAgentSuccess(
 				);
 			}
 		} else {
-			collector?.push(
-				"stages",
-				"warn",
-				`${agentName} completed but no commentBody found. ` +
-					`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
-					`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
-			);
+			// Graceful degradation: researcher with no commentBody still
+			// posts a "no findings" comment so issue has visible researcher output.
+			// Prevents silent skip when LLM treats commentBody as optional and omits it.
+			if (agentName === "researcher") {
+				const fallbackComment = "## Research Findings — No relevant results found for this topic.";
+				collector?.push(
+					"stages",
+					"warn",
+					`${agentName} completed but no commentBody in JSON output. ` +
+						`Posting graceful degradation comment. ` +
+						`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
+						`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
+				);
+				try {
+					await postIssueComment(pi, issueNum, config.repo, fallbackComment);
+					ctx.ui.notify(
+						`Posted ${agentName} comment (graceful degradation) on issue #${issueNum}`,
+						"info",
+					);
+				} catch (commentErr: unknown) {
+					collector?.push(
+						"stages",
+						"warn",
+						`Failed to post ${agentName} graceful degradation comment: ${
+							commentErr instanceof Error ? commentErr.message : String(commentErr)
+						}`,
+					);
+				}
+			} else {
+				collector?.push(
+					"stages",
+					"warn",
+					`${agentName} completed but no commentBody found. ` +
+						`textOutput: ${JSON.stringify((result.textOutput || "").slice(0, 200))}, ` +
+						`output: ${JSON.stringify((result.output || "").slice(0, 200))}`,
+				);
+			}
 		}
 	}
 

@@ -26,9 +26,7 @@ export class FooterState {
 	config: ContextStatusBarConfig | null = null;
 	emitted = false;
 	lastSampledOutput: number | undefined = undefined;
-	startupWidgetActive = false;
-	/** Welcome banner dispose function (cancels timeout + clears widget) */
-	welcomeDispose: (() => void) | undefined = undefined;
+
 	timerInterval: ReturnType<typeof setInterval> | null = null;
 
 	/** Disposed flag: set true when state is replaced on session transition.
@@ -127,8 +125,7 @@ export class FooterState {
 		this.config = null;
 		this.emitted = false;
 		this.lastSampledOutput = undefined;
-		this.startupWidgetActive = false;
-		this.welcomeDispose = undefined;
+
 		this.footerConfig.worktreeName = null;
 		this.footerConfig.thinkingLevel = "";
 		this.footerConfig.tpsSamples.length = 0;

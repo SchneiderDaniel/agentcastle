@@ -27,7 +27,6 @@
   - [SBOM — Software Bill of Materials](#sbom--software-bill-of-materials)
   - [Security](#security)
   - [License](#license)
-  - [Legacy Installation (host-level)](#legacy-installation-host-level)
   - [Acknowledgments](#acknowledgments)
 
 ---
@@ -136,7 +135,7 @@ Exit with `Ctrl+C` twice. The provider is persisted in `.pi/settings.json`.
 
 `./cheasee-pi.sh` runs `docker compose up` with:
 
-- Image built from `docker/Dockerfile` (Debian 12-slim, Node.js 22, Python 3, ctags, ripgrep, ast-grep, pi, gosu)
+- Image built from `docker/Dockerfile` (Debian 12-slim, Node.js 22, Python 3, ripgrep, ast-grep, pi, gosu)
 - Repo root bind-mounted to `/workspaces/main` inside the container
 - `.agent_env` file mounted and sourced automatically
 - Host UID/GID mapped to container user `agentuser` (no permission issues with bind mounts)
@@ -165,9 +164,9 @@ Exit with `Ctrl+C` twice. The provider is persisted in `.pi/settings.json`.
      ┌────▼────────────────────────────┐
      │  External tools                  │
      │  ┌──────────┐ ┌───────────────┐ │
-     │  │ ctags    │ │ ast-grep      │ │
-     │  │map_code- │ │structural_    │ │
-     │  │base tool │ │search tool    │ │
+     │  │ ast-grep │ │ web-search    │ │
+     │  │structural│ │ DuckDuckGo    │ │
+     │  │_search   │ │ (ddgs)        │ │
      │  └──────────┘ └───────────────┘ │
      │  ┌──────────┐ ┌───────────────┐ │
      │  │ ripgrep  │ │ scrapling    │ │
@@ -177,7 +176,7 @@ Exit with `Ctrl+C` twice. The provider is persisted in `.pi/settings.json`.
      └─────────────────────────────────┘
 ```
 
-**Key principle:** All tools run locally. Web crawling runs on host (network-only for crawl). Ctags, ast-grep, ripgrep are system binaries invoked via `pi.exec()`. No MCP servers, no network-exposed tool endpoints.
+**Key principle:** All tools run locally. Web crawling runs on host (network-only for crawl). ast-grep, ripgrep are system binaries invoked via `pi.exec()`. No MCP servers, no network-exposed tool endpoints.
 
 #### 5.2 Why extensions instead of MCP?
 
@@ -193,7 +192,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 
 | File/Path                                           | What it is                                                                                                             |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `.pi/extensions/structural-analyzer.ts`             | `structural_search` tool via ast-grep                                                                                  |
+| `.pi/extensions/structural-analyzer/`              | `structural_search` tool via ast-grep                                                                                  |
 | `.pi/extensions/ripgrep-search/`                    | `ripgrep_search` tool via ripgrep (modular: args, config, parse, temp, validate)                                       |
 | `.pi/extensions/scrapling/`                         | `web_crawl` tool: Scrapling with progressive fetching (lightweight → stealth)                                           |
 | `.pi/extensions/web-search/`                        | `web_search` tool: DuckDuckGo search via ddgs Python lib — ranked results with URLs + snippets                         |
@@ -203,7 +202,7 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/agent-harness/`                     | Runtime tool call validation — blocks `bash                                                                            | grep`, `cat` file reads, redundant reads, error retry loops, same-tool cascades |
 | `.pi/extensions/ask-user/`                          | Interactive MC questions + CSV logger                                                                                  |
 | `.pi/extensions/caveman/`                           | Token-efficient communication protocol; mode-adaptive compression, project-trust gating, `/caveman status` command    |
-| `.pi/extensions/format-on-save/`                    | Auto Prettier + ESLint after write/edit                                                                                |
+| `.pi/extensions/format-on-save/`                    | Auto Prettier + ESLint after write/edit; trust-gated (skips on untrusted projects), mode-adaptive notifications (TUI: ui.notify, RPC: followUp, JSON/print: silent) |
 | `.pi/extensions/lsp-auditor/`                       | LSP diagnostics pre-audit for supervisor                                                                               |
 | `.pi/extensions/piignore.ts`                        | `.piignore` path blocking                                                                                              |
 | `.pi/extensions/tsc-checkpoint.ts`                  | `/check` command: `tsc --noEmit`                                                                                       |
@@ -215,28 +214,21 @@ This project deliberately avoids the [Model Context Protocol (MCP)](https://mode
 | `.pi/extensions/supervisor/agents/test-designer.md` | TestDesigner agent (pipeline step 3)                                                                                   |
 | `.pi/extensions/supervisor/agents/developer.md`     | Developer agent (pipeline step 4)                                                                                      |
 | `.pi/extensions/supervisor/agents/auditor.md`       | Auditor agent (pipeline step 5)                                                                                        |
-| `scripts/session-advice.ts`                         | Post-hoc batch session analysis runner                                                                                 |
-| `scripts/session-advice.sh`                         | Shell wrapper for session-advice.ts                                                                                    |
-| `scripts/pr-review.ts`                              | PR review workflow — security checks, philosophy validation, structured comments                                       |
-| `scripts/pi_update`                                 | Updates pi npm package, verifies models.json symlink, extensible step array                                            |
+
 | `.pi/settings.json`                                 | Supervisor + context status bar config                                                                                 |
 | `.pi/themes/cheasee-pi.json`                       | Dark cyberpunk TUI theme                                                                                               |
-| `.pi/prompts/issue-cutter.md`                       | Epic → sub-issues with layer labels                                                                                    |
-| `.pi/prompts/issue-refinement.md`                   | Socratic interview + MC refinement                                                                                     |
-| `.pi/prompts/extension-spec.md`                     | Extension design PRD generator                                                                                         |
-| `.pi/prompts/handover.md`                           | Session handover document                                                                                              |
-| `.pi/prompts/quiz-master.md`                        | PR review quiz + auto-merge                                                                                            |
-| `.pi/prompts/package-extension.md`                  | Package extension as npm pi-package, publish to npm                                                                    |
+| `.pi/prompts/requirement/`                          | Prompt templates: issue-cutter, issue-refinement (layer labels, Socratic refinement)                                   |
+| `.pi/prompts/development/`                          | Prompt templates: handover, pr-review, quiz-master (session handoff, PR review, quiz auto-merge)                       |
+| `.pi/prompts/operations/`                           | Prompt templates: model-select, package-extension, architecture-review, changelog-check, extension-validation          |
+| `.pi/prompts/misc/`                                 | Prompt template: writing-voice (consistent AI writing style)                                                            |
 | `.piignore`                                         | Agent path blocking (gitignore syntax)                                                                                 |
 | `AGENTS.md`                                         | Caveman protocol (active every session)                                                                                |
-| `scripts/setup-github-project.sh`                   | Create GitHub Project from settings                                                                                    |
-| `scripts/session-query.sh`                          | Query JSONL session logs with jq                                                                                       |
-| `Makefile`                                          | Docker workflow: `make up` (build+start), `make shell` (enter container), `make pi` (launch agent with loading screen — uses `src/start-pi.ts` wrapper) |
-| `test/`                                             | Unit/integration test files                                                                                            |
-| `src/`                                              | Library modules — `SplashComponent`, `ProgressEmitter`, `runWithSplash`, splash-integration wiring (`integrate-splash.ts`), startup wrapper (`start-pi.ts`) |
-| `.pi/lib/`                                          | Shared library (bash-command, harness-rules, harness-state, lsp-types, types, github-types)                            |
+
+| `Makefile`                                          | Docker workflow: `make up` (build+start), `make shell` (enter container), `make pi` (launch agent)                     |
+| `test/`                                             | Unit/integration test files (4 test files)                                                                              |
+
 | `.pi/state/session-extensions.json`                 | Tracks extension on/off state                                                                                          |
-| `.pi/specs/`                                        | PRD specs (ripgrep-search, supervisor-refactor)                                                                        |
+
 | `.pi/npm/`                                          | Local npm package cache                                                                                                |
 | `flask_blogs/`                                      | Submodule: Flask blog apps                                                                                             |
 
@@ -252,9 +244,9 @@ Pi auto-discovers extensions from `.pi/extensions/` in the **project root**. No 
 | **Web Crawler**         | `web_crawl`: Scrapling with progressive fetching (lightweight curl_cffi → Playwright stealth). Auto-installs venv via pip install scrapling[fetchers] markdownify. |
 | **Web Search**          | `web_search`: DuckDuckGo search via `ddgs` Python library. Ranked results with titles, URLs, snippets. Result cache (5-min TTL). Graceful degradation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | **Context Info**        | Rich TUI status bar (branch, model, tokens, TPS, cache), welcome banner, animated working indicator.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| **Session Logger**      | Logs sessions to `.pi/sessions/<id>.jsonl`. Generates `.md` reports with sub-agent output from supervisor pipeline. Toggle with `/session-logger`. Query with `scripts/session-query.sh`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| **Session Advice**      | Analyzes each session after shutdown for inefficient patterns. Generates `.advice.md` with fix recommendations. Post-hoc batch analysis via `scripts/session-advice.ts`. Report with `/session-advice report`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **Agent Harness**       | Runtime tool call validation via `agent-harness` extension. Blocks `bash` with `grep`/`rg` (redirects to `ripgrep_search`), `bash` with `cat`/`head`/`tail` (redirects to `read`). Caches reads to prevent redundant file reads. Tracks errors per tool to block retry loops (2+ errors). Tracks consecutive same-tool calls to break cascades (8+) with sub-command-aware detection (`git status` vs `git diff` tracked separately). Cascade resets per conversation turn — each LLM response cycle starts fresh. Bash cascade suggestion is context-aware: commands already using `&&` get "Reduce per-turn call count", non-`&&` commands get "Combine bash calls with &&". **Mode-aware read cache**: In non-TUI modes (CI/headless, where `hasUI=false`), read-cache blocks are bypassed to prevent stalls. **Project config**: `.pi/harness-config.json` can override tool thresholds and cascade settings, gated by project trust (`ctx.isProjectTrusted()`). Complements Session Advice (post-hoc) with runtime prevention. |
+| **Session Logger**      | Logs sessions to `.pi/sessions/<id>.jsonl`. Generates `.md` reports with sub-agent output from supervisor pipeline. Toggle with `/session-logger`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Session Advice**      | Analyzes each session after shutdown for inefficient patterns. Generates `.advice.md` with fix recommendations. Report with `/session-advice report`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Agent Harness**       | Runtime tool call validation via `agent-harness` extension. Blocks `bash` with `grep`/`rg` (redirects to `ripgrep_search`), `bash` with `cat`/`head`/`tail` (redirects to `read`). Caches reads to prevent redundant file reads. Tracks errors per tool to block retry loops (2+ errors). Tracks consecutive same-tool calls to break cascades (8+) with sub-command-aware detection (`git status` vs `git diff` tracked separately). Cascade resets per conversation turn — each LLM response cycle starts fresh. Bash cascade suggestion is context-aware: commands already using `&&` get "Reduce per-turn call count", non-`&&` commands get "Combine bash calls with &&". Complements Session Advice (post-hoc) with runtime prevention. |
 | **Caveman Protocol**    | Token-efficient communication. Active via `AGENTS.md`. Configurable intensity levels.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | **Ask User**            | Interactive MC picker for AI-to-user questions. Uses arrow-key navigation + CSV logging.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | **Format on Save**      | Auto-formats TS/JS with Prettier + ESLint --fix after write/edit. Non-blocking lint warnings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
@@ -325,17 +317,21 @@ git branch -D feature/my-feature
 
 #### 5.7 Prompt Templates
 
-Invocable via `/name` in Pi's editor:
+Invocable via `/name` in Pi's editor. Files stored in `.pi/prompts/` organized by category:
 
-| Template              | Usage                        | What it does                                                                                                                                                                                 |
-| --------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **issue-cutter**      | `/issue-cutter <number>`     | Split epic into ordered, testable sub-issues with layer labels. Auto-links children to parent via GraphQL.                                                                                   |
-| **issue-refinement**  | `/issue-refinement <number>` | Grill issue against codebase, Socratic interview via `ask_user` (≥3 MC options), replace body with concrete ACs.                                                                             |
-| **extension-spec**    | `/extension-spec <idea>`     | Design new extension or refactor existing one. Researches pi docs, audits TypeScript, produces PRD.                                                                                          |
-| **handover**          | `/handover`                  | Write handover doc summarizing conversation. Saves to `tmp/` with datetime prefix.                                                                                                           |
-| **model-select**      | `/model-select <objective>`  | Research + recommend models per agent role. Crawls providers, benchmarks, pricing. Three objectives: cost-optimized, performance-optimized, balanced. Applies `model:` field in agent files. |
-| **quiz-master**       | `/quiz-master`               | List open PRs across repo + submodules, quiz reviewer on diff with MC questions, auto-merge if score ≥80%.                                                                                   |
-| **package-extension** | `/package-extension`         | Package selected extension from monorepo as individual npm pi-package. Sets up package.json with pi manifest, guides through publishing.                                                     |
+| Template              | Usage                              | What it does                                                                                                                                                                                 |
+| --------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **issue-cutter**      | `/issue-cutter <number>`           | Split epic into ordered, testable sub-issues with layer labels. Auto-links children to parent via GraphQL.                                                                                   |
+| **issue-refinement**  | `/issue-refinement <number>`       | Grill issue against codebase, Socratic interview via `ask_user` (≥3 MC options), replace body with concrete ACs.                                                                             |
+| **handover**          | `/handover`                        | Write handover doc summarizing conversation. Saves to `tmp/` with datetime prefix.                                                                                                           |
+| **pr-review**         | `/pr-review`                       | Automated PR security/quality checks, validates against Cheasee-Pi philosophy, formats structured review comment.                                                                            |
+| **quiz-master**       | `/quiz-master`                     | List open PRs across repo + submodules, quiz reviewer on diff with MC questions, auto-merge if score ≥80%.                                                                                   |
+| **model-select**      | `/model-select <objective>`        | Research + recommend models per agent role. Crawls providers, benchmarks, pricing. Three objectives: cost-optimized, performance-optimized, balanced.                                         |
+| **package-extension** | `/package-extension`               | Package selected extension from monorepo as individual npm pi-package. Sets up package.json with pi manifest, guides through publishing.                                                     |
+| **architecture-review** | `/architecture-review`           | Audit codebase architecture against Clean Architecture + PEAA principles. Identifies violations, proposes refactors.                                                                         |
+| **changelog-check**   | `/changelog-check`                 | Analyze pi CHANGELOG.md for breaking changes affecting extensions. Generates migration report.                                                                                               |
+| **extension-validation** | `/extension-validation <path>`  | Validate extension structure, imports, hooks against pi extension API.                                                                                                                      |
+| **writing-voice**     | `/writing-voice`                   | Derive consistent AI writing voice from sample text (paste, URL, or file). Generates `voice-{lang}.md` style guide.                                                                         |
 
 #### 5.8 Tool Benchmark
 
@@ -351,7 +347,7 @@ Empirical token consumption comparing tool configurations on a real audit task (
 
 The agent footer also shows a **TPS (tokens-per-second)** gauge during streaming, computed from a rolling 30s window, plus **LLM prompt cache** stats (`📦 cacheRead/cacheWrite`) on Row 2 — toggle with `contextStatusBar.showCache` in `.pi/settings.json` (default `true`). The supervisor subagent footer shows cache stats next to the token count. Shows `📦 --/--` before the first assistant response.
 
-> Run with `scripts/benchmark-tools.sh` (2 runs per config). Results saved to `scripts/benchmark-results/`.
+
 
 #### 5.9 Published Pi Packages
 
@@ -419,16 +415,15 @@ After publish, verify on [pi.dev/packages](https://pi.dev/packages) and test wit
 
 #### 5.10 Skills
 
-Currently **6 skills installed**:
+Currently **5 skills installed**:
 
-| Skill                             | Purpose                                                                                                                                                                                                        |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **dead-code-hunter**              | Systematic dead code detection — finds unused exports, unreachable paths, dead branches, orphaned imports. Hunt loop picks random extension, validates with deterministic proof.                               |
-| **extension-bug-hunter**          | Systematic bug hunting — boundary analysis, type safety, error paths, concurrency, input validation, security. Hunt loop with three-strike proof.                                                              |
-| **extension-spec**                | Designs pi extensions — new or refactoring — with full PRD, TypeScript best practices, anti-pattern audit, migration plan.                                                                                     |
-| **improve-codebase-architecture** | Surface architectural friction — shallow modules, leaky seams, low locality. Creates umbrella + sub-issues with Mermaid diagrams.                                                                              |
-| **duplicate-code-hunter**         | Systematic duplicate code detection — exact clones (Type 1), renamed clones (Type 2), near-miss (Type 3), semantic clones (Type 4). Uses jscpd for token-based scanning. Hunt loop with three-way-match proof. |
-| **pr-review**                     | Review external PRs — automated security/quality checks, validates against Cheasee-Pi philosophy + pi docs, formats structured review comment. Asks user confirmation before posting.                         |
+| Skill                     | Purpose                                                                                                                                                                                                        |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **dead-code-hunter**      | Systematic dead code detection — finds unused exports, unreachable paths, dead branches, orphaned imports. Hunt loop picks random extension, validates with deterministic proof.                               |
+| **extension-bug-hunter**  | Systematic bug hunting — boundary analysis, type safety, error paths, concurrency, input validation, security. Hunt loop with three-strike proof.                                                              |
+| **extension-spec**        | Designs pi extensions — new or refactoring — with full PRD, TypeScript best practices, anti-pattern audit, migration plan.                                                                                     |
+| **duplicate-code-hunter** | Systematic duplicate code detection — exact clones (Type 1), renamed clones (Type 2), near-miss (Type 3), semantic clones (Type 4). Uses jscpd for token-based scanning. Hunt loop with three-way-match proof. |
+| **writing-voice**         | Derive consistent AI writing voice from sample text (paste, URL, or file). Generates `voice-{lang}.md` style guide. Applied before drafting any user-facing prose.                                              |
 
 Skills are loaded on-demand via `/skill:<name>` invocation. Every skill's description injects ~50-150 tokens into the context window on every turn, causing [context rot](https://docs.anthropic.com/en/docs/build-with-claude/context-windows). Use sparingly. Prefer extensions (concise prompt snippets) or prompt templates (lazy-loaded) over skills.
 
@@ -455,9 +450,6 @@ pi "Use ripgrep_search to find 'TODO' in the project"
 
 # Web search (auto-creates venv + installs ddgs on first call)
 pi "Use web_search to find 'latest rust web framework 2026' with maxResults=5"
-
-# Web search (auto-creates venv + installs ddgs on first call)
-pi "Use web_search to find 'latest rust web framework 2026' with maxResults=5"
 ```
 
 #### 6.3 Pi Autonomy
@@ -480,13 +472,7 @@ pi -p "Create a file named '.pi/test-file.txt' with the content 'container works
 
 #### 7.1 Project Setup (one-time per GitHub project)
 
-Create a GitHub Project (v2) with Kanban statuses from `.pi/settings.json`:
-
-```bash
-./scripts/setup-github-project.sh
-```
-
-The script reads `supervisor.statusMapping`, prompts for a project name, creates the project under the `supervisor.repo` owner, adds a `Workflow` single-select field with your custom statuses, and writes the project number back to `settings.json`.
+Create a GitHub Project (v2) with Kanban statuses from `.pi/settings.json`. Configure project number under `supervisor.projectNumber`.
 
 Switch the project to **Board** layout in the browser and change **Group by** to `Workflow`.
 
@@ -499,10 +485,8 @@ Switch the project to **Board** layout in the browser and change **Group by** to
 | Run TSC type-check      | `/check`                                                                             |
 | Toggle session advice   | `/session-advice on` / `/session-advice off`                                         |
 | Session advice report   | `/session-advice report` — generates report, prompts cleanup + GitHub issue creation. Supports `--repo owner/repo` flag. Skips interactive dialogs in non-TUI modes.                                                               |
-| Batch advice analysis   | `npx tsx scripts/session-advice.ts` (all) or `--latest`                              |
 | Toggle session logger   | `/session-logger on` / `/session-logger off`                                         |
 | Toggle caveman level    | `/caveman` (cycle: lite → full → off) or `/caveman lite`; `/caveman status` for prompt context; `/caveman config` for settings |
-| Query session logs      | `./scripts/session-query.sh 'select(.role == "user")'`                               |
 | Design an extension     | `/extension-spec <idea>`                                                             |
 | Write handover          | `/handover`                                                                          |
 | Quiz PR reviewer        | `/quiz-master`                                                                       |
@@ -548,10 +532,7 @@ compatible with existing reports.
 
 The JSONL log is a newline-delimited JSON event stream: messages, thinking blocks, tool calls, compactions.
 
-```bash
-./scripts/session-query.sh 'select(.role == "user")'
-cat .pi/sessions/latest.jsonl | ./scripts/session-query.sh 'select(.tool == "bash")'
-```
+
 
 #### 7.3b Session Advice
 
@@ -595,13 +576,7 @@ Aggregates all sessions into `advice-report.md` with:
 
 After report generation, user is prompted to **clean up** the sessions folder (delete raw `.jsonl`, `.md`, `.metadata.json`) and then asked whether to **create a GitHub issue** from the report in the project repo (read from `supervisor.repo` in `.pi/settings.json`). Report file is preserved.
 
-**Batch analysis** (post-hoc for past sessions):
 
-```bash
-npx tsx scripts/session-advice.ts              # all sessions
-npx tsx scripts/session-advice.ts --latest     # latest only
-npx tsx scripts/session-advice.ts 2026-05-23   # by prefix
-```
 
 #### 7.4 Context & Templates
 
@@ -610,7 +585,7 @@ npx tsx scripts/session-advice.ts 2026-05-23   # by prefix
 | **Always-on** | `AGENTS.md` in project root | Concatenated and appended to system prompt every turn |
 | **On-demand** | `.pi/prompts/*.md`          | Invoked manually via `/prompt-name` in Pi's editor    |
 
-`AGENTS.md` contains the caveman protocol (communication style + tool routing) and **🛠 Tool Discipline** section (pre-call checklist, DO/DON'T table, error recovery procedure, batching triggers). Each agent `.md` in `.pi/agents/` also has a role-specific Tool Discipline box at top. Active automatically every session.
+`AGENTS.md` contains the caveman protocol (communication style + tool routing) and **🛠 Tool Discipline** section (pre-call checklist, DO/DON'T table, error recovery procedure, batching triggers). Each agent `.md` in `.pi/extensions/supervisor/agents/` also has a role-specific Tool Discipline box at top. Active automatically every session.
 
 ---
 
@@ -899,35 +874,12 @@ All supervisor settings in `.pi/settings.json` under the `supervisor` key:
 		},
 		"codeowners": ["SchneiderDaniel"], // REQUIRED — trusted GitHub usernames
 		"statusField": "Status", // Single-select field on project board
-		"maxRejections": 5, // Max Auditor rejections before loop stops
-		"remote": "origin", // Remote name for git push
-		"defaultBranch": "main", // Worktree base and PR target
-		"worktreeBase": "../", // Parent dir for worktrees
-		"branchPrefix": "worktree-git-issue-", // Prefix for auto-generated branch names
-		"agentTimeoutsMin": {
-			// Per-agent timeout (optional)
-			"researcher": 10,
-			"developer": 30,
-		},
-		"enableExperimentalFeatures": false, // Gate experimental pipeline features (auto-forking, advanced parallelism)
-		"submodules": [
-			// Auto-parsed from .gitmodules if absent
-			{ "path": "flask_blogs", "repo": "Owner/flask_blogs" },
-		],
+		"maxRejections": 3, // Max Auditor rejections before loop stops
+		"agentTokenBudget": 300000, // Soft token cap per agent (0 = unlimited)
+		"bellOnComplete": false, // Bell sound when pipeline finishes
+		"enableExperimentalFeatures": false, // Gate experimental pipeline features
 	},
 }
-
-### New in Changelog Check (v0.78.0–v0.79.1)
-
-| Improvement | Description |
-|---|---|
-| **Autocomplete trigger** | `#` trigger in editor opens issue autocomplete from configured repo. Registered in `session_start` handler. |
-| **Mode adaptation** | UI dialog methods (confirm/select) gated behind `ctx.hasUI`. Notify calls use `pi.sendMessage()` fallback in non-UI modes. |
-| **Trust gate** | Pipeline checks `ctx.isProjectTrusted()` before reading config or making GitHub calls. Early return with warning if untrusted. |
-| **System prompt options** | `ctx.getSystemPromptOptions()` called at pipeline start; tools, skills, context files injected into agent tasks via `## Available Tools` section. |
-| **Experimental features** | `enableExperimentalFeatures` config field gates advanced pipeline stages. |
-| **parseArgs interface** | `parseSupervisorArgs` updated to mirror `parseArgs` API with `unknownFlags` Map and `messages` array. |
-| **Prompt template defaults** | Developer agent prompt includes thinking effort default (`${1:-medium}`) using pi's prompt template syntax. |
 
 #### 8.9 Complete Walkthrough
 
@@ -1100,7 +1052,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 1. Fork the repository
 2. Create a feature branch (`git worktree add -b feature/amazing feature-amazing` is the recommended workflow)
 3. Make your changes
-4. Run tests: `npm test` (runs 14 listed test files; 64 total in `test/`)
+4. Run tests: `npm test` (runs 4 test files in `test/`)
 5. Submit a PR
 
 ---
@@ -1146,7 +1098,6 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | **Infrastructure Tools**                          |          |              |            |                                                                                                          |
 | GitHub CLI (gh)                                   | latest   | MIT          | system     | [cli.github.com](https://cli.github.com)                                                                 |
 | AST-grep                                          | ≥0.42    | MIT          | system     | [ast-grep.github.io](https://ast-grep.github.io)                                                         |
-| Universal Ctags                                   | latest   | GPL-2.0      | system     | [ctags.io](https://ctags.io)                                                                             |
 | ripgrep (rg)                                      | latest   | MIT          | system     | [github.com/BurntSushi/ripgrep](https://github.com/BurntSushi/ripgrep)                                   |
 | jscpd                                             | 4.2.4    | MIT          | system     | [github.com/kucherenko/jscpd](https://github.com/kucherenko/jscpd)                                       |
 | **Web Crawling (Python venv)**                    |          |              |            |                                                                                                          |
@@ -1154,8 +1105,7 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | Playwright Chromium                               | latest   | Apache-2.0   | venv       | [playwright.dev](https://playwright.dev)                                                                 |
 | markdownify                                        | latest   | MIT          | venv       | [github.com/matthewwithanm/python-markdownify](https://github.com/matthewwithanm/python-markdownify)     |
 | **Project Extensions (`.pi/extensions/`)**        |          |              |            |                                                                                                          |
-| structural-analyzer.ts                            | —        | MIT          | project    | This repository                                                                                          |
-| structural-analyzer.ts                            | —        | MIT          | project    | This repository                                                                                          |
+| structural-analyzer/                            | —        | MIT          | project    | This repository                                                                                          |
 | ripgrep-search/                                   | —        | MIT          | project    | This repository                                                                                          |
 | caveman/                                          | —        | MIT          | project    | This repository                                                                                          |
 | scrapling/                                        | —        | MIT          | project    | This repository                                                                                          |
@@ -1171,8 +1121,8 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 | dead-code-hunter/ (with references/)              | —        | MIT          | project    | This repository                                                                                          |
 | extension-bug-hunter/ (with references/)          | —        | MIT          | project    | This repository                                                                                          |
 | extension-spec/                                   | —        | MIT          | project    | This repository                                                                                          |
-| improve-codebase-architecture/ (with references/) | —        | MIT          | project    | This repository                                                                                          |
 | duplicate-code-hunter/ (with references/)         | —        | MIT          | project    | This repository                                                                                          |
+| writing-voice/ (with references/)                 | —        | MIT          | project    | This repository                                                                                          |
 
 > **License Compliance:** All components use OSI-approved open-source licenses (MIT, Apache-2.0, 0BSD, PSF, Artistic-2.0). No GPL/AGPL copyleft. No proprietary or source-available licenses. Total transitive dependency count: ~256 packages (`npm ls --all`).
 >
@@ -1192,35 +1142,6 @@ Contributions welcome — bug reports, feature requests, documentation improveme
 MIT © 2025. See [LICENSE](./LICENSE) for full text.
 
 All third-party components are OSI-approved open source (see [SBOM](#sbom--software-bill-of-materials)).
-
-### Legacy Installation (host-level)
-
-For users who prefer a host-level install (Node.js, apt packages, Pi on bare metal), the original install scripts are preserved in `scripts/legacy/`:
-
-| File                            | Purpose                                             |
-| ------------------------------- | --------------------------------------------------- |
-| `scripts/legacy/install.sh`     | Automated apt + npm install for Ubuntu/Debian hosts |
-| `scripts/legacy/postinstall.sh` | Patch Pi footer pipe separator                      |
-
-These scripts are **deprecated** — the Docker workflow is the supported path. They remain for reference and for users who cannot run Docker.
-
-### Project Model Config (host-level)
-
-The project defines model costs and compat settings in `.pi/agent/models.json`. This file is symlinked to `~/.pi/agent/models.json` so pi picks it up:
-
-```bash
-ln -sf $(pwd)/.pi/agent/models.json ~/.pi/agent/models.json
-```
-
-**Keep it in sync after every pi update.** Built-in model definitions (costs, `compat` flags like `thinkingFormat`) change between pi releases. If the custom models.json drifts from built-in, caching breaks and token waste increases — especially for Qwen (`thinkingFormat: "qwen"`) and DeepSeek models.
-
-Run `scripts/pi_update` after updating pi:
-
-```bash
-./scripts/pi_update
-```
-
-This updates the pi npm package, verifies the models.json symlink, and is extensible — add new update steps as functions in the `UPDATE_STEPS` array.
 
 ### Acknowledgments
 
@@ -1245,11 +1166,10 @@ Built on top of these excellent projects:
 
 - [Caveman](https://github.com/JuliusBrussee/caveman) — Token-efficient AI communication protocol
 - [pi-caveman](https://github.com/jonjonrankin/pi-caveman) — Multi-level caveman mode for Pi
-- [Matt Pocock's Skills — improve-codebase-architecture](https://github.com/mattpocock/skills/tree/main/skills/engineering/improve-codebase-architecture) — Architecture deepening methodology integrated as `.pi/skills/improve-codebase-architecture/`. Also inspiration for `issue-refinement` prompt pattern.
+- [Matt Pocock's Skills — improve-codebase-architecture](https://github.com/mattpocock/skills/tree/main/skills/engineering/improve-codebase-architecture) — Architecture deepening methodology. Also inspiration for `issue-refinement` prompt pattern.
 
 **Extensions & Tools:**
 
 - [Pi SDK & Extensions Documentation](https://pi.dev/docs/latest) — Extension API, commands, hooks, theme system
 - [ast-grep](https://ast-grep.github.io) — Structural code search via Tree-sitter AST
 - [ripgrep](https://github.com/BurntSushi/ripgrep) — Ultra-fast literal/regex code search
-- [universal-ctags](https://ctags.io) — Codebase symbol indexing

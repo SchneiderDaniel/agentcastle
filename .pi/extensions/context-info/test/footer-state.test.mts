@@ -71,7 +71,6 @@ describe("FooterState — construction & defaults", () => {
 		assert.strictEqual(state.footerConfig.lastComputedTps.value, null);
 		assert.strictEqual(state.lastSampledOutput, undefined);
 		assert.strictEqual(state.footerConfig.toolCallCount.value, 0);
-		assert.strictEqual(state.startupWidgetActive, false);
 		assert.strictEqual(state.footerConfig.cacheRead, undefined);
 		assert.strictEqual(state.footerConfig.cacheWrite, undefined);
 		// ── New fields (Improvements #1, #2, #4) ───────────────

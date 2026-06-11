@@ -14,7 +14,8 @@
 - **Configurable backend** — Set `searchBackend` to `"auto"` (default), `"ripgrep"`, or `"grep"` in `.pi/settings.json`
 - **Backend indicator** — Injects current search backend into system prompt so LLM knows which tool is active
 - **Temp file handling** — Large outputs saved to temp files, cleaned up at session shutdown
-- **TUI rendering** — Compact inline result display with match counts and truncation status
+- **TUI rendering** — Compact inline result display with match counts, truncation status, and clickable file paths via OSC 8 `file://` hyperlinks
+- **Mode-aware rendering** — Automatically adapts output for TUI (rich, themed), JSON, RPC, and print modes; non-TUI modes pass raw text through without theme formatting or OSC 8 escape sequences
 
 ## How it works
 

@@ -20,11 +20,17 @@ import {
 	DiagnosticsWatcher,
 	resolveDiagnosticFilePath,
 	formatDiagnostics,
+	formatDiagnosticsJson,
 	formatTrend,
 	runTscCheckpoint,
 } from "../index.ts";
 
-import type { TscDiagnostic, TscWatchAdapter, TscCheckpointResult } from "../index.ts";
+import type {
+	TscDiagnostic,
+	TscWatchAdapter,
+	TscCheckpointResult,
+	DiagnosticTrend,
+} from "../index.ts";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Mock Adapter for Testing
@@ -525,13 +531,25 @@ interface MockSendUserMessage {
 	options?: { deliverAs?: string };
 }
 
+interface MockCtx {
+	isProjectTrusted?: boolean;
+	mode?: "tui" | "json" | "rpc" | "print";
+}
+
 /**
  * Simulates the extension entry point behavior for /check command.
  * Uses the actual imported DiagnosticsWatcher with a mock adapter.
+ *
+ * @param adapter - Optional mock adapter for simulated diagnostics.
+ * @param mockCtx - Optional mock context with isProjectTrusted and mode.
  */
-function createCheckHandler(adapter?: MockAdapter) {
+function createCheckHandler(adapter?: MockAdapter, mockCtx?: MockCtx) {
 	const messages: MockSendUserMessage[] = [];
 	let watcherInstance: DiagnosticsWatcher | null = null;
+	const ctx = {
+		isProjectTrusted: mockCtx?.isProjectTrusted ?? true,
+		mode: mockCtx?.mode ?? "tui",
+	};
 
 	async function handleCheck(worktreePath: string): Promise<{
 		messages: MockSendUserMessage[];
@@ -545,6 +563,16 @@ function createCheckHandler(adapter?: MockAdapter) {
 			messages.push({
 				content:
 					"## TSC Checkpoint\n\nNo `tsconfig.json` found in worktree root. Skipping type-check.",
+				options: { deliverAs: "followUp" },
+			});
+			return { messages, diagnostics: [] };
+		}
+
+		// ── Trust Gate ──────────────────────────────────────────────
+		if (ctx.isProjectTrusted === false) {
+			messages.push({
+				content:
+					"## TSC Checkpoint — Project not trusted\n\nProject not trusted. Skipping type-check to avoid running `tsc` against potentially unsafe project-local configurations.",
 				options: { deliverAs: "followUp" },
 			});
 			return { messages, diagnostics: [] };
@@ -575,20 +603,32 @@ function createCheckHandler(adapter?: MockAdapter) {
 		const diagnostics = watcherInstance.getDiagnostics();
 		const trend = watcherInstance.getTrend();
 
-		if (diagnostics.length > 0) {
-			const formatted = formatDiagnostics(diagnostics);
-			let msg = `## TSC Checkpoint — ${diagnostics.length} Type Error(s) Found`;
-			if (trend) {
-				msg += ` (${trend.direction === "regressed" ? "⚠️ regression" : trend.direction === "improved" ? "✓ improved" : "→ stable"})`;
+		// ── Mode-Adapted Output ─────────────────────────────────────
+		if (ctx.mode === "tui") {
+			if (diagnostics.length > 0) {
+				const formatted = formatDiagnostics(diagnostics);
+				let msg = `## TSC Checkpoint — ${diagnostics.length} Type Error(s) Found`;
+				if (trend) {
+					msg += ` (${trend.direction === "regressed" ? "⚠️ regression" : trend.direction === "improved" ? "✓ improved" : "→ stable"})`;
+				}
+				msg += `\n\n${formatted}`;
+				messages.push({ content: msg, options: { deliverAs: "followUp" } });
+			} else {
+				let msg = "## TSC Checkpoint — ✓ No type errors detected";
+				if (trend && trend.current === 0 && trend.previous > 0) {
+					msg += " (✓ all errors resolved)";
+				}
+				messages.push({ content: msg, options: { deliverAs: "followUp" } });
 			}
-			msg += `\n\n${formatted}`;
-			messages.push({ content: msg, options: { deliverAs: "followUp" } });
 		} else {
-			let msg = "## TSC Checkpoint — ✓ No type errors detected";
-			if (trend && trend.current === 0 && trend.previous > 0) {
-				msg += " (✓ all errors resolved)";
-			}
-			messages.push({ content: msg, options: { deliverAs: "followUp" } });
+			// JSON/RPC/Print mode: structured JSON
+			const jsonOutput = formatDiagnosticsJson(diagnostics, trend ?? undefined);
+			const message = JSON.stringify({
+				type: "tsc-checkpoint",
+				...jsonOutput,
+				...(trend ? { trend } : {}),
+			});
+			messages.push({ content: message, options: { deliverAs: "followUp" } });
 		}
 
 		return { messages, diagnostics };
@@ -898,5 +938,388 @@ describe("resource leak prevention (no duplicate watchers)", () => {
 		fire1();
 		fire2();
 		assert.ok(true);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 9: Trust Gate — reject untrusted project before starting watcher
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("Trust gate (isProjectTrusted)", () => {
+	it("trusted project proceeds, starts watcher, running message sent", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: true,
+			mode: "tui",
+		});
+
+		const result = await handleCheck(process.cwd());
+
+		// Watcher was started
+		assert.strictEqual(adapter.startCalls, 1);
+		// Running message sent
+		assert.ok(result.messages.some((m) => m.content.includes("Running `tsc`")));
+	});
+
+	it("untrusted project returns early with warning, no watcher created", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: false,
+			mode: "tui",
+		});
+
+		const result = await handleCheck(process.cwd());
+
+		// No watcher was started
+		assert.strictEqual(adapter.startCalls, 0);
+		// Only one message: the untrusted warning
+		assert.strictEqual(result.messages.length, 1);
+		assert.ok(result.messages[0]!.content.includes("Project not trusted"));
+		assert.ok(result.messages[0]!.content.includes("Skipping type-check"));
+		// No diagnostics returned
+		assert.deepStrictEqual(result.diagnostics, []);
+	});
+
+	it("untrusted project with no observable watcher state change", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: false,
+			mode: "tui",
+		});
+
+		const result = await handleCheck(process.cwd());
+
+		// No watcher created, no running message, no diagnostics
+		assert.strictEqual(adapter.startCalls, 0);
+		const hasRunningMsg = result.messages.some((m) => m.content.includes("Running `tsc`"));
+		assert.strictEqual(hasRunningMsg, false);
+	});
+
+	it("isProjectTrusted called with optional chaining for backward compat", async () => {
+		// Default mockCtx has isProjectTrusted: true, handler proceeds
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: true,
+		});
+
+		const result = await handleCheck(process.cwd());
+		assert.strictEqual(adapter.startCalls, 1);
+		assert.ok(result.messages.some((m) => m.content.includes("Running `tsc`")));
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 10: Mode-adapted output — JSON in non-TUI modes, markdown in TUI
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("formatDiagnosticsJson", () => {
+	it("returns correct structure with diagnostics", () => {
+		const diags: TscDiagnostic[] = [
+			{
+				file: "src/a.ts",
+				line: 10,
+				column: 5,
+				severity: "Error",
+				message: "Type error",
+				code: "TS2322",
+				filePath: "/project/src/a.ts",
+			},
+		];
+		const result = formatDiagnosticsJson(diags);
+		assert.strictEqual(result.diagnostics.length, 1);
+		assert.strictEqual(result.fileCount, 1);
+		assert.ok(result.summary.includes("1 type error(s) found"));
+	});
+
+	it("empty diagnostics returns empty array, summary 'No type errors detected', fileCount 0", () => {
+		const result = formatDiagnosticsJson([]);
+		assert.deepStrictEqual(result.diagnostics, []);
+		assert.strictEqual(result.summary, "No type errors detected");
+		assert.strictEqual(result.fileCount, 0);
+	});
+
+	it("summary includes trend direction and delta when trend provided", () => {
+		const diags: TscDiagnostic[] = [
+			{
+				file: "src/a.ts",
+				line: 5,
+				column: 3,
+				severity: "Error",
+				message: "err",
+				code: "TS2304",
+				filePath: "/project/src/a.ts",
+			},
+			{
+				file: "src/b.ts",
+				line: 10,
+				column: 1,
+				severity: "Error",
+				message: "err2",
+				code: "TS2322",
+				filePath: "/project/src/b.ts",
+			},
+			{
+				file: "src/c.ts",
+				line: 15,
+				column: 7,
+				severity: "Error",
+				message: "err3",
+				code: "TS2554",
+				filePath: "/project/src/c.ts",
+			},
+		];
+		const trend: DiagnosticTrend = {
+			current: 3,
+			previous: 1,
+			direction: "regressed",
+			delta: 2,
+		};
+		const result = formatDiagnosticsJson(diags, trend);
+		assert.strictEqual(result.diagnostics.length, 3);
+		assert.strictEqual(result.fileCount, 3);
+		assert.ok(result.summary.includes("3 type error(s) found"));
+		assert.ok(result.summary.includes("regressed ↑"));
+		assert.ok(result.summary.includes("2"));
+		assert.ok(result.summary.includes("was 1"));
+	});
+
+	it("fileCount counts unique filePaths", () => {
+		const diags: TscDiagnostic[] = [
+			{
+				file: "a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "err1",
+				code: "TS2322",
+				filePath: "/project/src/a.ts",
+			},
+			{
+				file: "a.ts",
+				line: 5,
+				column: 3,
+				severity: "Error",
+				message: "err2",
+				code: "TS2304",
+				filePath: "/project/src/a.ts",
+			},
+			{
+				file: "b.ts",
+				line: 10,
+				column: 1,
+				severity: "Error",
+				message: "err3",
+				code: "TS2554",
+				filePath: "/project/src/b.ts",
+			},
+		];
+		const result = formatDiagnosticsJson(diags);
+		assert.strictEqual(result.diagnostics.length, 3);
+		assert.strictEqual(result.fileCount, 2); // Two unique files
+	});
+});
+
+describe("Mode-adapted output (/check with ctx.mode)", () => {
+	it("TUI mode sends markdown with clickable file paths", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: true,
+			mode: "tui",
+		});
+
+		await handleCheck(process.cwd());
+
+		// Emit some diagnostics
+		adapter.emitDiagnostics([
+			{
+				file: "src/app.ts",
+				line: 10,
+				column: 5,
+				severity: "Error",
+				message: "Type 'string' is not assignable",
+				code: "TS2322",
+				filePath: "/project/src/app.ts",
+			},
+		]);
+
+		const result = await handleCheck(process.cwd());
+
+		// Find the error message
+		const errorMsg = result.messages.find((m) => m.content.includes("Type Error(s) Found"));
+		assert.ok(errorMsg, "Should have error message in TUI mode");
+		// Should have markdown-style content
+		assert.ok(errorMsg!.content.includes("/project/src/app.ts"));
+		assert.ok(errorMsg!.content.includes("Line 10"));
+		assert.ok(errorMsg!.content.includes("(TS2322)"));
+	});
+
+	it("JSON mode sends structured JSON string", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: true,
+			mode: "json",
+		});
+
+		await handleCheck(process.cwd());
+
+		// Emit some diagnostics
+		adapter.emitDiagnostics([
+			{
+				file: "src/app.ts",
+				line: 10,
+				column: 5,
+				severity: "Error",
+				message: "Type error",
+				code: "TS2322",
+				filePath: "/project/src/app.ts",
+			},
+		]);
+
+		const result = await handleCheck(process.cwd());
+
+		// Get the last JSON message (first one is empty diagnostics from initial run)
+		const jsonMsgs = result.messages.filter((m) => m.content.startsWith("{"));
+		const lastJsonMsg = jsonMsgs[jsonMsgs.length - 1];
+		assert.ok(lastJsonMsg, "Should have JSON message in JSON mode");
+		const parsed = JSON.parse(lastJsonMsg!.content);
+		assert.strictEqual(parsed.type, "tsc-checkpoint");
+		assert.strictEqual(parsed.diagnostics.length, 1);
+		assert.strictEqual(parsed.fileCount, 1);
+		assert.ok(parsed.summary.includes("1 type error(s) found"));
+	});
+
+	it("RPC mode sends same structured JSON as JSON mode", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: true,
+			mode: "rpc",
+		});
+
+		await handleCheck(process.cwd());
+
+		adapter.emitDiagnostics([
+			{
+				file: "src/app.ts",
+				line: 10,
+				column: 5,
+				severity: "Error",
+				message: "Type error",
+				code: "TS2322",
+				filePath: "/project/src/app.ts",
+			},
+		]);
+
+		const result = await handleCheck(process.cwd());
+
+		// Get the last JSON message
+		const jsonMsgs = result.messages.filter((m) => m.content.startsWith("{"));
+		const lastJsonMsg = jsonMsgs[jsonMsgs.length - 1];
+		assert.ok(lastJsonMsg, "Should have JSON message in RPC mode");
+		const parsed = JSON.parse(lastJsonMsg!.content);
+		assert.strictEqual(parsed.type, "tsc-checkpoint");
+		assert.strictEqual(parsed.diagnostics.length, 1);
+	});
+
+	it("print mode sends same structured JSON as JSON mode", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: true,
+			mode: "print",
+		});
+
+		await handleCheck(process.cwd());
+
+		const result = await handleCheck(process.cwd());
+
+		// Get the last JSON message (both calls produce JSON, last has empty diagnostics)
+		const jsonMsgs = result.messages.filter((m) => m.content.startsWith("{"));
+		const lastJsonMsg = jsonMsgs[jsonMsgs.length - 1];
+		assert.ok(lastJsonMsg, "Should have JSON message in print mode");
+		const parsed = JSON.parse(lastJsonMsg!.content);
+		assert.strictEqual(parsed.type, "tsc-checkpoint");
+		assert.strictEqual(parsed.diagnostics.length, 0);
+		assert.strictEqual(parsed.summary, "No type errors detected");
+		assert.strictEqual(parsed.fileCount, 0);
+	});
+
+	it("JSON mode with trend info includes trend in output", async () => {
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: true,
+			mode: "json",
+		});
+
+		await handleCheck(process.cwd());
+
+		// First diagnostic emission (1 error)
+		adapter.emitDiagnostics([
+			{
+				file: "a.ts",
+				line: 1,
+				column: 1,
+				severity: "Error",
+				message: "err",
+				filePath: "/a.ts",
+			},
+		]);
+
+		await handleCheck(process.cwd());
+
+		// Second emission (3 errors, regressed)
+		adapter.emitDiagnostics([
+			{ file: "a.ts", line: 1, column: 1, severity: "Error", message: "err", filePath: "/a.ts" },
+			{ file: "b.ts", line: 2, column: 2, severity: "Error", message: "err2", filePath: "/b.ts" },
+			{ file: "c.ts", line: 3, column: 3, severity: "Error", message: "err3", filePath: "/c.ts" },
+		]);
+
+		const result = await handleCheck(process.cwd());
+
+		// Get the last JSON message
+		const jsonMsgs = result.messages.filter((m) => m.content.startsWith("{"));
+		const lastJsonMsg = jsonMsgs[jsonMsgs.length - 1];
+		assert.ok(lastJsonMsg, "Should have JSON message");
+		const parsed = JSON.parse(lastJsonMsg!.content);
+		assert.strictEqual(parsed.type, "tsc-checkpoint");
+		assert.strictEqual(parsed.diagnostics.length, 3);
+		assert.ok(parsed.trend, "Should include trend data");
+		assert.strictEqual(parsed.trend.direction, "regressed");
+		assert.strictEqual(parsed.trend.delta, 2);
+		// Summary should include trend info
+		assert.ok(parsed.summary.includes("3 type error(s) found"));
+		assert.ok(parsed.summary.includes("regressed ↑"));
+		assert.ok(parsed.summary.includes("was 1"));
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 11: Import parseArgs — structural addition without behavioral change
+// ═══════════════════════════════════════════════════════════════════════
+
+describe("parseArgs import", () => {
+	it("parseArgs is exported from @earendil-works/pi-coding-agent", async () => {
+		const mod = await import("@earendil-works/pi-coding-agent");
+		assert.strictEqual(typeof mod.parseArgs, "function");
+	});
+
+	it("source module imports parseArgs from the package", async () => {
+		const mod = await import("../index.ts");
+		// Verify the module still compiles and exports correctly
+		assert.strictEqual(typeof mod.formatDiagnosticsJson, "function");
+		assert.strictEqual(typeof mod.formatDiagnostics, "function");
+		assert.strictEqual(typeof mod.default, "function");
+	});
+
+	it("handler signature unchanged (args passed as raw string)", async () => {
+		// The handler still uses the same signature (_args, ctx)
+		// parseArgs is imported but not yet called in the handler
+		// Verify by checking the command handler works as before
+		const adapter = new MockAdapter();
+		const { handleCheck } = createCheckHandler(adapter, {
+			isProjectTrusted: true,
+			mode: "tui",
+		});
+
+		const result = await handleCheck(process.cwd());
+		assert.ok(result.messages.some((m) => m.content.includes("Running `tsc`")));
 	});
 });

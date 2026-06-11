@@ -472,6 +472,491 @@ describe("buildPrettierArgs config path", () => {
 // Tests: error boundary (handler-level try/catch)
 // ═══════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════
+// Tests: handler-level integration (trust gate + mode-adaptive notifications)
+// ═══════════════════════════════════════════════════════════════════════
+
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+
+/**
+ * Temp file helper: creates a small temp file and returns cleanup + path.
+ */
+function createTempTsFile(): { dir: string; filePath: string; cleanup: () => void } {
+	const dir = mkdtempSync(join(tmpdir(), "fos-handler-test-"));
+	const filePath = join(dir, "test.ts");
+	writeFileSync(filePath, "const x = 1;\n");
+	return { dir, filePath, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+interface EventHandler {
+	event: string;
+	handler: (...args: unknown[]) => unknown;
+}
+
+function getNotifyCalls(ctx: ExtensionContext): string[] {
+	return (ctx as unknown as Record<string, unknown>)._notifyCalls as string[];
+}
+
+/**
+ * Run the tool_result handler with given overrides.
+ * Creates a temp .ts file so existsSync/statSync pass through.
+ */
+async function runHandler(
+	ctxOverrides: Record<string, unknown> = {},
+	eventOverrides: Record<string, unknown> = {},
+	execResults?: {
+		prettierCode?: number;
+		prettierStdout?: string;
+		eslintCode?: number;
+		eslintStdout?: string;
+	},
+): Promise<{
+	events: EventHandler[];
+	execCalls: Array<{ command: string; args: string[]; opts?: Record<string, unknown> }>;
+	sendUserMessages: Array<{ content: string; options: Record<string, unknown> }>;
+	ctx: ExtensionContext;
+	cleanup: () => void;
+}> {
+	const { dir, filePath, cleanup } = createTempTsFile();
+
+	const events: EventHandler[] = [];
+	const execCalls: Array<{ command: string; args: string[]; opts?: Record<string, unknown> }> = [];
+	const sendUserMessages: Array<{ content: string; options: Record<string, unknown> }> = [];
+
+	let execCallIndex = 0;
+
+	const pi = {
+		on: (event: string, handler: (...args: unknown[]) => unknown) => {
+			events.push({ event, handler });
+		},
+		exec: async (command: string, args: string[], opts?: Record<string, unknown>) => {
+			execCalls.push({ command, args, opts });
+			const idx = execCallIndex++;
+			if (idx === 0) {
+				return {
+					code: execResults?.prettierCode ?? 0,
+					stdout: execResults?.prettierStdout ?? "",
+					stderr: "",
+					killed: false,
+				};
+			}
+			return {
+				code: execResults?.eslintCode ?? 0,
+				stdout: execResults?.eslintStdout ?? "[]",
+				stderr: "",
+				killed: false,
+			};
+		},
+		sendUserMessage: (content: string, options: Record<string, unknown>) => {
+			sendUserMessages.push({ content, options });
+		},
+	} as unknown as ExtensionAPI;
+
+	const mod = await import("../index.ts");
+	mod.default(pi);
+
+	const toolResult = events.find((e) => e.event === "tool_result");
+	assert.ok(toolResult !== undefined, "tool_result handler must be registered");
+
+	const notifyCalls: string[] = [];
+
+	// Use the temp dir as cwd so file resolution works
+	const eventInputPath = (eventOverrides as Record<string, unknown>).input as
+		| { path: string }
+		| undefined;
+	const relativePath = eventInputPath?.path ?? "test.ts";
+	const inputPath = relativePath.startsWith("/") ? relativePath : relativePath;
+
+	const ctx = {
+		cwd: dir,
+		ui: {
+			notify: (message: string) => {
+				notifyCalls.push(message);
+			},
+			setStatus: () => {},
+			theme: {
+				fg: () => (s: string) => s,
+				bold: (s: string) => s,
+			},
+		} as unknown as ExtensionContext["ui"],
+		sessionManager: {
+			getEntries: () => [] as unknown[],
+		},
+		mode: "tui",
+		hasUI: true,
+		isProjectTrusted: () => true,
+		_notifyCalls: notifyCalls,
+		...ctxOverrides,
+	} as unknown as ExtensionContext;
+
+	const event = {
+		toolName: "write",
+		isError: false,
+		input: { path: "test.ts" },
+		...eventOverrides,
+	};
+
+	await toolResult.handler(event, ctx);
+
+	return {
+		events,
+		execCalls,
+		sendUserMessages,
+		ctx: { ...ctx, _notifyCalls: notifyCalls } as unknown as ExtensionContext,
+		cleanup,
+	};
+}
+
+describe("handler — trust gate", () => {
+	it("trusted + write + .ts → exec called for prettier and eslint", async () => {
+		const { execCalls, sendUserMessages, cleanup } = await runHandler();
+		try {
+			assert.ok(execCalls.length >= 1, "prettier exec should be called");
+			const prettierCall = execCalls[0]!;
+			assert.ok(
+				prettierCall.command === "npx" && prettierCall.args[0] === "prettier",
+				"first exec should be prettier",
+			);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("untrusted + write + .ts → early return, no exec, no notifications", async () => {
+		const { execCalls, sendUserMessages, ctx, cleanup } = await runHandler({
+			isProjectTrusted: () => false,
+		});
+		try {
+			assert.strictEqual(execCalls.length, 0, "no exec calls for untrusted project");
+			assert.strictEqual(getNotifyCalls(ctx).length, 0, "no notify calls for untrusted project");
+			assert.strictEqual(sendUserMessages.length, 0, "no sendUserMessage for untrusted project");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("untrusted + edit + .ts → same early return", async () => {
+		const { execCalls, sendUserMessages, ctx, cleanup } = await runHandler(
+			{ isProjectTrusted: () => false },
+			{ toolName: "edit" },
+		);
+		try {
+			assert.strictEqual(execCalls.length, 0, "no exec calls for untrusted project on edit");
+			assert.strictEqual(getNotifyCalls(ctx).length, 0);
+			assert.strictEqual(sendUserMessages.length, 0);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("untrusted + write + .py → skipped at shouldFormat before trust check", async () => {
+		const { execCalls, sendUserMessages, cleanup } = await runHandler(
+			{ isProjectTrusted: () => false },
+			{ input: { path: "test.py" } },
+		);
+		try {
+			assert.strictEqual(execCalls.length, 0, "no exec for .py file");
+			assert.strictEqual(sendUserMessages.length, 0);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("trusted + error event → skipped before trust check", async () => {
+		const { execCalls, sendUserMessages, cleanup } = await runHandler(
+			{ isProjectTrusted: () => true },
+			{ isError: true },
+		);
+		try {
+			assert.strictEqual(execCalls.length, 0, "no exec on error event");
+			assert.strictEqual(sendUserMessages.length, 0);
+		} finally {
+			cleanup();
+		}
+	});
+});
+
+describe("handler — mode-adaptive notifications", () => {
+	it("tui mode, format succeeds, ESLint returns diagnostics → notify + followUp", async () => {
+		const eslintDiagStdout = JSON.stringify([
+			{
+				filePath: "test.ts",
+				messages: [
+					{
+						line: 10,
+						column: 5,
+						severity: 2,
+						message: "Unexpected any",
+						ruleId: "no-explicit-any",
+					},
+				],
+				errorCount: 1,
+				warningCount: 0,
+			},
+		]);
+
+		const { sendUserMessages, ctx, cleanup } = await runHandler(
+			{ mode: "tui", hasUI: true },
+			{},
+			{ prettierCode: 0, eslintCode: 1, eslintStdout: eslintDiagStdout },
+		);
+		try {
+			const notifyCalls = getNotifyCalls(ctx);
+			assert.ok(
+				notifyCalls.some((m) => m.startsWith("Formatted:")),
+				"TUI should notify formatted",
+			);
+			assert.ok(
+				notifyCalls.some((m) => m.startsWith("ESLint ran:")),
+				"TUI should notify ESLint ran",
+			);
+			assert.ok(sendUserMessages.length >= 1, "should send followUp for lint diagnostics");
+			if (sendUserMessages.length >= 1) {
+				assert.strictEqual(sendUserMessages[0]!.options.deliverAs, "followUp");
+				assert.ok(sendUserMessages[0]!.content.includes("Lint Diagnostics"));
+			}
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("rpc mode, format succeeds, ESLint returns diagnostics → no notify, followUp for format + lint", async () => {
+		const eslintDiagStdout = JSON.stringify([
+			{
+				filePath: "test.ts",
+				messages: [
+					{
+						line: 10,
+						column: 5,
+						severity: 2,
+						message: "Unexpected any",
+						ruleId: "no-explicit-any",
+					},
+				],
+				errorCount: 1,
+				warningCount: 0,
+			},
+		]);
+
+		const { sendUserMessages, ctx, cleanup } = await runHandler(
+			{ mode: "rpc", hasUI: true },
+			{},
+			{ prettierCode: 0, eslintCode: 1, eslintStdout: eslintDiagStdout },
+		);
+		try {
+			const notifyCalls = getNotifyCalls(ctx);
+			assert.strictEqual(notifyCalls.length, 0, "RPC mode should not call ctx.ui.notify");
+			assert.ok(sendUserMessages.length >= 1, "should send followUp messages in RPC mode");
+
+			const formatFollowUps = sendUserMessages.filter((m: { content: string }) =>
+				m.content.startsWith("Formatted:"),
+			);
+			assert.ok(formatFollowUps.length >= 1, "RPC should send format summary as followUp");
+
+			const lintFollowUps = sendUserMessages.filter((m: { content: string }) =>
+				m.content.includes("Lint Diagnostics"),
+			);
+			assert.ok(lintFollowUps.length >= 1, "RPC should send lint diagnostics as followUp");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("json mode, format succeeds → no notify, no followUp for format (lint followUp still sent if diagnostics)", async () => {
+		const eslintDiagStdout = JSON.stringify([
+			{
+				filePath: "test.ts",
+				messages: [
+					{
+						line: 10,
+						column: 5,
+						severity: 2,
+						message: "Unexpected any",
+						ruleId: "no-explicit-any",
+					},
+				],
+				errorCount: 1,
+				warningCount: 0,
+			},
+		]);
+
+		const { sendUserMessages, ctx, cleanup } = await runHandler(
+			{ mode: "json", hasUI: false },
+			{},
+			{ prettierCode: 0, eslintCode: 1, eslintStdout: eslintDiagStdout },
+		);
+		try {
+			const notifyCalls = getNotifyCalls(ctx);
+			assert.strictEqual(notifyCalls.length, 0, "JSON mode should not call ctx.ui.notify");
+
+			const formatFollowUps = sendUserMessages.filter((m: { content: string }) =>
+				m.content.startsWith("Formatted:"),
+			);
+			assert.strictEqual(
+				formatFollowUps.length,
+				0,
+				"JSON mode should not send format summary followUp",
+			);
+
+			const lintFollowUps = sendUserMessages.filter((m: { content: string }) =>
+				m.content.includes("Lint Diagnostics"),
+			);
+			assert.ok(lintFollowUps.length >= 1, "JSON mode should still send lint diagnostics followUp");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("print mode, format succeeds → same as json mode", async () => {
+		const eslintDiagStdout = JSON.stringify([
+			{
+				filePath: "test.ts",
+				messages: [
+					{
+						line: 10,
+						column: 5,
+						severity: 2,
+						message: "Unexpected any",
+						ruleId: "no-explicit-any",
+					},
+				],
+				errorCount: 1,
+				warningCount: 0,
+			},
+		]);
+
+		const { sendUserMessages, ctx, cleanup } = await runHandler(
+			{ mode: "print", hasUI: false },
+			{},
+			{ prettierCode: 0, eslintCode: 1, eslintStdout: eslintDiagStdout },
+		);
+		try {
+			const notifyCalls = getNotifyCalls(ctx);
+			assert.strictEqual(notifyCalls.length, 0, "Print mode should not call ctx.ui.notify");
+
+			const formatFollowUps = sendUserMessages.filter((m: { content: string }) =>
+				m.content.startsWith("Formatted:"),
+			);
+			assert.strictEqual(
+				formatFollowUps.length,
+				0,
+				"Print mode should not send format summary followUp",
+			);
+
+			const lintFollowUps = sendUserMessages.filter((m: { content: string }) =>
+				m.content.includes("Lint Diagnostics"),
+			);
+			assert.ok(
+				lintFollowUps.length >= 1,
+				"Print mode should still send lint diagnostics followUp",
+			);
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("all modes, ESLint returns empty/no diagnostics → no ESLint notify, no followUp for diagnostics", async () => {
+		const { sendUserMessages, ctx, cleanup } = await runHandler(
+			{ mode: "tui", hasUI: true },
+			{},
+			{ prettierCode: 0, eslintCode: 0, eslintStdout: "[]" },
+		);
+		try {
+			const notifyCalls = getNotifyCalls(ctx);
+			assert.ok(
+				notifyCalls.some((m) => m.startsWith("Formatted:")),
+				"should notify formatted",
+			);
+			assert.ok(
+				!notifyCalls.some((m) => m.startsWith("ESLint ran:")),
+				"should not notify ESLint ran when empty",
+			);
+			assert.strictEqual(sendUserMessages.length, 0, "no sendUserMessage when ESLint empty");
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("all modes, ESLint config error → retry with --no-eslintrc works", async () => {
+		const { dir, cleanup: cleanupFiles } = createTempTsFile();
+		try {
+			const events2: EventHandler[] = [];
+			const execCalls2: Array<{ command: string; args: string[]; opts?: Record<string, unknown> }> =
+				[];
+			const sendUserMessages2: Array<{ content: string; options: Record<string, unknown> }> = [];
+
+			let execCallIndex = 0;
+
+			const pi2 = {
+				on: (event: string, handler: (...args: unknown[]) => unknown) => {
+					events2.push({ event, handler });
+				},
+				exec: async (command: string, args: string[], opts?: Record<string, unknown>) => {
+					execCalls2.push({ command, args, opts });
+					const idx = execCallIndex++;
+					if (idx === 0) return { code: 0, stdout: "", stderr: "", killed: false };
+					if (idx === 1) return { code: 2, stdout: "", stderr: "", killed: false };
+					return { code: 0, stdout: "[]", stderr: "", killed: false };
+				},
+				sendUserMessage: (content: string, options: Record<string, unknown>) => {
+					sendUserMessages2.push({ content, options });
+				},
+			} as unknown as ExtensionAPI;
+
+			const mod = await import("../index.ts");
+			mod.default(pi2);
+
+			const toolResult = events2.find((e) => e.event === "tool_result");
+			assert.ok(toolResult !== undefined);
+
+			const notifyCalls2: string[] = [];
+			const ctx2 = {
+				cwd: dir,
+				ui: {
+					notify: (message: string) => notifyCalls2.push(message),
+					setStatus: () => {},
+					theme: { fg: () => (s: string) => s, bold: (s: string) => s },
+				} as unknown as ExtensionContext["ui"],
+				sessionManager: { getEntries: () => [] as unknown[] },
+				mode: "tui",
+				hasUI: true,
+				isProjectTrusted: () => true,
+			} as unknown as ExtensionContext;
+
+			await toolResult!.handler(
+				{ toolName: "write", isError: false, input: { path: "test.ts" } },
+				ctx2,
+			);
+
+			const eslintRetry = execCalls2.find((c) => c.args.includes("--no-eslintrc"));
+			assert.ok(eslintRetry, "ESLint retry with --no-eslintrc should be called after config error");
+			assert.ok(!notifyCalls2.some((m) => m.startsWith("ESLint ran:")));
+			assert.strictEqual(
+				sendUserMessages2.length,
+				0,
+				"no sendUserMessage when ESLint returns empty after retry",
+			);
+		} finally {
+			cleanupFiles();
+		}
+	});
+
+	it("untrusted + any mode → trust check precedes notification logic", async () => {
+		const { execCalls, sendUserMessages, ctx, cleanup } = await runHandler(
+			{ mode: "tui", hasUI: true, isProjectTrusted: () => false },
+			{},
+			{ prettierCode: 0, eslintCode: 0, eslintStdout: "[]" },
+		);
+		try {
+			assert.strictEqual(execCalls.length, 0, "no exec calls for untrusted project");
+			assert.strictEqual(getNotifyCalls(ctx).length, 0, "no notify for untrusted project");
+			assert.strictEqual(sendUserMessages.length, 0, "no sendUserMessage for untrusted project");
+		} finally {
+			cleanup();
+		}
+	});
+});
+
 describe("handler error boundary", () => {
 	it("runEslintOnFile does not throw on exec rejection (simulated via failing mock)", async () => {
 		let caught = false;
