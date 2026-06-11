@@ -34,7 +34,12 @@ import { runTscAndLspAudit } from "../pipeline/audit.ts";
 import { buildPipelineSummary, validateAgentResult } from "../pipeline/output.ts";
 import { handlePostPipelineMerge } from "../pipeline/merge.ts";
 import { createWorktree, installWorktreeDeps, cleanupWorktree } from "./worktree.ts";
-import { createCrashCleanup, type CrashCleanup, type CleanupOnExitDeps } from "./crash-cleanup.ts";
+import {
+	createCrashCleanup,
+	setupCrashCleanup,
+	type CrashCleanup,
+	type CleanupOnExitDeps,
+} from "./crash-cleanup.ts";
 import { createPrOnApproval } from "./pr-creation.ts";
 import { sendPipelineSummary, sendAgentResultMessage, sendPipelineError } from "./notifications.ts";
 import { ErrorCollector, setErrorCollector, getErrorCollector } from "./error-collector.ts";
@@ -345,8 +350,7 @@ export async function handleSupervisorCommand(
 				notify,
 				debugLogger: getDebugLogger(),
 			};
-			crashCleanup = createCrashCleanup(cleanupDeps);
-			crashCleanup.register();
+			crashCleanup = setupCrashCleanup(cleanupDeps);
 			getDebugLogger().info("handler", "Crash cleanup handlers registered (SIGTERM/SIGINT)");
 		}
 

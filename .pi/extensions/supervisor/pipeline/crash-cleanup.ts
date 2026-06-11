@@ -104,3 +104,31 @@ export function createCrashCleanup(deps: CleanupOnExitDeps): CrashCleanup {
 		},
 	};
 }
+
+/**
+ * Convenience wrapper that creates a CrashCleanup and registers signal handlers.
+ * Extracted for testability — Phase 3 verifies setup happens before pipeline loop
+ * and teardown runs in finally block.
+ */
+export function setupCrashCleanup(deps: CleanupOnExitDeps): CrashCleanup {
+	const cc = createCrashCleanup(deps);
+	cc.register();
+	return cc;
+}
+
+/**
+ * Runs an async function with crash cleanup lifecycle.
+ * Registers SIGTERM/SIGINT handlers before fn, tears down in finally.
+ * Extracted for testability of the wiring pattern.
+ */
+export async function withCrashCleanup<T>(
+	deps: CleanupOnExitDeps,
+	fn: (cc: CrashCleanup) => Promise<T>,
+): Promise<T> {
+	const cc = setupCrashCleanup(deps);
+	try {
+		return await fn(cc);
+	} finally {
+		cc.teardown();
+	}
+}
