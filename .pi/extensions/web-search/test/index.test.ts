@@ -2,293 +2,180 @@
  * Tests for index.ts — tool registration, parameter validation, cache, result formatting
  *
  * Layer: (D) Domain/Unit — mock pi.exec, no network.
+ * Tests the real webSearch implementation with mocked pi.exec.
  */
 
 import assert from "node:assert/strict";
-import { describe, it, mock, beforeEach } from "node:test";
+import { describe, it } from "node:test";
 import type { ExecFn, ExecResult } from "../types.ts";
-import webSearch, { formatResults as realFormatResults } from "../index.ts";
+import webSearch, { formatResults } from "../index.ts";
 
-// ===========================================================================
-// Replicate index.ts logic inline for testing
-// ===========================================================================
+// ── Mock exec helpers ──
 
-interface ExtensionAPI {
+/** Return the same ExecResult for every call */
+function mockExecReturns(result: ExecResult): ExecFn {
+	return async () => result;
+}
+
+/** Return ExecResults in sequence, repeating the last result for extra calls */
+function mockExecSequence(results: ExecResult[]): ExecFn {
+	let i = 0;
+	return async () =>
+		results[i++] ?? results[results.length - 1] ?? { code: 0, stdout: "", stderr: "" };
+}
+
+// ── Test helper: register the real webSearch tool with a mock pi.exec ──
+
+interface MockPi {
 	registerTool: (tool: any) => void;
 	exec: ExecFn;
 }
 
-/** In-session cache for search results to avoid redundant lookups */
-const searchCache = new Map<
-	string,
-	{ results: Array<{ title: string; url: string; snippet: string }>; timestamp: number }
->();
-
-/** TTL for cache entries in milliseconds (5 minutes) */
-const CACHE_TTL_MS = 5 * 60 * 1000;
-
-function formatResults(results: Array<{ title: string; url: string; snippet: string }>): string {
-	if (results.length === 0) {
-		return "No results found.";
-	}
-
-	const lines = results.map((r, i) => `${i + 1}. [${r.title}](${r.url})\n   ${r.snippet}`);
-
-	return `Search results:\n\n${lines.join("\n\n")}`;
+function registerWebSearch(mockExec: ExecFn): any {
+	let tool: any;
+	const mockPi: MockPi = {
+		registerTool: (t: any) => {
+			tool = t;
+		},
+		exec: mockExec,
+	};
+	webSearch(mockPi as any);
+	return tool;
 }
 
-function webSearchEntry(pi: ExtensionAPI): void {
-	pi.registerTool({
-		name: "web_search",
-		label: "Web Search",
-		description:
-			"Search the web using DuckDuckGo and return ranked results with URLs and snippets. " +
-			"Use this to discover relevant URLs before crawling them with web_crawl. " +
-			"Returns [{title, url, snippet}] from DuckDuckGo search. " +
-			"Results are cached within a session to avoid redundant lookups.",
-		promptSnippet: "Search the web and return ranked results with URLs and snippets via DuckDuckGo",
-		promptGuidelines: [
-			"- Use web_search to discover relevant URLs before crawling them with web_crawl.",
-			"- Results include title, URL, and snippet for each search result.",
-			"- Search results are cached within a session to avoid redundant lookups.",
-		],
-		parameters: {
-			type: "object",
-			properties: {
-				query: {
-					type: "string",
-					description: "Search query (e.g. 'latest rust web framework 2026')",
-				},
-				maxResults: {
-					type: "number",
-					default: 10,
-					description: "Maximum number of search results (default 10)",
-				},
-			},
-		},
-		async execute(_toolCallId: string, params: any, _signal: any, _onUpdate: any, _ctx: any) {
-			const query = params.query?.trim();
-			if (!query) {
-				throw new Error("Search query is empty");
-			}
+// ===========================================================================
+// Module exports
+// ===========================================================================
 
-			// Test hooks for error simulation
-			if (params.__test_venv_fail) {
-				throw new Error(
-					"Web search failed: could not set up Python virtual environment. " +
-						"Ensure python3 is installed and try again.",
-				);
-			}
-			if (params.__test_search_fail) {
-				throw new Error("Search failed: python3 error (code 1): mock stderr");
-			}
-			if (params.__test_parse_fail) {
-				throw new Error("Search failed: mock parse error");
-			}
-
-			const maxResults = Math.min(Math.max(1, params.maxResults ?? 10), 50);
-
-			// Check cache
-			const cacheKey = `${query}:${maxResults}`;
-			const cached = searchCache.get(cacheKey);
-			if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-				return { content: [{ type: "text", text: formatResults(cached.results) }], details: {} };
-			}
-
-			return { content: [{ type: "text", text: "mock search result" }], details: {} };
-		},
-	});
-}
-
-describe("web-search extension entry point", () => {
-	it("(D) registers web_search tool on pi.registerTool", () => {
-		const registeredTools: any[] = [];
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTools.push(tool);
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
-		assert.equal(registeredTools.length, 1);
-		assert.equal(registeredTools[0].name, "web_search");
+describe("webSearch module exports", () => {
+	it("(D) exports webSearch as a function", () => {
+		assert.equal(typeof webSearch, "function");
 	});
 
-	it("(D) registered tool has execute function", () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
-		assert.ok(typeof registeredTool.execute === "function");
-	});
-
-	it("(D) registered tool has query and optional maxResults parameters", () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
-		assert.ok(registeredTool.parameters.properties?.query !== undefined);
-		assert.ok(registeredTool.parameters.properties?.maxResults !== undefined);
-	});
-
-	it("(D) registered tool has name, label, description fields", () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
-		assert.equal(registeredTool.name, "web_search");
-		assert.equal(registeredTool.label, "Web Search");
-		assert.ok(typeof registeredTool.description === "string");
-		assert.ok(registeredTool.description.length > 20);
-	});
-
-	it("(D) registered tool has promptSnippet field", () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
-		assert.ok(typeof registeredTool.promptSnippet === "string");
-		assert.ok(registeredTool.promptSnippet.toLowerCase().includes("search"));
-		assert.ok(Array.isArray(registeredTool.promptGuidelines));
-		assert.ok(registeredTool.promptGuidelines.length > 0);
-		assert.ok(registeredTool.promptGuidelines.every((g: any) => typeof g === "string"));
-	});
-
-	it("(D) registered tool includes promptGuidelines array", () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearch(mockPi as any);
-		assert.ok(Array.isArray(registeredTool.promptGuidelines));
-		assert.ok(registeredTool.promptGuidelines.length > 0);
+	it("(D) exports formatResults as a function", () => {
+		assert.equal(typeof formatResults, "function");
 	});
 });
 
+// ===========================================================================
+// Registration metadata
+// ===========================================================================
+
+describe("web-search extension entry point", () => {
+	it("(D) registers web_search tool on pi.registerTool", () => {
+		const tool = registerWebSearch(mockExecReturns({ code: 0, stdout: "", stderr: "" }));
+		assert.equal(tool.name, "web_search");
+	});
+
+	it("(D) registered tool has execute function", () => {
+		const tool = registerWebSearch(mockExecReturns({ code: 0, stdout: "", stderr: "" }));
+		assert.equal(typeof tool.execute, "function");
+	});
+
+	it("(D) registered tool has query and optional maxResults parameters", () => {
+		const tool = registerWebSearch(mockExecReturns({ code: 0, stdout: "", stderr: "" }));
+		assert.ok(tool.parameters.properties?.query !== undefined);
+		assert.ok(tool.parameters.properties?.maxResults !== undefined);
+	});
+
+	it("(D) registered tool has name, label, description fields", () => {
+		const tool = registerWebSearch(mockExecReturns({ code: 0, stdout: "", stderr: "" }));
+		assert.equal(tool.name, "web_search");
+		assert.equal(tool.label, "Web Search");
+		assert.ok(typeof tool.description === "string");
+		assert.ok(tool.description.length > 20);
+	});
+
+	it("(D) registered tool has promptSnippet field", () => {
+		const tool = registerWebSearch(mockExecReturns({ code: 0, stdout: "", stderr: "" }));
+		assert.ok(typeof tool.promptSnippet === "string");
+		assert.ok(tool.promptSnippet.toLowerCase().includes("search"));
+	});
+
+	it("(D) registered tool includes promptGuidelines array", () => {
+		const tool = registerWebSearch(mockExecReturns({ code: 0, stdout: "", stderr: "" }));
+		assert.ok(Array.isArray(tool.promptGuidelines));
+		assert.ok(tool.promptGuidelines.length > 0);
+		assert.ok(tool.promptGuidelines.every((g: any) => typeof g === "string"));
+	});
+});
+
+// ===========================================================================
+// execute — parameter validation (no exec calls needed, checks throw)
+// ===========================================================================
+
 describe("web_search.execute — parameter validation", () => {
 	it("(D) execute validates query parameter — empty query throws error", async () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
+		const tool = registerWebSearch(mockExecReturns({ code: 0, stdout: "", stderr: "" }));
 		await assert.rejects(
-			registeredTool.execute("call1", { query: "" }, undefined, undefined, { cwd: "/tmp" }),
+			tool.execute("call1", { query: "" }, undefined, undefined, { cwd: "/test-empty" }),
 			{ message: "Search query is empty" },
 		);
 	});
 
 	it("(D) execute validates query parameter — whitespace-only query throws error", async () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
+		const tool = registerWebSearch(mockExecReturns({ code: 0, stdout: "", stderr: "" }));
 		await assert.rejects(
-			registeredTool.execute("call1", { query: "   " }, undefined, undefined, { cwd: "/tmp" }),
+			tool.execute("call1", { query: "   " }, undefined, undefined, { cwd: "/test-ws" }),
 			{ message: "Search query is empty" },
 		);
 	});
+});
 
+// ===========================================================================
+// execute — error paths requiring exec mocking
+// ===========================================================================
+
+describe("web_search.execute — error paths with exec mocking", () => {
 	it("(D) execute throws on venv setup failure", async () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
+		// All exec calls return code 1 → ensureWebSearchVenv returns null → throw
+		const tool = registerWebSearch(mockExecReturns({ code: 1, stdout: "", stderr: "no python3" }));
 		await assert.rejects(
-			registeredTool.execute(
-				"call1",
-				{ query: "test", __test_venv_fail: true },
-				undefined,
-				undefined,
-				{ cwd: "/tmp" },
-			),
+			tool.execute("call1", { query: "venv-test" }, undefined, undefined, {
+				cwd: "/test-venv-fail",
+			}),
 			{ message: /Python virtual environment/ },
 		);
 	});
 
 	it("(D) execute throws on search script non-zero exit", async () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
+		// Calls: 1=python3 --version (ok), 2=venv ddgs check (ok), 3=bash script (fail)
+		const tool = registerWebSearch(
+			mockExecSequence([
+				{ code: 0, stdout: "Python 3.11", stderr: "" },
+				{ code: 0, stdout: "ok", stderr: "" },
+				{ code: 1, stdout: "", stderr: "search error" },
+			]),
+		);
 		await assert.rejects(
-			registeredTool.execute(
-				"call1",
-				{ query: "test", __test_search_fail: true },
-				undefined,
-				undefined,
-				{ cwd: "/tmp" },
-			),
+			tool.execute("call1", { query: "search-test" }, undefined, undefined, {
+				cwd: "/test-search-fail",
+			}),
 			{ message: /Search failed: python3 error/ },
 		);
 	});
 
 	it("(D) execute throws on parse failure", async () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-		};
-
-		webSearchEntry(mockPi);
+		// Calls: 1=python3 --version (ok), 2=venv ddgs check (ok), 3=bash script (ok but unparseable stdout)
+		const tool = registerWebSearch(
+			mockExecSequence([
+				{ code: 0, stdout: "Python 3.11", stderr: "" },
+				{ code: 0, stdout: "ok", stderr: "" },
+				{ code: 0, stdout: "no delimiters here", stderr: "" },
+			]),
+		);
 		await assert.rejects(
-			registeredTool.execute(
-				"call1",
-				{ query: "test", __test_parse_fail: true },
-				undefined,
-				undefined,
-				{ cwd: "/tmp" },
-			),
+			tool.execute("call1", { query: "parse-test" }, undefined, undefined, {
+				cwd: "/test-parse-fail",
+			}),
 			{ message: /Search failed/ },
 		);
 	});
 });
+
+// ===========================================================================
+// formatResults — result formatting
+// ===========================================================================
 
 describe("formatResults — result formatting", () => {
 	it("(D) formats results with rank numbers, titles as links, snippets", () => {
@@ -296,52 +183,55 @@ describe("formatResults — result formatting", () => {
 			{ title: "Result 1", url: "https://example.com/1", snippet: "First result snippet" },
 			{ title: "Result 2", url: "https://example.com/2", snippet: "Second result snippet" },
 		];
-		const text = realFormatResults(results);
-		assert.ok(text.includes("1. [Result 1](https://example.com/1)"));
-		assert.ok(text.includes("First result snippet"));
-		assert.ok(text.includes("2. [Result 2](https://example.com/2)"));
-		assert.ok(text.includes("Second result snippet"));
+		assert.ok(formatResults(results).includes("1. [Result 1](https://example.com/1)"));
+		assert.ok(formatResults(results).includes("First result snippet"));
+		assert.ok(formatResults(results).includes("2. [Result 2](https://example.com/2)"));
+		assert.ok(formatResults(results).includes("Second result snippet"));
 	});
 
 	it("(D) returns 'No results found.' for empty array", () => {
-		const text = realFormatResults([]);
-		assert.equal(text, "No results found.");
+		assert.equal(formatResults([]), "No results found.");
 	});
 });
 
-describe("Cache functionality", () => {
-	beforeEach(() => {
-		searchCache.clear();
-	});
+// ===========================================================================
+// Cache functionality
+// ===========================================================================
 
+describe("Cache functionality", () => {
 	it("(D) cache stores results and returns cached on repeated call", async () => {
-		let registeredTool: any = null;
-		const mockPi: ExtensionAPI = {
-			registerTool: (tool: any) => {
-				registeredTool = tool;
-			},
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+		let callCount = 0;
+		const mockExec: ExecFn = async () => {
+			callCount++;
+			if (callCount === 1) return { code: 0, stdout: "Python 3.11", stderr: "" };
+			if (callCount === 2) return { code: 0, stdout: "ok", stderr: "" };
+			// Search script succeeds with valid output (matches python-script.ts format)
+			const searchResults = [
+				{ title: "Cached", url: "https://example.com", snippet: "Cached result" },
+			];
+			return {
+				code: 0,
+				stdout: `SEARCH_OK\n${JSON.stringify({ ok: true, results: searchResults })}\nSEARCH_DONE`,
+				stderr: "",
+			};
 		};
 
-		webSearchEntry(mockPi);
+		const tool = registerWebSearch(mockExec);
 
-		// First call — should not be cached yet
-		// We need to add to cache first since our test doesn't actually call the real executor
-		const cacheKey = "typescript:10";
-		searchCache.set(cacheKey, {
-			results: [{ title: "Cached", url: "https://example.com", snippet: "Cached result" }],
-			timestamp: Date.now(),
+		// First call — should succeed and populate cache
+		const result1 = await tool.execute("call1", { query: "cache-test" }, undefined, undefined, {
+			cwd: "/test-cache",
 		});
+		assert.equal(
+			result1.content[0].text,
+			formatResults([{ title: "Cached", url: "https://example.com", snippet: "Cached result" }]),
+		);
 
-		// Second call — should use cache
-		// This test verifies the cache logic path in execute()
-		const execute = registeredTool.execute;
-		const result = await execute("call1", { query: "typescript" }, undefined, undefined, {
-			cwd: "/tmp",
+		// Second call with same query — should use cache, no additional exec calls
+		const result2 = await tool.execute("call2", { query: "cache-test" }, undefined, undefined, {
+			cwd: "/test-cache",
 		});
-		assert.ok(searchCache.has(cacheKey));
-		const cached = searchCache.get(cacheKey)!;
-		assert.ok(Date.now() - cached.timestamp >= 0);
-		assert.equal(cached.results[0].title, "Cached");
+		assert.equal(result2.content[0].text, result1.content[0].text);
+		assert.equal(callCount, 3); // No extra exec calls on second invocation
 	});
 });
