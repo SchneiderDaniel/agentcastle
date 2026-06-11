@@ -80,6 +80,10 @@ function setupTest(initialLevel: Level = "off") {
 // ---------------------------------------------------------------------------
 
 describe("command.ts — registerCavemanCommand", () => {
+	it("exports registerCavemanCommand as a function", () => {
+		assert.strictEqual(typeof registerCavemanCommand, "function");
+	});
+
 	it("calls pi.registerCommand('caveman', ...) exactly once", () => {
 		const { piCalls } = setupTest();
 		const cmdCalls = piCalls.filter((c) => c.name === "registerCommand");
