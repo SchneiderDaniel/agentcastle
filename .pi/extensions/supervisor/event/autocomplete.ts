@@ -4,7 +4,9 @@
 // Uses fuzzyFilter from @earendil-works/pi-tui for local matching.
 // Cache: module-level promise per session_start (not per keystroke).
 
-import type { ExtensionAPI, SupervisorConfig } from "@earendil-works/pi-coding-agent";
+import type { SupervisorConfig } from "../config/types.ts";
+import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
+import type { AutocompleteProviderFactory } from "@earendil-works/pi-coding-agent";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -12,17 +14,6 @@ export interface IssueItem {
 	number: number;
 	title: string;
 	state: string;
-}
-
-interface AutocompleteItem {
-	value: string;
-	label: string;
-	description?: string;
-}
-
-interface AutocompleteContext {
-	text: string;
-	cursor?: number;
 }
 
 // ─── Regex ──────────────────────────────────────────────────────────
@@ -91,14 +82,26 @@ export function resetIssueCache(): void {
 	cachedIssuesPromise = null;
 }
 
-// ─── Autocomplete Provider ──────────────────────────────────────────
+/**
+ * Extract the partial issue token after `#` at the cursor position.
+ * Returns the partial token text, or null if no `#` trigger is active.
+ */
+function extractIssueToken(lines: string[], cursorLine: number, cursorCol: number): string | null {
+	const currentLine = lines[cursorLine] || "";
+	const textBeforeCursor = currentLine.slice(0, cursorCol);
+	const match = textBeforeCursor.match(ISSUE_TOKEN_RE);
+	return match ? match[1] || "" : null;
+}
+
+// ─── Autocomplete Provider Factory ──────────────────────────────────
 
 /**
- * Build an autocomplete provider triggered by `#` for issue numbers.
+ * Build an autocomplete provider factory triggered by `#` for issue numbers.
  *
- * The provider wraps any existing inner provider (pass-through when no `#` is typed).
- * When `#` is detected at the end of input, it fetches open issues and
+ * The factory wraps the current built-in autocomplete provider.
+ * When `#` is detected at the cursor, it fetches open issues and
  * filters them locally using the partial token after `#`.
+ * Otherwise, it delegates to the current provider.
  *
  * @param config - Supervisor config (provides repo name)
  * @param execFn - Function to execute shell commands (e.g., pi.exec)
@@ -110,19 +113,16 @@ export function createIssueAutocompleteProvider(
 		cmd: string,
 		args: string[],
 	) => Promise<{ code: number; stdout: string; stderr: string }>,
-): (ctx: AutocompleteContext) => { getItems: () => Promise<AutocompleteItem[]> } {
-	return (ctx: AutocompleteContext) => {
+): AutocompleteProviderFactory {
+	return (current: AutocompleteProvider): AutocompleteProvider => {
 		return {
-			getItems: async (): Promise<AutocompleteItem[]> => {
-				const text = ctx.text || "";
-				const match = text.match(ISSUE_TOKEN_RE);
+			getSuggestions: async (lines, cursorLine, cursorCol, options) => {
+				const partial = extractIssueToken(lines, cursorLine, cursorCol);
 
-				if (!match) {
-					// No `#` trigger — return empty (pass-through to inner provider)
-					return [];
+				if (partial === null) {
+					// No `#` trigger — delegate to current provider
+					return current.getSuggestions(lines, cursorLine, cursorCol, options);
 				}
-
-				const partial = (match[1] || "").toLowerCase();
 
 				try {
 					const issues = await fetchOpenIssues(execFn, config.repo);
@@ -136,14 +136,23 @@ export function createIssueAutocompleteProvider(
 							)
 						: issues;
 
-					return filtered.map((issue) => ({
+					const items: AutocompleteItem[] = filtered.map((issue) => ({
 						value: `#${issue.number}`,
 						label: `#${issue.number}: ${issue.title}`,
 						description: issue.state === "OPEN" ? "Open" : issue.state,
 					}));
+
+					return {
+						items,
+						prefix: partial,
+					};
 				} catch {
-					return [];
+					// Graceful fallback: delegate on error
+					return current.getSuggestions(lines, cursorLine, cursorCol, options);
 				}
+			},
+			applyCompletion: (lines, cursorLine, cursorCol, item, prefix) => {
+				return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
 			},
 		};
 	};

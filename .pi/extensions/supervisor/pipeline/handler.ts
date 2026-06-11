@@ -93,7 +93,10 @@ export async function handleSupervisorCommand(
 	// project_trust event handler (it's a project-local extension).
 	// #3 (auto-trust via project_trust event) must live in a separate
 	// global extension.
-	if (typeof ctx.isProjectTrusted === "function" && !ctx.isProjectTrusted()) {
+	// isProjectTrusted may not be in type definitions for older pi-coding-agent versions
+	// but it exists at runtime in v0.79.1+. Use optional chaining via cast.
+	const isTrusted = (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted?.();
+	if (isTrusted === false) {
 		const msg = "Project not trusted. Skipping issue operations.";
 		if (ctx.hasUI) {
 			ctx.ui.notify(msg, "error");
@@ -114,9 +117,20 @@ export async function handleSupervisorCommand(
 				skills?: string[];
 		  }
 		| undefined;
-	if (typeof ctx.getSystemPromptOptions === "function") {
+	// getSystemPromptOptions may not be in type definitions for older pi-coding-agent versions
+	// but it exists at runtime in v0.78.1+. Use optional chaining via cast.
+	const ctxWithOpts = ctx as {
+		getSystemPromptOptions?: () =>
+			| {
+					selectedTools?: string[];
+					contextFiles?: string[];
+					skills?: string[];
+			  }
+			| undefined;
+	};
+	if (typeof ctxWithOpts.getSystemPromptOptions === "function") {
 		try {
-			const opts = ctx.getSystemPromptOptions();
+			const opts = ctxWithOpts.getSystemPromptOptions();
 			if (opts) {
 				systemPromptOptions = {
 					selectedTools: opts.selectedTools as string[] | undefined,

@@ -40,7 +40,7 @@ describe("User journey — TUI mode, trusted, experimental off", () => {
 		assert.equal(ctx.hasUI, true);
 
 		// Step 5: Experimental features checked (nothing gated out since disabled)
-		const experimentalActive = config.enableExperimentalFeatures === true;
+		const experimentalActive = config.enableExperimentalFeatures;
 		assert.equal(experimentalActive, false);
 
 		// Step 6: Pipeline would run normally

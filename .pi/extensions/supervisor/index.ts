@@ -18,7 +18,8 @@ export default function supervisor(pi: ExtensionAPI) {
 	registerSupervisorCommand(pi);
 
 	// Register #-trigger autocomplete provider for issue numbers
-	pi.on("session_start", async () => {
+	// The session_start handler receives ExtensionContext which has ctx.ui
+	pi.on("session_start", async (_event, ctx) => {
 		// Reset the module-level cache so fresh issues are fetched
 		resetIssueCache();
 
@@ -26,8 +27,8 @@ export default function supervisor(pi: ExtensionAPI) {
 			const config = loadConfig();
 			const execFn = (cmd: string, args: string[]) => pi.exec(cmd, args);
 
-			// Register the autocomplete provider wrapping the current provider
-			pi.ui.addAutocompleteProvider(createIssueAutocompleteProvider(config, execFn));
+			// Register the autocomplete provider via ctx.ui (ExtensionContext, not ExtensionAPI)
+			ctx.ui.addAutocompleteProvider(createIssueAutocompleteProvider(config, execFn));
 		} catch {
 			// Supervisor not configured — skip autocomplete registration silently
 		}

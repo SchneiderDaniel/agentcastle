@@ -25,7 +25,10 @@ beforeEach(() => {
 
 function createMockPi(): ExtensionAPI {
 	return {
-		exec: (async () => ({ code: 0, stdout: "", stderr: "" })) as ExtensionAPI["exec"],
+		exec: (async () =>
+			({ code: 0, stdout: "", stderr: "", killed: false, signal: null }) as Awaited<
+				ReturnType<ExtensionAPI["exec"]>
+			>) as ExtensionAPI["exec"],
 		registerCommand: (() => {}) as ExtensionAPI["registerCommand"],
 		sendMessage: ((msg: any) => {
 			sentMessages.push(msg);
@@ -34,7 +37,8 @@ function createMockPi(): ExtensionAPI {
 }
 
 function createMockCtx(hasUI: boolean = true, mode: string = "tui"): ExtensionCommandContext {
-	return {
+	// Cast to include mode which may not be in type definitions for older versions
+	const ctx = {
 		cwd: "/repo",
 		hasUI,
 		mode,
@@ -51,7 +55,8 @@ function createMockCtx(hasUI: boolean = true, mode: string = "tui"): ExtensionCo
 				fg: (color: string, text: string) => `[${color}]${text}[/${color}]`,
 			},
 		},
-	} as unknown as ExtensionCommandContext;
+	} as unknown as ExtensionCommandContext & { mode: string };
+	return ctx as unknown as ExtensionCommandContext;
 }
 
 const mockConfig: SupervisorConfig = {
@@ -150,7 +155,7 @@ describe("ctx.mode and ctx.hasUI properties", () => {
 	it("ctx.mode returns 'tui' | 'rpc' | 'json' | 'print'", () => {
 		const modes = ["tui", "rpc", "json", "print"];
 		for (const m of modes) {
-			const ctx = createMockCtx(m !== "print" && m !== "json", m);
+			const ctx = createMockCtx(m !== "print" && m !== "json", m) as unknown as { mode: string };
 			assert.equal(ctx.mode, m);
 		}
 	});
