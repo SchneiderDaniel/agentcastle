@@ -26,6 +26,10 @@ import type { ASTFinding, ASTScanningResult } from "../ast-scanner.ts";
 import type { ImpactScore } from "../impact-scorer.ts";
 import type { MigrationSnippet } from "../migration-generator.ts";
 
+// ── Mock type helper ──
+// Provides access to mock.calls without needing the non-exported Mock<F> type from node:test
+type MockLike<T> = T & { mock: { calls: Array<{ arguments: unknown[] }> } };
+
 // ── Mock helpers ──
 
 /** Create a noop mock ExtensionAPI */
@@ -295,8 +299,8 @@ describe("ChangelogPipeline — notify helper", () => {
 		// that validatePhase calls ctx.ui.notify with the right args
 		const result = pipeline.validatePhase();
 
-		const notifyMock = ctx.ui.notify as mock.Mock<(msg: string, level: string) => void>;
-		const sendMessageMock = pi.sendMessage as mock.Mock<(...args: unknown[]) => unknown>;
+		const notifyMock = ctx.ui.notify as MockLike<(msg: string, level: string) => void>;
+		const sendMessageMock = pi.sendMessage as MockLike<(...args: unknown[]) => unknown>;
 
 		// With hasUI=true, ctx.ui.notify should have been called
 		// (validatePhase may or may not call notify depending on changelog existence)
@@ -317,8 +321,8 @@ describe("ChangelogPipeline — notify helper", () => {
 
 		pipeline.validatePhase();
 
-		const notifyMock = ctx.ui.notify as mock.Mock<(msg: string, level: string) => void>;
-		const sendMessageMock = pi.sendMessage as mock.Mock<(...args: unknown[]) => unknown>;
+		const notifyMock = ctx.ui.notify as MockLike<(msg: string, level: string) => void>;
+		const sendMessageMock = pi.sendMessage as MockLike<(...args: unknown[]) => unknown>;
 
 		// ctx.ui.notify should NOT be called when hasUI=false
 		assert.equal(
@@ -335,12 +339,14 @@ describe("ChangelogPipeline — notify helper", () => {
 		}
 	});
 
-	it("notify with hasUI=false and sendMessage rejecting does not crash", async () => {
-		const rejectError = new Error("sendMessage failed");
+	it("notify with hasUI=false and sendMessage throwing does not crash", async () => {
+		const throwError = new Error("sendMessage failed");
 
 		const localPi = {
 			...createMockPi(),
-			sendMessage: mock.fn(() => Promise.reject(rejectError)) as ExtensionAPI["sendMessage"],
+			sendMessage: mock.fn(() => {
+				throw throwError;
+			}) as ExtensionAPI["sendMessage"],
 		} as unknown as ExtensionAPI;
 		const localCtx: PipelineContext = {
 			cwd: process.cwd(),
@@ -350,16 +356,16 @@ describe("ChangelogPipeline — notify helper", () => {
 
 		const localPipeline = new ChangelogPipeline(localPi, localCtx);
 
-		// validatePhase with hasUI=false calls notify which calls sendMessage (rejects)
-		// The notify helper catches the rejection, so this should not throw.
+		// validatePhase with hasUI=false calls notify which calls sendMessage (throws)
+		// The notify helper catches the throw, so this should not propagate.
 		localPipeline.validatePhase();
-		const sm = localPi.sendMessage as mock.Mock<(...args: unknown[]) => unknown>;
+		const sm = localPi.sendMessage as MockLike<(...args: unknown[]) => unknown>;
 		assert.ok(sm.mock.calls.length > 0, "sendMessage should have been called");
 	});
 
 	it("notify with hasUI=true works for all notify levels", () => {
 		const { pi, ctx, pipeline } = createTestPipeline({ hasUI: true });
-		const notifyMock = ctx.ui.notify as mock.Mock<(msg: string, level: string) => void>;
+		const notifyMock = ctx.ui.notify as MockLike<(msg: string, level: string) => void>;
 
 		// Trigger an info notify (validatePhase with existing changelog)
 		pipeline.validatePhase();
@@ -376,9 +382,15 @@ describe("ChangelogPipeline — notify helper", () => {
 		// Count calls — validatePhase calls notify at least once, plus our 3 direct calls
 		const calls = notifyMock.mock.calls;
 		// Find our direct calls by message content
-		const infoCalls = calls.filter((c) => c.arguments[0] === "info message");
-		const errorCalls = calls.filter((c) => c.arguments[0] === "error message");
-		const warningCalls = calls.filter((c) => c.arguments[0] === "warning message");
+		const infoCalls = calls.filter(
+			(c: { arguments: unknown[] }) => c.arguments[0] === "info message",
+		);
+		const errorCalls = calls.filter(
+			(c: { arguments: unknown[] }) => c.arguments[0] === "error message",
+		);
+		const warningCalls = calls.filter(
+			(c: { arguments: unknown[] }) => c.arguments[0] === "warning message",
+		);
 
 		assert.equal(infoCalls.length, 1, "should have 1 info call");
 		assert.equal(errorCalls.length, 1, "should have 1 error call");

@@ -84,17 +84,11 @@ export class ChangelogPipeline {
 			this.ctx.ui.notify(msg, level);
 		} else {
 			try {
-				const result = this.pi.sendMessage({
+				this.pi.sendMessage({
 					customType: "check-extensions",
 					content: msg,
 					display: true,
 				});
-				// Handle async sendMessage — catch rejections silently
-				if (result instanceof Promise) {
-					result.catch(() => {
-						/* sendMessage failure is non-critical */
-					});
-				}
 			} catch {
 				/* sendMessage failure is non-critical */
 			}

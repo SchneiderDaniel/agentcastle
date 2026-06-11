@@ -3006,7 +3006,7 @@ describe("parseCheckExtensionsArgs", () => {
 
 describe("check-extensions handler — trust gate", () => {
 	it("does NOT call runPipeline when isProjectTrusted() returns false", async () => {
-		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+		let capturedHandler!: (args: string, ctx: any) => Promise<void>;
 		let userMessageSent = false;
 
 		const pi = {
@@ -3026,7 +3026,6 @@ describe("check-extensions handler — trust gate", () => {
 
 		const mod = await import("../index.ts");
 		mod.default(pi);
-		assert.ok(capturedHandler, "handler should be registered");
 
 		const testCtx = {
 			cwd: "/tmp",
@@ -3035,14 +3034,14 @@ describe("check-extensions handler — trust gate", () => {
 			isProjectTrusted: () => false,
 		};
 
-		await capturedHandler!("", testCtx);
+		await capturedHandler("", testCtx);
 
 		// Handler should have sent user message about trust
 		assert.equal(userMessageSent, true, "should send trust-gate user message");
 	});
 
 	it("calls runPipeline when isProjectTrusted() returns true", async () => {
-		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+		let capturedHandler!: (args: string, ctx: any) => Promise<void>;
 		let notifyCalled = false;
 
 		const pi = {
@@ -3060,7 +3059,6 @@ describe("check-extensions handler — trust gate", () => {
 
 		const mod = await import("../index.ts");
 		mod.default(pi);
-		assert.ok(capturedHandler, "handler should be registered");
 
 		const testCtx = {
 			cwd: "/tmp",
@@ -3074,14 +3072,14 @@ describe("check-extensions handler — trust gate", () => {
 		};
 
 		// Handler should proceed past trust gate and attempt pipeline
-		await capturedHandler!("", testCtx);
+		await capturedHandler("", testCtx);
 
 		// Handler should have called ctx.ui.notify (from pipeline's validatePhase)
 		assert.equal(notifyCalled, true, "pipeline should proceed past trust gate");
 	});
 
 	it("handles missing isProjectTrusted gracefully (older pi version)", async () => {
-		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+		let capturedHandler!: (args: string, ctx: any) => Promise<void>;
 		let notifyCalled = false;
 
 		const pi = {
@@ -3099,7 +3097,6 @@ describe("check-extensions handler — trust gate", () => {
 
 		const mod = await import("../index.ts");
 		mod.default(pi);
-		assert.ok(capturedHandler, "handler should be registered");
 
 		// No isProjectTrusted method — older pi version
 		const testCtx = {
@@ -3113,7 +3110,7 @@ describe("check-extensions handler — trust gate", () => {
 		};
 
 		// Handler should proceed (optional chaining returns undefined, which !== false)
-		await capturedHandler!("", testCtx);
+		await capturedHandler("", testCtx);
 
 		assert.equal(notifyCalled, true, "pipeline should proceed when isProjectTrusted is absent");
 	});
@@ -3121,7 +3118,7 @@ describe("check-extensions handler — trust gate", () => {
 
 describe("check-extensions handler — parseArgs integration", () => {
 	it("parseCheckExtensionsArgs called before pipeline creation (empty args)", async () => {
-		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+		let capturedHandler!: (args: string, ctx: any) => Promise<void>;
 
 		const pi = {
 			on: () => {},
@@ -3139,8 +3136,6 @@ describe("check-extensions handler — parseArgs integration", () => {
 		const mod = await import("../index.ts");
 		mod.default(pi);
 
-		assert.ok(capturedHandler, "handler should be registered");
-
 		const testCtx = {
 			cwd: "/tmp",
 			ui: { notify: () => {} },
@@ -3152,14 +3147,14 @@ describe("check-extensions handler — parseArgs integration", () => {
 		// It will attempt runPipeline which may fail, but that's fine —
 		// we just verify parseArgs was called (no crash)
 		try {
-			await capturedHandler!("", testCtx);
+			await capturedHandler("", testCtx);
 		} catch {
 			// Expected — pipeline will fail without real changelog
 		}
 	});
 
 	it("handler accepts unknown flags without crashing", async () => {
-		let capturedHandler: ((args: string, ctx: any) => Promise<void>) | null = null;
+		let capturedHandler!: (args: string, ctx: any) => Promise<void>;
 
 		const pi = {
 			on: () => {},
@@ -3186,7 +3181,7 @@ describe("check-extensions handler — parseArgs integration", () => {
 
 		// Handler should not crash with unknown flags
 		try {
-			await capturedHandler!("--dry-run --since=v0.78.0", testCtx);
+			await capturedHandler("--dry-run --since=v0.78.0", testCtx);
 		} catch {
 			// Expected — pipeline will fail without real changelog
 		}
