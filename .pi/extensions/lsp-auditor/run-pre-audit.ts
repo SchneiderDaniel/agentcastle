@@ -16,6 +16,51 @@ import { countRetryAttempts, shouldRetry, MAX_RETRIES, RETRY_ENTRY_TYPE } from "
 import { auditFileGroup } from "./lsp-client.ts";
 import { readSettings } from "./settings.ts";
 
+// ─── Project Trust Helper ────────────────────────────────────────────
+
+/**
+ * Check if the current project is trusted by the user.
+ *
+ * If the project is not trusted, LSP audit should be skipped because
+ * LSP servers may execute arbitrary code from workspace configuration.
+ * This matches the VS Code Restricted Mode precedent.
+ *
+ * Returns { trusted: true } if trusted, or { trusted: false, note: string }
+ * explaining why the audit was skipped.
+ *
+ * Defensive: returns untrusted + note if ctx is null/undefined or
+ * isProjectTrusted throws (fail-closed).
+ */
+export function checkProjectTrust(
+	ctx: { isProjectTrusted: () => boolean } | null | undefined,
+): { trusted: true } | { trusted: false; note: string } {
+	if (!ctx || typeof ctx.isProjectTrusted !== "function") {
+		return {
+			trusted: false,
+			note: "LSP audit skipped: project trust status unavailable (context missing)",
+		};
+	}
+
+	try {
+		if (ctx.isProjectTrusted()) {
+			return { trusted: true };
+		}
+		return {
+			trusted: false,
+			note:
+				"LSP audit skipped: project not trusted. LSP servers can execute " +
+				"code from workspace configuration. Trust the project with " +
+				'`pi trust` or `defaultProjectTrust: "always"` in settings to enable.',
+		};
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		return {
+			trusted: false,
+			note: `LSP audit skipped: project trust check failed (${msg})`,
+		};
+	}
+}
+
 /**
  * Map session-storage entries to retry-logic shape.
  *
@@ -49,6 +94,13 @@ export async function runPreAudit(
 	ctx: ExtensionContext,
 ): Promise<PreAuditResult> {
 	const { issueNum, worktreePath, defaultBranch } = options;
+
+	// 0. Check project trust before any LSP server interaction
+	const trustCheck = checkProjectTrust(ctx);
+	if (!trustCheck.trusted) {
+		pi.sendUserMessage?.(trustCheck.note, { deliverAs: "followUp" });
+		return { proceed: true, note: trustCheck.note };
+	}
 
 	// 1. Get modified files via git diff
 	let gitOutput: string;

@@ -21,7 +21,8 @@ import {
 import { buildServerMappings } from "../server-mappings.ts";
 import { extractModifiedFiles, groupFilesByServer } from "../file-discovery.ts";
 import { countRetryAttempts, shouldRetry, MAX_RETRIES } from "../retry.ts";
-import { mapSessionEntriesToRetryEntries } from "../run-pre-audit.ts";
+import { mapSessionEntriesToRetryEntries, checkProjectTrust } from "../run-pre-audit.ts";
+import { formatForMode } from "../output-adapter.ts";
 
 // =========================================================================
 // Tests
@@ -412,5 +413,100 @@ describe("groupFilesByServer", () => {
 		const { serverFiles, errors } = groupFilesByServer(["script.sh"], mappings);
 		assert.strictEqual(serverFiles.size, 0);
 		assert.strictEqual(errors.length, 1);
+	});
+});
+
+describe("checkProjectTrust", () => {
+	it("trusted → returns { trusted: true }", () => {
+		const result = checkProjectTrust({ isProjectTrusted: () => true });
+		assert.strictEqual(result.trusted, true);
+		assert.ok(!("note" in result && result.note));
+	});
+
+	it("untrusted → returns { trusted: false, note: string }", () => {
+		const result = checkProjectTrust({ isProjectTrusted: () => false });
+		assert.strictEqual(result.trusted, false);
+		assert.strictEqual(typeof (result as { trusted: false; note: string }).note, "string");
+		assert.ok((result as { trusted: false; note: string }).note.length > 0);
+	});
+
+	it("isProjectTrusted throws → returns { trusted: false, note } (fail-closed)", () => {
+		const result = checkProjectTrust({
+			isProjectTrusted: () => {
+				throw new Error("unexpected error");
+			},
+		});
+		assert.strictEqual(result.trusted, false);
+		assert.strictEqual(typeof (result as { trusted: false; note: string }).note, "string");
+	});
+
+	it("ctx null/undefined → returns { trusted: false, note } (defensive)", () => {
+		const nullResult = checkProjectTrust(null as unknown as { isProjectTrusted: () => boolean });
+		assert.strictEqual(nullResult.trusted, false);
+		assert.strictEqual(typeof (nullResult as { trusted: false; note: string }).note, "string");
+
+		const undefResult = checkProjectTrust(
+			undefined as unknown as { isProjectTrusted: () => boolean },
+		);
+		assert.strictEqual(undefResult.trusted, false);
+		assert.strictEqual(typeof (undefResult as { trusted: false; note: string }).note, "string");
+	});
+});
+
+describe("args splitting pattern (for parseArgs integration)", () => {
+	it("empty args string split → array with empty string", () => {
+		const args = "";
+		const split = args.split(/\s+/);
+		assert.deepStrictEqual(split, [""]);
+	});
+
+	it("simple flags split correctly", () => {
+		const result = "--files src/".split(/\s+/);
+		assert.deepStrictEqual(result, ["--files", "src/"]);
+	});
+
+	it("multiple flags and positionals split correctly", () => {
+		const result = "--files src/ --verbose src/main.ts".split(/\s+/);
+		assert.deepStrictEqual(result, ["--files", "src/", "--verbose", "src/main.ts"]);
+	});
+
+	it("whitespace normalization via split", () => {
+		const result = "   --files   src/   ".trim().split(/\s+/);
+		assert.deepStrictEqual(result, ["--files", "src/"]);
+	});
+});
+
+describe("formatForMode function selection per mode", () => {
+	it("TUI mode returns string type", () => {
+		const diags: LspDiagnostic[] = [
+			{ file: "test.ts", line: 1, column: 1, severity: "Error", message: "test" },
+		];
+		const tuiResult = formatForMode(diags, "tui", "/workspace", true);
+		assert.strictEqual(typeof tuiResult, "string");
+	});
+
+	it("RPC mode returns object type", () => {
+		const diags: LspDiagnostic[] = [
+			{ file: "test.ts", line: 1, column: 1, severity: "Error", message: "test" },
+		];
+		const rpcResult = formatForMode(diags, "rpc", "/workspace", false);
+		assert.strictEqual(typeof rpcResult, "object");
+	});
+
+	it("JSON mode returns same shape as RPC", () => {
+		const diags: LspDiagnostic[] = [
+			{ file: "test.ts", line: 1, column: 1, severity: "Error", message: "test" },
+		];
+		const rpcResult = formatForMode(diags, "rpc", "/workspace", false);
+		const jsonResult = formatForMode(diags, "json", "/workspace", false);
+		assert.deepStrictEqual(jsonResult, rpcResult);
+	});
+
+	it("Print mode returns string type", () => {
+		const diags: LspDiagnostic[] = [
+			{ file: "test.ts", line: 1, column: 1, severity: "Error", message: "test" },
+		];
+		const printResult = formatForMode(diags, "print", "/workspace", false);
+		assert.strictEqual(typeof printResult, "string");
 	});
 });
