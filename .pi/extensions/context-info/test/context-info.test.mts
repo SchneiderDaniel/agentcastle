@@ -20,7 +20,7 @@ import {
 // Runtime import from index.ts — verified through the test assertion below.
 // All local imports in index.ts use .ts extensions (changed from .js)
 // to support --experimental-strip-types resolution.
-import contextInfoFn from "../index.ts";
+import { contextInfo } from "../index.ts";
 
 // Runtime imports from prompts.ts, skills.ts, welcome.ts — these files
 // had import extension changes (.js → .ts) needed for the test runner.
@@ -238,21 +238,17 @@ function invoke(ctx: TestCtx, event: string, ...args: any[]) {
 
 // ---------------------------------------------------------------------------
 // Reference test for contextInfo from index.ts
-// The type import of contextInfoFn at the top of this file provides static
+// The named import of contextInfo at the top of this file provides static
 // coverage for index.ts's default export. This test verifies the type-level
 // reference is valid.
 // ---------------------------------------------------------------------------
 
 describe("contextInfo from index.ts", () => {
-	it("contextInfoFn is the default export — a function", () => {
-		// contextInfoFn is imported at runtime from ../index.ts.
+	it("contextInfo is the default export — a function", () => {
+		// contextInfo is imported at runtime from ../index.ts.
 		// Verifying it's a function confirms the module loaded successfully
 		// and the default export is the expected extension factory.
-		assert.strictEqual(
-			typeof contextInfoFn,
-			"function",
-			"contextInfoFn from index.ts is a function",
-		);
+		assert.strictEqual(typeof contextInfo, "function", "contextInfo from index.ts is a function");
 	});
 
 	it("prompts/skills/welcome runtime exports are valid functions", () => {
@@ -301,7 +297,7 @@ describe("contextInfo from index.ts", () => {
 			},
 			registerCommand: () => {},
 		};
-		contextInfoFn(pi as any);
+		contextInfo(pi as any);
 
 		assert.ok(handlers.has("session_start"), "should register session_start");
 		assert.ok(handlers.has("model_select"), "should register model_select");
@@ -346,7 +342,7 @@ describe("contextInfo from index.ts", () => {
 			registerCommand: () => {},
 			getSessionName: () => sessionNameValue,
 		};
-		contextInfoFn(pi as any);
+		contextInfo(pi as any);
 
 		const ctx = {
 			...createMockCtx(),
@@ -375,7 +371,7 @@ describe("contextInfo from index.ts", () => {
 			registerCommand: () => {},
 			getSessionName: () => undefined,
 		};
-		contextInfoFn(pi as any);
+		contextInfo(pi as any);
 
 		await handlers.get("session_start")!({}, createMockCtx());
 		assert.ok(true, "session_start with trusted project completed without error");
@@ -393,7 +389,7 @@ describe("contextInfo from index.ts", () => {
 			registerCommand: () => {},
 			getSessionName: () => undefined,
 		};
-		contextInfoFn(pi as any);
+		contextInfo(pi as any);
 
 		const ctx = createMockCtx();
 		(ctx as any).isProjectTrusted = () => false;
@@ -414,7 +410,7 @@ describe("contextInfo from index.ts", () => {
 			registerCommand: () => {},
 			getSessionName: () => undefined,
 		};
-		contextInfoFn(pi as any);
+		contextInfo(pi as any);
 
 		await handlers.get("session_start")!({}, createMockCtx());
 		await handlers.get("model_select")!({ model: { contextWindow: 256000 } }, createMockCtx());
@@ -433,7 +429,7 @@ describe("contextInfo from index.ts", () => {
 			registerCommand: () => {},
 			getSessionName: () => undefined,
 		};
-		contextInfoFn(pi as any);
+		contextInfo(pi as any);
 
 		const ctx = {
 			...createMockCtx(),
@@ -460,7 +456,7 @@ describe("contextInfo from index.ts", () => {
 			registerCommand: () => {},
 			getSessionName: () => undefined,
 		};
-		contextInfoFn(pi as any);
+		contextInfo(pi as any);
 
 		await handlers.get("session_start")!({}, createMockCtx());
 		await handlers.get("turn_end")!({}, createMockCtx());
