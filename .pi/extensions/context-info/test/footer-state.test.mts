@@ -55,6 +55,10 @@ const ENABLED_CONFIG: ContextStatusBarConfig = {
 // ---------------------------------------------------------------------------
 
 describe("FooterState — construction & defaults", () => {
+	it("FooterState is a class constructor", () => {
+		assert.strictEqual(typeof FooterState, "function", "FooterState is a constructor");
+	});
+
 	it("creates with default state values", () => {
 		const state = new FooterState(createMockCtx());
 		assert.strictEqual(state.config, null);

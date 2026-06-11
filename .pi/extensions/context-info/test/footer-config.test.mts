@@ -13,6 +13,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { formatCacheHitRate } from "../formatting.ts";
 
 // ---------------------------------------------------------------------------
 // Inline FooterConfig interface (matches .pi/extensions/context-info/types.ts)
@@ -53,6 +54,11 @@ interface FooterConfig {
 
 // ---------------------------------------------------------------------------
 // Inline installFooter (matches .pi/extensions/context-info/footer.ts)
+//
+// Note: We must replicate installFooter inline rather than importing it
+// because footer.ts has runtime imports with .js extensions that
+// --experimental-strip-types cannot resolve to .ts files.
+// formatCacheHitRate is imported above from ../formatting.ts (which works).
 // ---------------------------------------------------------------------------
 
 /** Format token count: 1200 → "1.2K", 1200000 → "1.2M" */
@@ -166,12 +172,6 @@ function formatCacheStats(
 		return "\u{1F4E6} --/--";
 	}
 	return `\u{1F4E6} ${formatTokens(cacheRead)}/${formatTokens(cacheWrite)}`;
-}
-
-/** Format cache hit rate: 75 → "CH: 75%" */
-function formatCacheHitRate(rate: number | undefined): string {
-	if (rate === undefined || rate === null || Number.isNaN(rate)) return "";
-	return `CH: ${Math.round(rate)}%`;
 }
 
 /** Simplified visibleWidth for tests — uses string length */
@@ -424,7 +424,7 @@ describe("FooterConfig", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		assert.strictEqual(config.worktreeName, null);
 		assert.strictEqual(config.thinkingLevel, "");
@@ -453,7 +453,7 @@ describe("FooterConfig", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		// Simulate passing footerConfig by reference and mutating
 		const ref = config;
@@ -495,7 +495,7 @@ describe("FooterConfig", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		const ref = config;
 		ref.tpsSamples.push({ time: 1000, cumulativeTokens: 50 });
@@ -519,7 +519,7 @@ describe("FooterConfig", () => {
 			sessionName: "my-session",
 			trustStatus: "trusted",
 			sessionId: "",
-		}
+		};
 
 		assert.strictEqual(config.worktreeName, "main");
 		assert.strictEqual(config.thinkingLevel, "medium");
@@ -600,7 +600,7 @@ describe("installFooter — mode guard", () => {
 				sessionName: undefined,
 				trustStatus: undefined,
 				sessionId: "",
-			}
+			};
 
 			let setFooterArg: unknown = undefined;
 			const ctx = {
@@ -646,7 +646,7 @@ describe("installFooter — mode guard", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let setFooterArg: unknown = undefined;
 		const ctx = {
@@ -690,7 +690,7 @@ describe("installFooter — mode guard", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let setFooterArg: unknown = undefined;
 		const ctx = {
@@ -740,7 +740,7 @@ describe("installFooter with FooterConfig", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let setFooterArg: unknown = undefined;
 		const ctx = {
@@ -781,7 +781,7 @@ describe("installFooter with FooterConfig", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let setFooterArg: unknown = undefined;
 		const ctx = {
@@ -814,7 +814,7 @@ describe("installFooter with FooterConfig", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let setFooterArg: unknown = undefined;
 		const ctx = {
@@ -862,7 +862,7 @@ describe("installFooter with FooterConfig", () => {
 			sessionName: "test-session",
 			trustStatus: "trusted",
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -923,7 +923,7 @@ describe("installFooter with FooterConfig", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -994,7 +994,7 @@ describe("footer — CH display", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -1049,7 +1049,7 @@ describe("footer — CH display", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -1104,7 +1104,7 @@ describe("footer — CH display", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -1168,7 +1168,7 @@ describe("footer — session name display", () => {
 			sessionName: "my-session",
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -1228,7 +1228,7 @@ describe("footer — session name display", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -1287,7 +1287,7 @@ describe("footer — session name display", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -1350,7 +1350,7 @@ describe("footer — trust status display", () => {
 			sessionName: undefined,
 			trustStatus: "trusted",
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -1405,7 +1405,7 @@ describe("footer — trust status display", () => {
 			sessionName: undefined,
 			trustStatus: "untrusted",
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
@@ -1460,7 +1460,7 @@ describe("footer — trust status display", () => {
 			sessionName: undefined,
 			trustStatus: undefined,
 			sessionId: "",
-		}
+		};
 
 		let footerComponent: { render: (w: number) => string[]; dispose: () => void } | undefined;
 		const ctx = {
