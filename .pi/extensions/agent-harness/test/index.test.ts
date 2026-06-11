@@ -11,7 +11,7 @@
  * @packageDocumentation
  */
 
-import { describe, it } from "node:test";
+import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { AgentHarness, getBashSubKey } from "../index.ts";
 import type { ToolCallResult } from "../index.ts";
@@ -818,5 +818,227 @@ describe("AgentHarness — resolved rules cascade threshold", () => {
 			assert.equal(results[i], null, `call ${i + 1} should pass`);
 		}
 		assert.ok(results[7]?.block, "8th call should block");
+	});
+});
+
+// ── Phase 4: session_start wiring with config loading ──
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+
+// Track for cleanup
+const configTempDirs: string[] = [];
+
+function createConfigTempDir(): string {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-wiring-test-"));
+	configTempDirs.push(dir);
+	fs.mkdirSync(path.join(dir, ".pi"));
+	return dir;
+}
+
+function writeHarnessConfig(dir: string, content: unknown): void {
+	fs.writeFileSync(path.join(dir, ".pi", "harness-config.json"), JSON.stringify(content), "utf-8");
+}
+
+function makeConfigCtx(overrides: Record<string, unknown> = {}) {
+	return {
+		isProjectTrusted: () => true,
+		ui: {
+			notify: () => {},
+		},
+		...overrides,
+	};
+}
+
+describe("AgentHarness — session_start config loading", () => {
+	const savedCwd = process.cwd();
+
+	after(() => {
+		// Restore cwd and clean up temp dirs
+		process.chdir(savedCwd);
+		for (const dir of configTempDirs) {
+			fs.rmSync(dir, { recursive: true, force: true });
+		}
+		configTempDirs.length = 0;
+	});
+
+	it("session_start with trusted ctx and config file present → resolved rules loaded, handleToolCall uses override cascade threshold", async () => {
+		const dir = createConfigTempDir();
+		writeHarnessConfig(dir, {
+			toolMeta: { bash: { cascadeThreshold: 12 } },
+			cascadeThreshold: 8,
+		});
+		process.chdir(dir);
+
+		const api = createMockAPI();
+		agentHarness(api);
+
+		await api.fire("session_start", { type: "session_start", reason: "new" }, makeConfigCtx());
+
+		// 11 consecutive bash calls should pass (threshold 12)
+		const results = [];
+		for (let i = 0; i < 11; i++) {
+			const r = await api.fire(
+				"tool_call",
+				{ toolName: "bash", input: { command: "echo hi" } },
+				makeConfigCtx(),
+			);
+			results.push(r);
+		}
+		// 11th call should still be OK
+		assert.equal(results[10], undefined, "11th bash call should pass (threshold 12)");
+
+		// 12th call should block
+		const blocked = await api.fire(
+			"tool_call",
+			{ toolName: "bash", input: { command: "echo hi" } },
+			makeConfigCtx(),
+		);
+		assert.ok(blocked?.block, "12th bash call should block");
+	});
+
+	it("session_start with untrusted ctx and config file present → defaults used, no config override applied", async () => {
+		const dir = createConfigTempDir();
+		writeHarnessConfig(dir, { cascadeThreshold: 99, toolMeta: { bash: { cascadeThreshold: 50 } } });
+		process.chdir(dir);
+
+		let notifyCalled = false;
+		const api = createMockAPI();
+		agentHarness(api);
+
+		await api.fire(
+			"session_start",
+			{ type: "session_start", reason: "new" },
+			makeConfigCtx({
+				isProjectTrusted: () => false,
+				ui: {
+					notify: () => {
+						notifyCalled = true;
+					},
+				},
+			}),
+		);
+
+		assert.equal(notifyCalled, true, "should call notify for untrusted project");
+
+		// Default threshold (8) should apply
+		const results = [];
+		for (let i = 0; i < 8; i++) {
+			const r = await api.fire(
+				"tool_call",
+				{ toolName: "write", input: { path: "f.ts", content: "" } },
+				makeConfigCtx(),
+			);
+			results.push(r);
+		}
+		for (let i = 0; i < 7; i++) {
+			assert.equal(results[i], undefined, `call ${i + 1} should pass (default threshold)`);
+		}
+		assert.ok(results[7]?.block, "8th call should block (default threshold)");
+	});
+
+	it("session_start without config file → defaults used", async () => {
+		const dir = createConfigTempDir();
+		// No .pi/harness-config.json written
+		process.chdir(dir);
+
+		const api = createMockAPI();
+		agentHarness(api);
+
+		await api.fire("session_start", { type: "session_start", reason: "new" }, makeConfigCtx());
+
+		// Default threshold (8) should apply
+		const results = [];
+		for (let i = 0; i < 8; i++) {
+			const r = await api.fire(
+				"tool_call",
+				{ toolName: "write", input: { path: "f.ts", content: "" } },
+				makeConfigCtx(),
+			);
+			results.push(r);
+		}
+		for (let i = 0; i < 7; i++) {
+			assert.equal(results[i], undefined, `call ${i + 1} should pass (default threshold)`);
+		}
+		assert.ok(results[7]?.block, "8th call should block (default threshold)");
+	});
+
+	it("session_start where config loader throws → session still initializes with defaults (fail-safe)", async () => {
+		const dir = createConfigTempDir();
+		// Malformed JSON config
+		fs.writeFileSync(path.join(dir, ".pi", "harness-config.json"), "not valid json", "utf-8");
+		process.chdir(dir);
+
+		const api = createMockAPI();
+		agentHarness(api);
+
+		// Should not throw — catches error and falls back to defaults
+		await api.fire("session_start", { type: "session_start", reason: "new" }, makeConfigCtx());
+
+		// Default threshold (8) should still apply
+		const results = [];
+		for (let i = 0; i < 8; i++) {
+			const r = await api.fire(
+				"tool_call",
+				{ toolName: "write", input: { path: "f.ts", content: "" } },
+				makeConfigCtx(),
+			);
+			results.push(r);
+		}
+		for (let i = 0; i < 7; i++) {
+			assert.equal(results[i], undefined, `call ${i + 1} should pass (default fallback)`);
+		}
+		assert.ok(results[7]?.block, "8th call should block (default fallback)");
+	});
+
+	it("Multiple session_start calls → each session_start reloads config independently", async () => {
+		const dir1 = createConfigTempDir();
+		writeHarnessConfig(dir1, { cascadeThreshold: 5 });
+
+		const dir2 = createConfigTempDir();
+		writeHarnessConfig(dir2, { cascadeThreshold: 3 });
+
+		// First session with threshold 5
+		process.chdir(dir1);
+
+		const api = createMockAPI();
+		agentHarness(api);
+
+		await api.fire("session_start", { type: "session_start", reason: "new" }, makeConfigCtx());
+
+		// 4 calls should pass, 5th blocks
+		let results = [];
+		for (let i = 0; i < 5; i++) {
+			const r = await api.fire(
+				"tool_call",
+				{ toolName: "write", input: { path: "f.ts", content: "" } },
+				makeConfigCtx(),
+			);
+			results.push(r);
+		}
+		for (let i = 0; i < 4; i++) {
+			assert.equal(results[i], undefined, `call ${i + 1} in session 1 should pass`);
+		}
+		assert.ok(results[4]?.block, "5th call in session 1 should block (threshold 5)");
+
+		// Second session with threshold 3
+		process.chdir(dir2);
+		await api.fire("session_start", { type: "session_start", reason: "new" }, makeConfigCtx());
+
+		// 2 calls should pass, 3rd blocks
+		results = [];
+		for (let i = 0; i < 3; i++) {
+			const r = await api.fire(
+				"tool_call",
+				{ toolName: "write", input: { path: "g.ts", content: "" } },
+				makeConfigCtx(),
+			);
+			results.push(r);
+		}
+		for (let i = 0; i < 2; i++) {
+			assert.equal(results[i], undefined, `call ${i + 1} in session 2 should pass`);
+		}
+		assert.ok(results[2]?.block, "3rd call in session 2 should block (threshold 3)");
 	});
 });

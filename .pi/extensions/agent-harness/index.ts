@@ -27,7 +27,9 @@ export default function agentHarness(pi: ExtensionAPI): void {
 		harness.reset();
 		try {
 			const configCtx = (ctx ?? {}) as ConfigLoaderContext;
-			const rules = loadProjectConfig(configCtx);
+			// Derive project root from ctx if available (for testability)
+			const projectRoot = configCtx.sessionManager?.getCwd?.();
+			const rules = loadProjectConfig(configCtx, projectRoot);
 			harness.setRules(rules);
 		} catch {
 			// Fail-safe: on config load failure, continue with defaults
