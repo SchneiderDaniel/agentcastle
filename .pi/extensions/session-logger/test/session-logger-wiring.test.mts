@@ -93,6 +93,10 @@ function createSessionShutdownCtx(overrides?: {
 // ---------------------------------------------------------------------------
 
 describe("index.ts — session_start wiring", () => {
+	it("defaultExport is a function (extension entry point)", () => {
+		assert.strictEqual(typeof defaultExport, "function", "defaultExport should be a function");
+	});
+
 	it("registers session_start handler", () => {
 		const { pi, handlers } = createMockPi();
 		defaultExport(pi);

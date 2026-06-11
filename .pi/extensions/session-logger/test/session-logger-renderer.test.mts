@@ -428,6 +428,14 @@ describe("parseSessionStats — perTurnTokens characterization", () => {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
 	});
 
+	it("parseSessionStats is a function", () => {
+		assert.strictEqual(
+			typeof parseSessionStats,
+			"function",
+			"parseSessionStats should be a function",
+		);
+	});
+
 	function writeJsonl(entries: Record<string, unknown>[]): string {
 		const filepath = path.join(tmpDir, "test-session.jsonl");
 		const header = {
@@ -665,12 +673,21 @@ describe("renderSessionToMarkdown — header name/mode overrides", () => {
 			id: "test-header-session",
 			timestamp: "2025-06-01T10:00:00Z",
 			cwd: "/tmp",
+
 			version: 1,
 		};
 		const lines = [header, ...entries].map((e) => JSON.stringify(e)).join("\n") + "\n";
 		fs.writeFileSync(filepath, lines, "utf-8");
 		return filepath;
 	}
+
+	it("renderSessionToMarkdown is a function that accepts overrides", () => {
+		assert.strictEqual(
+			typeof renderSessionToMarkdown,
+			"function",
+			"renderSessionToMarkdown should be a function",
+		);
+	});
 
 	it("with mode override renders Mode row between Start and CWD", () => {
 		const filepath = writeJsonl([]);
