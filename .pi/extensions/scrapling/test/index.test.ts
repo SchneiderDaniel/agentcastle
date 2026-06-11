@@ -30,6 +30,10 @@ function formatResults(results: Array<ResultItem>): string {
 }
 
 describe("web_crawl tool registration — shape contract", () => {
+	it("(entity) webCrawlExtension is a function", () => {
+		assert.equal(typeof webCrawlExtension, "function");
+	});
+
 	it("(entity) registers tool with name 'web_crawl'", () => {
 		const registered: Array<any> = [];
 		const mockPi = {
