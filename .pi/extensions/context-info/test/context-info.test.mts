@@ -22,12 +22,11 @@ import {
 // to support --experimental-strip-types resolution.
 import { contextInfo } from "../index.ts";
 
-// Runtime imports from prompts.ts, skills.ts, welcome.ts — these files
+// Runtime imports from prompts.ts, skills.ts — these files
 // had import extension changes (.js → .ts) needed for the test runner.
 // The imports verify their module-level exports are valid at runtime.
 import { listLocalPrompts } from "../prompts.ts";
 import { listLocalSkills, countSkills } from "../skills.ts";
-import { showWelcomeBanner, readSessionExtState } from "../welcome.ts";
 
 // ---------------------------------------------------------------------------
 // Replicate context-info extension logic for isolated unit testing
@@ -251,7 +250,7 @@ describe("contextInfo from index.ts", () => {
 		assert.strictEqual(typeof contextInfo, "function", "contextInfo from index.ts is a function");
 	});
 
-	it("prompts/skills/welcome runtime exports are valid functions", () => {
+	it("prompts/skills runtime exports are valid functions", () => {
 		assert.strictEqual(
 			typeof listLocalPrompts,
 			"function",
@@ -259,16 +258,6 @@ describe("contextInfo from index.ts", () => {
 		);
 		assert.strictEqual(typeof listLocalSkills, "function", "listLocalSkills should be a function");
 		assert.strictEqual(typeof countSkills, "function", "countSkills should be a function");
-		assert.strictEqual(
-			typeof showWelcomeBanner,
-			"function",
-			"showWelcomeBanner should be a function",
-		);
-		assert.strictEqual(
-			typeof readSessionExtState,
-			"function",
-			"readSessionExtState should be a function",
-		);
 	});
 
 	it("prompts/skills exports return arrays (smoke test)", () => {
@@ -277,16 +266,6 @@ describe("contextInfo from index.ts", () => {
 		assert.ok(Array.isArray(prompts), "listLocalPrompts should return an array");
 		assert.ok(Array.isArray(skills), "listLocalSkills should return an array");
 		assert.strictEqual(typeof countSkills(), "number", "countSkills should return a number");
-	});
-
-	it("readSessionExtState returns an object with expected keys", () => {
-		const extState = readSessionExtState();
-		assert.ok(
-			typeof extState === "object" && extState !== null,
-			"readSessionExtState should return an object",
-		);
-		assert.ok("logger" in extState, "extState should have logger");
-		assert.ok("advice" in extState, "extState should have advice");
 	});
 
 	it("registers all expected event handlers when called with mock pi", () => {
@@ -321,6 +300,7 @@ describe("contextInfo from index.ts", () => {
 				setStatus: () => {},
 				setWidget: () => {},
 				setWorkingIndicator: () => {},
+				notify: () => {},
 				theme: { fg: (_c: string, t: string) => t },
 			},
 			isProjectTrusted: () => true,
