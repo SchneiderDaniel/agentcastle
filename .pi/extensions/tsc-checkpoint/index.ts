@@ -10,6 +10,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import ts from "typescript";
+import { parseArgs } from "@earendil-works/pi-coding-agent";
+import type { Args } from "@earendil-works/pi-coding-agent";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Types
@@ -291,6 +293,42 @@ export function formatDiagnostics(diagnostics: TscDiagnostic[]): string {
 		.join("\n");
 }
 
+/**
+ * Format diagnostics as structured JSON output for programmatic consumers.
+ * Used in JSON, RPC, and print modes.
+ */
+export function formatDiagnosticsJson(
+	diagnostics: TscDiagnostic[],
+	trend?: DiagnosticTrend,
+): {
+	diagnostics: TscDiagnostic[];
+	summary: string;
+	fileCount: number;
+} {
+	let summary: string;
+	if (diagnostics.length === 0) {
+		summary = "No type errors detected";
+	} else {
+		const baseSummary = `${diagnostics.length} type error(s) found`;
+		if (trend) {
+			const directionLabel =
+				trend.direction === "regressed"
+					? "regressed ↑"
+					: trend.direction === "improved"
+						? "improved ↓"
+						: "stable →";
+			summary = `${baseSummary} (${directionLabel} ${trend.delta}, was ${trend.previous})`;
+		} else {
+			summary = baseSummary;
+		}
+	}
+	return {
+		diagnostics,
+		summary,
+		fileCount: new Set(diagnostics.map((d) => d.filePath)).size,
+	};
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Backward-Compatible Exports
 // ═══════════════════════════════════════════════════════════════════════
@@ -403,6 +441,20 @@ export default function tscCheckpoint(pi: ExtensionAPI): void {
 				return;
 			}
 
+			// ── Trust Gate ──────────────────────────────────────────────
+			// Guard against unsafe project-local tsconfig before starting
+			// the watch compiler. Use optional chaining for backward compat
+			// with older pi-coding-agent versions where isProjectTrusted may
+			// not be present in the type definitions.
+			const isTrusted = (ctx as { isProjectTrusted?: () => boolean }).isProjectTrusted?.();
+			if (isTrusted === false) {
+				pi.sendUserMessage?.(
+					"## TSC Checkpoint — Project not trusted\n\nProject not trusted. Skipping type-check to avoid running `tsc` against potentially unsafe project-local configurations.",
+					{ deliverAs: "followUp" },
+				);
+				return;
+			}
+
 			// Create watcher lazily on first /check
 			if (!watcher) {
 				watcher = new DiagnosticsWatcher(tsconfigPath);
@@ -425,29 +477,42 @@ export default function tscCheckpoint(pi: ExtensionAPI): void {
 
 			const diagnostics = watcher.getDiagnostics();
 			const trend = watcher.getTrend();
-			const hasErrors = diagnostics.length > 0;
 
-			if (hasErrors) {
-				const formatted = formatDiagnostics(diagnostics);
-				const errorCount = diagnostics.length;
-				let msg = `## TSC Checkpoint — ${errorCount} Type Error(s) Found`;
-				if (trend) {
-					const directionLabel =
-						trend.direction === "regressed"
-							? "⚠️ regression"
-							: trend.direction === "improved"
-								? "✓ improved"
-								: "→ stable";
-					msg += ` (${directionLabel})`;
+			// ── Mode-Adapted Output ─────────────────────────────────────
+			// TUI mode: markdown with clickable file paths.
+			// JSON/RPC/Print mode: structured JSON for programmatic consumers.
+			if (ctx.mode === "tui") {
+				if (diagnostics.length > 0) {
+					const formatted = formatDiagnostics(diagnostics);
+					const errorCount = diagnostics.length;
+					let msg = `## TSC Checkpoint — ${errorCount} Type Error(s) Found`;
+					if (trend) {
+						const directionLabel =
+							trend.direction === "regressed"
+								? "⚠️ regression"
+								: trend.direction === "improved"
+									? "✓ improved"
+									: "→ stable";
+						msg += ` (${directionLabel})`;
+					}
+					msg += `\n\n${formatted}`;
+					pi.sendUserMessage?.(msg, { deliverAs: "followUp" });
+				} else {
+					let msg = "## TSC Checkpoint — ✓ No type errors detected";
+					if (trend && trend.current === 0 && trend.previous > 0) {
+						msg += " (✓ all errors resolved)";
+					}
+					pi.sendUserMessage?.(msg, { deliverAs: "followUp" });
 				}
-				msg += `\n\n${formatted}`;
-				pi.sendUserMessage?.(msg, { deliverAs: "followUp" });
 			} else {
-				let msg = "## TSC Checkpoint — ✓ No type errors detected";
-				if (trend && trend.current === 0 && trend.previous > 0) {
-					msg += " (✓ all errors resolved)";
-				}
-				pi.sendUserMessage?.(msg, { deliverAs: "followUp" });
+				// JSON/RPC/Print mode: structured JSON
+				const jsonOutput = formatDiagnosticsJson(diagnostics, trend ?? undefined);
+				const message = JSON.stringify({
+					type: "tsc-checkpoint",
+					...jsonOutput,
+					...(trend ? { trend } : {}),
+				});
+				pi.sendUserMessage?.(message, { deliverAs: "followUp" });
 			}
 		},
 	});
