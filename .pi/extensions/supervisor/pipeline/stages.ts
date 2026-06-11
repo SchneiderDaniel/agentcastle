@@ -13,6 +13,7 @@ import type {
 	FilteredIssueData,
 } from "../config/types.ts";
 import type { ErrorCollector } from "./error-collector.ts";
+import type { NotifyFn } from "./helpers.ts";
 import {
 	resolveNextStatus,
 	resolveNextStatusFromAgentOutput,
@@ -532,6 +533,7 @@ export async function handlePostAgentSuccess(
 	worktreeBranch: string | undefined,
 	issueTitle: string,
 	collector?: ErrorCollector,
+	notify?: NotifyFn,
 ): Promise<boolean> {
 	// Agent comments: architect, test-designer, researcher
 	if (agentName === "architect" || agentName === "test-designer" || agentName === "researcher") {
@@ -691,24 +693,28 @@ export async function handlePostAgentSuccess(
 	// Commit and push for developer
 	if (agentName === "developer" && worktreePath && worktreeBranch) {
 		const commitMsg = `feat(#${issueNum}): ${issueTitle}`;
-		try {
-			const committed = await commitAndPush(
-				pi,
-				worktreePath,
-				config.remote!,
-				worktreeBranch,
-				commitMsg,
-			);
-			if (committed) {
-				ctx.ui.notify("Changes committed and pushed to branch", "info");
-			} else {
-				ctx.ui.notify("No changes to commit — pipeline continues", "info");
-			}
-		} catch (cpErr: unknown) {
-			const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr);
-			ctx.ui.notify(`commitAndPush failed: ${cpMsg}`, "warning");
-			collector?.push("stages", "error", `commitAndPush failed: ${cpMsg}`);
+		// Use provided notify or create a null-safe fallback
+		const pushNotify: NotifyFn = notify || {
+			info: (msg) => ctx.ui.notify(msg, "info"),
+			error: (msg) => ctx.ui.notify(msg, "error"),
+		};
+		const commitResult = await commitAndPush(
+			pi,
+			worktreePath,
+			config.remote!,
+			worktreeBranch,
+			commitMsg,
+			pushNotify,
+		);
+		if (!commitResult.ok) {
+			ctx.ui.notify(`commitAndPush failed: ${commitResult.error}`, "warning");
+			collector?.push("stages", "error", `commitAndPush failed: ${commitResult.error}`);
 			return false;
+		}
+		if (commitResult.value) {
+			ctx.ui.notify("Changes committed and pushed to branch", "info");
+		} else {
+			ctx.ui.notify("No changes to commit — pipeline continues", "info");
 		}
 
 		// README change detection: warn if README was not updated for user-facing changes

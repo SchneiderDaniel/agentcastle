@@ -1,10 +1,12 @@
 // ─── Tests: github/git.ts — git operations ───────────────────────
 // Tests for commitChanges, pushBranch, commitAndPush.
+// pushBranch and commitAndPush return Result<T>.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { commitChanges, pushBranch, commitAndPush } from "../../github/git.ts";
+import type { NotifyFn } from "../../pipeline/helpers.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -29,6 +31,15 @@ function createMockPi(results: Array<{ code: number; stdout: string; stderr: str
 	return { pi, calls };
 }
 
+function createMockNotify(): { notify: NotifyFn; calls: Array<{ level: string; msg: string }> } {
+	const calls: Array<{ level: string; msg: string }> = [];
+	const notify: NotifyFn = {
+		info: (msg: string) => calls.push({ level: "info", msg }),
+		error: (msg: string) => calls.push({ level: "error", msg }),
+	};
+	return { notify, calls };
+}
+
 // ─── Tests: commitChanges() ───────────────────────────────────────
 
 describe("commitChanges()", () => {
@@ -41,7 +52,7 @@ describe("commitChanges()", () => {
 		assert.equal(calls[0].opts.cwd, "/tmp/worktree");
 	});
 
-	it("throws on git commit failure", async () => {
+	it("throws on git commit failure (unchanged)", async () => {
 		const { pi } = createMockPi([{ code: 1, stdout: "", stderr: "nothing to commit" }]);
 		await assert.rejects(() => commitChanges(pi, "/tmp/worktree", "msg"), /git commit failed/);
 	});
@@ -49,34 +60,79 @@ describe("commitChanges()", () => {
 
 // ─── Tests: pushBranch() ──────────────────────────────────────────
 
-describe("pushBranch()", () => {
-	it("calls git push with correct args", async () => {
+describe("pushBranch() — Result<T>", () => {
+	it("calls git push with correct args — returns { ok: true }", async () => {
 		const { pi, calls } = createMockPi([{ code: 0, stdout: "", stderr: "" }]);
-		await pushBranch(pi, "/tmp/worktree", "origin", "feature-branch");
+		const { notify } = createMockNotify();
+		const result = await pushBranch(pi, "/tmp/worktree", "origin", "feature-branch", notify);
+		assert.equal(result.ok, true);
 		assert.equal(calls[0].cmd, "git");
 		assert.deepEqual(calls[0].args, ["push", "origin", "feature-branch"]);
 	});
 
-	it("throws on git push failure", async () => {
+	it("returns { ok: false } on git push failure — no throw", async () => {
 		const { pi } = createMockPi([{ code: 1, stdout: "", stderr: "rejected" }]);
-		await assert.rejects(
-			() => pushBranch(pi, "/tmp/worktree", "origin", "feature"),
-			/git push failed/,
+		const { notify, calls } = createMockNotify();
+		const result = await pushBranch(pi, "/tmp/worktree", "origin", "feature", notify);
+		assert.equal(result.ok, false);
+		if (!result.ok) {
+			assert.ok(result.error.includes("git push failed"));
+			assert.equal(result.source, "git");
+		}
+		assert.ok(
+			calls.some((c) => c.level === "error"),
+			"notify.error should be called",
 		);
+	});
+
+	it("non-fast-forward retry with --force succeeds — returns { ok: true }", async () => {
+		const { pi, calls } = createMockPi([
+			{ code: 1, stdout: "", stderr: "non-fast-forward" },
+			{ code: 0, stdout: "", stderr: "" },
+		]);
+		const { notify } = createMockNotify();
+		const result = await pushBranch(pi, "/tmp/worktree", "origin", "feature", notify);
+		assert.equal(result.ok, true);
+		assert.equal(calls.length, 2);
+		assert.deepEqual(calls[1].args, ["push", "--force", "origin", "feature"]);
+	});
+
+	it("non-fast-forward retry with --force also fails — returns { ok: false }", async () => {
+		const { pi, calls } = createMockPi([
+			{ code: 1, stdout: "", stderr: "non-fast-forward" },
+			{ code: 1, stdout: "", stderr: "force push rejected" },
+		]);
+		const { notify } = createMockNotify();
+		const result = await pushBranch(pi, "/tmp/worktree", "origin", "feature", notify);
+		assert.equal(result.ok, false);
+		if (!result.ok) {
+			assert.ok(result.error.includes("git push --force failed"));
+		}
 	});
 });
 
 // ─── Tests: commitAndPush() ───────────────────────────────────────
 
-describe("commitAndPush()", () => {
-	it("stages all changes, commits, then pushes — returns true", async () => {
+describe("commitAndPush() — Result<T>", () => {
+	it("stages all changes, commits, then pushes — returns { ok: true, value: true }", async () => {
 		const { pi, calls } = createMockPi([
-			{ code: 0, stdout: "", stderr: "" },
-			{ code: 0, stdout: "committed", stderr: "" },
-			{ code: 0, stdout: "", stderr: "" },
+			{ code: 0, stdout: "", stderr: "" }, // git add
+			{ code: 0, stdout: "committed", stderr: "" }, // git commit
+			{ code: 0, stdout: "", stderr: "" }, // git push
 		]);
-		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "feat(#123): msg");
-		assert.equal(result, true, "should return true when commits were pushed");
+		const { notify } = createMockNotify();
+		const result = await commitAndPush(
+			pi,
+			"/tmp/worktree",
+			"origin",
+			"feature",
+			"feat(#123): msg",
+			notify,
+		);
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			assert.equal(result.value, true);
+		}
 		assert.equal(calls.length, 3);
 		assert.deepEqual(calls[0].args, ["add", "-A"]);
 		assert.deepEqual(calls[1].args, ["commit", "-m", "feat(#123): msg"]);
@@ -87,45 +143,52 @@ describe("commitAndPush()", () => {
 		const { pi, calls } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 1, stdout: "", stderr: "nothing to commit" },
-			{ code: 0, stdout: "", stderr: "" },
+			{ code: 0, stdout: "", stderr: "" }, // push succeeds
 		]);
-		// Should resolve, not reject — pipeline should continue
-		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
-		// pushBranch is called even when nothing to commit (branch may not exist on remote)
-		assert.equal(calls.length, 3); // add + commit + push
+		const { notify } = createMockNotify();
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg", notify);
+		assert.equal(result.ok, true);
+		if (result.ok) {
+			assert.equal(result.value, true);
+		}
+		assert.equal(calls.length, 3);
 		assert.equal(calls[2].cmd, "git");
 		assert.deepEqual(calls[2].args, ["push", "origin", "feature"]);
 	});
 
-	it("does not throw when nothing to commit and push succeeds", async () => {
+	it("does not throw when nothing to commit and push succeeds — returns { ok: true }", async () => {
 		const { pi, calls } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 1, stdout: "", stderr: "nothing to commit" },
 			{ code: 0, stdout: "Everything up-to-date", stderr: "" },
 		]);
-		await assert.doesNotReject(() =>
-			commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg"),
-		);
+		const { notify } = createMockNotify();
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg", notify);
+		assert.equal(result.ok, true);
 		assert.equal(calls.length, 3);
 	});
 
-	it("throws when git add fails", async () => {
+	it("returns { ok: false } when git add fails", async () => {
 		const { pi } = createMockPi([{ code: 1, stdout: "", stderr: "fatal error" }]);
-		await assert.rejects(
-			() => commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg"),
-			/git add failed/,
-		);
+		const { notify } = createMockNotify();
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg", notify);
+		assert.equal(result.ok, false);
+		if (!result.ok) {
+			assert.ok(result.error.includes("git add failed"));
+		}
 	});
 
-	it("throws when git commit fails with real error (not 'nothing to commit')", async () => {
+	it("returns { ok: false } when git commit fails with real error (not 'nothing to commit')", async () => {
 		const { pi } = createMockPi([
 			{ code: 0, stdout: "", stderr: "" },
 			{ code: 1, stdout: "", stderr: "fatal: bad config" },
 		]);
-		await assert.rejects(
-			() => commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg"),
-			/git commit failed/,
-		);
+		const { notify } = createMockNotify();
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg", notify);
+		assert.equal(result.ok, false);
+		if (!result.ok) {
+			assert.ok(result.error.includes("git commit failed"));
+		}
 	});
 
 	it("calls pushBranch even when nothing to commit (no short-circuit)", async () => {
@@ -134,10 +197,28 @@ describe("commitAndPush()", () => {
 			{ code: 1, stdout: "", stderr: "nothing to commit" },
 			{ code: 0, stdout: "Everything up-to-date", stderr: "" },
 		]);
-		await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg");
-		// Should still call push — branch may not exist on remote yet
+		const { notify } = createMockNotify();
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg", notify);
+		assert.equal(result.ok, true);
 		assert.equal(calls.length, 3, "should call push even when nothing to commit");
 		assert.equal(calls[2].cmd, "git");
 		assert.deepEqual(calls[2].args, ["push", "origin", "feature"]);
+	});
+
+	it("returns { ok: false } when push fails (after add+commit succeed)", async () => {
+		const { pi } = createMockPi([
+			{ code: 0, stdout: "", stderr: "" }, // git add
+			{ code: 0, stdout: "", stderr: "" }, // git commit
+			{ code: 1, stdout: "", stderr: "push failed: network error" }, // git push
+		]);
+		const { notify } = createMockNotify();
+		const result = await commitAndPush(pi, "/tmp/worktree", "origin", "feature", "msg", notify);
+		assert.equal(result.ok, false);
+		if (!result.ok) {
+			assert.ok(
+				result.error.includes("git push failed"),
+				`error should mention push: ${result.error}`,
+			);
+		}
 	});
 });

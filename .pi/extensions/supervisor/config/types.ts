@@ -227,6 +227,8 @@ export interface PrCreationResult {
 	error?: string;
 	/** Whether this was an update to an existing PR */
 	wasUpdate?: boolean;
+	/** Source identifier for error tracking (e.g. "pr-creation") */
+	source?: string;
 }
 
 // ─── Merge result ────────────────────────────────────────────────────
