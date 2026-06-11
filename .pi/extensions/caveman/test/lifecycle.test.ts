@@ -10,7 +10,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createConfigStore } from "../config.ts";
-import { resetSessionLevel, resolveSessionLevel } from "../session.ts";
+import { resetSessionLevel, resolveSessionLevel, shouldAppendCavemanEntry } from "../session.ts";
 import type { CustomEntry } from "@earendil-works/pi-coding-agent";
 import type { Level } from "../types.ts";
 
@@ -203,5 +203,104 @@ describe("Full lifecycle integration", () => {
 		}
 		assert.equal(capture.appendEntryCalls.length, 1);
 		assert.equal(capture.appendEntryCalls[0].level, "lite");
+	});
+
+	// ---------------------------------------------------------------------------
+	// Phase 4: Trust-gated lifecycle scenarios
+	// ---------------------------------------------------------------------------
+
+	it("appendEntry gated on trust: untrusted + shouldAppendEntry=true → no entry", () => {
+		const result = shouldAppendCavemanEntry(true, false);
+		assert.equal(result, false);
+	});
+
+	it("appendEntry gated on trust: trusted + shouldAppendEntry=true → entry", () => {
+		const result = shouldAppendCavemanEntry(true, true);
+		assert.equal(result, true);
+	});
+
+	it("appendEntry gated on trust: trusted + shouldAppendEntry=false → no entry", () => {
+		const result = shouldAppendCavemanEntry(false, true);
+		assert.equal(result, false);
+	});
+
+	it("trust gating in session_start: untrusted project with defaultLevel=lite → appendEntry NOT called", async () => {
+		await writeConfig({ defaultLevel: "lite", showStatus: true });
+		const store = createConfigStore(configPath);
+		await store.ensureConfigLoaded();
+
+		const capture: MockCapture = { setLevelCalls: [], appendEntryCalls: [] };
+		const pi = createMockExtensionAPI(capture);
+
+		// Simulate session_start with untrusted project
+		const result = resolveSessionLevel(store.getConfig(), []);
+		store.setLevel(result.level);
+
+		// Gate on trust
+		if (shouldAppendCavemanEntry(result.shouldAppendEntry, false)) {
+			pi.appendEntry("caveman-level", { level: store.getLevel() });
+		}
+
+		// Level is still set
+		assert.equal(store.getLevel(), "lite");
+		// But appendEntry is NOT called
+		assert.equal(capture.appendEntryCalls.length, 0);
+	});
+
+	it("trust gating in session_start: trusted project with defaultLevel=lite → appendEntry called", async () => {
+		await writeConfig({ defaultLevel: "lite", showStatus: true });
+		const store = createConfigStore(configPath);
+		await store.ensureConfigLoaded();
+
+		const capture: MockCapture = { setLevelCalls: [], appendEntryCalls: [] };
+		const pi = createMockExtensionAPI(capture);
+
+		// Simulate session_start with trusted project
+		const result = resolveSessionLevel(store.getConfig(), []);
+		store.setLevel(result.level);
+
+		// Gate on trust
+		if (shouldAppendCavemanEntry(result.shouldAppendEntry, true)) {
+			pi.appendEntry("caveman-level", { level: store.getLevel() });
+		}
+
+		assert.equal(store.getLevel(), "lite");
+		assert.equal(capture.appendEntryCalls.length, 1);
+		assert.equal(capture.appendEntryCalls[0].level, "lite");
+	});
+
+	it("lifecycle: untrusted project with new(lite) → /caveman full → shutdown → new(lite) → level restored, no leak", async () => {
+		await writeConfig({ defaultLevel: "lite", showStatus: true });
+		const store = createConfigStore(configPath);
+		await store.ensureConfigLoaded();
+
+		const capture: MockCapture = { setLevelCalls: [], appendEntryCalls: [] };
+		const pi = createMockExtensionAPI(capture);
+
+		// Session A start (new, defaultLevel=lite, untrusted)
+		let result = resolveSessionLevel(store.getConfig(), []);
+		store.setLevel(result.level);
+		if (shouldAppendCavemanEntry(result.shouldAppendEntry, false)) {
+			pi.appendEntry("caveman-level", { level: store.getLevel() });
+		}
+		assert.equal(store.getLevel(), "lite");
+		assert.equal(capture.appendEntryCalls.length, 0, "No entry in untrusted session");
+
+		// User runs /caveman full (this still works regardless of trust)
+		store.setLevel("full");
+		assert.equal(store.getLevel(), "full");
+
+		// Session A shutdown — reset
+		store.setLevel(resetSessionLevel(store.getLevel()));
+		assert.equal(store.getLevel(), "off");
+
+		// Session B start (new, defaultLevel=lite, still untrusted)
+		result = resolveSessionLevel(store.getConfig(), []);
+		store.setLevel(result.level);
+		if (shouldAppendCavemanEntry(result.shouldAppendEntry, false)) {
+			pi.appendEntry("caveman-level", { level: store.getLevel() });
+		}
+		assert.equal(store.getLevel(), "lite");
+		assert.equal(capture.appendEntryCalls.length, 0, "Still no entry in untrusted session");
 	});
 });

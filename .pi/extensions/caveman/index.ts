@@ -8,7 +8,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createConfigStore } from "./config.ts";
 import { registerCavemanCommand } from "./command.ts";
-import { resolveSessionLevel, resetSessionLevel } from "./session.ts";
+import { resolveSessionLevel, resetSessionLevel, shouldAppendCavemanEntry } from "./session.ts";
+import { resolveCompression, shouldLightenCompression } from "./compression.ts";
 import { CAVEMAN_BASE, INTENSITY } from "./prompts.ts";
 
 export default function caveman(pi: ExtensionAPI): void {
@@ -37,7 +38,7 @@ export default function caveman(pi: ExtensionAPI): void {
 
 		const result = resolveSessionLevel(configStore.getConfig(), ctx.sessionManager.getEntries());
 		configStore.setLevel(result.level);
-		if (result.shouldAppendEntry) {
+		if (shouldAppendCavemanEntry(result.shouldAppendEntry, ctx.isProjectTrusted())) {
 			pi.appendEntry("caveman-level", { level: result.level });
 		}
 
@@ -62,13 +63,22 @@ export default function caveman(pi: ExtensionAPI): void {
 
 	// -- Inject caveman rules into system prompt --
 
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		await configStore.ensureConfigLoaded();
 		const level = configStore.getLevel();
-		if (level === "off") return;
+
+		// Resolve compression based on mode (skip in JSON/RPC to avoid mangling structured output)
+		const compression = resolveCompression(level, ctx.mode);
+		if (compression.skip) return;
+
+		// If structured search tools are active, lighten compression to preserve tool output
+		let intensity = compression.intensity;
+		if (shouldLightenCompression(event.systemPromptOptions) && intensity !== "lite") {
+			intensity = "lite";
+		}
 
 		return {
-			systemPrompt: `${event.systemPrompt}\n\n${CAVEMAN_BASE}\n\n${INTENSITY[level]}`,
+			systemPrompt: `${event.systemPrompt}\n\n${CAVEMAN_BASE}\n\n${INTENSITY[intensity]}`,
 		};
 	});
 }
