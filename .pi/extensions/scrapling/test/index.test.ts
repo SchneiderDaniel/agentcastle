@@ -7,6 +7,27 @@
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 
+// ===========================================================================
+// Test helper — result formatting
+// ===========================================================================
+
+interface ResultItem {
+	url: string;
+	markdown?: string;
+	error?: string;
+	method?: string;
+	success: boolean;
+}
+
+function formatResults(results: Array<ResultItem>): string {
+	const texts = results.map((r) =>
+		r.success
+			? `--- ${r.url} (via ${r.method}) ---\n${r.markdown || "[No content]"}`
+			: `--- ${r.url} ---\nError: ${r.error}`,
+	);
+	return texts.join("\n\n");
+}
+
 describe("web_crawl tool registration — shape contract", () => {
 	it("(entity) registers tool with name 'web_crawl'", () => {
 		const registered: Array<{ name: string }> = [];
@@ -173,17 +194,52 @@ describe("execute flow — integration with ensureScraplingVenv", () => {
 	});
 });
 
+describe("formatResults — result formatting", () => {
+	it("(entity) formats single successful result with method prefix and markdown", () => {
+		const results = [
+			{ url: "https://example.com", markdown: "# Hello", method: "lightweight", success: true },
+		];
+		const output = formatResults(results);
+		assert.ok(output.includes("--- https://example.com (via lightweight) ---"));
+		assert.ok(output.includes("# Hello"));
+	});
+
+	it("(entity) formats single error result without method", () => {
+		const results = [{ url: "https://example.com", error: "Connection failed", success: false }];
+		const output = formatResults(results);
+		assert.ok(output.includes("--- https://example.com ---"));
+		assert.ok(output.includes("Error: Connection failed"));
+	});
+
+	it("(entity) joins multiple results with double newline separator", () => {
+		const results = [
+			{ url: "https://a.com", markdown: "Page A", method: "lightweight", success: true },
+			{ url: "https://b.com", markdown: "Page B", method: "stealth", success: true },
+		];
+		const output = formatResults(results);
+		assert.ok(output.includes("Page A"));
+		assert.ok(output.includes("Page B"));
+		assert.ok(output.includes("\n\n"));
+	});
+
+	it("(entity) uses [No content] fallback when markdown is missing", () => {
+		const results = [{ url: "https://example.com", success: true, method: "lightweight" }];
+		const output = formatResults(results);
+		assert.ok(output.includes("[No content]"));
+	});
+
+	it("(entity) returns empty string for empty results array", () => {
+		const output = formatResults([]);
+		assert.equal(output, "");
+	});
+});
+
 describe("output format", () => {
 	it("(entity) formats successful crawl results with URL prefix and method", () => {
 		const results = [
 			{ url: "https://example.com", markdown: "# Hello", method: "lightweight", success: true },
 		];
-		const texts = results.map((r: any) =>
-			r.success
-				? `--- ${r.url} (via ${r.method}) ---\n${r.markdown || "[No content]"}`
-				: `--- ${r.url} ---\nError: ${r.error}`,
-		);
-		const output = texts.join("\n\n");
+		const output = formatResults(results);
 
 		assert.ok(output.includes("--- https://example.com (via lightweight) ---"));
 		assert.ok(output.includes("# Hello"));
@@ -191,12 +247,7 @@ describe("output format", () => {
 
 	it("(entity) formats error results without method", () => {
 		const results = [{ url: "https://example.com", error: "Connection failed", success: false }];
-		const texts = results.map((r: any) =>
-			r.success
-				? `--- ${r.url} (via ${r.method}) ---\n${r.markdown || "[No content]"}`
-				: `--- ${r.url} ---\nError: ${r.error}`,
-		);
-		const output = texts.join("\n\n");
+		const output = formatResults(results);
 
 		assert.ok(output.includes("--- https://example.com ---"));
 		assert.ok(output.includes("Error: Connection failed"));
@@ -207,12 +258,7 @@ describe("output format", () => {
 			{ url: "https://a.com", markdown: "Page A", method: "lightweight", success: true },
 			{ url: "https://b.com", markdown: "Page B", method: "stealth", success: true },
 		];
-		const texts = results.map((r: any) =>
-			r.success
-				? `--- ${r.url} (via ${r.method}) ---\n${r.markdown || "[No content]"}`
-				: `--- ${r.url} ---\nError: ${r.error}`,
-		);
-		const output = texts.join("\n\n");
+		const output = formatResults(results);
 
 		assert.ok(output.includes("Page A"));
 		assert.ok(output.includes("Page B"));
