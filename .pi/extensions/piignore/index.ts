@@ -6,7 +6,7 @@
  * patterns. Keeps .env, secrets/, and other sensitive data safe.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -409,28 +409,25 @@ export default function (pi: ExtensionAPI): void {
 		}
 	});
 
-	// Tools that take a direct path parameter
-	const pathTools = ["read", "write", "edit"];
-	// Tools that take an optional path/directory parameter
-	const optPathTools = ["grep", "find", "ls"];
-	// Tools that take a command string containing paths
-	const commandTools = ["bash"];
-
 	pi.on("tool_call", async (event, ctx) => {
 		try {
 			const ignoreEntries = getEntries(ctx.cwd);
 			let blockedPath: string | null = null;
 
-			if (pathTools.includes(event.toolName)) {
-				blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
-			} else if (optPathTools.includes(event.toolName)) {
-				blockedPath = checkPath((event.input as { path?: string }).path, ignoreEntries, ctx.cwd);
-			} else if (commandTools.includes(event.toolName)) {
-				blockedPath = checkBashCommand(
-					(event.input as { command?: string }).command ?? "",
-					ignoreEntries,
-					ctx.cwd,
-				);
+			if (isToolCallEventType("read", event)) {
+				blockedPath = checkPath(event.input.path, ignoreEntries, ctx.cwd);
+			} else if (isToolCallEventType("write", event)) {
+				blockedPath = checkPath(event.input.path, ignoreEntries, ctx.cwd);
+			} else if (isToolCallEventType("edit", event)) {
+				blockedPath = checkPath(event.input.path, ignoreEntries, ctx.cwd);
+			} else if (isToolCallEventType("grep", event)) {
+				blockedPath = checkPath(event.input.path, ignoreEntries, ctx.cwd);
+			} else if (isToolCallEventType("find", event)) {
+				blockedPath = checkPath(event.input.path, ignoreEntries, ctx.cwd);
+			} else if (isToolCallEventType("ls", event)) {
+				blockedPath = checkPath(event.input.path, ignoreEntries, ctx.cwd);
+			} else if (isToolCallEventType("bash", event)) {
+				blockedPath = checkBashCommand(event.input.command, ignoreEntries, ctx.cwd);
 			} else {
 				return;
 			}
