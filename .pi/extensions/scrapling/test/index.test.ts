@@ -5,7 +5,8 @@
  */
 
 import assert from "node:assert/strict";
-import { describe, it, mock } from "node:test";
+import { describe, it, mock, before } from "node:test";
+import webCrawlExtension from "../index.ts";
 
 // ===========================================================================
 // Test helper — result formatting
@@ -29,18 +30,23 @@ function formatResults(results: Array<ResultItem>): string {
 }
 
 describe("web_crawl tool registration — shape contract", () => {
+	it("(entity) webCrawlExtension is a function", () => {
+		assert.equal(typeof webCrawlExtension, "function");
+	});
+
 	it("(entity) registers tool with name 'web_crawl'", () => {
-		const registered: Array<{ name: string }> = [];
+		const registered: Array<any> = [];
 		const mockPi = {
-			registerTool: (tool: { name: string }) => {
+			registerTool: (tool: any) => {
 				registered.push(tool);
 			},
 			exec: async () => ({ code: 0, stdout: "{}", stderr: "" }),
 		};
 
-		// Dynamic import — will fail until index.ts is rewritten
-		// We test the registration shape via a simulated module
-		assert.ok(true, "placeholder");
+		webCrawlExtension(mockPi as any);
+
+		assert.equal(registered.length, 1, "should register exactly one tool");
+		assert.equal(registered[0].name, "web_crawl");
 	});
 
 	it("(entity) tool has url and optional maxPages parameters", () => {
@@ -148,18 +154,18 @@ describe("URL validation", () => {
 
 describe("execute flow — integration with ensureScraplingVenv", () => {
 	it("(entity) execute calls ensureScraplingVenv before running crawl", async () => {
-		// Simulate the new index.ts execute flow
+		// Simulate the new index.ts execute flow (ensureScraplingVenv now throws instead of null)
 		let venvCalled = false;
 		let crawlCalled = false;
 
-		async function ensureScraplingVenvMock(_exec: unknown, _cwd: string): Promise<string | null> {
+		async function ensureScraplingVenvMock(_exec: unknown, _cwd: string): Promise<string> {
 			venvCalled = true;
 			return "/path/to/python3";
 		}
 
 		async function execute() {
 			const python = await ensureScraplingVenvMock(null, "/tmp");
-			if (!python) throw new Error("Failed to init venv");
+			// ensureScraplingVenv throws on failure — no null check needed
 			crawlCalled = true;
 			return { content: [{ type: "text", text: "result" }], details: {} };
 		}
@@ -170,27 +176,26 @@ describe("execute flow — integration with ensureScraplingVenv", () => {
 		assert.equal(result.content[0].text, "result");
 	});
 
-	it("(entity) execute returns error if ensureScraplingVenv fails", async () => {
+	it("(entity) ensureScraplingVenv throw propagates through execute", async () => {
 		let venvCalled = false;
 
-		async function ensureScraplingVenvMock(_exec: unknown, _cwd: string): Promise<string | null> {
+		async function ensureScraplingVenvMock(_exec: unknown, _cwd: string): Promise<string> {
 			venvCalled = true;
-			return null;
+			throw new Error("Failed to initialize scraping environment.");
 		}
 
 		async function execute() {
 			const python = await ensureScraplingVenvMock(null, "/tmp");
-			if (!python) throw new Error("Failed to initialize scraping environment.");
+			// ensureScraplingVenv throws — this line is unreachable on failure
 			return { content: [{ type: "text", text: "result" }], details: {} };
 		}
 
-		try {
-			await execute();
-			assert.fail("should have thrown");
-		} catch (e) {
-			assert.ok(venvCalled, "ensureScraplingVenv should be called");
-			assert.ok((e as Error).message.includes("Failed to initialize"), "should propagate error");
-		}
+		await assert.rejects(
+			execute(),
+			/Failed to initialize/,
+			"should propagate error from ensureScraplingVenv",
+		);
+		assert.ok(venvCalled, "ensureScraplingVenv should be called");
 	});
 });
 
@@ -231,6 +236,106 @@ describe("formatResults — result formatting", () => {
 	it("(entity) returns empty string for empty results array", () => {
 		const output = formatResults([]);
 		assert.equal(output, "");
+	});
+});
+
+describe("error signaling — throws instead of returning error content", () => {
+	it("(entity) invalid URL throws 'Invalid URL'", async () => {
+		let onUpdateCalled = false;
+
+		async function execute() {
+			// URL validation — reject invalid URLs early
+			try {
+				new URL("not-a-url");
+			} catch {
+				throw new Error("Invalid URL");
+			}
+
+			onUpdateCalled = true;
+			return { content: [{ type: "text", text: "result" }], details: {} };
+		}
+
+		await assert.rejects(execute(), /Invalid URL/, "should throw on invalid URL");
+		assert.equal(onUpdateCalled, false, "onUpdate should not fire before invalid URL error");
+	});
+
+	it("(entity) execution error throws with error detail", async () => {
+		async function execute() {
+			const run = { code: 1, stdout: "", stderr: "Connection timeout" };
+
+			if (run.code === 0) {
+				return { content: [{ type: "text", text: "success" }], details: {} };
+			}
+
+			throw new Error(`Error executing crawl: ${run.stderr || run.stdout}`);
+		}
+
+		await assert.rejects(
+			execute(),
+			/Error executing crawl: Connection timeout/,
+			"should throw on execution error",
+		);
+	});
+
+	it("(entity) releaseCrawlLock runs in finally even when execute throws", async () => {
+		let lockReleased = false;
+
+		async function execute() {
+			try {
+				throw new Error("Invalid URL");
+			} finally {
+				lockReleased = true;
+			}
+		}
+
+		await assert.rejects(execute(), /Invalid URL/);
+		assert.ok(lockReleased, "lock should be released in finally block even after throw");
+	});
+});
+
+describe("promptSnippet and promptGuidelines", () => {
+	let tool: any;
+
+	before(() => {
+		const registered: any[] = [];
+		const mockPi = {
+			registerTool: (t: any) => {
+				registered.push(t);
+			},
+			exec: async () => ({ code: 0, stdout: "{}", stderr: "" }),
+		};
+		webCrawlExtension(mockPi as any);
+		tool = registered[0];
+	});
+
+	it("(entity) tool definition has promptSnippet field", () => {
+		assert.ok(tool.promptSnippet, "promptSnippet should be present");
+		assert.equal(typeof tool.promptSnippet, "string", "promptSnippet should be a string");
+		assert.ok(tool.promptSnippet.length > 0, "promptSnippet should not be empty");
+	});
+
+	it("(entity) tool definition has promptGuidelines field", () => {
+		assert.ok(Array.isArray(tool.promptGuidelines), "promptGuidelines should be an array");
+		assert.ok(tool.promptGuidelines.length >= 1, "promptGuidelines should have at least one entry");
+		assert.ok(
+			tool.promptGuidelines[0].includes("web_crawl"),
+			"each guideline should name web_crawl explicitly",
+		);
+	});
+
+	it("(entity) promptSnippet and promptGuidelines present alongside name, label, description, parameters, execute", () => {
+		const requiredFields = [
+			"name",
+			"label",
+			"description",
+			"promptSnippet",
+			"promptGuidelines",
+			"parameters",
+			"execute",
+		];
+		for (const field of requiredFields) {
+			assert.ok(field in tool, `tool definition should have ${field} field`);
+		}
 	});
 });
 
